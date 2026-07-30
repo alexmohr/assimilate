@@ -104,6 +104,7 @@ async function mountWithAgent(
             never_succeeded_agents: [],
             disabled_only_agents: [],
           },
+          running_operations: [],
         },
       })
     return Promise.resolve({ data: [] })
@@ -130,6 +131,7 @@ describe('HostsView', () => {
               never_succeeded_agents: [{ agent_id: 2, hostname: 'never-succeeded-host' }],
               disabled_only_agents: [],
             },
+            running_operations: [],
           },
         })
       }
@@ -138,6 +140,55 @@ describe('HostsView', () => {
       }
       return Promise.resolve({ data: [] })
     })
+  })
+
+  it('shows a running pill on the agent card when a backup is in progress after reload', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: agents })
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [
+              {
+                report_id: 1,
+                status: 'started',
+                hostname: 'protected-host',
+                schedule_id: 1,
+                schedule_name: 'nightly',
+                repo_id: 1,
+                repo_name: 'server-daily',
+                started_at: '2026-06-01T10:00:00Z',
+                destination: { kind: 'schedule', schedule_id: 1 },
+              },
+            ],
+          },
+        })
+      }
+      if (url === '/system/version') {
+        return Promise.resolve({ data: { agent_version: null } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const cards = wrapper.findAll('.host-card')
+    const protectedCard = cards.find((c) => c.text().includes('protected-host'))
+    expect(protectedCard?.find('.entity-running-pill').exists()).toBe(true)
+    expect(protectedCard?.text()).toContain('Backing up: server-daily')
+
+    const otherCard = cards.find((c) => c.text().includes('never-succeeded-host'))
+    expect(otherCard?.find('.entity-running-pill').exists()).toBe(false)
   })
 
   it('applies the coverage filter from the route query', async () => {
@@ -189,6 +240,7 @@ describe('HostsView', () => {
               never_succeeded_agents: [],
               disabled_only_agents: [],
             },
+            running_operations: [],
           },
         })
       }
@@ -245,6 +297,7 @@ describe('HostsView issue rows', () => {
       never_succeeded_agents: [],
       disabled_only_agents: [],
     },
+    running_operations: [],
   }
 
   async function mountAgentsList(

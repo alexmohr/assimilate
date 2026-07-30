@@ -46,6 +46,22 @@ test.describe('Schedules management', () => {
     )
   })
 
+  test('running schedule card shows a Running pill', async ({ page }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, { last_status: 'started' })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const runningPill = card.locator('.entity-running-pill')
+    await expect(runningPill).toBeVisible()
+    await expect(runningPill).toContainText('Running')
+
+    const otherCard = page.locator('.schedule-card', { hasText: 'database-hourly' })
+    await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
+  })
+
   test("clicking a schedule card's Overdue chip navigates to the schedule detail page", async ({
     page,
   }) => {

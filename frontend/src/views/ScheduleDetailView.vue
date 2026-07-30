@@ -96,8 +96,6 @@ const backupHostname = ref<string | null>(null)
 const backupArchiveName = ref<string | null>(null)
 const backupStartedAt = ref<number | null>(null)
 const backupElapsedSecs = ref(0)
-const liveLogLines = ref<string[]>([])
-const MAX_LIVE_LOG_LINES = 200
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
 const lastSuccessfulReport = computed<ReportRow | null>(
@@ -606,7 +604,6 @@ onMessage('BackupStarted', (payload) => {
   backupHostname.value = payload.hostname
   backupArchiveName.value = payload.archive_name ?? null
   archiveProgress.value = null
-  liveLogLines.value = []
   backupStartedAt.value = Date.now()
   backupElapsedSecs.value = 0
   if (elapsedTimer !== null) clearInterval(elapsedTimer)
@@ -622,7 +619,6 @@ onMessage('BackupCompleted', (payload) => {
     backupRunning.value = false
     backupHostname.value = null
     backupArchiveName.value = null
-    liveLogLines.value = []
     if (elapsedTimer !== null) {
       clearInterval(elapsedTimer)
       elapsedTimer = null
@@ -646,8 +642,6 @@ onMessage('BackupLog', (payload) => {
       originalSize: progress.original_size,
       currentPath: progress.path ?? '',
     }
-  } else {
-    liveLogLines.value = [...liveLogLines.value.slice(-(MAX_LIVE_LOG_LINES - 1)), payload.line]
   }
 })
 
@@ -744,16 +738,6 @@ watch(activeTab, (tab) => {
     >
       {{ error }}
     </div>
-
-    <BackupProgressCard
-      v-if="!isCreate && backupRunning"
-      :badge="backupHostname"
-      :archive-name="backupArchiveName"
-      :elapsed-secs="backupElapsedSecs"
-      :estimated-remaining-secs="estimatedRemainingSecs"
-      :progress="archiveProgress"
-      :log-lines="liveLogLines"
-    />
 
     <BaseSpinner
       v-if="loading && !schedule && !isCreate"
@@ -1027,6 +1011,14 @@ watch(activeTab, (tab) => {
                 cronToHuman(form.cron_expression) ?? form.cron_expression
               }}</span>
             </div>
+            <BackupProgressCard
+              v-if="backupRunning"
+              :badge="backupHostname"
+              :archive-name="backupArchiveName"
+              :elapsed-secs="backupElapsedSecs"
+              :estimated-remaining-secs="estimatedRemainingSecs"
+              :progress="archiveProgress"
+            />
           </div>
 
           <!-- Edit-only: target settings card -->

@@ -2,7 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Route } from '@playwright/test'
-import { expect, loginAsAdmin, mockScheduleOneHealth, test } from './fixtures'
+import {
+  expect,
+  loginAsAdmin,
+  mockRunningBackupOperation,
+  mockScheduleOneHealth,
+  test,
+} from './fixtures'
 
 test.describe('Hosts management', () => {
   test('hosts list shows connected agent hosts and imported placeholders', async ({ page }) => {
@@ -119,6 +125,22 @@ test.describe('Hosts management', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=schedules&health=overdue/)
+  })
+
+  test('agent card shows a Running pill while a backup is in progress', async ({ page }) => {
+    await mockRunningBackupOperation(page)
+
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
+    const runningPill = card.locator('.entity-running-pill')
+    await expect(runningPill).toBeVisible()
+    await expect(runningPill).toContainText('server-daily')
+
+    const otherCard = page.locator('.host-card').filter({ hasText: 'db-server-01' }).first()
+    await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
   })
 
   test("agent detail schedules tab's Failed chip navigates to the filtered activity log", async ({

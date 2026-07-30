@@ -93,4 +93,34 @@ describe('EntityStatusBadges', () => {
     expect(wrapper.find('.entity-issue-chip').exists()).toBe(true)
     expect(wrapper.find('.entity-status-pill').text()).toBe('Offline')
   })
+
+  it('shows the running pill with its label when running is true', () => {
+    const wrapper = mount(EntityStatusBadges, {
+      props: { running: true, runningLabel: 'Backing up: server-daily' },
+    })
+    const pill = wrapper.find('.entity-running-pill')
+    expect(pill.exists()).toBe(true)
+    expect(pill.text()).toBe('Backing up: server-daily')
+  })
+
+  it('defaults the running pill label to "Running" when none is given', () => {
+    const wrapper = mount(EntityStatusBadges, {
+      props: { running: true },
+    })
+    expect(wrapper.find('.entity-running-pill').text()).toBe('Running')
+  })
+
+  it('renders the row for a running entity even without issues or notable', () => {
+    const wrapper = mount(EntityStatusBadges, {
+      props: { running: true },
+    })
+    expect(wrapper.find('.entity-badge-row').exists()).toBe(true)
+  })
+
+  it('does not show the running pill when running is false', () => {
+    const wrapper = mount(EntityStatusBadges, {
+      props: { running: false, notable: true, notableLabel: 'Offline' },
+    })
+    expect(wrapper.find('.entity-running-pill').exists()).toBe(false)
+  })
 })

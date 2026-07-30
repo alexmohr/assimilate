@@ -112,6 +112,39 @@ export async function mockScheduleOneHealth(
   )
 }
 
+// Injects a running backup operation for web-server-01 / server-daily (schedule 1,
+// seeded by the demo) into /api/stats/dashboard-overview's running_operations, so
+// tests can force the agent list's "Running" pill to render without waiting for a
+// real backup to start.
+export async function mockRunningBackupOperation(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/stats/dashboard-overview',
+    async (route) => {
+      const response = await route.fetch()
+      const overview = (await response.json()) as { running_operations: unknown[] }
+      overview.running_operations = [
+        ...overview.running_operations,
+        {
+          report_id: 999_999,
+          status: 'started',
+          hostname: 'web-server-01',
+          schedule_id: 1,
+          schedule_name: 'server-daily',
+          repo_id: 1,
+          repo_name: 'server-daily',
+          started_at: new Date().toISOString(),
+          destination: { kind: 'schedule', schedule_id: 1 },
+        },
+      ]
+      return route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        body: JSON.stringify(overview),
+      })
+    },
+  )
+}
+
 // Wraps the built-in `page` fixture to collect Istanbul coverage after each
 // test when VITE_COVERAGE=true. The browser accumulates `window.__coverage__`
 // throughout the test; we read it out just before Playwright closes the page

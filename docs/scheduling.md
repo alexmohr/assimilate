@@ -29,13 +29,15 @@ The Schedules list page shows all configured backup schedules with:
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
 - **Sort buttons** — sort by Agent, Next Run, Last Run, or Type
 
-Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering. A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention — click it to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue).
+Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering. A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention — click it to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue). While a backup for the schedule is currently running, the card also shows a **Running** pill and the **Run** button is replaced with **Cancel**.
 
 Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the Overdue chip to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
 
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 
 On the schedule detail page, each target under **Schedule Info** shows an **Overdue** badge and a **Retry** button when it's behind. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
+
+While a backup for the schedule is running, the **Schedule Info** card also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
 ## Cron Expression Builder
 

@@ -412,8 +412,9 @@ test.describe('backup progress card — mid-backup page load', () => {
     await expect(page.locator('.progress-body')).toContainText('data.db')
   })
 
-  test('non-progress log lines appear in the live log output panel', async ({ page }) => {
-    // Send a non-progress BackupLog line (e.g. a borg log_message JSON).
+  test('non-progress log lines do not render a raw log output panel', async ({ page }) => {
+    // Send a non-progress BackupLog line (e.g. a borg log_message JSON). The schedule
+    // detail card only surfaces parsed progress stats, not raw log output.
     const logLine = JSON.stringify({
       type: 'log_message',
       levelname: 'WARNING',
@@ -427,8 +428,9 @@ test.describe('backup progress card — mid-backup page load', () => {
       line: logLine,
     })
 
-    await expect(page.locator('.live-log-output')).toBeVisible({ timeout: 3_000 })
-    await expect(page.locator('.live-log-output')).toContainText('WARNING')
+    await page.waitForTimeout(300)
+    await expect(page.locator('.live-log-output')).toHaveCount(0)
+    await expect(page.locator('.live-log-card')).not.toContainText('WARNING')
   })
 
   test('BackupLog matched by schedule_id updates progress even without repo data loaded', async ({

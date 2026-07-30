@@ -409,6 +409,8 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         <EntityStatusBadges
           :notable="!s.enabled"
           notable-label="Disabled"
+          :running="s.isRunning"
+          running-label="Running"
           :issues="scheduleIssues(s)"
         />
         <div class="card-meta">

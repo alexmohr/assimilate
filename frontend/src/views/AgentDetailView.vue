@@ -596,7 +596,6 @@ async function loadTabData(): Promise<void> {
           startedAt,
           elapsedSecs: Math.floor((Date.now() - startedAt) / 1000),
           progress: null,
-          logLines: [],
         },
       ]
     })
@@ -805,10 +804,8 @@ interface ActiveBackup {
   startedAt: number
   elapsedSecs: number
   progress: ArchiveProgressData | null
-  logLines: string[]
 }
 
-const MAX_LIVE_LOG_LINES = 200
 const activeBackups = ref<ActiveBackup[]>([])
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
@@ -856,7 +853,6 @@ onMessage('BackupStarted', (payload) => {
       startedAt: Date.now(),
       elapsedSecs: 0,
       progress: null,
-      logLines: [],
     },
   ]
   ensureElapsedTimer()
@@ -883,8 +879,6 @@ onMessage('BackupLog', (payload) => {
       originalSize: progress.original_size,
       currentPath: progress.path ?? '',
     }
-  } else {
-    backup.logLines = [...backup.logLines.slice(-(MAX_LIVE_LOG_LINES - 1)), payload.line]
   }
 })
 
@@ -988,7 +982,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
             :elapsed-secs="b.elapsedSecs"
             :estimated-remaining-secs="null"
             :progress="b.progress"
-            :log-lines="b.logLines"
           />
           <div class="info-actions">
             <button

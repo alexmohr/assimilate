@@ -147,8 +147,12 @@ export async function expandAllArchiveGroups(page: Page): Promise<void> {
     .first()
     .waitFor({ state: 'visible', timeout: 20_000 })
     .catch(() => {})
-  const collapsed = page.locator('.group-header.collapsed')
-  while ((await collapsed.count()) > 0) {
-    await collapsed.first().click()
+  // Click the chevron, not the header button itself: the header also
+  // contains a BaseHostLink that fills most of its width, and clicking the
+  // button's center can land on that link (navigating away) instead of
+  // toggling the group.
+  const collapsedChevrons = page.locator('.group-header.collapsed .group-chevron')
+  while ((await collapsedChevrons.count()) > 0) {
+    await collapsedChevrons.first().click()
   }
 }

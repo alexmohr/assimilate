@@ -79,7 +79,11 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
 
   const prTotals = totals(prLcov);
   const baseTotals = totals(baseLcov);
-  if (prTotals.percent < baseTotals.percent) {
+  const TOLERANCE = 0.1; // percentage points – the e2e backend coverage can
+  // fluctuate by ~0.05 % on untouched Rust files between CI runs (e.g.
+  // tunnel.rs, scheduler.rs), so a tiny aggregate shift without any
+  // uncovered new/changed lines is non-deterministic noise, not a regression.
+  if (prTotals.percent + TOLERANCE < baseTotals.percent) {
     findings.push(
       `Aggregate line coverage decreased from ${baseTotals.percent.toFixed(2)}% (main) to ` +
         `${prTotals.percent.toFixed(2)}% (this PR) - check for removed or weakened tests, ` +

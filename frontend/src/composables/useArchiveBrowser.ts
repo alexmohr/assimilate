@@ -230,8 +230,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       mode: d.mode,
       displayName: d.displayName,
       isDir: true,
-      displaySize: '-',
-      displayMtime: '',
+      displaySize: d.displaySize,
+      displayMtime: d.displayMtime,
     })),
     ...files.value.map((f) => ({
       type: f.type,

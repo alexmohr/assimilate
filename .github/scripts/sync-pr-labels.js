@@ -25,9 +25,20 @@ const GATE_CHECK_NAME = "PR Merge Gate";
 // UI or their own token shows up under their real account instead.
 const TRUSTED_AUTOMATION_LOGIN = "github-actions[bot]";
 
-// Job names from coverage-diff-check.yml / duplicate-code-check.yml - see
-// labelReflectsCurrentCommit below for why these matter.
-const COVERAGE_DIFF_CHECK_NAME = "Check coverage diff";
+// The check-run names labelReflectsCurrentCommit below looks for - not
+// necessarily each workflow's job name. DUPLICATE_CODE_CHECK_NAME matches
+// duplicate-code-check.yml's job name ("Detect duplicate code"), which
+// GitHub reliably auto-registers as its own check run. COVERAGE_DIFF_CHECK_NAME
+// does NOT use coverage-diff-check.yml's job name ("Check coverage diff") -
+// that job-level check was confirmed live on PR #399 to never actually
+// register on the PR's commit (checked repeatedly over several days), so
+// labelReflectsCurrentCommit(..., "Check coverage diff") always returned
+// false and permanently stuck every PR's "PR Merge Gate" at "still waiting
+// on: Check coverage diff", no matter how many times it was re-triggered.
+// "Coverage Diff Check" is the name analyze-coverage-diff.js itself posts
+// via its own checks.create call (CHECK_NAME there) and reliably appears -
+// use that instead.
+const COVERAGE_DIFF_CHECK_NAME = "Coverage Diff Check";
 const DUPLICATE_CODE_CHECK_NAME = "Detect duplicate code";
 
 const STATUS_LABELS = {

@@ -195,4 +195,65 @@ describe('useArchiveBrowser', () => {
     expect(entries[0].displayName).toBe('.')
     expect(entries[0].isDir).toBe(true)
   })
+
+  it('loadArchives fetches archives and clears errors', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [ARCHIVE] })
+
+    const browser = useArchiveBrowser(ref(5))
+    await browser.loadArchives()
+
+    expect(browser.archives.value).toEqual([ARCHIVE])
+    expect(browser.archivesError.value).toBeNull()
+    expect(browser.archivesLoading.value).toBe(false)
+  })
+
+  it('loadArchives sets an error when the API call fails', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('network error'))
+
+    const browser = useArchiveBrowser(ref(5))
+    await browser.loadArchives()
+
+    expect(browser.archivesError.value).toBe('network error')
+    expect(browser.archivesLoading.value).toBe(false)
+  })
+
+  it('restoreEntry throws when the API reports failure', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { success: false, error_message: 'restore failed' },
+    })
+
+    const browser = useArchiveBrowser(ref(5))
+    browser.selectedArchive.value = ARCHIVE
+    const entry = { ...ROOT_ENTRY, type: '-', path: 'etc/nginx/nginx.conf' }
+
+    await expect(browser.restoreEntry(entry)).rejects.toThrow('restore failed')
+  })
+
+  it('deleteArchiveByName throws when the API reports failure', async () => {
+    vi.mocked(apiClient.delete).mockResolvedValue({
+      data: { success: false, archive_name: ARCHIVE.name },
+    })
+
+    const browser = useArchiveBrowser(ref(5))
+
+    await expect(browser.deleteArchiveByName(ARCHIVE)).rejects.toThrow('Archive delete failed')
+  })
+
+  it('deleteArchive returns false when the entry is not a directory', async () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.selectedArchive.value = ARCHIVE
+
+    const result = await browser.deleteArchive({ ...ROOT_ENTRY, type: '-', path: '' })
+
+    expect(result).toBe(false)
+  })
+
+  it('deleteArchive returns false when the entry path is not empty', async () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.selectedArchive.value = ARCHIVE
+
+    const result = await browser.deleteArchive({ ...ROOT_ENTRY, type: 'd', path: 'not-empty' })
+
+    expect(result).toBe(false)
+  })
 })

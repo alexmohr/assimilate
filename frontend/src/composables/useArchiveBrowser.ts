@@ -160,7 +160,16 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     if (currentEntry) {
       entries.push({ ...currentEntry, displayName: '.', displaySize: '-', displayMtime: '' })
     } else if (currentPath.value === ROOT_PATH) {
-      entries.push({ type: 'd', path: '', size: 0, mtime: '', mode: '', displayName: '.', displaySize: '-', displayMtime: '' })
+      entries.push({
+        type: 'd',
+        path: '',
+        size: 0,
+        mtime: '',
+        mode: '',
+        displayName: '.',
+        displaySize: '-',
+        displayMtime: '',
+      })
     }
 
     if (currentPath.value !== ROOT_PATH) {
@@ -186,7 +195,12 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       .sort((a, b) => a.path.localeCompare(b.path))
     return [
       ...entries,
-      ...childDirs.map((e) => ({ ...e, displayName: e.path.split('/').pop() ?? e.path, displaySize: '-', displayMtime: '' })),
+      ...childDirs.map((e) => ({
+        ...e,
+        displayName: e.path.split('/').pop() ?? e.path,
+        displaySize: '-',
+        displayMtime: '',
+      })),
     ]
   })
 

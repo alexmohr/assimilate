@@ -9,7 +9,11 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
-import { useArchiveBrowser, type ArchiveEntry, type DisplayEntry } from '../composables/useArchiveBrowser'
+import {
+  useArchiveBrowser,
+  type ArchiveEntry,
+  type DisplayEntry,
+} from '../composables/useArchiveBrowser'
 
 const CURRENT_DIR_MARKER = '.'
 

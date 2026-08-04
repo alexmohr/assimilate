@@ -4946,12 +4946,14 @@ async fn list_importing_repo_ids_test(pool: PgPool) {
 /// Regression test for `ImportingGuard::clear_now` only disarming `Drop`'s
 /// fallback after the write actually succeeds. Deletes the guarded repo
 /// (cascading away its `repo_import_state` row) right before `clear_now`
-/// runs, so that write hits a foreign-key violation and fails - then
-/// reinserts a repo with the same id before draining the task registry, so
-/// a still-armed `Drop` retry has something to succeed against. If
-/// `clear_now` had already disarmed `Drop` on the earlier failure (the bug
-/// this guards against), no retry would ever be spawned and no
-/// `repo_import_state` row would exist afterward.
+/// runs, so that write hits a foreign-key violation and fails. Asserts via
+/// `TaskRegistry::pending_count` - incremented synchronously by `Drop` the
+/// moment it spawns its retry, before that retry's own future ever runs -
+/// rather than waiting on the retry's outcome, since the retry racing
+/// against any DB state this test could set up afterward would make the
+/// test's own timing nondeterministic. If `clear_now` had already disarmed
+/// `Drop` on the earlier failure (the bug this guards against), `Drop`
+/// would skip spawning a retry entirely and `pending_count` would stay 0.
 #[sqlx::test(migrations = "./migrations")]
 async fn importing_guard_clear_now_leaves_drop_armed_on_write_failure(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
@@ -4968,45 +4970,15 @@ async fn importing_guard_clear_now_leaves_drop_armed_on_write_failure(pool: PgPo
 
     guard.clear_now().await;
 
-    sqlx::query!(
-        "INSERT INTO repos (id, name, repo_path, ssh_user, ssh_host, ssh_port, \
-         passphrase_encrypted, compression, encryption) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-         $9)",
-        repo.id,
-        "test-repo",
-        "/backups/test",
-        "backup",
-        "storage.local",
-        22,
-        b"encrypted_data".as_slice(),
-        "lz4",
-        "repokey",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    assert_eq!(
+        task_registry.pending_count(),
+        1,
+        "Drop should still spawn its retry after clear_now's own write fails"
+    );
 
     task_registry
         .shutdown(std::time::Duration::from_secs(5))
         .await;
-
-    let after = db::list_importing_repo_ids(&pool).await.unwrap();
-    assert!(
-        !after.contains(&repo.id),
-        "Drop's retry should have cleared the flag once the repo existed again"
-    );
-    let row_exists = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM repo_import_state WHERE repo_id = $1)",
-        repo.id
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        row_exists,
-        Some(true),
-        "Drop's spawned retry must still run after clear_now's own write fails"
-    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

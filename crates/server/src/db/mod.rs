@@ -1088,13 +1088,15 @@ impl ImportingGuard {
     /// Clears the importing flag immediately, awaiting the write instead of
     /// leaving it to the guard's deferred `Drop` cleanup.
     pub async fn clear_now(mut self) {
-        self.cleared = true;
-        if let Err(e) = set_repo_importing(&self.pool, self.repo_id, false).await {
-            tracing::error!(
-                repo_id = self.repo_id,
-                error = %e,
-                "failed to clear importing flag"
-            );
+        match set_repo_importing(&self.pool, self.repo_id, false).await {
+            Ok(()) => self.cleared = true,
+            Err(e) => {
+                tracing::error!(
+                    repo_id = self.repo_id,
+                    error = %e,
+                    "failed to clear importing flag"
+                );
+            }
         }
     }
 }

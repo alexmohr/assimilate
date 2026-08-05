@@ -277,22 +277,33 @@ describe('ArchiveFileBrowser', () => {
 
   it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
     const wrapper = await mountWithEntries()
+    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
 
-    const dirRow = wrapper.find('.clickable')
-    expect(dirRow.exists()).toBe(true)
-
-    await dirRow.trigger('click')
+    const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
+    expect(subdirRow).toBeTruthy()
+    await subdirRow!.trigger('click')
     await flushPromises()
     await nextTick()
 
-    const rootCrumb = wrapper.find('.crumb')
-    expect(rootCrumb.exists()).toBe(true)
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callCountBefore + 1)
+    expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith(
+      expect.stringContaining('/contents'),
+      expect.objectContaining({ params: { path: 'subdir' } }),
+    )
 
-    await rootCrumb.trigger('click')
+    let crumbs = wrapper.findAll('.crumb')
+    expect(crumbs.length).toBe(2)
+    expect(crumbs[0].text()).toBe('~')
+    expect(crumbs[1].text()).toBe('subdir')
+
+    await crumbs[0].trigger('click')
     await flushPromises()
     await nextTick()
 
-    expect(wrapper.find('.breadcrumb').exists()).toBe(true)
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callCountBefore + 2)
+    crumbs = wrapper.findAll('.crumb')
+    expect(crumbs.length).toBe(1)
+    expect(crumbs[0].text()).toBe('~')
   })
 
   it('download button creates a download link', async () => {

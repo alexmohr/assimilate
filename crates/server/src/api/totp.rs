@@ -74,18 +74,23 @@ async fn hash_recovery_code(code: &str) -> Result<String, ApiError> {
     .map_err(|e| ApiError::Internal(format!("spawn blocking failed: {e}")))?
 }
 
+/// Returns the exact stored hash that matched `input`, if any. The hash
+/// (rather than an index into the caller's snapshot of the code list) is
+/// what callers should use to consume the code, so the consumption can be
+/// an atomic "remove this exact value" DB operation instead of a
+/// read-modify-write of the whole array.
 async fn verify_recovery_code(
     input: &str,
     hashed_codes: &[String],
-) -> Result<Option<usize>, ApiError> {
+) -> Result<Option<String>, ApiError> {
     let normalized_input = normalize_recovery_code(input);
     let hashes = hashed_codes.to_vec();
-    tokio::task::spawn_blocking(move || -> Result<Option<usize>, ApiError> {
-        for (idx, hash) in hashes.iter().enumerate() {
-            if bcrypt::verify(&normalized_input, hash)
+    tokio::task::spawn_blocking(move || -> Result<Option<String>, ApiError> {
+        for hash in hashes {
+            if bcrypt::verify(&normalized_input, &hash)
                 .map_err(|e| ApiError::Internal(format!("failed to verify recovery code: {e}")))?
             {
-                return Ok(Some(idx));
+                return Ok(Some(hash));
             }
         }
         Ok(None)
@@ -318,13 +323,30 @@ pub async fn totp_setup(
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if TOTP is not set up or the code
-/// is invalid. Returns [`ApiError::Internal`] if decryption or TOTP
-/// verification fails. Returns [`ApiError::Database`] if the DB query fails.
+/// is invalid. Returns [`ApiError::TooManyRequests`] if the account has
+/// too many recent failed attempts. Returns [`ApiError::Internal`] if
+/// decryption or TOTP verification fails. Returns [`ApiError::Database`]
+/// if the DB query fails.
 pub async fn totp_verify(
     State(state): State<AppState>,
     auth: AuthUser,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     ApiJson(req): ApiJson<TotpVerifyRequest>,
 ) -> Result<Json<TotpVerifyResponse>, ApiError> {
+    // Same account-level lockout as totp_disable: a hijacked authenticated
+    // session (stolen cookie, XSS) belonging to a user who started but
+    // hasn't finished enrollment could otherwise brute-force this
+    // guessable 6-digit code with no rate limit at all.
+    let failed_count =
+        db::count_failed_totp_attempts(&state.pool, auth.user_id, TOTP_ATTEMPTS_WINDOW_MINUTES)
+            .await?;
+    if failed_count >= TOTP_MAX_ATTEMPTS {
+        return Err(ApiError::TooManyRequests(
+            "Too many failed attempts. Try again later.".to_string(),
+        ));
+    }
+
     let totp_fields = db::get_user_totp_fields(&state.pool, auth.user_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("TOTP not set up".to_string()))?;
@@ -334,6 +356,11 @@ pub async fn totp_verify(
     };
 
     let Some(step) = verify_totp_code(&state, encrypted, &req.code)? else {
+        let ip = state
+            .client_ip_resolver
+            .resolve(peer.ip(), &headers)
+            .to_string();
+        db::insert_totp_attempt(&state.pool, auth.user_id, &ip, false).await?;
         return Err(ApiError::BadRequest(
             "Invalid verification code".to_string(),
         ));
@@ -428,14 +455,13 @@ pub async fn totp_verify_login(
     // second, different, currently-valid code from a different device
     // logging in shortly after the first (a real scenario given this PR's
     // multi-device session support), even though it isn't a replay at all.
-    if let Some(last_step) = totp_fields.last_verified_step
-        && step <= last_step
-    {
+    //
+    // The check and the write happen in one atomic statement (rather than
+    // read-then-write) so two requests racing the same code can't both
+    // observe "not yet used" before either write lands.
+    if !db::try_consume_totp_step(&state.pool, user.id, step).await? {
         return Err(ApiError::Unauthorized("TOTP code already used".to_string()));
     }
-
-    // Record the verified step to prevent replay of this or any earlier code.
-    db::update_totp_last_verified_step(&state.pool, user.id, step).await?;
 
     // Delete the temp session
     db::delete_session(&state.pool, &temp_hashed).await?;
@@ -559,8 +585,8 @@ pub async fn totp_recovery(
         .await?
         .ok_or_else(|| ApiError::BadRequest("TOTP not set up".to_string()))?;
 
-    let idx = verify_recovery_code(&req.code, &totp_fields.recovery_codes).await?;
-    let Some(idx) = idx else {
+    let matched_hash = verify_recovery_code(&req.code, &totp_fields.recovery_codes).await?;
+    let Some(matched_hash) = matched_hash else {
         let ip = state
             .client_ip_resolver
             .resolve(peer.ip(), &headers)
@@ -569,10 +595,12 @@ pub async fn totp_recovery(
         return Err(ApiError::Unauthorized("invalid recovery code".to_string()));
     };
 
-    // Remove the used recovery code
-    let mut remaining = totp_fields.recovery_codes.clone();
-    remaining.remove(idx);
-    db::replace_totp_recovery_codes(&state.pool, session.user_id, &remaining).await?;
+    // Consume the matched code atomically (remove-if-present in one
+    // statement) so a second request racing the same code can't also
+    // observe it as still present and consume it a second time.
+    if !db::try_consume_totp_recovery_code(&state.pool, session.user_id, &matched_hash).await? {
+        return Err(ApiError::Unauthorized("invalid recovery code".to_string()));
+    }
 
     // Delete the temp session
     db::delete_session(&state.pool, &temp_hashed).await?;
@@ -612,20 +640,20 @@ mod tests {
     async fn recovery_code_hash_and_verify_roundtrip() {
         let code = "abcd-1234-ef56-7890";
         let hashed = hash_recovery_code(code).await.unwrap();
-        let idx = verify_recovery_code("abcd-1234-ef56-7890", &[hashed])
+        let matched = verify_recovery_code("abcd-1234-ef56-7890", std::slice::from_ref(&hashed))
             .await
             .unwrap();
-        assert_eq!(idx, Some(0));
+        assert_eq!(matched, Some(hashed));
     }
 
     #[tokio::test]
     async fn recovery_code_verify_is_case_insensitive_and_ignores_dashes() {
         let code = "ABCD-1234-EF56-7890";
         let hashed = hash_recovery_code(code).await.unwrap();
-        let idx = verify_recovery_code("abcd1234ef567890", &[hashed])
+        let matched = verify_recovery_code("abcd1234ef567890", std::slice::from_ref(&hashed))
             .await
             .unwrap();
-        assert_eq!(idx, Some(0));
+        assert_eq!(matched, Some(hashed));
     }
 
     #[tokio::test]

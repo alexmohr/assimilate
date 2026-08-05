@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET totp_last_verified_step = $2 WHERE id = $1 AND (totp_last_verified_step IS NULL OR totp_last_verified_step < $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cc84ffe7e041b216366b323901ac1bdb4d4fb14fdd5d4af9e242304e31957f4e"
+}

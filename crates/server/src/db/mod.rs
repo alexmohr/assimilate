@@ -4432,23 +4432,59 @@ pub async fn replace_totp_recovery_codes(
     Ok(())
 }
 
+/// Atomically removes exactly one recovery code (matched by its stored
+/// hash) from a user's recovery-code list, in a single statement rather
+/// than a read-modify-write of the whole array, so two requests racing the
+/// same code can't both observe it as still present before either write
+/// commits. Returns `true` if the hash was found and removed, `false` if it
+/// was already gone (e.g. consumed by a concurrent request).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn update_totp_last_verified_step(
+pub async fn try_consume_totp_recovery_code(
+    pool: &PgPool,
+    user_id: i64,
+    code_hash: &str,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE users SET totp_recovery_codes = array_remove(totp_recovery_codes, $2) WHERE id = \
+         $1 AND $2 = ANY(totp_recovery_codes)",
+        user_id,
+        code_hash,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Atomically checks and records the TOTP step consumed by a login, in a
+/// single statement rather than a separate read-then-write, so two
+/// concurrent requests racing the same code can't both pass the replay
+/// check before either write commits. Returns `true` if `step` was newer
+/// than whatever was previously recorded (and is now recorded), `false` if
+/// it was a replay (at or before the recorded step) and the row was left
+/// unchanged.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn try_consume_totp_step(
     pool: &PgPool,
     user_id: i64,
     step: i64,
-) -> Result<(), ApiError> {
-    sqlx::query!(
-        "UPDATE users SET totp_last_verified_step = $2 WHERE id = $1",
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE users SET totp_last_verified_step = $2 WHERE id = $1 AND (totp_last_verified_step \
+         IS NULL OR totp_last_verified_step < $2)",
         user_id,
         step,
     )
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 /// # Errors

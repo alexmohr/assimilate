@@ -2752,9 +2752,10 @@ async fn totp_fields_crud(pool: PgPool) {
     );
 
     // Record a verified step
-    db::update_totp_last_verified_step(&pool, user.id, 100)
+    let consumed = db::try_consume_totp_step(&pool, user.id, 100)
         .await
         .unwrap();
+    assert!(consumed);
 
     let fields = db::get_user_totp_fields(&pool, user.id)
         .await
@@ -7646,6 +7647,58 @@ async fn totp_recovery_codes_replace(pool: PgPool) {
     );
 }
 
+/// Regression test for the TOCTOU race fixed by consuming a recovery code
+/// via an atomic conditional `UPDATE ... WHERE $hash = ANY(...)` instead of
+/// a read-modify-write of the whole array: a second, concurrent attempt to
+/// consume the same (now-removed) code must be rejected, not silently
+/// no-op into removing an already-removed value or affecting another code.
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_try_consume_recovery_code_rejects_reuse_and_is_atomic(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-recovery-atomic-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(
+        &pool,
+        user.id,
+        b"secret",
+        &["hash-a".to_string(), "hash-b".to_string()],
+    )
+    .await
+    .unwrap();
+
+    let first = db::try_consume_totp_recovery_code(&pool, user.id, "hash-a")
+        .await
+        .unwrap();
+    assert!(first, "consuming a present code must succeed");
+
+    // Simulate a second, concurrent request racing the same code: it must
+    // observe the first request's removal and be rejected, not succeed a
+    // second time.
+    let second = db::try_consume_totp_recovery_code(&pool, user.id, "hash-a")
+        .await
+        .unwrap();
+    assert!(!second, "reusing an already-consumed code must be rejected");
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fields.recovery_codes,
+        vec!["hash-b".to_string()],
+        "only the consumed code must be removed, the other must remain untouched"
+    );
+
+    let unknown = db::try_consume_totp_recovery_code(&pool, user.id, "hash-does-not-exist")
+        .await
+        .unwrap();
+    assert!(
+        !unknown,
+        "consuming a code that was never present must fail"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn totp_last_verified_step_update(pool: PgPool) {
     let user = db::insert_user(&pool, "totp-verified-user", "hash")
@@ -7660,9 +7713,8 @@ async fn totp_last_verified_step_update(pool: PgPool) {
     let fields = fields.unwrap();
     assert!(fields.last_verified_step.is_none());
 
-    db::update_totp_last_verified_step(&pool, user.id, 42)
-        .await
-        .unwrap();
+    let consumed = db::try_consume_totp_step(&pool, user.id, 42).await.unwrap();
+    assert!(consumed, "a fresh, newer step must be consumable");
 
     let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
     let fields = fields.unwrap();
@@ -7671,6 +7723,46 @@ async fn totp_last_verified_step_update(pool: PgPool) {
         Some(42),
         "last_verified_step must be set after update"
     );
+}
+
+/// Regression test for the TOCTOU race fixed by making the replay check and
+/// the write a single atomic `UPDATE ... WHERE ...`, rather than a
+/// read-then-write: two requests racing the same (or an older) step must
+/// not both be able to consume it.
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_try_consume_step_rejects_replay_and_is_atomic(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-atomic-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(&pool, user.id, b"secret", &[])
+        .await
+        .unwrap();
+
+    let first = db::try_consume_totp_step(&pool, user.id, 10).await.unwrap();
+    assert!(first, "the first attempt at a fresh step must succeed");
+
+    // Simulate a second, concurrent request racing the same step: it must
+    // observe the write from the first request and be rejected, not overwrite
+    // it or otherwise succeed.
+    let replay_same_step = db::try_consume_totp_step(&pool, user.id, 10).await.unwrap();
+    assert!(!replay_same_step, "reusing the same step must be rejected");
+
+    let replay_older_step = db::try_consume_totp_step(&pool, user.id, 5).await.unwrap();
+    assert!(!replay_older_step, "an older step must be rejected");
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fields.last_verified_step,
+        Some(10),
+        "a rejected replay must not change the recorded step"
+    );
+
+    let newer = db::try_consume_totp_step(&pool, user.id, 11).await.unwrap();
+    assert!(newer, "a genuinely newer step must still be accepted");
 }
 
 #[sqlx::test(migrations = "./migrations")]

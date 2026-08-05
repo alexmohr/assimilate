@@ -4,26 +4,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { FilterMatchMode } from '@primevue/core/api'
-import { formatBytes, formatDate } from '../utils/format'
+import { computed, watch, onBeforeUnmount } from 'vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
-import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
-
-interface DisplayEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
-  displayName: string
-  isDir: boolean
-  displaySize: string
-  displayMtime: string
-}
+import {
+  useArchiveBrowser,
+  type ArchiveEntry,
+  type DisplayEntry,
+} from '../composables/useArchiveBrowser'
 
 const CURRENT_DIR_MARKER = '.'
 
@@ -42,37 +32,8 @@ const contentsError = browser.contentsError
 const indexing = browser.indexing
 const navigateTo = browser.navigateTo
 const downloadEntry = browser.downloadEntry
-
-const browserFilters = ref({
-  displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  displaySize: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  displayMtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
-})
-
-const browserEntries = computed<DisplayEntry[]>(() => [
-  ...browser.dirs.value.map((d) => ({
-    type: d.type,
-    path: d.path,
-    size: Number(d.size),
-    mtime: d.mtime,
-    mode: d.mode,
-    displayName: d.displayName,
-    isDir: true,
-    displaySize: '-',
-    displayMtime: '',
-  })),
-  ...browser.files.value.map((f) => ({
-    type: f.type,
-    path: f.path,
-    size: Number(f.size),
-    mtime: f.mtime,
-    mode: f.mode,
-    displayName: browser.entryName(f),
-    isDir: false,
-    displaySize: formatBytes(Number(f.size)),
-    displayMtime: formatDate(f.mtime),
-  })),
-])
+const browserEntries = browser.browserEntries
+const browserFilters = browser.browserFilters
 
 function archivePlaceholder(name: string): ArchiveEntry {
   return {

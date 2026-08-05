@@ -173,19 +173,24 @@ mod tests {
         assert_eq!(outcome, CompletionOutcome::Failed);
     }
 
-    #[tokio::test]
-    async fn wait_for_completion_keeps_waiting_while_agent_stays_connected() {
-        // A long-running backup must not be abandoned just because it's slow;
-        // with no completion event and a connected agent, the wait never resolves
-        // on its own.
+    /// Sets up a `CompletionBus`/`AgentRegistry` pair with `host-a` connected
+    /// and a `wait_for_completion_with_poll_interval` waiter (10ms poll, so
+    /// disconnect-driven tests resolve quickly) already running against
+    /// `host-a`/repo `1`. Shared by every test below that needs a waiter in
+    /// the background to then race some event against.
+    async fn setup_connected_waiter() -> (
+        CompletionBus,
+        AgentRegistry,
+        tokio::task::JoinHandle<CompletionOutcome>,
+    ) {
         let bus = CompletionBus::new();
         let registry = AgentRegistry::new();
         let (tx, _) = tokio::sync::mpsc::channel(1);
         registry
             .register("host-a".to_string(), tx, false, None)
             .await;
-        let rx = bus.subscribe();
 
+        let rx = bus.subscribe();
         let wait = tokio::spawn({
             let registry = registry.clone();
             async move {
@@ -199,6 +204,15 @@ mod tests {
                 .await
             }
         });
+        (bus, registry, wait)
+    }
+
+    #[tokio::test]
+    async fn wait_for_completion_keeps_waiting_while_agent_stays_connected() {
+        // A long-running backup must not be abandoned just because it's slow;
+        // with no completion event and a connected agent, the wait never resolves
+        // on its own.
+        let (_bus, _registry, wait) = setup_connected_waiter().await;
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!wait.is_finished());
@@ -207,27 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_completion_detects_agent_disconnect() {
-        let bus = CompletionBus::new();
-        let registry = AgentRegistry::new();
-        let (tx, _) = tokio::sync::mpsc::channel(1);
-        registry
-            .register("host-a".to_string(), tx, false, None)
-            .await;
-        let rx = bus.subscribe();
-
-        let wait = tokio::spawn({
-            let registry = registry.clone();
-            async move {
-                wait_for_completion_with_poll_interval(
-                    &registry,
-                    rx,
-                    "host-a",
-                    1,
-                    Duration::from_millis(10),
-                )
-                .await
-            }
-        });
+        let (_bus, registry, wait) = setup_connected_waiter().await;
 
         tokio::time::sleep(Duration::from_millis(30)).await;
         registry.unregister("host-a").await;
@@ -237,5 +231,38 @@ mod tests {
             .expect("wait_for_completion should resolve shortly after disconnect")
             .expect("task should not panic");
         assert_eq!(outcome, CompletionOutcome::AgentDisconnected);
+    }
+
+    #[tokio::test]
+    async fn wait_for_completion_wakes_on_abandonment_event_despite_agent_staying_connected() {
+        // Simulates an agent reconnect under the same hostname: the registry
+        // never reports a disconnect (a replacement registration keeps
+        // `is_connected` true throughout), so the only way a waiter tied to
+        // the abandoned session can ever resolve is an explicit publish - the
+        // same one `abandon_stale_operations_on_reconnect` sends once it marks
+        // the stale backup as failed.
+        let (bus, registry, wait) = setup_connected_waiter().await;
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        // The agent reconnects under the same hostname - registry still shows
+        // it connected the whole time.
+        let (tx2, _) = tokio::sync::mpsc::channel(1);
+        let replaced = registry
+            .register("host-a".to_string(), tx2, false, None)
+            .await;
+        assert!(replaced);
+        assert!(registry.is_connected("host-a").await);
+
+        bus.publish(OperationOutcome {
+            hostname: "host-a".to_string(),
+            repo_id: 1,
+            success: false,
+        });
+
+        let outcome = tokio::time::timeout(Duration::from_secs(1), wait)
+            .await
+            .expect("wait_for_completion should resolve once the abandonment event is published")
+            .expect("task should not panic");
+        assert_eq!(outcome, CompletionOutcome::Failed);
     }
 }

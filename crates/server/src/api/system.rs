@@ -161,6 +161,10 @@ pub struct SettingsResponse {
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: u64,
+    /// Idle timeout for user sessions in minutes. `None` if the setting has
+    /// never been configured (the effective default is still enforced).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[utoipa::path(
@@ -238,6 +242,8 @@ pub async fn get_settings(
         .filter(|&s| s > 0)
         .unwrap_or(300);
 
+    let session_idle_timeout_minutes = get_effective_session_idle_timeout_minutes(&state).await?;
+
     Ok(Json(SettingsResponse {
         retention_days,
         report_retention_days,
@@ -245,7 +251,27 @@ pub async fn get_settings(
         system_event_retention_days,
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
+        session_idle_timeout_minutes,
     }))
+}
+
+/// Read the effective `session_idle_timeout_minutes` setting from the DB.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+async fn get_effective_session_idle_timeout_minutes(
+    state: &AppState,
+) -> Result<Option<i64>, ApiError> {
+    Ok(
+        db::get_setting(&state.pool, "session_idle_timeout_minutes")
+            .await?
+            .and_then(|v| {
+                v.parse::<i64>().inspect_err(|e| {
+                    tracing::warn!(value = %v, error = %e, "failed to parse session_idle_timeout_minutes setting");
+                }).ok()
+            }),
+    )
 }
 
 /// Request payload for updating system settings.
@@ -263,6 +289,9 @@ pub struct UpdateSettingsRequest {
     pub timezone: Option<String>,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: Option<u64>,
+    /// Idle timeout for user sessions in minutes, must be positive. `None`
+    /// leaves the current value unchanged; the timeout cannot be disabled.
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[utoipa::path(
@@ -352,6 +381,18 @@ pub async fn update_settings(
     )
     .await?;
 
+    if let Some(v) = body.session_idle_timeout_minutes {
+        if v < 1 {
+            return Err(ApiError::BadRequest(
+                "session_idle_timeout_minutes must be positive".to_string(),
+            ));
+        }
+        db::set_setting(&state.pool, "session_idle_timeout_minutes", &v.to_string()).await?;
+    }
+
+    // Refresh the cached session idle timeout
+    state.reload_session_idle_timeout().await;
+
     let effective_tz = db::get_schedule_timezone(&state.pool).await?;
 
     let legacy = Some(body.retention_days);
@@ -362,6 +403,8 @@ pub async fn update_settings(
 
     let system_event_retention_days = body.system_event_retention_days.or(legacy).unwrap_or(90);
 
+    let session_idle_timeout_minutes = get_effective_session_idle_timeout_minutes(&state).await?;
+
     Ok(Json(SettingsResponse {
         retention_days: body.retention_days,
         report_retention_days,
@@ -369,6 +412,7 @@ pub async fn update_settings(
         system_event_retention_days,
         timezone: effective_tz.name().to_owned(),
         borg_query_timeout_secs,
+        session_idle_timeout_minutes,
     }))
 }
 

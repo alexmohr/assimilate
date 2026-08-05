@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT totp_secret_encrypted AS secret_encrypted, totp_enabled AS enabled, totp_recovery_codes AS recovery_codes, totp_last_verified_step AS last_verified_step FROM users WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "secret_encrypted",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "recovery_codes",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_verified_step",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "139e53f123bfce97515d41a5964dbb081a0a7fa9ee59a3a96fbe1e88f8f46109"
+}

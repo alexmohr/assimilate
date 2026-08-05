@@ -328,7 +328,7 @@ describe('ArchiveFileBrowser', () => {
     })
 
     const clearIntervalSpy = vi.spyOn(global, 'clearInterval')
-    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
+    const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
     wrapper.unmount()
 
     expect(clearIntervalSpy).toHaveBeenCalled()
@@ -398,7 +398,7 @@ describe('ArchiveFileBrowser', () => {
     const removeChildSpy = vi.spyOn(document.body, 'removeChild')
 
     const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
+      props: { repoId: 5, archive: makeArchive('test-archive') },
     })
 
     await flushPromises()
@@ -444,7 +444,7 @@ describe('ArchiveFileBrowser', () => {
     })
 
     const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
+      props: { repoId: 5, archive: makeArchive('test-archive') },
     })
 
     await flushPromises()

@@ -76,8 +76,8 @@ SQL
 echo "==> Logging in..."
 login
 
-echo "==> Setting timezone to Europe/Berlin..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90}'
+echo "==> Setting timezone to Europe/Berlin and configuring session idle timeout..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"session_idle_timeout_minutes":480}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
@@ -463,13 +463,17 @@ echo "==> Creating additional users and roles..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL'
 INSERT INTO users (username, password_hash) VALUES
     ('operator1', '$2b$10$bO6/.9GSDqqTPFqe1CiOGOf2UZt3rxK71x7CfBXlFotSLhT0aUoZ2'),
-    ('viewer1', '$2b$10$Ex5wHmqtI7IFdor4vJdXo.6YvqGErhf3PtiKGKCDORiArpZwyg3Ze')
+    ('viewer1', '$2b$10$Ex5wHmqtI7IFdor4vJdXo.6YvqGErhf3PtiKGKCDORiArpZwyg3Ze'),
+    ('totpuser', '$2b$10$92LXqE0n28dyZnMu3ZALt.EsjPxgzLcjcOL4Oapg.mGLah7y65bW2')
 ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'operator1' AND r.name = 'operator'
 ON CONFLICT DO NOTHING;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'viewer1' AND r.name = 'viewer'
+ON CONFLICT DO NOTHING;
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'totpuser' AND r.name = 'viewer'
 ON CONFLICT DO NOTHING;
 SQL
 

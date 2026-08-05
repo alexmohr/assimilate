@@ -4105,6 +4105,27 @@ pub struct SessionRow {
     pub expires_at: DateTime<Utc>,
     /// Whether the "remember me" flag was set.
     pub remember_me: bool,
+    /// When the session was last used.
+    pub last_seen_at: DateTime<Utc>,
+    /// Whether this session is pending TOTP verification (pre-login temp session).
+    pub pending_totp: bool,
+}
+
+/// A session row returned for user-facing session listing.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SessionForUser {
+    /// Hashed session ID.
+    pub id: String,
+    /// User ID the session belongs to.
+    pub user_id: i64,
+    /// When the session was created.
+    pub created_at: DateTime<Utc>,
+    /// When the session expires.
+    pub expires_at: DateTime<Utc>,
+    /// When the session was last used.
+    pub last_seen_at: DateTime<Utc>,
+    /// Whether the "remember me" flag was set.
+    pub remember_me: bool,
 }
 
 /// # Errors
@@ -4282,19 +4303,284 @@ pub async fn update_last_login(pool: &PgPool, user_id: i64) -> Result<(), ApiErr
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_user_totp_fields(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Option<UserTotpFields>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        secret_encrypted: Option<Vec<u8>>,
+        enabled: bool,
+        recovery_codes: Option<Vec<String>>,
+        last_verified_step: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT totp_secret_encrypted AS secret_encrypted, totp_enabled AS enabled, \
+         totp_recovery_codes AS recovery_codes, totp_last_verified_step AS last_verified_step \
+         FROM users WHERE id = $1",
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(match row {
+        Some(r) => {
+            if r.secret_encrypted.is_some() {
+                Some(UserTotpFields {
+                    secret_encrypted: r.secret_encrypted,
+                    enabled: r.enabled,
+                    recovery_codes: r.recovery_codes.unwrap_or_default(),
+                    last_verified_step: r.last_verified_step,
+                })
+            } else {
+                None
+            }
+        }
+        None => None,
+    })
+}
+
+/// TOTP configuration fields for a user.
+pub struct UserTotpFields {
+    /// Encrypted TOTP secret (AES-256-GCM).
+    pub secret_encrypted: Option<Vec<u8>>,
+    /// Whether TOTP is enabled for this user.
+    pub enabled: bool,
+    /// Hashed recovery codes.
+    pub recovery_codes: Vec<String>,
+    /// The most recent TOTP time-step (`unix_time / step`) successfully
+    /// consumed during login, used for replay protection.
+    pub last_verified_step: Option<i64>,
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn set_user_totp_secret(
+    pool: &PgPool,
+    user_id: i64,
+    encrypted_secret: &[u8],
+    recovery_codes: &[String],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_secret_encrypted = $2, totp_recovery_codes = $3 WHERE id = $1",
+        user_id,
+        encrypted_secret,
+        recovery_codes,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn enable_user_totp(
+    pool: &PgPool,
+    user_id: i64,
+    verified_step: i64,
+) -> Result<(), ApiError> {
+    // Record the step consumed by the enrollment code itself, so it can't be
+    // replayed against the login endpoint for the rest of its validity window.
+    sqlx::query!(
+        "UPDATE users SET totp_enabled = true, totp_last_verified_step = $2 WHERE id = $1",
+        user_id,
+        verified_step,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn disable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_enabled = false, totp_secret_encrypted = NULL, totp_recovery_codes \
+         = NULL, totp_last_verified_step = NULL WHERE id = $1",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn replace_totp_recovery_codes(
+    pool: &PgPool,
+    user_id: i64,
+    recovery_codes: &[String],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_recovery_codes = $2 WHERE id = $1",
+        user_id,
+        recovery_codes,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Atomically removes exactly one recovery code (matched by its stored
+/// hash) from a user's recovery-code list, in a single statement rather
+/// than a read-modify-write of the whole array, so two requests racing the
+/// same code can't both observe it as still present before either write
+/// commits. Returns `true` if the hash was found and removed, `false` if it
+/// was already gone (e.g. consumed by a concurrent request).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn try_consume_totp_recovery_code(
+    pool: &PgPool,
+    user_id: i64,
+    code_hash: &str,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE users SET totp_recovery_codes = array_remove(totp_recovery_codes, $2) WHERE id = \
+         $1 AND $2 = ANY(totp_recovery_codes)",
+        user_id,
+        code_hash,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Atomically checks and records the TOTP step consumed by a login, in a
+/// single statement rather than a separate read-then-write, so two
+/// concurrent requests racing the same code can't both pass the replay
+/// check before either write commits. Returns `true` if `step` was newer
+/// than whatever was previously recorded (and is now recorded), `false` if
+/// it was a replay (at or before the recorded step) and the row was left
+/// unchanged.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn try_consume_totp_step(
+    pool: &PgPool,
+    user_id: i64,
+    step: i64,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE users SET totp_last_verified_step = $2 WHERE id = $1 AND (totp_last_verified_step \
+         IS NULL OR totp_last_verified_step < $2)",
+        user_id,
+        step,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn update_session_last_seen(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1",
+        session_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_sessions_for_user(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Vec<SessionForUser>, ApiError> {
+    sqlx::query_as!(
+        SessionForUser,
+        "SELECT id, user_id, created_at, expires_at, last_seen_at, remember_me FROM sessions \
+         WHERE user_id = $1 AND expires_at > NOW() AND pending_totp = false ORDER BY created_at \
+         DESC",
+        user_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_session_by_id(
+    pool: &PgPool,
+    session_id: &str,
+    user_id: i64,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_user_password_hash_by_id(pool: &PgPool, user_id: i64) -> Result<String, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        password_hash: String,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT password_hash FROM users WHERE id = $1",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("user {user_id} not found")),
+        other => ApiError::Database(other),
+    })?;
+    Ok(row.password_hash)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_session(
     pool: &PgPool,
     session_id: &str,
     user_id: i64,
     expires_at: DateTime<Utc>,
     remember_me: bool,
+    pending_totp: bool,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "INSERT INTO sessions (id, user_id, expires_at, remember_me) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO sessions (id, user_id, expires_at, remember_me, last_seen_at, pending_totp) \
+         VALUES ($1, $2, $3, $4, NOW(), $5)",
         session_id,
         user_id,
         expires_at,
         remember_me,
+        pending_totp,
     )
     .execute(pool)
     .await
@@ -4310,8 +4596,8 @@ pub async fn insert_session(
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as!(
         SessionRow,
-        "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND \
-         expires_at > NOW()",
+        "SELECT id, user_id, created_at, expires_at, remember_me, last_seen_at, pending_totp FROM \
+         sessions WHERE id = $1 AND expires_at > NOW()",
         session_id,
     )
     .fetch_one(pool)
@@ -4421,6 +4707,53 @@ pub async fn insert_login_attempt(
     sqlx::query!(
         "INSERT INTO login_attempts (username, ip, success) VALUES ($1, $2, $3)",
         username,
+        ip,
+        success,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_failed_totp_attempts(
+    pool: &PgPool,
+    user_id: i64,
+    window_minutes: i32,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM totp_attempts WHERE user_id = $1 AND success = false AND \
+         attempted_at > NOW() - ($2 || ' minutes')::INTERVAL",
+        user_id,
+        window_minutes.to_string(),
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn insert_totp_attempt(
+    pool: &PgPool,
+    user_id: i64,
+    ip: &str,
+    success: bool,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "INSERT INTO totp_attempts (user_id, ip, success) VALUES ($1, $2, $3)",
+        user_id,
         ip,
         success,
     )

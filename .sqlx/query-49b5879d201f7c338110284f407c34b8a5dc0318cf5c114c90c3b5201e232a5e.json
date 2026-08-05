@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET totp_recovery_codes = array_remove(totp_recovery_codes, $2) WHERE id = $1 AND $2 = ANY(totp_recovery_codes)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "49b5879d201f7c338110284f407c34b8a5dc0318cf5c114c90c3b5201e232a5e"
+}

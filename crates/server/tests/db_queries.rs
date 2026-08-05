@@ -2488,7 +2488,7 @@ async fn session_crud(pool: PgPool) {
     let user = db::insert_user(&pool, "sessuser", "hash").await.unwrap();
 
     let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
-    db::insert_session(&pool, "sess_abc123", user.id, expires, false)
+    db::insert_session(&pool, "sess_abc123", user.id, expires, false, false)
         .await
         .unwrap();
 
@@ -2496,6 +2496,7 @@ async fn session_crud(pool: PgPool) {
     assert_eq!(session.user_id, user.id);
     assert_eq!(session.id, "sess_abc123");
     assert!(!session.remember_me);
+    assert!(!session.pending_totp);
 
     db::delete_session(&pool, "sess_abc123").await.unwrap();
 
@@ -2508,7 +2509,7 @@ async fn session_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "expuser", "hash").await.unwrap();
 
     let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_expired", user.id, expired, false)
+    db::insert_session(&pool, "sess_expired", user.id, expired, false, false)
         .await
         .unwrap();
 
@@ -2521,7 +2522,7 @@ async fn session_delete_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "cleanuser", "hash").await.unwrap();
 
     let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_old", user.id, expired, false)
+    db::insert_session(&pool, "sess_old", user.id, expired, false, false)
         .await
         .unwrap();
 
@@ -2536,7 +2537,7 @@ async fn session_remember_me(pool: PgPool) {
         .unwrap();
 
     let expires = Utc::now().checked_add_signed(Duration::days(7)).unwrap();
-    db::insert_session(&pool, "sess_remember", user.id, expires, true)
+    db::insert_session(&pool, "sess_remember", user.id, expires, true, false)
         .await
         .unwrap();
 
@@ -2550,7 +2551,7 @@ async fn session_extend(pool: PgPool) {
     let user = db::insert_user(&pool, "extenduser", "hash").await.unwrap();
 
     let original_expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
+    db::insert_session(&pool, "sess_extend", user.id, original_expires, true, false)
         .await
         .unwrap();
 
@@ -2562,6 +2563,230 @@ async fn session_extend(pool: PgPool) {
     let session = db::get_session(&pool, "sess_extend").await.unwrap();
     assert!(session.expires_at > original_expires);
     assert!(session.remember_me);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_revoke_by_id(pool: PgPool) {
+    let user = db::insert_user(&pool, "revokeuser", "hash").await.unwrap();
+    let other = db::insert_user(&pool, "otheruser", "hash2").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_revoke_1", user.id, expires, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "sess_revoke_2", user.id, expires, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "sess_other_user", other.id, expires, false, false)
+        .await
+        .unwrap();
+
+    // Revoke sess_revoke_1 by user - should succeed
+    let deleted = db::delete_session_by_id(&pool, "sess_revoke_1", user.id)
+        .await
+        .unwrap();
+    assert!(deleted);
+
+    // Revoking same session again should return false
+    let deleted = db::delete_session_by_id(&pool, "sess_revoke_1", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted);
+
+    // Other user's session cannot be revoked by user (ownership check)
+    let deleted = db::delete_session_by_id(&pool, "sess_other_user", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted, "cannot revoke another user's session");
+
+    // Other user's session still exists
+    let fetched = db::get_session(&pool, "sess_other_user").await.unwrap();
+    assert_eq!(fetched.user_id, other.id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_last_seen_update(pool: PgPool) {
+    let user = db::insert_user(&pool, "seenuser", "hash").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_seen", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_seen").await.unwrap();
+    let initial_seen = session.last_seen_at;
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    db::update_session_last_seen(&pool, "sess_seen")
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_seen").await.unwrap();
+    assert!(
+        session.last_seen_at > initial_seen,
+        "last_seen_at must be updated"
+    );
+}
+
+/// Verifies the DB primitives that support session idle timeout:
+/// `last_seen_at` is persisted, can be set to an arbitrary past timestamp,
+/// and can be refreshed. The actual timeout enforcement lives in the
+/// `AuthUser` extractor; this test ensures the DB layer exposes the field
+/// correctly so an idle session older than the configured threshold can be
+/// detected and revoked on the next request.
+#[sqlx::test(migrations = "./migrations")]
+async fn session_idle_timeout_tracking(pool: PgPool) {
+    let user = db::insert_user(&pool, "idleuser", "hash").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_idle", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    // Simulate a session that has been idle for longer than the default
+    // 480-minute timeout by backdating last_seen_at.
+    let idle_since = Utc::now()
+        .checked_sub_signed(Duration::minutes(481))
+        .unwrap();
+    sqlx::query!(
+        "UPDATE sessions SET last_seen_at = $1 WHERE id = $2",
+        idle_since,
+        "sess_idle"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The DB layer must still return the session: idle timeout is enforced
+    // in the application layer, not by `get_session`.
+    let session = db::get_session(&pool, "sess_idle").await.unwrap();
+    assert_eq!(session.user_id, user.id);
+    assert!(
+        Utc::now()
+            .signed_duration_since(session.last_seen_at)
+            .num_minutes()
+            >= 480,
+        "session must be idle for at least the default timeout"
+    );
+
+    // list_sessions_for_user should also include the idle session.
+    let listed = db::list_sessions_for_user(&pool, user.id).await.unwrap();
+    assert!(listed.iter().any(|s| s.id == "sess_idle"));
+
+    // Refreshing last_seen_at moves the idle window forward.
+    db::update_session_last_seen(&pool, "sess_idle")
+        .await
+        .unwrap();
+    let session = db::get_session(&pool, "sess_idle").await.unwrap();
+    assert!(
+        Utc::now()
+            .signed_duration_since(session.last_seen_at)
+            .num_minutes()
+            < 1,
+        "last_seen_at must be recent after refresh"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_pending_totp(pool: PgPool) {
+    let user = db::insert_user(&pool, "pendingtotpuser", "hash")
+        .await
+        .unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    // Session with pending_totp = true (temp session during two-step login)
+    db::insert_session(&pool, "sess_pending", user.id, expires, false, true)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_pending").await.unwrap();
+    assert!(session.pending_totp);
+
+    // Regular session with pending_totp = false
+    db::insert_session(&pool, "sess_regular", user.id, expires, false, false)
+        .await
+        .unwrap();
+    let session = db::get_session(&pool, "sess_regular").await.unwrap();
+    assert!(!session.pending_totp);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_crud(pool: PgPool) {
+    let user = db::insert_user(&pool, "totpuser", "hash").await.unwrap();
+
+    // Initially TOTP should not be configured
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none());
+
+    // Set TOTP secret and recovery codes
+    let secret = b"encrypted_secret_bytes";
+    let codes = vec!["bcrypt_code_1".to_string(), "bcrypt_code_2".to_string()];
+    db::set_user_totp_secret(&pool, user.id, secret, &codes)
+        .await
+        .unwrap();
+
+    // Should be present but not enabled
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.secret_encrypted.as_deref(), Some(secret as &[u8]));
+    assert!(!fields.enabled);
+    assert_eq!(fields.recovery_codes.len(), 2);
+    assert!(fields.last_verified_step.is_none());
+
+    // Enable TOTP, recording the step consumed by the enrollment code itself
+    // so it can't be replayed against the login endpoint.
+    db::enable_user_totp(&pool, user.id, 42).await.unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert!(fields.enabled);
+    assert_eq!(
+        fields.last_verified_step,
+        Some(42),
+        "the enrollment code's step must be recorded to prevent its replay"
+    );
+
+    // Record a verified step
+    let consumed = db::try_consume_totp_step(&pool, user.id, 100)
+        .await
+        .unwrap();
+    assert!(consumed);
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.last_verified_step, Some(100));
+
+    // Replace recovery codes (remove one)
+    let remaining = vec!["bcrypt_code_1".to_string()];
+    db::replace_totp_recovery_codes(&pool, user.id, &remaining)
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.recovery_codes.len(), 1);
+    assert_eq!(fields.recovery_codes.first().unwrap(), "bcrypt_code_1");
+
+    // Disable TOTP (clears everything)
+    db::disable_user_totp(&pool, user.id).await.unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_for_nonexistent_user(pool: PgPool) {
+    let fields = db::get_user_totp_fields(&pool, 999_999_999).await.unwrap();
+    assert!(fields.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -7172,4 +7397,396 @@ async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool)
         .unwrap();
     assert_eq!(other_reports.len(), 1);
     assert_eq!(other_reports.first().unwrap().status, "started");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_insert_and_get(pool: PgPool) {
+    let user = db::insert_user(&pool, "session-user", "hash")
+        .await
+        .unwrap();
+    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "session-hash-1", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "session-hash-1").await.unwrap();
+    assert_eq!(session.user_id, user.id);
+    assert!(!session.pending_totp);
+    assert!(!session.remember_me);
+    assert_eq!(session.id, "session-hash-1");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_pending_totp_flag_roundtrip(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-pending-user", "hash")
+        .await
+        .unwrap();
+    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "pending-session-1", user.id, expires, false, true)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "pending-session-1").await.unwrap();
+    assert!(session.pending_totp);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_expired_returns_error(pool: PgPool) {
+    let user = db::insert_user(&pool, "expired-session-user", "hash")
+        .await
+        .unwrap();
+    let past = Utc::now().checked_add_signed(Duration::hours(-1)).unwrap();
+
+    db::insert_session(&pool, "expired-session", user.id, past, false, false)
+        .await
+        .unwrap();
+
+    let result = db::get_session(&pool, "expired-session").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_list_for_user_excludes_expired_and_pending_totp(pool: PgPool) {
+    let user = db::insert_user(&pool, "list-session-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let past = Utc::now().checked_add_signed(Duration::hours(-1)).unwrap();
+
+    db::insert_session(&pool, "active-session", user.id, future, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "expired-session", user.id, past, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "pending-session", user.id, future, false, true)
+        .await
+        .unwrap();
+
+    let sessions = db::list_sessions_for_user(&pool, user.id).await.unwrap();
+    let ids: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"active-session"));
+    assert!(!ids.contains(&"expired-session"));
+    assert!(!ids.contains(&"pending-session"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_delete_by_id_with_ownership_check(pool: PgPool) {
+    let user = db::insert_user(&pool, "del-session-user", "hash")
+        .await
+        .unwrap();
+    let other_user = db::insert_user(&pool, "other-del-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "del-session", user.id, future, false, false)
+        .await
+        .unwrap();
+
+    // Other user tries to delete - must fail
+    let deleted = db::delete_session_by_id(&pool, "del-session", other_user.id)
+        .await
+        .unwrap();
+    assert!(!deleted, "other user must not be able to delete session");
+
+    // Owner deletes - must succeed
+    let deleted = db::delete_session_by_id(&pool, "del-session", user.id)
+        .await
+        .unwrap();
+    assert!(deleted, "owner must be able to delete session");
+
+    // Already deleted - must return false
+    let deleted = db::delete_session_by_id(&pool, "del-session", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_update_last_seen(pool: PgPool) {
+    let user = db::insert_user(&pool, "last-seen-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "seen-session", user.id, future, false, false)
+        .await
+        .unwrap();
+
+    // Wait a minimal delta and update
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    db::update_session_last_seen(&pool, "seen-session")
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "seen-session").await.unwrap();
+    assert!(
+        session.last_seen_at > Utc::now().checked_add_signed(Duration::hours(-1)).unwrap(),
+        "last_seen_at must have been updated"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_extend_expiry(pool: PgPool) {
+    let user = db::insert_user(&pool, "extend-user", "hash").await.unwrap();
+    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "extend-session", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    let new_expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::extend_session(&pool, "extend-session", new_expires)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "extend-session").await.unwrap();
+    assert!(
+        session.expires_at > expires,
+        "expires_at must have been extended"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_delete_removes_session(pool: PgPool) {
+    let user = db::insert_user(&pool, "delete-sess-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "delete-me", user.id, future, false, false)
+        .await
+        .unwrap();
+
+    db::delete_session(&pool, "delete-me").await.unwrap();
+
+    let result = db::get_session(&pool, "delete-me").await;
+    assert!(result.is_err(), "deleted session must not be found");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_roundtrip(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-user", "hash").await.unwrap();
+
+    // Initially no TOTP fields
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none(), "no TOTP fields initially");
+
+    let encrypted = b"encrypted_secret_32_bytes_long_here!";
+    let recovery = vec!["code1".to_string(), "code2".to_string()];
+
+    db::set_user_totp_secret(&pool, user.id, encrypted, &recovery)
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.expect("TOTP fields must exist after set");
+    assert_eq!(fields.secret_encrypted.as_deref(), Some(&encrypted[..]));
+    assert!(!fields.enabled, "TOTP must not be enabled yet");
+    assert_eq!(fields.recovery_codes.len(), 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_enable_disable_roundtrip(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-enable-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(&pool, user.id, b"some_secret", &[])
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert!(!fields.enabled);
+
+    db::enable_user_totp(&pool, user.id, 7).await.unwrap();
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert!(fields.enabled);
+    assert_eq!(
+        fields.last_verified_step,
+        Some(7),
+        "the enrollment code's step must be recorded to prevent its replay"
+    );
+
+    db::disable_user_totp(&pool, user.id).await.unwrap();
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    // After disable the TOTP configuration must be fully cleared
+    assert!(fields.is_none(), "TOTP fields must be cleared on disable");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_recovery_codes_replace(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-recovery-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(
+        &pool,
+        user.id,
+        b"secret",
+        &["old1".to_string(), "old2".to_string()],
+    )
+    .await
+    .unwrap();
+
+    db::replace_totp_recovery_codes(&pool, user.id, &["new1".to_string()])
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert_eq!(fields.recovery_codes.len(), 1);
+    assert_eq!(
+        fields.recovery_codes.first().map(String::as_str),
+        Some("new1")
+    );
+}
+
+/// Regression test for the TOCTOU race fixed by consuming a recovery code
+/// via an atomic conditional `UPDATE ... WHERE $hash = ANY(...)` instead of
+/// a read-modify-write of the whole array: a second, concurrent attempt to
+/// consume the same (now-removed) code must be rejected, not silently
+/// no-op into removing an already-removed value or affecting another code.
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_try_consume_recovery_code_rejects_reuse_and_is_atomic(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-recovery-atomic-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(
+        &pool,
+        user.id,
+        b"secret",
+        &["hash-a".to_string(), "hash-b".to_string()],
+    )
+    .await
+    .unwrap();
+
+    let first = db::try_consume_totp_recovery_code(&pool, user.id, "hash-a")
+        .await
+        .unwrap();
+    assert!(first, "consuming a present code must succeed");
+
+    // Simulate a second, concurrent request racing the same code: it must
+    // observe the first request's removal and be rejected, not succeed a
+    // second time.
+    let second = db::try_consume_totp_recovery_code(&pool, user.id, "hash-a")
+        .await
+        .unwrap();
+    assert!(!second, "reusing an already-consumed code must be rejected");
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fields.recovery_codes,
+        vec!["hash-b".to_string()],
+        "only the consumed code must be removed, the other must remain untouched"
+    );
+
+    let unknown = db::try_consume_totp_recovery_code(&pool, user.id, "hash-does-not-exist")
+        .await
+        .unwrap();
+    assert!(
+        !unknown,
+        "consuming a code that was never present must fail"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_last_verified_step_update(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-verified-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(&pool, user.id, b"secret", &[])
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert!(fields.last_verified_step.is_none());
+
+    let consumed = db::try_consume_totp_step(&pool, user.id, 42).await.unwrap();
+    assert!(consumed, "a fresh, newer step must be consumable");
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert_eq!(
+        fields.last_verified_step,
+        Some(42),
+        "last_verified_step must be set after update"
+    );
+}
+
+/// Regression test for the TOCTOU race fixed by making the replay check and
+/// the write a single atomic `UPDATE ... WHERE ...`, rather than a
+/// read-then-write: two requests racing the same (or an older) step must
+/// not both be able to consume it.
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_try_consume_step_rejects_replay_and_is_atomic(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-atomic-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(&pool, user.id, b"secret", &[])
+        .await
+        .unwrap();
+
+    let first = db::try_consume_totp_step(&pool, user.id, 10).await.unwrap();
+    assert!(first, "the first attempt at a fresh step must succeed");
+
+    // Simulate a second, concurrent request racing the same step: it must
+    // observe the write from the first request and be rejected, not overwrite
+    // it or otherwise succeed.
+    let replay_same_step = db::try_consume_totp_step(&pool, user.id, 10).await.unwrap();
+    assert!(!replay_same_step, "reusing the same step must be rejected");
+
+    let replay_older_step = db::try_consume_totp_step(&pool, user.id, 5).await.unwrap();
+    assert!(!replay_older_step, "an older step must be rejected");
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fields.last_verified_step,
+        Some(10),
+        "a rejected replay must not change the recorded step"
+    );
+
+    let newer = db::try_consume_totp_step(&pool, user.id, 11).await.unwrap();
+    assert!(newer, "a genuinely newer step must still be accepted");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_per_user_isolation(pool: PgPool) {
+    let user_a = db::insert_user(&pool, "totp-iso-a", "hash").await.unwrap();
+    let user_b = db::insert_user(&pool, "totp-iso-b", "hash").await.unwrap();
+
+    db::set_user_totp_secret(&pool, user_a.id, b"secret_a", &[])
+        .await
+        .unwrap();
+
+    let a_fields = db::get_user_totp_fields(&pool, user_a.id).await.unwrap();
+    assert!(a_fields.is_some(), "user_a must have TOTP fields");
+
+    let b_fields = db::get_user_totp_fields(&pool, user_b.id).await.unwrap();
+    assert!(b_fields.is_none(), "user_b must not have TOTP fields");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_user_without_secret_returns_none(pool: PgPool) {
+    let user = db::insert_user(&pool, "no-totp-user", "hash")
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none(), "user without TOTP setup must return None");
 }

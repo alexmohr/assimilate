@@ -102,15 +102,22 @@ function sendWsMsg(ws: WebSocketRoute, type: string, payload: unknown): void {
   ws.send(JSON.stringify({ type, payload }))
 }
 
-// Routes the UI WebSocket and, once registered, returns a promise that
-// resolves with the route once the client connects - wrapped in an object so
-// awaiting connectWs() itself doesn't block on the (later) connection.
-async function connectWs(page: Page): Promise<{ wsReady: Promise<WebSocketRoute> }> {
+// Routes the UI WebSocket, invoking onRoute for every connection (the app may
+// reconnect more than once) so callers can keep tracking the latest live
+// route, and returns a promise resolving with the first connection so callers
+// can await readiness before navigating.
+async function connectWs(
+  page: Page,
+  onRoute: (route: WebSocketRoute) => void,
+): Promise<{ wsReady: Promise<WebSocketRoute> }> {
   let resolveWs!: (w: WebSocketRoute) => void
   const wsReady = new Promise<WebSocketRoute>((resolve) => {
     resolveWs = resolve
   })
-  await page.routeWebSocket('**/ws/ui', (route) => resolveWs(route))
+  await page.routeWebSocket('**/ws/ui', (route) => {
+    onRoute(route)
+    resolveWs(route)
+  })
   return { wsReady }
 }
 
@@ -123,7 +130,9 @@ test.describe('backup progress card', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    const { wsReady } = await connectWs(page)
+    const { wsReady } = await connectWs(page, (route) => {
+      ws = route
+    })
 
     await mockScheduleDetailApis(page)
     await loginAsAdmin(page)
@@ -253,7 +262,9 @@ test.describe('backup progress card — mid-backup page load', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    const { wsReady } = await connectWs(page)
+    const { wsReady } = await connectWs(page, (route) => {
+      ws = route
+    })
 
     // Override the reports endpoint to return an in-progress report so that
     // loadReports() sets backupRunning = true before any WS message arrives.
@@ -473,7 +484,9 @@ test.describe('activity log — live backup log', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    const { wsReady } = await connectWs(page)
+    const { wsReady } = await connectWs(page, (route) => {
+      ws = route
+    })
     await mockActivityLogApis(page)
     await loginAsAdmin(page)
     ws = await wsReady

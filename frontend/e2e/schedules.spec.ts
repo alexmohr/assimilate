@@ -2,11 +2,28 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { expect, loginAsAdmin, mockScheduleOneHealth, test } from './fixtures'
+import type { Locator, Page } from '@playwright/test'
 
 interface ScheduleListEntry {
   id: number
   name: string
   target_hostnames: string[]
+}
+
+// Navigates to the schedules list with schedule 1 ("server-daily") forced
+// overdue, and returns its card and Overdue chip locators.
+async function openOverdueScheduleCard(
+  page: Page,
+): Promise<{ card: Locator; overdueChip: Locator }> {
+  await loginAsAdmin(page)
+  await mockScheduleOneHealth(page, { is_overdue: true })
+
+  await page.goto('/schedules')
+  await page.waitForLoadState('networkidle')
+
+  const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+  const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+  return { card, overdueChip }
 }
 
 test.describe('Schedules management', () => {
@@ -24,19 +41,11 @@ test.describe('Schedules management', () => {
   test('overdue schedule card shows an Overdue chip with a per-host detail tooltip', async ({
     page,
   }) => {
-    await loginAsAdmin(page)
-
     // The demo's seeded health data has no overdue hosts, so this reproduces
     // a host whose own last report is stale even though the schedule itself
     // looks on track, which is exactly what the Overdue chip's tooltip
     // exists to surface.
-    await mockScheduleOneHealth(page, { is_overdue: true })
-
-    await page.goto('/schedules')
-    await page.waitForLoadState('networkidle')
-
-    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
-    const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+    const { overdueChip } = await openOverdueScheduleCard(page)
     await expect(overdueChip).toBeVisible()
     await expect(overdueChip).toContainText('Overdue')
 
@@ -65,14 +74,7 @@ test.describe('Schedules management', () => {
   test("clicking a schedule card's Overdue chip navigates to the schedule detail page", async ({
     page,
   }) => {
-    await loginAsAdmin(page)
-    await mockScheduleOneHealth(page, { is_overdue: true })
-
-    await page.goto('/schedules')
-    await page.waitForLoadState('networkidle')
-
-    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
-    const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+    const { overdueChip } = await openOverdueScheduleCard(page)
     await expect(overdueChip).toBeVisible()
 
     await overdueChip.click()

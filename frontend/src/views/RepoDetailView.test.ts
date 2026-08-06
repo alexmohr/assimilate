@@ -192,6 +192,33 @@ async function renderRepoDetail(
   return wrapper
 }
 
+const archiveA = {
+  name: 'web-server-01-backup-2026-06-04T02:00:00',
+  start: '2026-06-04T02:00:00',
+  hostname: 'web-server-01',
+  comment: '',
+  original_size: 1_000,
+  deduplicated_size: 500,
+  matched: true,
+  agent_hostname: 'web-server-01',
+}
+const archiveB = {
+  name: 'db-server-01-backup-2026-06-04T03:00:00',
+  start: '2026-06-04T03:00:00',
+  hostname: 'db-server-01',
+  comment: '',
+  original_size: 2_000,
+  deduplicated_size: 1_000,
+  matched: true,
+  agent_hostname: 'db-server-01',
+}
+
+function setupArchivesAB(): void {
+  mockBrowserArchives.value = [archiveA, archiveB]
+  mockSortedArchives.value = [archiveA, archiveB]
+  setupApiSuccess()
+}
+
 describe('RepoDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -494,32 +521,7 @@ describe('RepoDetailView', () => {
   })
 
   describe('archive list interactions', () => {
-    const archiveA = {
-      name: 'web-server-01-backup-2026-06-04T02:00:00',
-      start: '2026-06-04T02:00:00',
-      hostname: 'web-server-01',
-      comment: '',
-      original_size: 1_000,
-      deduplicated_size: 500,
-      matched: true,
-      agent_hostname: 'web-server-01',
-    }
-    const archiveB = {
-      name: 'db-server-01-backup-2026-06-04T03:00:00',
-      start: '2026-06-04T03:00:00',
-      hostname: 'db-server-01',
-      comment: '',
-      original_size: 2_000,
-      deduplicated_size: 1_000,
-      matched: true,
-      agent_hostname: 'db-server-01',
-    }
-
-    beforeEach(() => {
-      mockBrowserArchives.value = [archiveA, archiveB]
-      mockSortedArchives.value = [archiveA, archiveB]
-      setupApiSuccess()
-    })
+    beforeEach(setupArchivesAB)
 
     async function goToArchivesTab(
       wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
@@ -715,32 +717,7 @@ describe('RepoDetailView', () => {
   })
 
   describe('archive filter via ?archive= query parameter', () => {
-    const archiveA = {
-      name: 'web-server-01-backup-2026-06-04T02:00:00',
-      start: '2026-06-04T02:00:00',
-      hostname: 'web-server-01',
-      comment: '',
-      original_size: 1_000,
-      deduplicated_size: 500,
-      matched: true,
-      agent_hostname: 'web-server-01',
-    }
-    const archiveB = {
-      name: 'db-server-01-backup-2026-06-04T03:00:00',
-      start: '2026-06-04T03:00:00',
-      hostname: 'db-server-01',
-      comment: '',
-      original_size: 2_000,
-      deduplicated_size: 1_000,
-      matched: true,
-      agent_hostname: 'db-server-01',
-    }
-
-    beforeEach(() => {
-      mockBrowserArchives.value = [archiveA, archiveB]
-      mockSortedArchives.value = [archiveA, archiveB]
-      setupApiSuccess()
-    })
+    beforeEach(setupArchivesAB)
 
     it('AC-U1: archive filter computed returns null when no ?archive= query is present', async () => {
       const wrapper = await renderRepoDetail()

@@ -83,6 +83,21 @@ describe('ArchiveFileBrowser', () => {
     return wrapper
   }
 
+  async function triggerWholeArchiveRestore(): Promise<void> {
+    window.confirm = vi.fn().mockReturnValue(true)
+
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    const restoreBtn = wrapper.find('button[title="Restore whole archive to host"]')
+    expect(restoreBtn.exists()).toBe(true)
+    await restoreBtn.trigger('click')
+    await flushPromises()
+  }
+
   it('renders empty state when archive is null', () => {
     const wrapper = mount(ArchiveFileBrowser, {
       props: { repoId: null, archive: null },
@@ -219,18 +234,7 @@ describe('ArchiveFileBrowser', () => {
 
   it('clicking restore calls restoreEntry and shows a success toast', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
-    window.confirm = vi.fn().mockReturnValue(true)
-
-    const wrapper = await mountWithEntries({
-      repoId: 5,
-      archive: makeArchive('test-archive'),
-      isAdmin: true,
-    })
-
-    const restoreBtn = wrapper.find('button[title="Restore whole archive to host"]')
-    expect(restoreBtn.exists()).toBe(true)
-    await restoreBtn.trigger('click')
-    await flushPromises()
+    await triggerWholeArchiveRestore()
 
     expect(apiClient.post).toHaveBeenCalled()
     expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive.')
@@ -240,18 +244,7 @@ describe('ArchiveFileBrowser', () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       data: { success: false, error_message: 'Restore failed: disk full' },
     })
-    window.confirm = vi.fn().mockReturnValue(true)
-
-    const wrapper = await mountWithEntries({
-      repoId: 5,
-      archive: makeArchive('test-archive'),
-      isAdmin: true,
-    })
-
-    const restoreBtn = wrapper.find('button[title="Restore whole archive to host"]')
-    expect(restoreBtn.exists()).toBe(true)
-    await restoreBtn.trigger('click')
-    await flushPromises()
+    await triggerWholeArchiveRestore()
 
     expect(toastError).toHaveBeenCalledWith('Restore failed: disk full')
     expect(toastSuccess).not.toHaveBeenCalled()

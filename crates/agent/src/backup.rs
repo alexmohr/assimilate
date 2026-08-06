@@ -443,6 +443,13 @@ impl BackupEngine {
                     deduplicated_size: stats.deduplicated_size,
                     repo_unique_csize: stats.repo_unique_csize,
                     files_processed: stats.files_processed,
+                    // Kept populated (not None) despite duplicating `warnings`:
+                    // dispatch_backup_completion_notification's backup_warning
+                    // path reads only this field for the email/push body, so
+                    // clearing it silently drops warning text from
+                    // notifications. The duplicate-display bug this was meant
+                    // to fix is handled at the UI layer instead (report
+                    // detail views hide the Error box when status is Warning).
                     error_message: Some(summary),
                     warnings,
                     archive_name,

@@ -59,6 +59,7 @@ const settingsForm = reactive({
   failed_report_retention_days: 365,
   system_event_retention_days: 90,
   borg_query_timeout_secs: 300,
+  session_idle_timeout_minutes: 480,
 })
 
 const versionInfo = ref<VersionInfo | null>(null)
@@ -87,6 +88,7 @@ onMounted(async () => {
     settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
     settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
     settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
+    settingsForm.session_idle_timeout_minutes = res.data.session_idle_timeout_minutes ?? 480
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -200,8 +202,8 @@ async function importConfig(): Promise<void> {
 
 async function saveSettings(): Promise<void> {
   settingsSaving.value = true
-  settingsError.value = ''
   settingsSaved.value = false
+  settingsError.value = ''
   try {
     const res = await apiClient.put<SettingsResponse>('/system/settings', {
       retention_days: settingsForm.retention_days,
@@ -210,6 +212,7 @@ async function saveSettings(): Promise<void> {
       system_event_retention_days: settingsForm.system_event_retention_days,
       timezone: settingsForm.timezone || undefined,
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
+      session_idle_timeout_minutes: settingsForm.session_idle_timeout_minutes,
     })
     settingsForm.timezone = res.data.timezone
     settingsForm.retention_days = Number(res.data.retention_days)
@@ -475,6 +478,27 @@ async function resetSystem(): Promise<void> {
               <span class="field-hint"
                 >Maximum seconds to wait for a single <code>borg list</code> or
                 <code>borg info</code> invocation. Increase for slow or remote repositories.</span
+              >
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label
+              class="setting-label"
+              for="settings-idle-timeout"
+            >
+              Session Idle Timeout
+            </label>
+            <div class="setting-input-group">
+              <input
+                id="settings-idle-timeout"
+                v-model.number="settingsForm.session_idle_timeout_minutes"
+                type="number"
+                min="1"
+                class="form-input retention-input"
+              />
+              <span class="field-hint"
+                >Minutes of inactivity before a session expires. Default: 480 (8 hours).</span
               >
             </div>
           </div>

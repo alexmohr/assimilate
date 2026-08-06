@@ -768,28 +768,45 @@ async fn refresh_next_run(
     db::set_next_run_at(pool, schedule_id, next).await
 }
 
+/// Request payload for triggering a schedule run.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct RunScheduleRequest {
+    /// Restrict the run to these agent IDs (must all be targets of the
+    /// schedule). Omit or leave empty to run every target.
+    #[serde(default)]
+    pub agent_ids: Option<Vec<i64>>,
+}
+
 #[utoipa::path(
     post,
     path = "/api/schedules/{id}/run",
     tag = "Schedules",
     operation_id = "runScheduleNow",
     params(("id" = i64, Path, description = "Schedule ID")),
+    request_body = RunScheduleRequest,
     responses(
         (status = 202, description = "Accepted"),
+        (status = 400, description = "Bad request"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
     )
 )]
-/// Trigger a schedule to run immediately.
+/// Trigger a schedule to run immediately, optionally restricted to a subset
+/// of its target agents. The body is optional - a request sent with no
+/// `Content-Type` header (as any caller predating the `agent_ids` filter
+/// would send) is treated the same as `{}`, running every target, so this
+/// stays backwards compatible with callers outside this codebase.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns [`ApiError::BadRequest`] if the request is invalid, e.g. an
+/// `agent_ids` entry that is not a target of this schedule.
 pub async fn run_schedule_now(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<i64>,
+    payload: Option<Json<RunScheduleRequest>>,
 ) -> Result<StatusCode, ApiError> {
     let schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let Some(schedule_repo_id) = schedule.repo_id else {
@@ -802,7 +819,24 @@ pub async fn run_schedule_now(
     })
     .await?;
 
+    let agent_ids = payload.and_then(|Json(p)| p.agent_ids);
     let targets = db::get_schedule_targets_for_run(&state.pool, id).await?;
+    let targets = match agent_ids {
+        Some(agent_ids) if !agent_ids.is_empty() => {
+            let requested: std::collections::HashSet<i64> = agent_ids.into_iter().collect();
+            let filtered: Vec<_> = targets
+                .into_iter()
+                .filter(|t| requested.contains(&t.agent_id))
+                .collect();
+            if filtered.len() != requested.len() {
+                return Err(ApiError::BadRequest(
+                    "one or more agent_ids are not targets of this schedule".into(),
+                ));
+            }
+            filtered
+        }
+        _ => targets,
+    };
     let repo_id = RepoId(schedule_repo_id);
     let schedule_type = schedule
         .schedule_type

@@ -5,12 +5,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { AlertCircle } from '@lucide/vue'
+import { AlertCircle, AlertTriangle } from '@lucide/vue'
 
-defineProps<{
-  label: string
-  message: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    label: string
+    message: string
+    tone?: 'danger' | 'warning'
+  }>(),
+  { tone: 'danger' },
+)
 
 const expanded = ref(false)
 </script>
@@ -18,13 +22,21 @@ const expanded = ref(false)
 <template>
   <div
     class="card-error"
+    :class="`tone-${props.tone}`"
     @click.stop
   >
     <button
       class="error-toggle"
       @click="expanded = !expanded"
     >
-      <AlertCircle :size="12" />
+      <AlertTriangle
+        v-if="props.tone === 'warning'"
+        :size="12"
+      />
+      <AlertCircle
+        v-else
+        :size="12"
+      />
       {{ label }}
       <span class="toggle-arrow">{{ expanded ? '▴' : '▾' }}</span>
     </button>
@@ -65,6 +77,10 @@ const expanded = ref(false)
   margin-left: 0.1rem;
 }
 
+.card-error.tone-warning .error-toggle {
+  color: var(--warning);
+}
+
 .error-pre {
   background: var(--bg-input);
   border: 1px solid var(--danger-subtle);
@@ -78,5 +94,10 @@ const expanded = ref(false)
   max-height: 150px;
   overflow-y: auto;
   margin: 0;
+}
+
+.card-error.tone-warning .error-pre {
+  border-color: var(--warning-subtle);
+  color: var(--warning);
 }
 </style>

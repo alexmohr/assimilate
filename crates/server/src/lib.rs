@@ -48,7 +48,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicI64, AtomicU64, Ordering},
     },
 };
 
@@ -229,4 +229,29 @@ pub struct AppState {
 
     /// Per-user rate limiter state.
     pub user_rate_limiter: UserRateLimiter,
+    /// Cached session idle timeout in minutes (default 480/8h).
+    /// Read from `system_settings` on startup and refreshed when the admin updates it.
+    pub session_idle_timeout_minutes: Arc<AtomicI64>,
+}
+
+impl AppState {
+    /// Reload the session idle timeout from the database.
+    ///
+    /// Called at startup and whenever the admin setting is updated.
+    pub async fn reload_session_idle_timeout(&self) {
+        match db::get_setting(&self.pool, "session_idle_timeout_minutes").await {
+            Ok(Some(value)) => {
+                if let Ok(minutes) = value.parse::<i64>() {
+                    self.session_idle_timeout_minutes
+                        .store(minutes, Ordering::Relaxed);
+                }
+            }
+            Ok(None) => {
+                // Setting not in DB yet - keep the default.
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to load session_idle_timeout_minutes");
+            }
+        }
+    }
 }

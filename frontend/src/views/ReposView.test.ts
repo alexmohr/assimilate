@@ -147,16 +147,52 @@ describe('ReposView', () => {
     expect(text).toContain('repokey-blake2')
   })
 
-  it('shows enabled and disabled status badges', async () => {
+  it('shows nothing for an enabled repo and a Disabled pill for a disabled one', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
 
-    const text = wrapper.text()
-    expect(text).toContain('Enabled')
-    expect(text).toContain('Disabled')
+    const cards = wrapper.findAll('.repo-card')
+    const enabledCard = cards.find((c) => c.text().includes('server-daily'))
+    const disabledCard = cards.find((c) => c.text().includes('media-weekly'))
+
+    expect(enabledCard!.find('.entity-status-pill').exists()).toBe(false)
+    expect(enabledCard!.classes()).not.toContain('repo-card-notable')
+
+    expect(disabledCard!.find('.entity-status-pill').text()).toBe('Disabled')
+    expect(disabledCard!.classes()).toContain('repo-card-notable')
+  })
+
+  it('shows a clickable unmatched-archives chip that navigates to the Archives tab', async () => {
+    setupApiSuccess([
+      {
+        ...mockRepos[0],
+        id: 4,
+        name: 'unmatched-repo',
+        repo_path: '/backup/unmatched',
+        unmatched_count: 2,
+      },
+    ])
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const chip = wrapper.find('.entity-issue-chip.sev-warning')
+    expect(chip.text()).toBe('2 unmatched')
+
+    await chip.trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as {
+        $router: { currentRoute: { value: { path: string; query: Record<string, string> } } }
+      }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/repos/4')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'archives' })
   })
 
   it('renders archive count, size, and agent stats for each repo', async () => {

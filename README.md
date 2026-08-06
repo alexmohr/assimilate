@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 <p align="center">
-  <img src="docs/assets/icon.png" alt="Assimilate Logo" width="200">
+  <img src="frontend/public/icon.png" alt="Assimilate Logo" width="200">
 </p>
 
 # Assimilate

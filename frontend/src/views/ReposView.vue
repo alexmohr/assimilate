@@ -21,6 +21,7 @@ import BaseModal from '../components/BaseModal.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { Repo, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 
@@ -411,6 +412,22 @@ function navigateToRepo(repo: RepoWithStats): void {
   router.push(`/repos/${repo.id}`)
 }
 
+function navigateToRepoIssue(repo: RepoWithStats): void {
+  router.push(`/repos/${repo.id}?tab=archives`)
+}
+
+function repoIssues(repo: RepoWithStats): EntityIssue[] {
+  if (repo.unmatched_count <= 0) return []
+  return [
+    {
+      key: 'unmatched',
+      label: `${repo.unmatched_count} unmatched`,
+      severity: 'warning',
+      onClick: () => navigateToRepoIssue(repo),
+    },
+  ]
+}
+
 function openCreateRepo(): void {
   repoMode.value = 'create'
   addTab.value = 'create'
@@ -770,6 +787,7 @@ onMounted(loadRepos)
         v-for="repo in filteredRepos"
         :key="repo.id"
         class="repo-card"
+        :class="{ 'repo-card-notable': !repo.enabled }"
         @click="navigateToRepo(repo)"
       >
         <div class="card-top">
@@ -781,28 +799,17 @@ onMounted(loadRepos)
           </div>
           <div class="card-badges">
             <span
+              v-if="repo.import_error || repo.importing"
               class="status-badge"
-              :class="
-                repo.import_error
-                  ? 'status-error'
-                  : repo.importing
-                    ? 'status-importing'
-                    : repo.enabled
-                      ? 'status-online'
-                      : 'status-offline'
-              "
+              :class="repo.import_error ? 'status-error' : 'status-importing'"
               :title="repo.import_error ?? undefined"
             >
               {{
                 repo.import_error
                   ? 'Import Failed'
-                  : repo.importing
-                    ? repo.import_total > 0
-                      ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
-                      : `${repoImportPhaseVerb(repo)}\u2026`
-                    : repo.enabled
-                      ? 'Enabled'
-                      : 'Disabled'
+                  : repo.import_total > 0
+                    ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
+                    : `${repoImportPhaseVerb(repo)}\u2026`
               }}
             </span>
           </div>
@@ -827,17 +834,14 @@ onMounted(loadRepos)
         >
           {{ repo.import_status_message }}
         </p>
+        <EntityStatusBadges
+          :notable="!repo.enabled"
+          notable-label="Disabled"
+          :issues="repoIssues(repo)"
+        />
         <div class="card-meta">
           <span class="meta-pill">{{ repo.encryption }}</span>
           <span class="meta-pill">{{ repo.compression }}</span>
-          <span
-            v-if="repo.unmatched_count > 0"
-            class="meta-pill unmatched-pill"
-          >
-            &#9888; {{ repo.unmatched_count }} unmatched host{{
-              repo.unmatched_count === 1 ? '' : 's'
-            }}
-          </span>
           <span
             v-for="tag in repoTags(repo)"
             :key="tag.name"
@@ -891,6 +895,7 @@ onMounted(loadRepos)
             v-for="repo in group.repos"
             :key="`${group.label}-${repo.id}`"
             class="repo-card"
+            :class="{ 'repo-card-notable': !repo.enabled }"
             @click="navigateToRepo(repo)"
           >
             <div class="card-top">
@@ -902,28 +907,17 @@ onMounted(loadRepos)
               </div>
               <div class="card-badges">
                 <span
+                  v-if="repo.import_error || repo.importing"
                   class="status-badge"
-                  :class="
-                    repo.import_error
-                      ? 'status-error'
-                      : repo.importing
-                        ? 'status-importing'
-                        : repo.enabled
-                          ? 'status-online'
-                          : 'status-offline'
-                  "
+                  :class="repo.import_error ? 'status-error' : 'status-importing'"
                   :title="repo.import_error ?? undefined"
                 >
                   {{
                     repo.import_error
                       ? 'Import Failed'
-                      : repo.importing
-                        ? repo.import_total > 0
-                          ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
-                          : `${repoImportPhaseVerb(repo)}\u2026`
-                        : repo.enabled
-                          ? 'Enabled'
-                          : 'Disabled'
+                      : repo.import_total > 0
+                        ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
+                        : `${repoImportPhaseVerb(repo)}\u2026`
                   }}
                 </span>
               </div>
@@ -950,17 +944,14 @@ onMounted(loadRepos)
             >
               {{ repo.import_status_message }}
             </p>
+            <EntityStatusBadges
+              :notable="!repo.enabled"
+              notable-label="Disabled"
+              :issues="repoIssues(repo)"
+            />
             <div class="card-meta">
               <span class="meta-pill">{{ repo.encryption }}</span>
               <span class="meta-pill">{{ repo.compression }}</span>
-              <span
-                v-if="repo.unmatched_count > 0"
-                class="meta-pill unmatched-pill"
-              >
-                &#9888; {{ repo.unmatched_count }} unmatched archive{{
-                  repo.unmatched_count === 1 ? '' : 's'
-                }}
-              </span>
               <span
                 v-for="tag in repoTags(repo)"
                 :key="tag.name"
@@ -1480,6 +1471,10 @@ onMounted(loadRepos)
   box-shadow: var(--shadow);
 }
 
+.repo-card-notable {
+  background: var(--bg-hover);
+}
+
 .import-progress {
   display: flex;
   align-items: center;
@@ -1567,14 +1562,9 @@ onMounted(loadRepos)
   border-radius: 999px;
   font-size: 0.65rem;
   font-weight: 500;
-  background: var(--bg-hover);
+  background: var(--bg-card);
   color: var(--text-muted);
   text-transform: lowercase;
-}
-
-.unmatched-pill {
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
-  color: var(--warning);
 }
 
 .card-stats {

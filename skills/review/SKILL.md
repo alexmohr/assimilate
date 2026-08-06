@@ -67,7 +67,7 @@ set the verdict labels per the Workflow section to move them.
 | `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` via the standalone `.github/workflows/coverage-diff-check.yml`. See "Automated pre-flight checks" below |
 | `duplicate code` | The duplicate-code-scan pre-review stage failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml`. See "Automated pre-flight checks" below |
 | `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** no human sign-off is pending **and** neither `coverage failed` nor `duplicate code` is set **and** the review decision is not `CHANGES_REQUESTED`. An approving review is *not* required — see note below the table |
-| `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" |
+| `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" — **but only once `ci failing`, `merge conflict`, `coverage failed`, and `duplicate code` are all clear; see the note below the table** |
 
 `ready to merge` does not require an approving review. Waiting on an
 approval when CI hasn't even confirmed the commit builds/passes is a
@@ -105,15 +105,25 @@ is never set or cleared directly — it's recomputed as a pure
 runs, from whichever of the two labels currently exist, so it can't go stale
 independently of its inputs.
 
-`needs human review` is additive-only: the workflow will add it but will
-**never** remove it — only a human clearing the label counts as sign-off. Even
-a PR that is fully approved and green stays capped at `needs review` while
-this label is present. If your review touches one of the sensitive areas
-above, expect this label and do not treat an agent approval as sufficient to
-merge. The "security" text/issue checks are a keyword match, not a judgment
-call — expect occasional false positives (a PR that merely discusses security
-in passing) and treat them as a cheap net that widens the gate, not a
-guarantee that every gated PR is actually security-critical.
+`needs human review` is the repo's *last* gate, not a parallel one: it is
+only ever added, and only actually blocks `ready to merge`, while `ci
+failing`, `merge conflict`, `coverage failed`, and `duplicate code` are all
+already clear — a PR that isn't even buildable yet doesn't need a human's
+judgment call before its objective, code-fixable problems are resolved.
+Concretely, `sync-pr-labels.js` strips the label itself the moment any of
+those four starts failing (and re-derives it automatically, no human
+involvement needed, the moment they're clear again and the sensitive-path/
+security-keyword triggers still apply) — this keeps a maintainer from having
+to notice and clear the label only to watch a still-broken PR immediately
+re-request their attention. Once those four are clear, though, the label
+reverts to additive-only: only a human clearing it counts as sign-off, and
+even a PR that is fully approved and green stays capped at `needs review`
+while it's present. If your review touches one of the sensitive areas above,
+expect this label once CI is green and do not treat an agent approval as
+sufficient to merge. The "security" text/issue checks are a keyword match,
+not a judgment call — expect occasional false positives (a PR that merely
+discusses security in passing) and treat them as a cheap net that widens the
+gate, not a guarantee that every gated PR is actually security-critical.
 
 ### Same-account review verdict labels
 

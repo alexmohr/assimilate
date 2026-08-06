@@ -114,6 +114,9 @@ async fn main() -> Result<(), StartupError> {
         shutdown_token: shutdown_token.clone(),
     });
 
+    // Load the cached session idle timeout from the database
+    state.reload_session_idle_timeout().await;
+
     spawn_background_tasks(&state, &tunnel_manager);
 
     let login_router = build_login_router(&state, &client_ip_resolver);
@@ -255,6 +258,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         client_ip_resolver,
         task_registry,
         user_rate_limiter,
+        session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
     }
 }
 
@@ -368,20 +372,53 @@ fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
     state.task_registry.register(resume_handle);
 }
 
+/// Per-IP cap for both the login and TOTP-step rate limiters. 10/min proved
+/// too tight even for legitimate traffic: a single office NAT (or a
+/// sequential e2e test suite hitting /api/auth/login from one IP) can
+/// plausibly exceed 10 login attempts within a minute with zero malicious
+/// intent. The primary brute-force defense for password guessing is the
+/// per-username+IP DB-tracked lockout (`MAX_LOGIN_ATTEMPTS`/`LOGIN_WINDOW_MINUTES`
+/// in `api::auth`); this IP-only limiter is a coarser backstop, so it can afford more
+/// headroom without meaningfully weakening protection.
+const AUTH_RATE_LIMIT_PER_MINUTE: u32 = 30;
+
 fn build_login_router(state: &AppState, client_ip_resolver: &ClientIpResolver) -> Router<AppState> {
-    let login_ip_limiter = IpRateLimiter::new(10, Duration::from_mins(1));
+    let login_ip_limiter = IpRateLimiter::new(AUTH_RATE_LIMIT_PER_MINUTE, Duration::from_mins(1));
     let login_rate_limit_state = IpRateLimitMiddlewareState {
         limiter: login_ip_limiter,
         resolver: client_ip_resolver.clone(),
     };
-
-    Router::new()
+    let login = Router::new()
         .route("/api/auth/login", post(api::auth::login))
         .layer(axum_middleware::from_fn_with_state(
             login_rate_limit_state,
             ip_rate_limit_middleware,
-        ))
-        .with_state(state.clone())
+        ));
+
+    // TOTP verify-login and recovery complete a login using only a
+    // temp_token, with no username/password - rate limit them too, or an
+    // attacker who already has a valid password can brute-force the 6-digit
+    // code (or a recovery code) with unlimited attempts. This uses its own
+    // bucket rather than sharing login_ip_limiter's, so a burst of
+    // ordinary password logins from the same IP (e.g. a shared office NAT)
+    // can't starve a legitimate user's TOTP step of its own budget.
+    let totp_ip_limiter = IpRateLimiter::new(AUTH_RATE_LIMIT_PER_MINUTE, Duration::from_mins(1));
+    let totp_rate_limit_state = IpRateLimitMiddlewareState {
+        limiter: totp_ip_limiter,
+        resolver: client_ip_resolver.clone(),
+    };
+    let totp_login = Router::new()
+        .route(
+            "/api/auth/totp/verify-login",
+            post(api::totp::totp_verify_login),
+        )
+        .route("/api/auth/totp/recovery", post(api::totp::totp_recovery))
+        .layer(axum_middleware::from_fn_with_state(
+            totp_rate_limit_state,
+            ip_rate_limit_middleware,
+        ));
+
+    login.merge(totp_login).with_state(state.clone())
 }
 
 fn core_routes() -> Router<AppState> {
@@ -397,6 +434,14 @@ fn core_routes() -> Router<AppState> {
         .route(
             "/api/auth/preferences",
             get(api::auth::get_preferences).put(api::auth::update_preferences),
+        )
+        .route("/api/auth/totp/setup", post(api::totp::totp_setup))
+        .route("/api/auth/totp/verify", post(api::totp::totp_verify))
+        .route("/api/auth/totp/disable", post(api::totp::totp_disable))
+        .route("/api/auth/sessions", get(api::auth::list_sessions))
+        .route(
+            "/api/auth/sessions/{session_id}",
+            delete(api::auth::revoke_session),
         )
         .route(
             "/api/users",

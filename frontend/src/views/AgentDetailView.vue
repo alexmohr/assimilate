@@ -23,11 +23,13 @@ import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -60,11 +62,17 @@ const agent = ref<AgentRow | null>(null)
 const repos = ref<Repo[]>([])
 const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
+const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const { loading, error, run } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
 
 // Backup filter / sort
-const filterStatus = ref<'all' | 'success' | 'warning' | 'failed'>('all')
+function isRunStatusFilter(value: unknown): value is 'success' | 'warning' | 'failed' {
+  return value === 'success' || value === 'warning' || value === 'failed'
+}
+const filterStatus = ref<'all' | 'success' | 'warning' | 'failed'>(
+  isRunStatusFilter(route.query.status) ? route.query.status : 'all',
+)
 const sortAscending = ref(false)
 
 const highlightedArchiveName = computed(() => {
@@ -72,10 +80,22 @@ const highlightedArchiveName = computed(() => {
   return typeof a === 'string' ? a : undefined
 })
 
+const pinnedStatus = computed(() => {
+  const s = route.query.status
+  return isRunStatusFilter(s) ? s : undefined
+})
+const pinnedReportId = ref<number | null>(null)
+const pinnedForStatus = ref<typeof pinnedStatus.value>(undefined)
+
+function isOverdueQuery(value: unknown): value is 'overdue' {
+  return value === 'overdue'
+}
+const overdueHighlighted = computed(() => isOverdueQuery(route.query.health))
+
 const filteredSortedReports = computed(() => {
   let result = reports.value
   if (filterStatus.value !== 'all') {
-    result = result.filter((r) => r.status === filterStatus.value)
+    result = result.filter((r) => normalizeBackupStatus(r.status) === filterStatus.value)
   }
   return [...result].sort((a, b) => {
     const diff = new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime()
@@ -551,14 +571,16 @@ async function loadTabData(): Promise<void> {
   if (!agent.value) return
   const hostname = agent.value.hostname
   try {
-    const [repoRes, schedRes, reportRes] = await Promise.all([
+    const [repoRes, schedRes, reportRes, healthRes] = await Promise.all([
       apiClient.get<Repo[]>(`/agents/${hostname}/repos`),
       apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`),
+      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
     ])
     repos.value = repoRes.data
     schedules.value = schedRes.data
     reports.value = reportRes.data
+    scheduleHealth.value = healthRes.data.filter((h) => h.hostname === hostname)
     const runningReports = reportRes.data.filter((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'
@@ -585,6 +607,27 @@ async function loadTabData(): Promise<void> {
 }
 
 watch(
+  [reports, pinnedStatus],
+  ([, status]) => {
+    if (!status) return
+    if (pinnedForStatus.value === status && pinnedReportId.value !== null) return
+    const match = [...reports.value]
+      .filter((r) => normalizeBackupStatus(r.status) === status)
+      .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())[0]
+    if (!match) return
+    pinnedForStatus.value = status
+    pinnedReportId.value = match.id
+    expandedReportId.value = match.id
+    nextTick(() => {
+      document
+        .getElementById(`report-${match.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  },
+  { immediate: true },
+)
+
+watch(
   [reports, highlightedArchiveName],
   ([, archiveName]) => {
     if (!archiveName) return
@@ -604,6 +647,14 @@ const agentSchedules = computed(() => {
   const hostname = agent.value?.hostname
   return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
 })
+
+function scheduleHealthEntries(s: ScheduleRow): ScheduleHealthEntry[] {
+  return scheduleHealth.value.filter((h) => h.schedule_id === s.id)
+}
+
+function scheduleIssues(s: ScheduleRow): EntityIssue[] {
+  return scheduleIssuesFromEntries(scheduleHealthEntries(s), s.id, router)
+}
 
 function repoNameForSchedule(s: ScheduleRow): string {
   return (
@@ -1341,6 +1392,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 Glob patterns matched against the full warning message, with actions:
                 <code>ignore</code> (no warning), <code>warn</code> (default), <code>fatal</code>
                 (fail backup). Checked after schedule-level patterns, as a fallback for this host.
+                <code>*</code> does not match <code>/</code> - to cover every file under a
+                directory, end the pattern with <code>**</code>, e.g. <code>/data/wal/**</code>.
               </template>
             </FileChangePatternsEditor>
             <div
@@ -1617,22 +1670,19 @@ watch(wsStatus, (newStatus, oldStatus) => {
             v-for="s in agentSchedules"
             :key="s.id"
             class="schedule-card"
-            :class="{ disabled: !s.enabled }"
+            :class="{
+              'schedule-card-notable': !s.enabled,
+              'schedule-card-highlighted':
+                overdueHighlighted && scheduleHealthEntries(s).some((h) => h.is_overdue),
+            }"
             @click="navigateToSchedule(s)"
           >
-            <div class="card-top">
-              <div class="card-info">
-                <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
-              </div>
-              <div class="card-badges">
-                <span
-                  class="status-badge"
-                  :class="s.enabled ? 'status-online' : 'status-offline'"
-                >
-                  {{ s.enabled ? 'Enabled' : 'Disabled' }}
-                </span>
-              </div>
-            </div>
+            <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
+            <EntityStatusBadges
+              :notable="!s.enabled"
+              notable-label="Disabled"
+              :issues="scheduleIssues(s)"
+            />
             <div class="card-meta">
               <span
                 class="type-badge"
@@ -1711,7 +1761,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
               `result-${r.status}`,
               {
                 'result-card-link': r.status === 'success',
-                'result-card-highlighted': r.archive_name === highlightedArchiveName,
+                'result-card-highlighted':
+                  r.archive_name === highlightedArchiveName || r.id === pinnedReportId,
               },
             ]"
             @click="handleResultClick(r)"
@@ -1746,7 +1797,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 <pre class="result-output">{{ (r.warnings ?? []).join('\n') }}</pre>
               </div>
               <div
-                v-if="r.error_message"
+                v-if="r.error_message && normalizeBackupStatus(r.status) !== 'warning'"
                 class="result-error"
               >
                 <strong class="result-section-label">Error</strong>
@@ -2312,29 +2363,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
   box-shadow: var(--shadow);
 }
 
-.schedule-card.disabled {
-  opacity: 0.5;
+.schedule-card-notable {
+  background: var(--bg-hover);
 }
 
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-badges {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
+.schedule-card-highlighted {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-subtle);
 }
 
 .card-hostname {

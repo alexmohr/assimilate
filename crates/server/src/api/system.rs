@@ -162,6 +162,10 @@ pub struct SettingsResponse {
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: u64,
+    /// Idle timeout for user sessions in minutes. `None` if the setting has
+    /// never been configured (the effective default is still enforced).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 /// Reads a setting and parses it, logging (without failing the request) if
@@ -209,6 +213,9 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         .filter(|&s| s > 0)
         .unwrap_or(300);
 
+    let session_idle_timeout_minutes =
+        parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
+
     Ok(SettingsResponse {
         retention_days,
         report_retention_days,
@@ -216,6 +223,7 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         system_event_retention_days,
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
+        session_idle_timeout_minutes,
     })
 }
 
@@ -257,6 +265,9 @@ pub struct UpdateSettingsRequest {
     pub timezone: Option<String>,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: Option<u64>,
+    /// Idle timeout for user sessions in minutes, must be positive. `None`
+    /// leaves the current value unchanged; the timeout cannot be disabled.
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[utoipa::path(
@@ -345,6 +356,18 @@ pub async fn update_settings(
         &borg_query_timeout_secs.to_string(),
     )
     .await?;
+
+    if let Some(v) = body.session_idle_timeout_minutes {
+        if v < 1 {
+            return Err(ApiError::BadRequest(
+                "session_idle_timeout_minutes must be positive".to_string(),
+            ));
+        }
+        db::set_setting(&state.pool, "session_idle_timeout_minutes", &v.to_string()).await?;
+    }
+
+    // Refresh the cached session idle timeout
+    state.reload_session_idle_timeout().await;
 
     Ok(Json(fetch_settings_response(&state.pool).await?))
 }

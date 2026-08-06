@@ -146,20 +146,46 @@ async function createEditWrapper(): Promise<ReturnType<typeof renderWithPlugins>
   return wrapper
 }
 
-function setupWithReports(reports: unknown[]): void {
+function setupEditModeWithReport(report: Record<string, unknown>): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
     if (url === '/schedules/1/targets')
       return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
     if (url === '/schedules/1/sources')
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-    if (url === '/schedules/1/reports') return Promise.resolve({ data: reports })
+    if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
 }
 
+async function renderAndStartBackup(): Promise<ReturnType<typeof renderWithPlugins>> {
+  setupEditMode()
+  const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+  await flushPromises()
+
+  wsHandlers['BackupStarted']?.({
+    hostname: 'web-server-01',
+    target_name: 'server-daily',
+    archive_name: null,
+    schedule_id: 1,
+  })
+  await nextTick()
+  return wrapper
+}
+
+async function renderEditModeAndSave(): Promise<ReturnType<typeof renderWithPlugins>> {
+  setupEditMode()
+  mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+  const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+  await flushPromises()
+
+  const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
+  await saveBtn!.trigger('click')
+  await flushPromises()
+  return wrapper
+}
 describe('ScheduleDetailView - edit mode', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -265,23 +291,8 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(saveBtn).toBeTruthy()
   })
 
-  async function createWrapperWithSaveMock(): Promise<ReturnType<typeof renderWithPlugins>> {
-    setupEditMode()
-    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-    return wrapper
-  }
-
-  async function clickSave(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
-    await saveBtn!.trigger('click')
-    await flushPromises()
-  }
-
   it('calls PUT on save', async () => {
-    const wrapper = await createWrapperWithSaveMock()
-    await clickSave(wrapper)
+    await renderEditModeAndSave()
 
     expect(mockApiClient.put).toHaveBeenCalledWith('/schedules/1', expect.any(Object))
   })
@@ -295,8 +306,7 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   it('shows save success message after successful save', async () => {
-    const wrapper = await createWrapperWithSaveMock()
-    await clickSave(wrapper)
+    const wrapper = await renderEditModeAndSave()
 
     expect(wrapper.find('.save-success').exists()).toBe(true)
     expect(wrapper.text()).toContain('Saved')
@@ -381,8 +391,100 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(buttons).not.toContain('Cancel Backup')
   })
 
+  it('clicking Run Now triggers the schedule with an empty body', async () => {
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = await createEditWrapper()
+
+    const runNowButton = wrapper.findAll('button').find((b) => b.text() === 'Run Now')
+    expect(runNowButton).toBeTruthy()
+    await runNowButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', {})
+  })
+
+  it('shows an Overdue badge and Retry button for an overdue target, with an offline note', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({
+          data: [
+            { agent_id: 10, execution_order: 0 },
+            { agent_id: 11, execution_order: 1 },
+          ],
+        })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents')
+        return Promise.resolve({
+          data: [
+            {
+              id: 10,
+              hostname: 'web-server-01',
+              display_name: 'Web Server',
+              is_connected: false,
+              last_seen_at: '2026-05-23T02:00:00Z',
+            },
+            {
+              id: 11,
+              hostname: 'db-server-01',
+              display_name: null,
+              is_connected: true,
+              last_seen_at: '2026-05-30T02:00:00Z',
+            },
+          ],
+        })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return Promise.resolve({
+          data: [
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              last_status: 'success',
+              last_backup_at: '2026-05-23T02:00:00Z',
+              is_overdue: true,
+              last_error_message: null,
+              cron_expression: '0 2 * * *',
+              schedule_enabled: true,
+            },
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'db-server-01',
+              target_name: 'server-daily',
+              last_status: 'success',
+              last_backup_at: '2026-05-30T02:00:00Z',
+              is_overdue: false,
+              last_error_message: null,
+              cron_expression: '0 2 * * *',
+              schedule_enabled: true,
+            },
+          ],
+        })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Overdue')
+    expect(wrapper.text()).toContain('Agent offline (last seen')
+
+    const retryButton = wrapper.findAll('button').find((b) => b.text() === 'Retry')
+    expect(retryButton).toBeTruthy()
+    await retryButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', { agent_ids: [10] })
+  })
+
   it('seeds running state from recent reports and shows Cancel Backup instead of Run Now', async () => {
-    setupWithReports([{ id: 1, status: 'started' }])
+    setupEditModeWithReport({ id: 1, status: 'started' })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
@@ -392,7 +494,7 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   it('calls cancel API when Cancel Backup is clicked', async () => {
-    setupWithReports([{ id: 1, status: 'pending' }])
+    setupEditModeWithReport({ id: 1, status: 'pending' })
     mockApiClient.post.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
@@ -545,7 +647,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with matching schedule_id and archive_progress JSON updates progress data', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -566,15 +668,13 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('replayed BackupLog updates a running backup after reload', async () => {
-    setupWithReports([
-      {
-        id: 1,
-        status: 'started',
-        started_at: '2026-06-27T10:00:00Z',
-        agent_id: 10,
-        original_size: 0,
-      },
-    ])
+    setupEditModeWithReport({
+      id: 1,
+      status: 'started',
+      started_at: '2026-06-27T10:00:00Z',
+      agent_id: 10,
+      original_size: 0,
+    })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
@@ -600,7 +700,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with wrong schedule_id does not update progress', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -619,7 +719,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with null schedule_id and matching repo_id updates progress', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -639,7 +739,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with null schedule_id and wrong repo_id does not update progress', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -658,7 +758,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with non-JSON line adds text to live log output', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -698,10 +798,17 @@ describe('ScheduleDetailView - Backups tab', () => {
     })
   }
 
-  it('shows Backups tab button for backup-type schedule in edit mode', async () => {
-    setupBackupWithReports([])
+  async function createBackupsWrapper(
+    reports: unknown[],
+  ): Promise<ReturnType<typeof renderWithPlugins>> {
+    setupBackupWithReports(reports)
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
+    return wrapper
+  }
+
+  it('shows Backups tab button for backup-type schedule in edit mode', async () => {
+    const wrapper = await createBackupsWrapper([])
 
     const tabs = wrapper.findAll('.tab-btn')
     expect(tabs.some((t) => t.text() === 'Backups')).toBe(true)
@@ -737,7 +844,7 @@ describe('ScheduleDetailView - Backups tab', () => {
   })
 
   it('shows empty state when no reports have archive_name', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -747,10 +854,7 @@ describe('ScheduleDetailView - Backups tab', () => {
         agent_id: 10,
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Click Backups tab to trigger reports load
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
@@ -759,7 +863,7 @@ describe('ScheduleDetailView - Backups tab', () => {
   })
 
   it('shows archive rows when reports have archive_name', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -788,28 +892,22 @@ describe('ScheduleDetailView - Backups tab', () => {
         hostname: 'web-server-01',
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Click Backups tab to trigger reports load
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
-    // Should show the archive rows sorted newest-first
     const texts = wrapper.text()
     expect(texts).toContain('test-archive-2026-06-02')
     expect(texts).toContain('test-archive-2026-06-01')
-    // Should appear in sort order (newest first)
     expect(texts.indexOf('test-archive-2026-06-02')).toBeLessThan(
       texts.indexOf('test-archive-2026-06-01'),
     )
-    // Should NOT include the report without archive_name
     expect(texts).not.toContain('No backup archives found')
   })
 
   it('clicking an archive row selects it and shows file browser', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -820,27 +918,21 @@ describe('ScheduleDetailView - Backups tab', () => {
         hostname: 'web-server-01',
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Click Backups tab
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
-    // Click on the archive row
     const archiveRow = wrapper.find('.archive-row')
     await archiveRow.trigger('click')
     await flushPromises()
 
-    // The selected row should have the 'selected' class
     expect(archiveRow.classes()).toContain('selected')
-    // The ArchiveFileBrowser stub should be rendered
     expect(wrapper.find('.archive-file-browser-stub').exists()).toBe(true)
   })
 
   it('hides save bar on Backups tab', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -851,18 +943,13 @@ describe('ScheduleDetailView - Backups tab', () => {
         hostname: 'web-server-01',
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Save bar should be visible on Settings tab
     expect(wrapper.find('.save-bar').exists()).toBe(true)
 
-    // Click Backups tab
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
-    // Save bar should be hidden on Backups tab
     expect(wrapper.find('.save-bar').exists()).toBe(false)
   })
 

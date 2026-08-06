@@ -923,16 +923,9 @@ fn misc_routes() -> Router<AppState> {
 }
 
 fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppState> {
-    let authenticated_routes = Router::new()
+    Router::new()
         .merge(login_router)
         .merge(core_routes())
-        .layer(axum_middleware::from_fn_with_state(
-            state.clone(),
-            auth_tracking_middleware,
-        ));
-
-    Router::new()
-        .merge(authenticated_routes)
         .merge(agent_routes())
         .merge(repo_routes())
         .merge(schedule_and_config_routes())
@@ -943,6 +936,10 @@ fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppS
         .merge(tunnel_routes())
         .merge(notification_routes())
         .merge(misc_routes())
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            auth_tracking_middleware,
+        ))
 }
 
 async fn configure_docs_and_static(app: Router) -> Router {

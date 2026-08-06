@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
 
 test.describe('Archive browsing & diff journey', () => {
   test('archives tab loads showing archive entries with names, dates, and hosts', async ({
@@ -13,6 +13,7 @@ test.describe('Archive browsing & diff journey', () => {
 
     await expect(page.getByRole('button', { name: 'Archives' })).toBeVisible()
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
+    await expandAllArchiveGroups(page)
 
     const firstRow = page.locator('.archive-row').first()
     await expect(firstRow).toBeVisible({ timeout: 30_000 })
@@ -24,6 +25,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await expect(page.getByText(/web-server-01-backup/).first()).toBeVisible()
   })
@@ -32,6 +34,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -39,8 +42,8 @@ test.describe('Archive browsing & diff journey', () => {
       .click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.panel-title').filter({ hasText: /Files/ })).toBeVisible()
-    await expect(page.locator('.archive-breadcrumb')).toBeVisible()
+    await expect(page.locator('.browser-title').filter({ hasText: /Files/ })).toBeVisible()
+    await expect(page.locator('.breadcrumb')).toBeVisible()
 
     const browserPanel = page.locator('.browser-panel').last()
     await expect(browserPanel).toBeVisible()
@@ -50,6 +53,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -71,6 +75,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -78,13 +83,14 @@ test.describe('Archive browsing & diff journey', () => {
       .click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.archive-breadcrumb').getByText('~')).toBeVisible()
+    await expect(page.locator('.breadcrumb').getByText('~')).toBeVisible()
   })
 
   test('clicking a directory in file browser navigates into it', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -99,7 +105,7 @@ test.describe('Archive browsing & diff journey', () => {
     await tmpEntry.click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.archive-breadcrumb')).toContainText('tmp')
+    await expect(page.locator('.breadcrumb')).toContainText('tmp')
   })
 
   test('archive tags API endpoint is accessible and returns structured data', async ({ page }) => {

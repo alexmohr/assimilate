@@ -252,8 +252,7 @@ describe('SystemView', () => {
     await flushPromises()
     const input = wrapper.find<HTMLInputElement>('#settings-idle-timeout')
     await input.setValue('120')
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
-    await saveBtn.trigger('click')
+    await wrapper.find('form.settings-form').trigger('submit')
     await flushPromises()
     expect(mockPut).toHaveBeenCalledWith(
       '/system/settings',
@@ -345,8 +344,7 @@ describe('SystemView', () => {
     })
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
-    await saveBtn.trigger('click')
+    await wrapper.find('form.settings-form').trigger('submit')
     await flushPromises()
     expect(mockPut).toHaveBeenCalledWith('/system/settings', {
       retention_days: 30,
@@ -373,8 +371,7 @@ describe('SystemView', () => {
     })
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
-    await saveBtn.trigger('click')
+    await wrapper.find('form.settings-form').trigger('submit')
     await flushPromises()
     const retentionInput = wrapper.find<HTMLInputElement>('#settings-retention')
     expect(retentionInput.element.value).toBe('14')

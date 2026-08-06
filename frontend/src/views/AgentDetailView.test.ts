@@ -431,6 +431,20 @@ describe('AgentDetailView — backups tab', () => {
     expect(highlighted.exists()).toBe(true)
     expect(highlighted.attributes('id')).toBe('report-2')
   })
+
+  it('clears the pinned highlight and auto-expand when the status query param is removed', async () => {
+    const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
+
+    expect(wrapper.find('.result-card-highlighted').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Click to collapse')
+
+    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+    await router.push({ query: { tab: 'backups' } })
+    await flushPromises()
+
+    expect(wrapper.find('.result-card-highlighted').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Click to collapse')
+  })
 })
 
 describe('AgentDetailView — schedules tab', () => {

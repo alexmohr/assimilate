@@ -236,6 +236,27 @@ describe('ArchiveFileBrowser', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive.')
   })
 
+  it('shows an error toast when restore fails', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { success: false, error_message: 'Restore failed: disk full' },
+    })
+    window.confirm = vi.fn().mockReturnValue(true)
+
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    const restoreBtn = wrapper.find('button[title="Restore whole archive to host"]')
+    expect(restoreBtn.exists()).toBe(true)
+    await restoreBtn.trigger('click')
+    await flushPromises()
+
+    expect(toastError).toHaveBeenCalledWith('Restore failed: disk full')
+    expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
   it('clicking the whole-archive delete button emits delete-archive with the archive', async () => {
     const archive = makeArchive('test-archive')
     const wrapper = await mountWithEntries({ repoId: 5, archive, isAdmin: true })

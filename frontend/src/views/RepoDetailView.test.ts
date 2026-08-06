@@ -485,6 +485,156 @@ describe('RepoDetailView', () => {
 
     expect(wrapper.find('.group-header').classes()).not.toContain('collapsed')
     expect(wrapper.find('.group-archives').attributes('style') ?? '').not.toContain('display: none')
+
+    await wrapper.find('.group-header').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.group-header').classes()).toContain('collapsed')
+    expect(wrapper.find('.group-archives').attributes('style')).toContain('display: none')
+  })
+
+  describe('archive list interactions', () => {
+    const archiveA = {
+      name: 'web-server-01-backup-2026-06-04T02:00:00',
+      start: '2026-06-04T02:00:00',
+      hostname: 'web-server-01',
+      comment: '',
+      original_size: 1_000,
+      deduplicated_size: 500,
+      matched: true,
+      agent_hostname: 'web-server-01',
+    }
+    const archiveB = {
+      name: 'db-server-01-backup-2026-06-04T03:00:00',
+      start: '2026-06-04T03:00:00',
+      hostname: 'db-server-01',
+      comment: '',
+      original_size: 2_000,
+      deduplicated_size: 1_000,
+      matched: true,
+      agent_hostname: 'db-server-01',
+    }
+
+    beforeEach(() => {
+      mockBrowserArchives.value = [archiveA, archiveB]
+      mockSortedArchives.value = [archiveA, archiveB]
+      setupApiSuccess()
+    })
+
+    async function goToArchivesTab(
+      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    ): Promise<void> {
+      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      await archivesTab!.trigger('click')
+      await flushPromises()
+    }
+
+    it('toggles between grouped and flat archive list views', async () => {
+      const wrapper = await renderRepoDetail()
+      await goToArchivesTab(wrapper)
+
+      expect(wrapper.find('.archive-groups').exists()).toBe(true)
+      expect(wrapper.find('.archive-flat-list').exists()).toBe(false)
+
+      const toggle = wrapper.find('.archive-group-toggle')
+      await toggle.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.archive-flat-list').exists()).toBe(true)
+      expect(wrapper.find('.archive-groups').exists()).toBe(false)
+      expect(wrapper.find('.archive-group-toggle').text()).toContain('Flat list')
+    })
+
+    it('filters the archive list by typing in the filter input', async () => {
+      const wrapper = await renderRepoDetail()
+      await goToArchivesTab(wrapper)
+      await wrapper.find('.archive-group-toggle').trigger('click')
+      await flushPromises()
+
+      const filterInput = wrapper.find('.filter-input')
+      await filterInput.setValue('db-server')
+      await flushPromises()
+
+      const rows = wrapper.findAll('.archive-row-detailed')
+      expect(rows.length).toBe(1)
+      expect(rows[0]!.text()).toContain('db-server-01')
+    })
+
+    it('sorts the archive list using the sort select', async () => {
+      const wrapper = await renderRepoDetail()
+      await goToArchivesTab(wrapper)
+      await wrapper.find('.archive-group-toggle').trigger('click')
+      await flushPromises()
+
+      const select = wrapper.find('.archive-sort-select')
+      await select.setValue('size-asc')
+      await flushPromises()
+
+      const rows = wrapper.findAll('.archive-row-detailed')
+      expect(rows[0]!.text()).toContain('web-server-01-backup')
+      expect(rows[1]!.text()).toContain('db-server-01-backup')
+    })
+
+    it('selects an archive from a grouped row and opens the delete dialog from it', async () => {
+      const wrapper = await renderRepoDetail()
+      await goToArchivesTab(wrapper)
+
+      const chevrons = wrapper.findAll('.group-chevron')
+      for (const chevron of chevrons) {
+        await chevron.trigger('click')
+      }
+      await flushPromises()
+
+      const row = wrapper.findAll('.archive-row').find((r) => r.text().includes(archiveA.name))
+      expect(row).toBeDefined()
+      await row!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.browser-title').text()).toContain(archiveA.name)
+
+      const deleteBtn = row!.find('.archive-row-delete')
+      expect(deleteBtn.exists()).toBe(true)
+      await deleteBtn.trigger('click')
+      await flushPromises()
+
+      // BaseModal teleports to document.body, outside the mounted wrapper's tree.
+      expect(document.body.querySelector('.archive-delete-message')?.textContent).toContain(
+        archiveA.name,
+      )
+
+      // Unmount so the still-open dialog's teleported content doesn't leak
+      // into document.body for the next test in this file.
+      wrapper.unmount()
+    })
+
+    it('selects and deletes an archive from the flat list, clearing the selection', async () => {
+      const wrapper = await renderRepoDetail()
+      await goToArchivesTab(wrapper)
+      await wrapper.find('.archive-group-toggle').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.empty-state').text()).toContain('Select an archive')
+
+      const rows = wrapper.findAll('.archive-row-detailed')
+      const targetRow = rows.find((r) => r.text().includes(archiveA.name))!
+      await targetRow.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.browser-title').text()).toContain(archiveA.name)
+
+      await targetRow.find('.archive-row-delete').trigger('click')
+      await flushPromises()
+
+      // BaseModal teleports to document.body, outside the mounted wrapper's tree.
+      const confirmBtn = Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Delete Archive',
+      )
+      expect(confirmBtn).toBeDefined()
+      confirmBtn!.click()
+      await flushPromises()
+
+      expect(wrapper.find('.empty-state').text()).toContain('Select an archive')
+    })
   })
 
   it('shows danger zone for admin users', async () => {

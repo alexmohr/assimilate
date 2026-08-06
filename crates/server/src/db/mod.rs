@@ -4799,14 +4799,16 @@ pub async fn set_account_lockout(
     Ok(())
 }
 
-/// Clear the lockout for an account.
+/// Clear the lockout for an account and reset its lockout-escalation
+/// counter. Called after a successful login so a future lockout starts
+/// back at the shortest tier.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the query fails.
 pub async fn clear_account_lockout(pool: &PgPool, username: &str) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE users SET locked_until = NULL WHERE username = $1",
+        "UPDATE users SET locked_until = NULL, lockout_escalation_level = 0 WHERE username = $1",
         username,
     )
     .execute(pool)
@@ -4815,26 +4817,21 @@ pub async fn clear_account_lockout(pool: &PgPool, username: &str) -> Result<(), 
     Ok(())
 }
 
-/// Return the escalation level (index into the lockout-durations array) for a
-/// user. The first lockout (at exactly `max_account_failures` failures) yields
-/// index 0 so that the shortest duration is used first.
+/// Read the current lockout-escalation counter for a user (0 if the user
+/// doesn't exist or has never been locked out).
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the query fails.
-pub async fn count_lockout_escalation_level(
-    pool: &PgPool,
-    username: &str,
-    max_account_failures: i64,
-) -> Result<i64, ApiError> {
-    let count = count_failed_attempts_since_last_success(pool, username).await?;
-    if count == 0 {
-        return Ok(0);
-    }
-    Ok(count
-        .saturating_sub(1)
-        .checked_div(max_account_failures)
-        .unwrap_or(0))
+pub async fn get_lockout_escalation_level(pool: &PgPool, username: &str) -> Result<i64, ApiError> {
+    let level = sqlx::query_scalar!(
+        "SELECT lockout_escalation_level::BIGINT as \"level!\" FROM users WHERE username = $1",
+        username,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(level.unwrap_or(0))
 }
 
 /// Count failed login attempts since the last successful login for the given
@@ -4873,6 +4870,15 @@ struct RecordCountRow {
 
 /// Record a failed login attempt and check if the account should be locked.
 ///
+/// Escalates the lockout duration by lockout *cycle*, not by raw failure
+/// count: `users.lockout_escalation_level` only advances when this call
+/// actually establishes a new lockout (the account isn't already locked).
+/// Deriving the tier from the cumulative failure count instead doesn't
+/// work, since an active lockout blocks further attempts from ever
+/// recording a new failure -- in normal usage the count only grows by 1
+/// per cycle, so the tier would advance once every `max_account_failures`
+/// cycles instead of once per cycle.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if a database query fails.
@@ -4910,10 +4916,33 @@ pub async fn record_failed_login_and_check_lockout(
     let count = row.count.unwrap_or(0);
 
     if count >= max_account_failures {
-        let escalation_level = count
-            .saturating_sub(1)
-            .checked_div(max_account_failures)
-            .unwrap_or(0);
+        // Advance the per-cycle escalation counter only if the account isn't
+        // already locked. `login` short-circuits on an active lockout before
+        // ever calling this function, so in practice this condition is
+        // always true here -- but guarding it directly makes the escalation
+        // correct regardless of caller, instead of relying on that upstream
+        // invariant.
+        let escalated: Option<i32> = sqlx::query_scalar!(
+            "UPDATE users SET lockout_escalation_level = lockout_escalation_level + 1 WHERE \
+             username = $1 AND (locked_until IS NULL OR locked_until <= NOW()) RETURNING \
+             lockout_escalation_level",
+            username,
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+        // `None` means either the user doesn't exist (the bcrypt dummy-hash
+        // path) or the account is already locked -- nothing further to do.
+        let Some(escalated) = escalated else {
+            tx.commit().await.map_err(ApiError::Database)?;
+            return Ok(());
+        };
+
+        // The counter was just incremented, so this lockout's tier is one
+        // less than the new value -- the first lockout uses index 0, the
+        // shortest duration.
+        let escalation_level = i64::from(escalated).saturating_sub(1);
         let duration_minutes = LOCKOUT_DURATIONS
             .get(usize::try_from(escalation_level).unwrap_or(0))
             .copied()
@@ -4922,7 +4951,7 @@ pub async fn record_failed_login_and_check_lockout(
             .checked_add_signed(chrono::Duration::try_minutes(duration_minutes).unwrap_or_default())
             .unwrap_or(Utc::now());
 
-        let result = sqlx::query!(
+        sqlx::query!(
             "UPDATE users SET locked_until = $1 WHERE username = $2",
             locked_until,
             username,
@@ -4931,26 +4960,17 @@ pub async fn record_failed_login_and_check_lockout(
         .await
         .map_err(ApiError::Database)?;
 
-        // Only log the lockout event if the user actually exists. For
-        // nonexistent usernames (the bcrypt dummy-hash path) the UPDATE
-        // silently affects 0 rows and logging a fake event would pollute
-        // the audit trail.
-        let user_exists = result.rows_affected() > 0;
-
         tx.commit().await.map_err(ApiError::Database)?;
 
-        if user_exists {
-            let _ = insert_system_event(
-                pool,
-                "account_locked",
-                None,
-                &format!(
-                    "Account '{username}' locked until {locked_until} after {count} failed \
-                     attempts"
-                ),
-            )
-            .await;
-        }
+        let _ = insert_system_event(
+            pool,
+            "account_locked",
+            None,
+            &format!(
+                "Account '{username}' locked until {locked_until} after {count} failed attempts"
+            ),
+        )
+        .await;
 
         return Ok(());
     }

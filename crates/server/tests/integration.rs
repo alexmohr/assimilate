@@ -1802,6 +1802,138 @@ async fn test_login_response_includes_role(pool: sqlx::PgPool) {
     );
 }
 
+/// Drives the full account-lockout flow through the real `login()` HTTP
+/// handler: enough failed attempts to cross `MAX_ACCOUNT_FAILURES`, then
+/// verifies a *correct* password is also rejected while the account is
+/// locked. Locked/wrong-password both return 401 "invalid credentials" by
+/// design (anti-enumeration), so a correct-password attempt is the only way
+/// to observe that lockout, rather than just another wrong password, is
+/// actually in effect.
+///
+/// Failed attempts are spread across several source IPs because
+/// `MAX_LOGIN_ATTEMPTS` (5 failures per username+IP within
+/// `LOGIN_WINDOW_MINUTES`) blocks a 6th attempt from the *same* IP with 429
+/// before it ever reaches the account-wide counter -- one IP alone can never
+/// reach `MAX_ACCOUNT_FAILURES` (10).
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_account_lockout_rejects_correct_password_while_locked(pool: sqlx::PgPool) {
+    use std::net::SocketAddr;
+
+    let mut app = build_test_app(pool.clone());
+
+    let username = "lockout-integration-user";
+    let correct_password = "correct-horse-battery-staple";
+    let hash = tokio::task::spawn_blocking({
+        let correct_password = correct_password.to_string();
+        move || bcrypt::hash(correct_password, 4)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    sqlx::query("INSERT INTO users (username, password_hash) VALUES ($1, $2)")
+        .bind(username)
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let login_request = |ip: &str, password: &str| {
+        let mut req = Request::builder()
+            .uri("/api/auth/login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&json!({ "username": username, "password": password }))
+                    .unwrap(),
+            ))
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo::<SocketAddr>(
+                ip.parse().unwrap(),
+            ));
+        req
+    };
+
+    // 10 wrong-password attempts, 5 per source IP so neither IP alone trips
+    // the per-(username, IP) limiter before the account-wide threshold.
+    for ip in ["10.0.1.1:1", "10.0.1.2:1"] {
+        for _ in 0..5 {
+            let resp = oneshot(&mut app, login_request(ip, "wrong-password")).await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    let user: (Option<chrono::DateTime<chrono::Utc>>,) =
+        sqlx::query_as("SELECT locked_until FROM users WHERE username = $1")
+            .bind(username)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        user.0
+            .is_some_and(|locked_until| locked_until > chrono::Utc::now()),
+        "account should be locked after {} failed attempts",
+        10
+    );
+
+    // A correct password from an unused (0 prior failures) IP would
+    // normally succeed -- confirm it's rejected instead, proving the
+    // lockout itself is blocking it and not a coincidental wrong password.
+    let resp = oneshot(&mut app, login_request("10.0.1.3:1", correct_password)).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "correct password should still be rejected while the account is locked"
+    );
+}
+
+/// Drives real HTTP requests through `auth_tracking_middleware` (rather than
+/// unit-testing `UserRateLimiter` in isolation) to prove the per-user 60
+/// req/min limit on mutating authenticated routes actually engages: an
+/// authenticated caller gets 429 after its 60th mutating request within the
+/// window, and reads are never throttled.
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_user_rate_limiter_returns_429_after_60_mutating_requests(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+
+    let state = build_test_state(pool);
+    let mut app = Router::new()
+        .route(
+            "/api/excludes",
+            get(server::api::excludes::get_excludes).put(server::api::excludes::set_excludes),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            server::rate_limit::auth_tracking_middleware,
+        ))
+        .with_state(state);
+
+    let put_excludes =
+        || json_request("PUT", "/api/excludes", Some(json!({ "raw_text": "*.tmp" })));
+
+    for i in 0..60 {
+        let resp = oneshot(&mut app, put_excludes()).await;
+        assert_eq!(resp.status(), StatusCode::OK, "request {i} should succeed");
+    }
+
+    let resp = oneshot(&mut app, put_excludes()).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "61st mutating request within the window should be rate-limited"
+    );
+
+    // Reads are never throttled, even once the mutating-request budget is spent.
+    let resp = oneshot(&mut app, get_request("/api/excludes")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "GET requests must not count against the mutating-request limiter"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_session_idle_timeout_revokes_inactive_session(pool: sqlx::PgPool) {
     let mut app = build_test_app_with_idle_timeout(pool.clone(), 1).0;

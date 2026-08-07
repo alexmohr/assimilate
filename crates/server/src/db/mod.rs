@@ -4723,35 +4723,6 @@ pub async fn insert_login_attempt(
     Ok(())
 }
 
-/// Count failed login attempts for a username across ALL IPs within the given
-/// window (account-scoped, not per-IP).
-///
-/// # Errors
-///
-/// Returns [`ApiError::Database`] if the query fails.
-pub async fn count_failed_login_attempts_by_username(
-    pool: &PgPool,
-    username: &str,
-    window_minutes: i32,
-) -> Result<i64, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct CountRow {
-        count: Option<i64>,
-    }
-
-    let row = sqlx::query_as!(
-        CountRow,
-        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
-         attempted_at > NOW() - ($2 || ' minutes')::INTERVAL",
-        username,
-        window_minutes.to_string(),
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(row.count.unwrap_or(0))
-}
-
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -4817,33 +4788,22 @@ pub async fn clear_account_lockout(pool: &PgPool, username: &str) -> Result<(), 
     Ok(())
 }
 
-/// Read the current lockout-escalation counter for a user (0 if the user
-/// doesn't exist or has never been locked out).
-///
-/// # Errors
-///
-/// Returns [`ApiError::Database`] if the query fails.
-pub async fn get_lockout_escalation_level(pool: &PgPool, username: &str) -> Result<i64, ApiError> {
-    let level = sqlx::query_scalar!(
-        "SELECT lockout_escalation_level::BIGINT as \"level!\" FROM users WHERE username = $1",
-        username,
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(level.unwrap_or(0))
-}
-
 /// Count failed login attempts since the last successful login for the given
 /// username. If there has never been a successful login, counts all failures.
+/// Generic over the executor so callers running inside a transaction (e.g.
+/// [`record_failed_login_and_check_lockout`]) can reuse this instead of
+/// re-embedding the same query against a `&mut Transaction`.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the query fails.
-pub async fn count_failed_attempts_since_last_success(
-    pool: &PgPool,
+pub async fn count_failed_attempts_since_last_success<'e, E>(
+    executor: E,
     username: &str,
-) -> Result<i64, ApiError> {
+) -> Result<i64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     #[derive(sqlx::FromRow)]
     struct CountRow {
         count: Option<i64>,
@@ -4856,16 +4816,11 @@ pub async fn count_failed_attempts_since_last_success(
          $1 AND success = true), '-infinity'::TIMESTAMPTZ)",
         username,
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
     .map_err(ApiError::Database)?;
 
     Ok(row.count.unwrap_or(0))
-}
-
-#[derive(sqlx::FromRow)]
-struct RecordCountRow {
-    count: Option<i64>,
 }
 
 /// Record a failed login attempt and check if the account should be locked.
@@ -4902,18 +4857,7 @@ pub async fn record_failed_login_and_check_lockout(
     // Count all failures *since the last successful login* (consecutive failures).
     // This is the key fix: no fixed time window, so escalation can reach any tier
     // regardless of lockout duration.
-    let row = sqlx::query_as!(
-        RecordCountRow,
-        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
-         attempted_at > COALESCE((SELECT MAX(attempted_at) FROM login_attempts WHERE username = \
-         $1 AND success = true), '-infinity'::TIMESTAMPTZ)",
-        username,
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
-
-    let count = row.count.unwrap_or(0);
+    let count = count_failed_attempts_since_last_success(&mut *tx, username).await?;
 
     if count >= max_account_failures {
         // Advance the per-cycle escalation counter only if the account isn't

@@ -2810,12 +2810,6 @@ async fn login_attempts(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(count_other_ip, 0);
-
-    // Username-only count includes all IPs
-    let count_by_user = db::count_failed_login_attempts_by_username(&pool, "user1", 60)
-        .await
-        .unwrap();
-    assert_eq!(count_by_user, 2);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2831,7 +2825,7 @@ async fn account_lockout(pool: PgPool) {
     }
 
     // Verify count across all IPs
-    let count = db::count_failed_login_attempts_by_username(&pool, "lockuser", 60)
+    let count = db::count_failed_attempts_since_last_success(&pool, "lockuser")
         .await
         .unwrap();
     assert_eq!(count, 3);
@@ -2856,10 +2850,7 @@ async fn account_lockout(pool: PgPool) {
 
     // Never gone through record_failed_login_and_check_lockout, so the
     // escalation counter is still at its default.
-    let level = db::get_lockout_escalation_level(&pool, "lockuser")
-        .await
-        .unwrap();
-    assert_eq!(level, 0);
+    assert_eq!(lockout_escalation_level(&pool, "lockuser").await, 0);
 
     // Trigger a real lockout, which advances the counter to 1...
     for _ in 0..10 {
@@ -2867,17 +2858,11 @@ async fn account_lockout(pool: PgPool) {
             .await
             .unwrap();
     }
-    let level = db::get_lockout_escalation_level(&pool, "lockuser")
-        .await
-        .unwrap();
-    assert_eq!(level, 1);
+    assert_eq!(lockout_escalation_level(&pool, "lockuser").await, 1);
 
     // ...and clearing the lockout (a successful login) resets it back to 0.
     db::clear_account_lockout(&pool, "lockuser").await.unwrap();
-    let level = db::get_lockout_escalation_level(&pool, "lockuser")
-        .await
-        .unwrap();
-    assert_eq!(level, 0);
+    assert_eq!(lockout_escalation_level(&pool, "lockuser").await, 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2914,6 +2899,20 @@ async fn expire_lockout(pool: &PgPool, username: &str) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// Reads `users.lockout_escalation_level` directly for test assertions. Not
+/// exposed from `db` since nothing in production code needs to read it back
+/// (`record_failed_login_and_check_lockout` already reads/advances it itself).
+#[cfg(test)]
+async fn lockout_escalation_level(pool: &PgPool, username: &str) -> i32 {
+    sqlx::query_scalar!(
+        "SELECT lockout_escalation_level FROM users WHERE username = $1",
+        username,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6986,7 +6985,6 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
     assert!(events.is_empty());
 }
 
-/// Applies the same fallback logic as `get_settings` in `api/system.rs`.
 #[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(

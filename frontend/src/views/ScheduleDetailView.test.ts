@@ -757,7 +757,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.find('.live-log-empty').exists()).toBe(true)
   })
 
-  it('BackupLog with non-JSON line adds text to live log output', async () => {
+  it('BackupLog with non-JSON line does not render raw log output', async () => {
     const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
@@ -768,8 +768,8 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.live-log-output').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Creating archive server-daily-2026-06-26...')
+    expect(wrapper.find('.live-log-output').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Creating archive server-daily-2026-06-26...')
   })
 })
 

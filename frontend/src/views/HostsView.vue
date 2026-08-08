@@ -356,6 +356,15 @@ async function loadAgents(): Promise<void> {
       if (entry.is_overdue) hMap[entry.hostname].overdue++
     })
     healthByHost.value = hMap
+
+    const activeMap: Record<string, string[]> = {}
+    overviewRes.data.running_operations.forEach((op) => {
+      const list = activeMap[op.hostname] ?? []
+      if (!list.includes(op.repo_name)) list.push(op.repo_name)
+      activeMap[op.hostname] = list
+    })
+    activeBackupsByHost.value = activeMap
+
     coverageHostIds.value = {
       protected: new Set(
         overviewRes.data.protection.protected_agent_links.map((host) => host.agent_id),
@@ -518,6 +527,11 @@ onMessage('BackupCompleted', (payload) => {
 
 function hostActiveBackups(agent: AgentRow): string[] {
   return activeBackupsByHost.value[agent.hostname] ?? []
+}
+
+function hostRunningLabel(agent: AgentRow): string {
+  const targets = hostActiveBackups(agent)
+  return targets.length > 0 ? `Backing up: ${targets.join(', ')}` : 'Running'
 }
 
 function deployButtonLabel(agent: AgentRow): string | null {
@@ -757,15 +771,10 @@ watch(
         <EntityStatusBadges
           :notable="!isOnline(agent)"
           notable-label="Offline"
+          :running="hostActiveBackups(agent).length > 0"
+          :running-label="hostRunningLabel(agent)"
           :issues="agentIssues(agent)"
         />
-        <div
-          v-if="hostActiveBackups(agent).length > 0"
-          class="card-active-backup"
-        >
-          <span class="active-pulse" />
-          <span class="active-text"> Backing up: {{ hostActiveBackups(agent).join(', ') }} </span>
-        </div>
         <div
           v-if="agentTags(agent).length > 0"
           class="card-tags"
@@ -1179,39 +1188,6 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-}
-
-.card-active-backup {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.72rem;
-  color: var(--accent);
-}
-
-.active-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-.active-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tag-pill {

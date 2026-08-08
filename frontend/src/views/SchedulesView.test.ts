@@ -561,6 +561,8 @@ describe('SchedulesView', () => {
     expect(buttons.some((b) => b.text() === 'Cancel')).toBe(true)
     // Schedule 1 (running) no longer shows a Run button; schedules 2 and 3 still do.
     expect(buttons.filter((b) => b.text() === 'Run')).toHaveLength(2)
+    expect(wrapper.find('.entity-running-pill').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Running')
   })
 
   it('calls cancel API on cancel button click for a running schedule', async () => {

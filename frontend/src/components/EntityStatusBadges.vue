@@ -16,15 +16,25 @@ export interface EntityIssue {
 defineProps<{
   notable?: boolean
   notableLabel?: string
+  running?: boolean
+  runningLabel?: string
   issues?: EntityIssue[]
 }>()
 </script>
 
 <template>
   <div
-    v-if="notable || (issues && issues.length > 0)"
+    v-if="running || notable || (issues && issues.length > 0)"
     class="entity-badge-row"
   >
+    <span
+      v-if="running"
+      class="entity-running-pill"
+      :title="runningLabel"
+    >
+      <span class="entity-running-pulse" />
+      {{ runningLabel ?? 'Running' }}
+    </span>
     <button
       v-for="issue in issues"
       :key="issue.key"
@@ -95,5 +105,40 @@ defineProps<{
   text-transform: uppercase;
   background: var(--bg-card);
   color: var(--text-secondary);
+}
+
+.entity-running-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.entity-running-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: entity-running-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes entity-running-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 </style>

@@ -4,10 +4,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useWebSocket } from '../composables/useWebSocket'
+import { useElapsedClock } from '../composables/useElapsedTimer'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
@@ -101,45 +102,25 @@ interface ActiveBackup {
 }
 
 const activeBackups = ref<ActiveBackup[]>([])
-const now = ref(Date.now())
-let elapsedTimer: ReturnType<typeof setInterval> | null = null
-
-function ensureElapsedTimer(): void {
-  if (elapsedTimer !== null) return
-  elapsedTimer = setInterval(() => {
-    now.value = Date.now()
-  }, 1000)
-}
-
-function stopElapsedTimerIfIdle(): void {
-  if (activeBackups.value.length === 0 && elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = null
-  }
-}
-
-watch(
-  activeBackups,
-  (backups) => {
-    if (backups.length > 0) {
-      ensureElapsedTimer()
-    } else {
-      stopElapsedTimerIfIdle()
-    }
-  },
-  { immediate: true },
-)
-
-onUnmounted(() => {
-  if (elapsedTimer !== null) clearInterval(elapsedTimer)
-})
+const hasActiveBackups = computed(() => activeBackups.value.length > 0)
+const { now } = useElapsedClock(hasActiveBackups)
 
 function elapsedSecsFor(backup: ActiveBackup): number {
   return Math.max(0, Math.floor((now.value - backup.started_at) / 1000))
 }
 
+// Fetched in one batch of the most recent runs of any status (not just
+// success/warning) so an interleaved failure can't starve the average of
+// data points: the last 5 *matching* runs are taken from this wider window,
+// per docs/dashboard.md's "last five successful or warned runs".
+const AVG_DURATION_SAMPLE_WINDOW = 20
+const AVG_DURATION_SAMPLE_COUNT = 5
+
 const avgDurationSecs = ref<Map<string, number>>(new Map())
-const avgDurationRequested = new Set<string>()
+// Tracks in-flight requests only, so a page reload or reconnect can retry a
+// pair whose fetch previously failed or came back with too little history -
+// entries are removed as soon as the request settles, successful or not.
+const avgDurationInFlight = new Set<string>()
 
 function avgDurationKey(scheduleId: number, repoId: number): string {
   return `${scheduleId}:${repoId}`
@@ -147,26 +128,30 @@ function avgDurationKey(scheduleId: number, repoId: number): string {
 
 async function fetchAvgDuration(scheduleId: number, repoId: number): Promise<void> {
   const key = avgDurationKey(scheduleId, repoId)
-  if (avgDurationRequested.has(key)) return
-  avgDurationRequested.add(key)
+  if (avgDurationSecs.value.has(key) || avgDurationInFlight.has(key)) return
+  avgDurationInFlight.add(key)
   try {
     const params = new URLSearchParams({
       schedule_id: String(scheduleId),
       repo_id: String(repoId),
-      limit: '5',
+      limit: String(AVG_DURATION_SAMPLE_WINDOW),
     })
     const response = await apiClient.get<Array<{ status: string; duration_secs: number }>>(
       `/stats/activity?${params.toString()}`,
     )
-    const completed = response.data.filter((entry) => {
-      const status = normalizeBackupStatus(entry.status)
-      return status === 'success' || status === 'warning'
-    })
+    const completed = response.data
+      .filter((entry) => {
+        const status = normalizeBackupStatus(entry.status)
+        return status === 'success' || status === 'warning'
+      })
+      .slice(0, AVG_DURATION_SAMPLE_COUNT)
     if (completed.length === 0) return
     const avg = completed.reduce((sum, entry) => sum + entry.duration_secs, 0) / completed.length
     avgDurationSecs.value = new Map(avgDurationSecs.value).set(key, avg)
   } catch (e: unknown) {
     logger.error('fetchAvgDuration failed', e)
+  } finally {
+    avgDurationInFlight.delete(key)
   }
 }
 

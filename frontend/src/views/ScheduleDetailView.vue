@@ -13,6 +13,7 @@ import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
+import { useElapsedClock } from '../composables/useElapsedTimer'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
@@ -95,8 +96,12 @@ const archiveProgress = ref<ArchiveProgressData | null>(null)
 const backupHostname = ref<string | null>(null)
 const backupArchiveName = ref<string | null>(null)
 const backupStartedAt = ref<number | null>(null)
-const backupElapsedSecs = ref(0)
-let elapsedTimer: ReturnType<typeof setInterval> | null = null
+const { now } = useElapsedClock(backupRunning)
+const backupElapsedSecs = computed(() =>
+  backupStartedAt.value === null
+    ? 0
+    : Math.max(0, Math.floor((now.value - backupStartedAt.value) / 1000)),
+)
 
 const lastSuccessfulReport = computed<ReportRow | null>(
   () =>
@@ -249,9 +254,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
-  if (elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-  }
 })
 
 function populateForm(s: ScheduleRow): void {
@@ -330,13 +332,6 @@ async function loadData(): Promise<void> {
         const agent = agentMap.value.get(runningReport.agent_id ?? 0)
         backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
         backupStartedAt.value = new Date(runningReport.started_at).getTime()
-        backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-        if (elapsedTimer !== null) clearInterval(elapsedTimer)
-        elapsedTimer = setInterval(() => {
-          if (backupStartedAt.value !== null) {
-            backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-          }
-        }, 1000)
       }
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
       selectedAgentIds.value = sorted.map((t) => t.agent_id)
@@ -605,13 +600,6 @@ onMessage('BackupStarted', (payload) => {
   backupArchiveName.value = payload.archive_name ?? null
   archiveProgress.value = null
   backupStartedAt.value = Date.now()
-  backupElapsedSecs.value = 0
-  if (elapsedTimer !== null) clearInterval(elapsedTimer)
-  elapsedTimer = setInterval(() => {
-    if (backupStartedAt.value !== null) {
-      backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-    }
-  }, 1000)
 })
 
 onMessage('BackupCompleted', (payload) => {
@@ -619,10 +607,6 @@ onMessage('BackupCompleted', (payload) => {
     backupRunning.value = false
     backupHostname.value = null
     backupArchiveName.value = null
-    if (elapsedTimer !== null) {
-      clearInterval(elapsedTimer)
-      elapsedTimer = null
-    }
   }
 })
 

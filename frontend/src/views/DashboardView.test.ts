@@ -537,6 +537,139 @@ describe('DashboardView success ring', () => {
     await flushPromises()
   })
 
+  it('retries the average-duration fetch after a previous request failed', async () => {
+    let activityCallCount = 0
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(
+          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
+        )
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        activityCallCount++
+        if (activityCallCount === 1) return Promise.reject(new Error('API error'))
+        return Promise.resolve({
+          data: [
+            { status: 'success', duration_secs: 300 },
+            { status: 'success', duration_secs: 300 },
+          ],
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = await renderDashboard()
+    expect(wrapper.text()).not.toMatch(/left/)
+
+    // AgentConnected re-runs fetchAll -> mergeActiveBackups -> fetchAvgDuration
+    // for the same schedule/repo pair; a prior failure must not have
+    // permanently disabled that retry.
+    wsHandlers['AgentConnected']({})
+    await flushPromises()
+
+    expect(activityCallCount).toBeGreaterThan(1)
+    expect(wrapper.text()).toMatch(/left/)
+  })
+
+  it('retries the average-duration fetch after a previous request had too little history', async () => {
+    let activityCallCount = 0
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(
+          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
+        )
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        activityCallCount++
+        if (activityCallCount === 1) {
+          // No successful/warned runs yet - not enough history for an estimate.
+          return Promise.resolve({ data: [{ status: 'failed', duration_secs: 300 }] })
+        }
+        return Promise.resolve({
+          data: [
+            { status: 'success', duration_secs: 300 },
+            { status: 'success', duration_secs: 300 },
+          ],
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = await renderDashboard()
+    expect(wrapper.text()).not.toMatch(/left/)
+
+    wsHandlers['AgentConnected']({})
+    await flushPromises()
+
+    expect(activityCallCount).toBeGreaterThan(1)
+    expect(wrapper.text()).toMatch(/left/)
+  })
+
+  it('does not refetch the average duration once a result for that pair is already cached', async () => {
+    let activityCallCount = 0
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(
+          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
+        )
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        activityCallCount++
+        return Promise.resolve({
+          data: [
+            { status: 'success', duration_secs: 300 },
+            { status: 'success', duration_secs: 300 },
+          ],
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    await renderDashboard()
+    expect(activityCallCount).toBe(1)
+
+    wsHandlers['AgentConnected']({})
+    await flushPromises()
+
+    expect(activityCallCount).toBe(1)
+  })
+
+  it('averages the first five successful/warned runs from a wider window, skipping interleaved failures', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(
+          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
+        )
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        // Fewer than 5 of the most recent runs are success/warning, but the
+        // wider window (beyond the first 5 raw entries) contains enough.
+        expect(url).toContain('limit=20')
+        return Promise.resolve({
+          data: [
+            { status: 'failed', duration_secs: 9999 },
+            { status: 'failed', duration_secs: 9999 },
+            { status: 'failed', duration_secs: 9999 },
+            { status: 'success', duration_secs: 300 },
+            { status: 'success', duration_secs: 300 },
+            { status: 'warning', duration_secs: 300 },
+            { status: 'success', duration_secs: 300 },
+            { status: 'success', duration_secs: 300 },
+            // Would drag the average up if included - must be excluded once
+            // 5 matching samples have already been taken.
+            { status: 'success', duration_secs: 999_999 },
+          ],
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = await renderDashboard()
+
+    // Average of the first 5 matching entries (300 each) is 300s.
+    expect(wrapper.text()).toMatch(/~300s left/)
+  })
+
   it('fires the interval callback and stops the timer when backups complete', async () => {
     vi.useFakeTimers()
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')

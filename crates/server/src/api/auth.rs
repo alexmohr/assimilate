@@ -272,6 +272,22 @@ pub async fn login(
     if let Some(locked_until) = user.locked_until
         && locked_until > Utc::now()
     {
+        // Record the attempt through the same DB path as the wrong-password
+        // branch below (record_failed_login_and_check_lockout already no-ops
+        // its re-lock/escalation logic while the account is still locked) so
+        // this branch does comparable DB work instead of returning
+        // immediately -- otherwise a locked account responds measurably
+        // faster than a wrong-password one, letting an attacker distinguish
+        // "this account is currently locked" from "wrong password" by
+        // timing alone, even though both return the identical 401 body.
+        db::record_failed_login_and_check_lockout(
+            &state.pool,
+            &req.username,
+            &ip,
+            MAX_ACCOUNT_FAILURES,
+        )
+        .await?;
+
         return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
 

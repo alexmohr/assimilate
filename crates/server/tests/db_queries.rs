@@ -3091,12 +3091,9 @@ async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn record_failed_login_transactional_rollback(pool: PgPool) {
+async fn record_failed_login_inserts_exactly_one_attempt(pool: PgPool) {
     db::insert_user(&pool, "txuser", "hash").await.unwrap();
 
-    // The function is atomic - if it succeeds, the insert is committed
-    // If it fails (e.g. DB error), the insert is rolled back.
-    // Test by checking count before and after.
     let count_before: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
     )

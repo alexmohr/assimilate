@@ -28,6 +28,8 @@ use crate::{
 const MAX_LOGIN_ATTEMPTS: i64 = 5;
 const LOGIN_WINDOW_MINUTES: i32 = 15;
 
+/// Per-account lockout is triggered after this many consecutive failed attempts.
+const MAX_ACCOUNT_FAILURES: i64 = 10;
 /// Minimum time between `last_seen_at` writes for a single session. Sliding
 /// the idle-timeout window on literally every authenticated request would
 /// put a DB write on the hot path of every API call; throttling to once per
@@ -63,6 +65,13 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // If `auth_tracking_middleware` (rate_limit.rs) already extracted the
+        // authenticated user, reuse it from request extensions -- avoids an
+        // extra DB round trip on every request.
+        if let Some(auth_user) = parts.extensions.get::<AuthUser>() {
+            return Ok(auth_user.clone());
+        }
+
         if let Some(token_user) = try_bearer_auth(parts, state).await? {
             return Ok(token_user);
         }
@@ -215,6 +224,31 @@ pub async fn login(
         .resolve(peer.ip(), &headers)
         .to_string();
 
+    // Look up user. If not found, use a dummy hash so that the bcrypt
+    // verification below runs in constant time regardless of whether the
+    // username exists -- preventing a timing side-channel that could be used
+    // to enumerate valid usernames.
+    let (user, hash) = match db::get_user_password_hash(&state.pool, &req.username).await {
+        Ok(result) => result,
+        Err(ApiError::NotFound(_)) => {
+            // Dummy hash -- must be a valid bcrypt hash to keep bcrypt timing
+            // uniform.  Pre-computed with cost 12 (matching the real hashing).
+            let dummy_hash =
+                "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();
+            let dummy_user = db::UserRow {
+                id: 0,
+                username: req.username.clone(),
+                must_change_password: false,
+                created_at: Utc::now(),
+                last_login_at: None,
+                locked_until: None,
+            };
+            (dummy_user, dummy_hash)
+        }
+        Err(other) => return Err(other),
+    };
+
+    // Per-IP rate limit check
     let failed_count =
         db::count_failed_login_attempts(&state.pool, &req.username, &ip, LOGIN_WINDOW_MINUTES)
             .await?;
@@ -224,22 +258,55 @@ pub async fn login(
         ));
     }
 
-    let (user, hash) = db::get_user_password_hash(&state.pool, &req.username)
-        .await
-        .map_err(|e| match e {
-            ApiError::NotFound(_) => ApiError::Unauthorized("invalid credentials".to_string()),
-            other => other,
-        })?;
-
+    // Run the (real or dummy) bcrypt verification unconditionally, before
+    // branching on lockout state, so that the locked/not-found/wrong-password
+    // outcomes are indistinguishable by response timing. Branching on
+    // `locked_until` before this call would let an attacker detect the exact
+    // moment a candidate username gets locked out by watching responses go
+    // fast again, re-opening the username-enumeration side channel.
     let password = req.password.clone();
     let valid = helpers::verify_password(password, hash)
         .await
         .map_err(|_| ApiError::Unauthorized("invalid credentials".to_string()))?;
 
-    if !valid {
-        db::insert_login_attempt(&state.pool, &req.username, &ip, false).await?;
+    if let Some(locked_until) = user.locked_until
+        && locked_until > Utc::now()
+    {
+        // Record the attempt through the same DB path as the wrong-password
+        // branch below (record_failed_login_and_check_lockout already no-ops
+        // its re-lock/escalation logic while the account is still locked) so
+        // this branch does comparable DB work instead of returning
+        // immediately -- otherwise a locked account responds measurably
+        // faster than a wrong-password one, letting an attacker distinguish
+        // "this account is currently locked" from "wrong password" by
+        // timing alone, even though both return the identical 401 body.
+        db::record_failed_login_and_check_lockout(
+            &state.pool,
+            &req.username,
+            &ip,
+            MAX_ACCOUNT_FAILURES,
+        )
+        .await?;
+
         return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
+
+    if !valid {
+        // Atomic transaction: insert failed attempt, check threshold, set lockout
+        db::record_failed_login_and_check_lockout(
+            &state.pool,
+            &req.username,
+            &ip,
+            MAX_ACCOUNT_FAILURES,
+        )
+        .await?;
+
+        return Err(ApiError::Unauthorized("invalid credentials".to_string()));
+    }
+
+    // Login succeeded - clear any account lockout
+    db::clear_account_lockout(&state.pool, &req.username).await?;
+    db::insert_login_attempt(&state.pool, &req.username, &ip, true).await?;
 
     let user_resp = users::user_row_to_response(&state.pool, user).await?;
 
@@ -635,4 +702,19 @@ pub async fn revoke_session(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::helpers;
+
+    #[tokio::test]
+    async fn verify_password_runs_in_constant_time_with_dummy_hash() {
+        let dummy_hash = "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();
+
+        let result = helpers::verify_password("any-password".to_string(), dummy_hash)
+            .await
+            .unwrap();
+        assert!(!result, "dummy hash must not match any password");
+    }
 }

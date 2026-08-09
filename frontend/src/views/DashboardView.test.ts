@@ -160,6 +160,16 @@ function overviewWithFindings() {
   }
 }
 
+/** apiClient.get mock that returns a finding-bearing overview, defaulting everything else. */
+function overviewWithFindingsHandler(): (url: string) => ReturnType<typeof defaultApiHandler> {
+  return (url: string) => {
+    if (url === '/stats/dashboard-overview') {
+      return Promise.resolve({ data: overviewWithFindings() })
+    }
+    return defaultApiHandler(url)
+  }
+}
+
 vi.mocked(apiClient.get).mockImplementation(defaultApiHandler)
 describe('DashboardView', () => {
   beforeEach(() => {
@@ -199,12 +209,7 @@ describe('DashboardView attention panel', () => {
   })
 
   it('shows NeedsAttention when findings exist', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({ data: overviewWithFindings() })
-      }
-      return defaultApiHandler(url)
-    })
+    vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
@@ -221,12 +226,7 @@ describe('DashboardView attention panel', () => {
   })
 
   it('does not apply attention-sidebar-wide class when findings exist', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({ data: overviewWithFindings() })
-      }
-      return defaultApiHandler(url)
-    })
+    vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
@@ -237,12 +237,7 @@ describe('DashboardView attention panel', () => {
 
   it('re-fetches overview when findings are dismissed', async () => {
     const getSpy = vi.mocked(apiClient.get)
-    getSpy.mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({ data: overviewWithFindings() })
-      }
-      return defaultApiHandler(url)
-    })
+    getSpy.mockImplementation(overviewWithFindingsHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
@@ -281,12 +276,7 @@ describe('DashboardView attention panel', () => {
   })
 
   it('removes attention-row-full class when findings exist', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({ data: overviewWithFindings() })
-      }
-      return defaultApiHandler(url)
-    })
+    vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
@@ -297,12 +287,7 @@ describe('DashboardView attention panel', () => {
 
   it('hides NeedsAttention after dismiss when fetchOverview returns empty findings', async () => {
     const getSpy = vi.mocked(apiClient.get)
-    getSpy.mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({ data: overviewWithFindings() })
-      }
-      return defaultApiHandler(url)
-    })
+    getSpy.mockImplementation(overviewWithFindingsHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
@@ -376,6 +361,31 @@ describe('DashboardView success ring', () => {
       }
       return defaultApiHandler(url)
     }
+  }
+
+  // Mocks a single running operation (schedule 7 / repo 3) plus its
+  // /stats/activity fetch, letting the caller vary the response (or reject)
+  // per call so retry behavior can be exercised without repeating the
+  // dashboard-overview/URL-matching boilerplate in every test.
+  function mockActivityRetry(
+    activityResponse: (
+      callCount: number,
+    ) => Promise<Array<{ status: string; duration_secs: number }>>,
+  ): () => number {
+    let activityCallCount = 0
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(
+          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
+        )
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        activityCallCount++
+        return activityResponse(activityCallCount).then((data) => ({ data }))
+      }
+      return defaultApiHandler(url)
+    })
+    return () => activityCallCount
   }
 
   async function renderDashboard(): Promise<ReturnType<typeof renderWithPlugins>> {
@@ -537,26 +547,15 @@ describe('DashboardView success ring', () => {
     await flushPromises()
   })
 
+  const twoSuccessfulRuns = [
+    { status: 'success', duration_secs: 300 },
+    { status: 'success', duration_secs: 300 },
+  ]
+
   it('retries the average-duration fetch after a previous request failed', async () => {
-    let activityCallCount = 0
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(
-          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
-        )
-      }
-      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
-        activityCallCount++
-        if (activityCallCount === 1) return Promise.reject(new Error('API error'))
-        return Promise.resolve({
-          data: [
-            { status: 'success', duration_secs: 300 },
-            { status: 'success', duration_secs: 300 },
-          ],
-        })
-      }
-      return defaultApiHandler(url)
-    })
+    const getCallCount = mockActivityRetry((callCount) =>
+      callCount === 1 ? Promise.reject(new Error('API error')) : Promise.resolve(twoSuccessfulRuns),
+    )
 
     const wrapper = await renderDashboard()
     expect(wrapper.text()).not.toMatch(/left/)
@@ -567,33 +566,17 @@ describe('DashboardView success ring', () => {
     wsHandlers['AgentConnected']({})
     await flushPromises()
 
-    expect(activityCallCount).toBeGreaterThan(1)
+    expect(getCallCount()).toBeGreaterThan(1)
     expect(wrapper.text()).toMatch(/left/)
   })
 
   it('retries the average-duration fetch after a previous request had too little history', async () => {
-    let activityCallCount = 0
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(
-          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
-        )
-      }
-      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
-        activityCallCount++
-        if (activityCallCount === 1) {
-          // No successful/warned runs yet - not enough history for an estimate.
-          return Promise.resolve({ data: [{ status: 'failed', duration_secs: 300 }] })
-        }
-        return Promise.resolve({
-          data: [
-            { status: 'success', duration_secs: 300 },
-            { status: 'success', duration_secs: 300 },
-          ],
-        })
-      }
-      return defaultApiHandler(url)
-    })
+    const getCallCount = mockActivityRetry((callCount) =>
+      Promise.resolve(
+        // First call: no successful/warned runs yet - not enough history for an estimate.
+        callCount === 1 ? [{ status: 'failed', duration_secs: 300 }] : twoSuccessfulRuns,
+      ),
+    )
 
     const wrapper = await renderDashboard()
     expect(wrapper.text()).not.toMatch(/left/)
@@ -601,37 +584,20 @@ describe('DashboardView success ring', () => {
     wsHandlers['AgentConnected']({})
     await flushPromises()
 
-    expect(activityCallCount).toBeGreaterThan(1)
+    expect(getCallCount()).toBeGreaterThan(1)
     expect(wrapper.text()).toMatch(/left/)
   })
 
   it('does not refetch the average duration once a result for that pair is already cached', async () => {
-    let activityCallCount = 0
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(
-          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
-        )
-      }
-      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
-        activityCallCount++
-        return Promise.resolve({
-          data: [
-            { status: 'success', duration_secs: 300 },
-            { status: 'success', duration_secs: 300 },
-          ],
-        })
-      }
-      return defaultApiHandler(url)
-    })
+    const getCallCount = mockActivityRetry(() => Promise.resolve(twoSuccessfulRuns))
 
     await renderDashboard()
-    expect(activityCallCount).toBe(1)
+    expect(getCallCount()).toBe(1)
 
     wsHandlers['AgentConnected']({})
     await flushPromises()
 
-    expect(activityCallCount).toBe(1)
+    expect(getCallCount()).toBe(1)
   })
 
   it('averages the first five successful/warned runs from a wider window, skipping interleaved failures', async () => {

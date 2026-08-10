@@ -499,7 +499,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        assert!(query.pattern.is_empty());
+        assert_eq!(query.pattern, "");
     }
 
     #[test]

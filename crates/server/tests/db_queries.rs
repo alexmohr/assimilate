@@ -597,7 +597,7 @@ async fn tunnel_crud(pool: PgPool) {
     assert!(!updated.enabled);
 
     let enabled = db::list_enabled_tunnels(&pool).await.unwrap();
-    assert!(enabled.is_empty());
+    assert_eq!(enabled.len(), 0);
 
     db::delete_tunnel(&pool, tunnel.id).await.unwrap();
     let result = db::get_tunnel_by_id(&pool, tunnel.id).await;
@@ -1059,7 +1059,7 @@ async fn schedule_due_and_trigger(pool: PgPool) {
     assert!(fetched.next_run_at.is_some());
 
     let due = db::list_due_schedules(&pool, now).await.unwrap();
-    assert!(due.is_empty());
+    assert_eq!(due.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1097,7 +1097,7 @@ async fn backup_sources_crud(pool: PgPool) {
     let sources = db::list_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(sources.is_empty());
+    assert_eq!(sources.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1156,7 +1156,7 @@ async fn backup_sources_per_agent_crud(pool: PgPool) {
     let all_per_agent = db::list_all_per_agent_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(all_per_agent.is_empty());
+    assert_eq!(all_per_agent.len(), 0);
 
     let schedule_level = db::list_backup_sources_for_schedule(&pool, schedule.id)
         .await
@@ -1207,7 +1207,7 @@ async fn excludes_per_agent_crud(pool: PgPool) {
     let all_per_agent = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(all_per_agent.is_empty());
+    assert_eq!(all_per_agent.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1284,7 +1284,7 @@ async fn file_change_patterns_per_agent_crud(pool: PgPool) {
         db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
             .await
             .unwrap();
-    assert!(all_per_agent.is_empty());
+    assert_eq!(all_per_agent.len(), 0);
     assert_eq!(
         db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
             .await
@@ -1725,7 +1725,7 @@ async fn backup_report_list_with_target(pool: PgPool) {
     let reports = db::list_reports_for_agent(&pool, agent.id, Some("nonexistent"), 10)
         .await
         .unwrap();
-    assert!(reports.is_empty());
+    assert_eq!(reports.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1811,7 +1811,7 @@ async fn storage_stats_with_sum(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_stats_empty(pool: PgPool) {
     let stats = db::get_storage_stats(&pool).await.unwrap();
-    assert!(stats.is_empty());
+    assert_eq!(stats.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3145,7 +3145,7 @@ async fn api_token_crud(pool: PgPool) {
 
     db::delete_api_token(&pool, token.id).await.unwrap();
     let tokens = db::list_api_tokens_for_user(&pool, user.id).await.unwrap();
-    assert!(tokens.is_empty());
+    assert_eq!(tokens.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3223,7 +3223,7 @@ async fn system_events_crud(pool: PgPool) {
     assert_eq!(deleted, 2);
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
-    assert!(events.is_empty());
+    assert_eq!(events.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3259,11 +3259,11 @@ async fn tags_crud(pool: PgPool) {
     assert_eq!(tags.len(), 1);
 
     let host_tags = db::list_tags(&pool, "agent").await.unwrap();
-    assert!(host_tags.is_empty());
+    assert_eq!(host_tags.len(), 0);
 
     db::delete_tag(&pool, tag.id).await.unwrap();
     let tags = db::list_tags(&pool, "repo").await.unwrap();
-    assert!(tags.is_empty());
+    assert_eq!(tags.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3302,7 +3302,7 @@ async fn test_tag_remove(pool: PgPool) {
     let tags = db::tags::list_tags_for_archive(&pool, repo.id, "archive-2")
         .await
         .unwrap();
-    assert!(tags.is_empty());
+    assert_eq!(tags.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3410,7 +3410,7 @@ async fn groups_crud(pool: PgPool) {
 
     db::delete_group(&pool, group.id).await.unwrap();
     let groups = db::list_groups(&pool).await.unwrap();
-    assert!(groups.is_empty());
+    assert_eq!(groups.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4020,7 +4020,7 @@ async fn list_schedule_ids_for_ssh_host_and_set_schedule_enabled(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn test_backup_trends_empty(pool: PgPool) {
     let trends = db::get_backup_trends(&pool, None, 30).await.unwrap();
-    assert!(trends.is_empty());
+    assert_eq!(trends.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4055,7 +4055,7 @@ async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
     let trends_other = db::get_backup_trends(&pool, Some(repo.id.saturating_add(999)), 30)
         .await
         .unwrap();
-    assert!(trends_other.is_empty());
+    assert_eq!(trends_other.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4063,7 +4063,7 @@ async fn test_calendar_events_empty(pool: PgPool) {
     let events = db::get_calendar_events(&pool, 2026, 1, None, Tz::UTC)
         .await
         .unwrap();
-    assert!(events.is_empty());
+    assert_eq!(events.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4121,7 +4121,7 @@ async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
     )
     .await
     .unwrap();
-    assert!(events_other.is_empty());
+    assert_eq!(events_other.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4185,7 +4185,7 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
     .unwrap();
 
     assert_eq!(total, 0);
-    assert!(items.is_empty());
+    assert_eq!(items.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4217,7 +4217,7 @@ async fn test_hostname_pattern_crud(pool: PgPool) {
     let patterns = patterns::list_patterns_for_agent(&pool, agent.id)
         .await
         .unwrap();
-    assert!(patterns.is_empty());
+    assert_eq!(patterns.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5709,7 +5709,7 @@ async fn schedule_targets_list_and_delete(pool: PgPool) {
         .unwrap();
 
     let empty = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5754,7 +5754,7 @@ async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: 
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_timezone_default(pool: PgPool) {
     let tz = db::get_schedule_timezone(&pool).await.unwrap();
-    assert!(!tz.name().is_empty());
+    assert_ne!(tz.name(), "");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5788,7 +5788,7 @@ async fn reports_for_schedule_test(pool: PgPool) {
     let empty = db::list_reports_for_schedule(&pool, schedule.id.saturating_add(999), 10)
         .await
         .unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5870,7 +5870,7 @@ async fn activity_feed_repo_filter(pool: PgPool) {
     let all = db::get_activity_feed(&pool, 10, None, None, None, None)
         .await
         .unwrap();
-    assert!(!all.is_empty());
+    assert_ne!(all.len(), 0);
 
     let filtered = db::get_activity_feed(&pool, 10, Some(repo.id), None, None, None)
         .await
@@ -5887,7 +5887,7 @@ async fn activity_feed_repo_filter(pool: PgPool) {
     )
     .await
     .unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5907,7 +5907,7 @@ async fn activity_feed_hostname_filter(pool: PgPool) {
     let empty = db::get_activity_feed(&pool, 10, None, Some("nonexistent-host"), None, None)
         .await
         .unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5922,7 +5922,7 @@ async fn activity_feed_days_test(pool: PgPool) {
     let all = db::get_activity_feed_days(&pool, 7, None, None, None, None)
         .await
         .unwrap();
-    assert!(!all.is_empty());
+    assert_ne!(all.len(), 0);
 
     let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None, None, None)
         .await
@@ -5937,7 +5937,7 @@ async fn activity_feed_days_test(pool: PgPool) {
     let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"), None, None)
         .await
         .unwrap();
-    assert!(no_match.is_empty());
+    assert_eq!(no_match.len(), 0);
 }
 
 #[test]
@@ -5994,7 +5994,7 @@ async fn storage_trends_test(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_trends_by_repo_test(pool: PgPool) {
     let empty = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 
     let agent = db::insert_agent(&pool, "strend-repo-host", None, "hash", None)
         .await
@@ -6004,7 +6004,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     insert_test_report(&pool, agent.id, repo.id).await;
 
     let trends = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
-    assert!(!trends.is_empty());
+    assert_ne!(trends.len(), 0);
     assert!(
         trends
             .iter()
@@ -6343,7 +6343,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
     let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
         .unwrap();
-    assert!(reports.is_empty());
+    assert_eq!(reports.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6772,7 +6772,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
     let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
         .unwrap();
-    assert!(reports.is_empty());
+    assert_eq!(reports.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6979,7 +6979,7 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
     );
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
-    assert!(events.is_empty());
+    assert_eq!(events.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -7317,7 +7317,7 @@ async fn dismiss_finding_roundtrip(pool: PgPool) {
     let ids = db::dashboard::dismissed_finding_ids(&pool, user.id)
         .await
         .unwrap();
-    assert!(ids.is_empty());
+    assert_eq!(ids.len(), 0);
 
     db::dashboard::dismiss_finding(&pool, user.id, "target:1:2:BackupFailed")
         .await
@@ -7399,7 +7399,7 @@ async fn dismissed_findings_are_per_user(pool: PgPool) {
         .unwrap();
 
     assert_eq!(a_ids.len(), 1);
-    assert!(b_ids.is_empty());
+    assert_eq!(b_ids.len(), 0);
 }
 
 /// `update_repo_and_set_relocation_pending` atomically updates the repo path AND sets

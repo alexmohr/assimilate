@@ -163,7 +163,7 @@ These values are compiled into the server and are not runtime-configurable witho
 | Account lockout threshold | `10 consecutive failed attempts since last successful login` | Number of failed attempts (across all IPs) before the account is temporarily locked. Returns 401 (same as invalid credentials) to prevent enumeration. |
 | Lockout duration (exponential backoff) | `1 min → 5 min → 15 min → 1 hr → 24 hr` | Escalating lockout durations based on consecutive lockout cycles. Resets on successful login. |
 | Login attempt record retention | `90 days` | Failed/successful login attempt records (used for the rate limit and lockout checks above) older than this are pruned by the scheduler's retention cleanup. |
-| API rate limit (per-user) | `60 requests per 60 seconds` | Sliding-window rate limit applied to all authenticated API routes. Returns 429 when exceeded. |
+| API rate limit (per-user) | `60 requests per 60 seconds` | Sliding-window rate limit applied to mutating (POST/PUT/PATCH/DELETE) requests on authenticated routes; reads (GET/HEAD/OPTIONS) are not throttled. Returns 429 when exceeded. |
 | Session cookie | `HttpOnly; SameSite=Lax; Path=/; Max-Age=86400` | Session cookie attributes. Sessions expire after 24 hours (7 days with remember-me). |
 | Password minimum length | `8 characters` | Minimum length enforced when setting or changing a password. |
 | Token hashing | SHA-256 | API tokens are stored as SHA-256 hashes; the plaintext is never persisted. |

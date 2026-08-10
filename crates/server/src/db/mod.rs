@@ -4749,27 +4749,6 @@ pub async fn count_failed_totp_attempts(
     Ok(row.count.unwrap_or(0))
 }
 
-/// Set the lockout time for an account.
-///
-/// # Errors
-///
-/// Returns [`ApiError::Database`] if the query fails.
-pub async fn set_account_lockout(
-    pool: &PgPool,
-    username: &str,
-    locked_until: DateTime<Utc>,
-) -> Result<(), ApiError> {
-    sqlx::query!(
-        "UPDATE users SET locked_until = $1 WHERE username = $2",
-        locked_until,
-        username,
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
-}
-
 /// Clear the lockout for an account and reset its lockout-escalation
 /// counter. Called after a successful login so a future lockout starts
 /// back at the shortest tier.

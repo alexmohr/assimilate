@@ -2834,9 +2834,14 @@ async fn account_lockout(pool: PgPool) {
     let lock_time = Utc::now()
         .checked_add_signed(Duration::minutes(30))
         .unwrap();
-    db::set_account_lockout(&pool, "lockuser", lock_time)
-        .await
-        .unwrap();
+    sqlx::query!(
+        "UPDATE users SET locked_until = $1 WHERE username = $2",
+        lock_time,
+        "lockuser",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Verify user is locked
     let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();

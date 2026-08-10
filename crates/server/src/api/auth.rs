@@ -709,7 +709,10 @@ mod tests {
     use super::helpers;
 
     #[tokio::test]
-    async fn verify_password_runs_in_constant_time_with_dummy_hash() {
+    async fn verify_password_never_matches_the_dummy_hash() {
+        // Doesn't measure timing; just confirms the dummy hash used to keep
+        // the nonexistent-user login path running bcrypt (for timing
+        // uniformity) never verifies as a match for any password.
         let dummy_hash = "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();
 
         let result = helpers::verify_password("any-password".to_string(), dummy_hash)

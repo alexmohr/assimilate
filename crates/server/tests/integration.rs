@@ -258,6 +258,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
                 .put(server::api::tunnels::update_tunnel)
                 .delete(server::api::tunnels::delete_tunnel),
         )
+        .route(
+            "/api/system/settings",
+            get(server::api::system::get_settings).put(server::api::system::update_settings),
+        )
 }
 
 #[cfg(test)]
@@ -4335,4 +4339,78 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
         stats.import_error.is_some(),
         "import_error should be set after no-archives-key sync fails"
     );
+}
+
+/// Regression test for the stale-echo bug: `PUT /api/system/settings` used to
+/// build its response from the request body's fields (falling back to
+/// request-derived defaults for omitted optional fields) instead of reading
+/// back what was actually persisted. A partial update that omits an
+/// already-configured field must still report the previously persisted
+/// value, not a default.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_settings_partial_put_reflects_persisted_values_not_request_defaults() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    // First PUT sets every optional field to a non-default value.
+    let full_body = json!({
+        "retention_days": 7,
+        "report_retention_days": 45,
+        "failed_report_retention_days": 200,
+        "system_event_retention_days": 30,
+        "timezone": "UTC",
+        "borg_query_timeout_secs": 120,
+        "session_idle_timeout_minutes": 60,
+    });
+    let req = json_request("PUT", "/api/system/settings", Some(full_body));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("report_retention_days").unwrap(), 45);
+    assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
+    assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
+
+    // Second PUT omits all the optional fields except the required
+    // retention_days. Their values must still reflect what was persisted
+    // above, not request-derived defaults (0/365/90/absent).
+    let partial_body = json!({ "retention_days": 7 });
+    let req = json_request("PUT", "/api/system/settings", Some(partial_body));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("report_retention_days").unwrap(),
+        45,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
+        body.get("failed_report_retention_days").unwrap(),
+        200,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
+        body.get("system_event_retention_days").unwrap(),
+        30,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
+        body.get("session_idle_timeout_minutes").unwrap(),
+        60,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+
+    // GET must agree with what the PUT response reported.
+    let req = get_request("/api/system/settings");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("report_retention_days").unwrap(), 45);
+    assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
+    assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
 }

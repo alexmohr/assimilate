@@ -1733,7 +1733,7 @@ mod tests {
     fn parse_dry_run_empty_input() {
         let (files, total_size) = parse_dry_run_output("");
 
-        assert!(files.is_empty());
+        assert_eq!(files, [] as [DryRunFile; 0]);
         assert_eq!(total_size, 0);
     }
 

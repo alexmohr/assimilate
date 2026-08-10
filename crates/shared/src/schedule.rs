@@ -152,7 +152,7 @@ mod tests {
     fn parse_timezone_empty_detects_system() {
         let tz = parse_timezone("").unwrap();
         let tz_name = tz.name();
-        assert!(!tz_name.is_empty());
+        assert_ne!(tz_name, "");
     }
 
     #[test]

@@ -5362,6 +5362,27 @@ pub async fn get_schedule_timezone(pool: &PgPool) -> Result<chrono_tz::Tz, ApiEr
         .map_err(|e| ApiError::Internal(format!("invalid timezone setting: {e}")))
 }
 
+/// Prunes old login-attempt history by age. `record_failed_login_and_check_lockout`
+/// now also records attempts against nonexistent usernames (needed for the
+/// constant-time dummy-hash login path), so this table grows without bound
+/// otherwise. A 90-day cutoff is far longer than the longest lockout tier
+/// (24h), so this cannot interfere with an in-progress lockout escalation in
+/// practice.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_login_attempts_before(
+    pool: &PgPool,
+    before: DateTime<Utc>,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!("DELETE FROM login_attempts WHERE attempted_at < $1", before)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

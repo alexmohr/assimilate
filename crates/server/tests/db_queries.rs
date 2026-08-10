@@ -6983,6 +6983,30 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn delete_login_attempts_before_deletes_old_keeps_recent(pool: PgPool) {
+    db::insert_login_attempt(&pool, "pruned-user", "10.0.0.1", false)
+        .await
+        .unwrap();
+
+    let past_cutoff = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_login_attempts_before(&pool, past_cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 0, "attempt is newer than the cutoff");
+
+    let future_cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_login_attempts_before(&pool, future_cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1, "attempt must be deleted with future cutoff");
+
+    let count = db::count_failed_attempts_since_last_success(&pool, "pruned-user")
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(
         &pool,

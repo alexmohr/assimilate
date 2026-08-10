@@ -158,9 +158,11 @@ These values are compiled into the server and are not runtime-configurable witho
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| Login rate limit (per-IP) | `5 attempts per 15 minutes` | IP-address-scoped rate limit on login attempts. Returns 429 when exceeded. |
+| Login rate limit (per-username, per-IP) | `5 attempts per 15 minutes` | Scoped to a single (username, IP) pair; rotating usernames from the same IP is not caught by this limiter alone. Returns 429 when exceeded. |
+| Login rate limit (per-IP) | `30 attempts per minute` | IP-address-scoped, independent of username. Applies to `/api/auth/login` and the TOTP login-step endpoints. Returns 429 when exceeded. |
 | Account lockout threshold | `10 consecutive failed attempts since last successful login` | Number of failed attempts (across all IPs) before the account is temporarily locked. Returns 401 (same as invalid credentials) to prevent enumeration. |
 | Lockout duration (exponential backoff) | `1 min → 5 min → 15 min → 1 hr → 24 hr` | Escalating lockout durations based on consecutive lockout cycles. Resets on successful login. |
+| Login attempt record retention | `90 days` | Failed/successful login attempt records (used for the rate limit and lockout checks above) older than this are pruned by the scheduler's retention cleanup. |
 | API rate limit (per-user) | `60 requests per 60 seconds` | Sliding-window rate limit applied to all authenticated API routes. Returns 429 when exceeded. |
 | Session cookie | `HttpOnly; SameSite=Lax; Path=/; Max-Age=86400` | Session cookie attributes. Sessions expire after 24 hours (7 days with remember-me). |
 | Password minimum length | `8 characters` | Minimum length enforced when setting or changing a password. |

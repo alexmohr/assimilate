@@ -434,6 +434,11 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
     }
 }
 
+/// Not user-configurable (unlike the settings-driven cutoffs in
+/// `run_retention_cleanup`): this is background account-security bookkeeping
+/// rather than a report/event retention policy a user would want to tune.
+const LOGIN_ATTEMPT_RETENTION_DAYS: i64 = 90;
+
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {
     let legacy_retention = db::get_setting(pool, "retention_days")
         .await?
@@ -475,6 +480,13 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut events_deleted: u64 = 0;
     let mut reports_deleted: u64 = 0;
     let mut archive_reports_deleted: u64 = 0;
+    let mut login_attempts_deleted: u64 = 0;
+
+    if let Some(cutoff) =
+        Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
+    {
+        login_attempts_deleted = db::delete_login_attempts_before(pool, cutoff).await?;
+    }
 
     if report_days > 0 {
         let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(report_days))
@@ -500,11 +512,16 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
     }
 
-    if events_deleted > 0 || reports_deleted > 0 || archive_reports_deleted > 0 {
+    if events_deleted > 0
+        || reports_deleted > 0
+        || archive_reports_deleted > 0
+        || login_attempts_deleted > 0
+    {
         tracing::info!(
             events_deleted,
             reports_deleted,
             archive_reports_deleted,
+            login_attempts_deleted,
             report_days,
             failed_days,
             event_days,

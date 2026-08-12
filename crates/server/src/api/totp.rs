@@ -416,6 +416,10 @@ pub async fn totp_verify_login(
     }
 
     let user = db::get_user_by_id(&state.pool, temp_session.user_id).await?;
+    let ip = state
+        .client_ip_resolver
+        .resolve(peer.ip(), &headers)
+        .to_string();
 
     let failed_count =
         db::count_failed_totp_attempts(&state.pool, user.id, TOTP_ATTEMPTS_WINDOW_MINUTES).await?;
@@ -439,10 +443,6 @@ pub async fn totp_verify_login(
     };
 
     let Some(step) = verify_totp_code(&state, encrypted, &req.code)? else {
-        let ip = state
-            .client_ip_resolver
-            .resolve(peer.ip(), &headers)
-            .to_string();
         db::insert_totp_attempt(&state.pool, user.id, &ip, false).await?;
         return Err(ApiError::Unauthorized(
             "invalid verification code".to_string(),
@@ -462,6 +462,13 @@ pub async fn totp_verify_login(
     if !db::try_consume_totp_step(&state.pool, user.id, step).await? {
         return Err(ApiError::Unauthorized("TOTP code already used".to_string()));
     }
+
+    // The TOTP step is the actual completion of login for a TOTP-enabled
+    // account -- the password step (login()) deliberately deferred clearing
+    // the account lockout / recording success until here, so a correct
+    // password alone (without the TOTP code) can't reset the password-
+    // lockout escalation tier or be recorded as a successful login.
+    db::record_successful_login(&state.pool, &user.username, &ip).await?;
 
     // Delete the temp session
     db::delete_session(&state.pool, &temp_hashed).await?;
@@ -572,6 +579,11 @@ pub async fn totp_recovery(
         return Err(ApiError::Unauthorized("invalid temp token".to_string()));
     }
 
+    let ip = state
+        .client_ip_resolver
+        .resolve(peer.ip(), &headers)
+        .to_string();
+
     let failed_count =
         db::count_failed_totp_attempts(&state.pool, session.user_id, TOTP_ATTEMPTS_WINDOW_MINUTES)
             .await?;
@@ -587,10 +599,6 @@ pub async fn totp_recovery(
 
     let matched_hash = verify_recovery_code(&req.code, &totp_fields.recovery_codes).await?;
     let Some(matched_hash) = matched_hash else {
-        let ip = state
-            .client_ip_resolver
-            .resolve(peer.ip(), &headers)
-            .to_string();
         db::insert_totp_attempt(&state.pool, session.user_id, &ip, false).await?;
         return Err(ApiError::Unauthorized("invalid recovery code".to_string()));
     };
@@ -602,11 +610,17 @@ pub async fn totp_recovery(
         return Err(ApiError::Unauthorized("invalid recovery code".to_string()));
     }
 
+    // Recovery-code verification completes login the same way the TOTP-code
+    // path does -- reset the password-lockout state and record the success,
+    // matching totp_verify_login (see the reasoning in login()'s TOTP
+    // branch: only a fully-completed login should do either).
+    let user = db::get_user_by_id(&state.pool, session.user_id).await?;
+    db::record_successful_login(&state.pool, &user.username, &ip).await?;
+
     // Delete the temp session
     db::delete_session(&state.pool, &temp_hashed).await?;
 
     // Create the real session using the shared helper
-    let user = db::get_user_by_id(&state.pool, session.user_id).await?;
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
     let response =
         super::auth::create_session_response(&state.pool, user_resp, session.remember_me).await?;

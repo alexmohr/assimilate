@@ -28,6 +28,8 @@ use crate::{
 const MAX_LOGIN_ATTEMPTS: i64 = 5;
 const LOGIN_WINDOW_MINUTES: i32 = 15;
 
+/// Per-account lockout is triggered after this many consecutive failed attempts.
+const MAX_ACCOUNT_FAILURES: i64 = 10;
 /// Minimum time between `last_seen_at` writes for a single session. Sliding
 /// the idle-timeout window on literally every authenticated request would
 /// put a DB write on the hot path of every API call; throttling to once per
@@ -35,6 +37,17 @@ const LOGIN_WINDOW_MINUTES: i32 = 15;
 /// `session_idle_timeout_minutes` still counts) without the write
 /// amplification.
 const LAST_SEEN_UPDATE_THROTTLE_SECONDS: i64 = 60;
+
+/// Used in place of a real password hash when a username doesn't exist, so
+/// that `verify_password` below still runs a real bcrypt comparison and
+/// takes comparable time to the real-user paths -- otherwise a nonexistent
+/// username would short-circuit fast and be distinguishable from a real one
+/// by response timing. Must be a valid bcrypt hash at the *same cost* as
+/// [`helpers::hash_password`] (currently 10); a mismatched cost changes
+/// bcrypt's work factor exponentially and reopens the timing side-channel
+/// this exists to close. Never matches any real password -- generated from
+/// an arbitrary fixed string, not derived from user input.
+const DUMMY_BCRYPT_HASH: &str = "$2b$10$C6uGFZbRgasN.5dBXeaw8eCCM2.6QkeETDzx5hiCGnRyfvdYRKmIO";
 
 /// Authenticated user extracted from a session cookie or bearer token.
 #[derive(Debug, Clone)]
@@ -63,6 +76,13 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // If `auth_tracking_middleware` (rate_limit.rs) already extracted the
+        // authenticated user, reuse it from request extensions -- avoids an
+        // extra DB round trip on every request.
+        if let Some(auth_user) = parts.extensions.get::<AuthUser>() {
+            return Ok(auth_user.clone());
+        }
+
         if let Some(token_user) = try_bearer_auth(parts, state).await? {
             return Ok(token_user);
         }
@@ -215,6 +235,9 @@ pub async fn login(
         .resolve(peer.ip(), &headers)
         .to_string();
 
+    // Per-(username, IP) rate limit check, before touching the user/password
+    // table at all, so a caller already over the limit is fast-rejected
+    // instead of paying for a DB lookup on every throttled request.
     let failed_count =
         db::count_failed_login_attempts(&state.pool, &req.username, &ip, LOGIN_WINDOW_MINUTES)
             .await?;
@@ -224,20 +247,69 @@ pub async fn login(
         ));
     }
 
-    let (user, hash) = db::get_user_password_hash(&state.pool, &req.username)
-        .await
-        .map_err(|e| match e {
-            ApiError::NotFound(_) => ApiError::Unauthorized("invalid credentials".to_string()),
-            other => other,
-        })?;
+    // Look up user. If not found, use a dummy hash so that the bcrypt
+    // verification below runs in constant time regardless of whether the
+    // username exists -- preventing a timing side-channel that could be used
+    // to enumerate valid usernames.
+    let (user, hash) = match db::get_user_password_hash(&state.pool, &req.username).await {
+        Ok(result) => result,
+        Err(ApiError::NotFound(_)) => {
+            let dummy_user = db::UserRow {
+                id: 0,
+                username: req.username.clone(),
+                must_change_password: false,
+                created_at: Utc::now(),
+                last_login_at: None,
+                locked_until: None,
+            };
+            (dummy_user, DUMMY_BCRYPT_HASH.to_string())
+        }
+        Err(other) => return Err(other),
+    };
 
+    // Run the (real or dummy) bcrypt verification unconditionally, before
+    // branching on lockout state, so that the locked/not-found/wrong-password
+    // outcomes are indistinguishable by response timing. Branching on
+    // `locked_until` before this call would let an attacker detect the exact
+    // moment a candidate username gets locked out by watching responses go
+    // fast again, re-opening the username-enumeration side channel.
     let password = req.password.clone();
     let valid = helpers::verify_password(password, hash)
         .await
         .map_err(|_| ApiError::Unauthorized("invalid credentials".to_string()))?;
 
+    if let Some(locked_until) = user.locked_until
+        && locked_until > Utc::now()
+    {
+        // Record the attempt through the same DB path as the wrong-password
+        // branch below (record_failed_login_and_check_lockout already no-ops
+        // its re-lock/escalation logic while the account is still locked) so
+        // this branch does comparable DB work instead of returning
+        // immediately -- otherwise a locked account responds measurably
+        // faster than a wrong-password one, letting an attacker distinguish
+        // "this account is currently locked" from "wrong password" by
+        // timing alone, even though both return the identical 401 body.
+        db::record_failed_login_and_check_lockout(
+            &state.pool,
+            &req.username,
+            &ip,
+            MAX_ACCOUNT_FAILURES,
+        )
+        .await?;
+
+        return Err(ApiError::Unauthorized("invalid credentials".to_string()));
+    }
+
     if !valid {
-        db::insert_login_attempt(&state.pool, &req.username, &ip, false).await?;
+        // Atomic transaction: insert failed attempt, check threshold, set lockout
+        db::record_failed_login_and_check_lockout(
+            &state.pool,
+            &req.username,
+            &ip,
+            MAX_ACCOUNT_FAILURES,
+        )
+        .await?;
+
         return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
 
@@ -248,7 +320,14 @@ pub async fn login(
     let totp_enabled = totp_fields.is_some_and(|f| f.enabled);
 
     if totp_enabled {
-        // Create a short-lived temp token session for TOTP verification
+        // Password check passed, but authentication isn't complete until the
+        // TOTP step below also succeeds -- deliberately *not* clearing the
+        // account lockout or recording a successful login_attempts row
+        // here. Doing so this early would let a correct-password guess
+        // reset the password-lockout escalation tier (and mark the audit
+        // trail as "successful") before the caller has proven they also
+        // hold the TOTP secret. `totp_verify_login` (totp.rs) records the
+        // real success once the TOTP code is verified.
         let temp_token = Uuid::new_v4().to_string();
         let temp_hashed = hash_token(&temp_token);
         let temp_expires = Utc::now()
@@ -275,6 +354,9 @@ pub async fn login(
         });
         return Ok(body.into_response());
     }
+
+    // No TOTP step required, so this is the actual completion of login.
+    db::record_successful_login(&state.pool, &req.username, &ip).await?;
 
     let response = create_session_response(&state.pool, user_resp, req.remember_me).await?;
     Ok(response)
@@ -635,4 +717,39 @@ pub async fn revoke_session(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DUMMY_BCRYPT_HASH, helpers};
+
+    #[test]
+    fn dummy_bcrypt_hash_cost_matches_hash_password() {
+        // hash_password() (helpers.rs) hashes real passwords at cost 10. If
+        // DUMMY_BCRYPT_HASH's cost ever drifts from that, bcrypt's
+        // exponential work factor makes the nonexistent-username login path
+        // measurably slower or faster than the real-user paths, reopening
+        // the timing side-channel this constant exists to close. The cost
+        // is encoded as the second '$'-delimited field of the hash string.
+        let cost = DUMMY_BCRYPT_HASH
+            .split('$')
+            .nth(2)
+            .expect("well-formed bcrypt hash has a cost field");
+        assert_eq!(
+            cost, "10",
+            "dummy hash cost must match hash_password's cost of 10"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_password_never_matches_the_dummy_hash() {
+        // Doesn't measure timing; just confirms the dummy hash used to keep
+        // the nonexistent-user login path running bcrypt (for timing
+        // uniformity) never verifies as a match for any password.
+        let result =
+            helpers::verify_password("any-password".to_string(), DUMMY_BCRYPT_HASH.to_string())
+                .await
+                .unwrap();
+        assert!(!result, "dummy hash must not match any password");
+    }
 }

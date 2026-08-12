@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, username, must_change_password, created_at, last_login_at FROM users ORDER BY id",
+  "query": "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, must_change_password, created_at, last_login_at, locked_until",
   "describe": {
     "columns": [
       {
@@ -27,18 +27,27 @@
         "ordinal": 4,
         "name": "last_login_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "locked_until",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text",
+        "Text"
+      ]
     },
     "nullable": [
       false,
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "55fdb660cc1bdad7a5bc5e56ff533aaadbc5c16729272fca1ef05732753fd305"
+  "hash": "d5ad72d07800005462835c3702730cd9e60aadf1cbf16bb456fd296048d2ed80"
 }

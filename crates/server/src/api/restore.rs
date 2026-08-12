@@ -273,7 +273,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(request.paths.is_empty());
+        assert_eq!(request.paths.len(), 0);
     }
 
     #[test]

@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn empty_input_returns_empty() {
-        assert!(parse_raw_excludes("").is_empty());
+        assert_eq!(parse_raw_excludes("").len(), 0);
     }
 
     #[test]
@@ -488,6 +488,6 @@ mod tests {
     #[test]
     fn parse_raw_file_change_patterns_empty_input() {
         let patterns = parse_raw_file_change_patterns("");
-        assert!(patterns.is_empty());
+        assert_eq!(patterns.len(), 0);
     }
 }

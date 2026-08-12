@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM login_attempts WHERE attempted_at < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c66978313faf4a527d630ae91947fe7f0fcb57d55d4c9be87588c277ca2a5bb2"
+}

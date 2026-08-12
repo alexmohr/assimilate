@@ -130,7 +130,7 @@ mod tests {
 
         drain_frames_to_writer(frames, &mut buf).await;
 
-        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
     }
 
     #[test]

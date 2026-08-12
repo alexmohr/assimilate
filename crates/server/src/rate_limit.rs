@@ -3,13 +3,14 @@
 
 use std::{
     collections::HashMap,
+    hash::Hash,
     net::IpAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use axum::{
-    extract::{ConnectInfo, Request},
+    extract::{ConnectInfo, FromRequestParts, Request},
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
@@ -18,36 +19,34 @@ use tokio::sync::Mutex;
 
 use crate::client_ip::ClientIpResolver;
 
-/// IP-based rate limiter with a sliding window per IP address.
+/// Generic sliding-window rate limiter keyed by `K`.
 #[derive(Clone)]
-pub struct RateLimiter {
-    state: Arc<Mutex<RateLimiterState>>,
+struct SlidingWindowRateLimiter<K> {
+    state: Arc<Mutex<SlidingWindowState<K>>>,
     max_requests: u32,
     window: Duration,
-    resolver: ClientIpResolver,
 }
 
-struct RateLimiterState {
-    requests: HashMap<IpAddr, Vec<Instant>>,
+struct SlidingWindowState<K> {
+    requests: HashMap<K, Vec<Instant>>,
     last_cleanup: Instant,
 }
 
-impl RateLimiter {
-    /// Create a new rate limiter allowing up to `max_requests` per `window` duration per IP.
+impl<K: Hash + Eq + Clone> SlidingWindowRateLimiter<K> {
+    /// Create a new sliding-window rate limiter.
     #[must_use]
-    pub fn new(max_requests: u32, window: Duration, resolver: ClientIpResolver) -> Self {
+    fn new(max_requests: u32, window: Duration) -> Self {
         Self {
-            state: Arc::new(Mutex::new(RateLimiterState {
+            state: Arc::new(Mutex::new(SlidingWindowState {
                 requests: HashMap::new(),
                 last_cleanup: Instant::now(),
             })),
             max_requests,
             window,
-            resolver,
         }
     }
 
-    async fn check(&self, ip: IpAddr) -> bool {
+    async fn check(&self, key: K) -> bool {
         let now = Instant::now();
         let mut state = self.state.lock().await;
 
@@ -60,7 +59,7 @@ impl RateLimiter {
             state.last_cleanup = now;
         }
 
-        let timestamps = state.requests.entry(ip).or_default();
+        let timestamps = state.requests.entry(key).or_default();
         timestamps.retain(|t| now.duration_since(*t) < self.window);
 
         if u32::try_from(timestamps.len()).unwrap_or(u32::MAX) >= self.max_requests {
@@ -72,9 +71,39 @@ impl RateLimiter {
     }
 }
 
-/// Axum middleware that enforces per-IP rate limits.
-pub async fn rate_limit_middleware(
-    axum::extract::State(limiter): axum::extract::State<RateLimiter>,
+/// IP-based rate limiter with a sliding window per IP address.
+#[derive(Clone)]
+pub struct IpRateLimiter {
+    inner: SlidingWindowRateLimiter<IpAddr>,
+}
+
+impl IpRateLimiter {
+    /// Create a new IP rate limiter.
+    #[must_use]
+    pub fn new(max_requests: u32, window: Duration) -> Self {
+        Self {
+            inner: SlidingWindowRateLimiter::new(max_requests, window),
+        }
+    }
+
+    /// Check whether a request from `ip` is allowed.
+    pub(crate) async fn check(&self, ip: IpAddr) -> bool {
+        self.inner.check(ip).await
+    }
+}
+
+/// State for the IP rate limit middleware.
+#[derive(Clone)]
+pub struct IpRateLimitMiddlewareState {
+    /// The IP rate limiter.
+    pub limiter: IpRateLimiter,
+    /// Client IP resolver used to extract the real client IP.
+    pub resolver: ClientIpResolver,
+}
+
+/// Middleware that rate-limits requests per IP address.
+pub async fn ip_rate_limit_middleware(
+    axum::extract::State(state): axum::extract::State<IpRateLimitMiddlewareState>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -83,9 +112,8 @@ pub async fn rate_limit_middleware(
         .get::<ConnectInfo<std::net::SocketAddr>>()
         .map_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |ci| ci.0.ip());
 
-    let ip = limiter.resolver.resolve(peer_ip, req.headers());
-
-    if limiter.check(ip).await {
+    let ip = state.resolver.resolve(peer_ip, req.headers());
+    if state.limiter.check(ip).await {
         next.run(req).await
     } else {
         (
@@ -93,5 +121,132 @@ pub async fn rate_limit_middleware(
             "too many requests, please try again later",
         )
             .into_response()
+    }
+}
+
+/// Per-user sliding-window rate limiter for mutating / expensive endpoints.
+#[derive(Clone)]
+pub struct UserRateLimiter {
+    inner: SlidingWindowRateLimiter<i64>,
+}
+
+impl UserRateLimiter {
+    /// Create a new user rate limiter.
+    #[must_use]
+    pub fn new(max_requests: u32, window: Duration) -> Self {
+        Self {
+            inner: SlidingWindowRateLimiter::new(max_requests, window),
+        }
+    }
+
+    /// Check whether a request from `user_id` is allowed.
+    pub(crate) async fn check(&self, user_id: i64) -> bool {
+        self.inner.check(user_id).await
+    }
+}
+
+/// Wraps the auth extractor to populate request extensions with the
+/// authenticated user so the handler's own extractor can reuse it,
+/// and to apply per-user rate limiting to mutating requests.
+pub async fn auth_tracking_middleware(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    // Extract AuthUser and stash it in request extensions so the handler's
+    // own `AuthUser` extractor can reuse it instead of doing a second DB
+    // round trip.
+    let (mut parts, body) = req.into_parts();
+    let auth_user = crate::api::auth::AuthUser::from_request_parts(&mut parts, &state)
+        .await
+        .ok();
+    if let Some(ref user) = auth_user {
+        parts.extensions.insert(user.clone());
+    }
+    let req = Request::from_parts(parts, body);
+
+    // Only rate-limit mutating requests (POST, PUT, PATCH, DELETE).
+    // Reads (GET, HEAD, OPTIONS) are not throttled so E2E test suites
+    // and UI polling are not blocked.
+    let is_mutating = matches!(
+        req.method(),
+        &axum::http::Method::POST
+            | &axum::http::Method::PUT
+            | &axum::http::Method::PATCH
+            | &axum::http::Method::DELETE
+    );
+
+    if let Some(user) = auth_user
+        && is_mutating
+    {
+        let user_id = user.user_id;
+        if state.user_rate_limiter.check(user_id).await {
+            next.run(req).await
+        } else {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many requests, please try again later",
+            )
+                .into_response()
+        }
+    } else {
+        next.run(req).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn ip_rate_limiter_accepts_first_request() {
+        let limiter = IpRateLimiter::new(5, Duration::from_mins(1));
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        assert!(limiter.check(ip).await);
+    }
+
+    #[tokio::test]
+    async fn ip_rate_limiter_rejects_excess_requests() {
+        let limiter = IpRateLimiter::new(2, Duration::from_mins(1));
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        assert!(limiter.check(ip).await);
+        assert!(limiter.check(ip).await);
+        assert!(!limiter.check(ip).await);
+    }
+
+    #[tokio::test]
+    async fn ip_rate_limiter_allows_different_ips() {
+        let limiter = IpRateLimiter::new(2, Duration::from_mins(1));
+        let ip1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        assert!(limiter.check(ip1).await);
+        assert!(limiter.check(ip1).await);
+        assert!(limiter.check(ip2).await);
+        assert!(!limiter.check(ip1).await);
+    }
+
+    #[tokio::test]
+    async fn user_rate_limiter_accepts_first_request() {
+        let limiter = UserRateLimiter::new(5, Duration::from_mins(1));
+        assert!(limiter.check(42).await);
+    }
+
+    #[tokio::test]
+    async fn user_rate_limiter_rejects_excess_requests() {
+        let limiter = UserRateLimiter::new(2, Duration::from_mins(1));
+        assert!(limiter.check(1).await);
+        assert!(limiter.check(1).await);
+        assert!(!limiter.check(1).await);
+    }
+
+    #[tokio::test]
+    async fn user_rate_limiter_allows_different_users() {
+        let limiter = UserRateLimiter::new(2, Duration::from_mins(1));
+        assert!(limiter.check(10).await);
+        assert!(limiter.check(10).await);
+        assert!(limiter.check(20).await);
+        assert!(!limiter.check(10).await);
     }
 }

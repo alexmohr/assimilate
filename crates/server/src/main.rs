@@ -20,7 +20,10 @@ use server::{
     middleware::csp_headers,
     notifications::NotificationService,
     openapi::ApiDoc,
-    rate_limit::{RateLimiter, rate_limit_middleware},
+    rate_limit::{
+        IpRateLimitMiddlewareState, IpRateLimiter, UserRateLimiter, auth_tracking_middleware,
+        ip_rate_limit_middleware,
+    },
     tunnel::TunnelManager,
     ws,
 };
@@ -116,11 +119,11 @@ async fn main() -> Result<(), StartupError> {
 
     spawn_background_tasks(&state, &tunnel_manager);
 
-    let login_router = build_login_router(&state, client_ip_resolver);
+    let login_router = build_login_router(&state, &client_ip_resolver);
     let registry = state.registry.clone();
     let task_registry = state.task_registry.clone();
     let background_task_tracker = state.background_task_tracker.clone();
-    let app = build_router(login_router)
+    let app = build_router(&state, login_router)
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
@@ -232,6 +235,8 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
+    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_mins(1));
+
     AppState {
         pool,
         encryption_key,
@@ -245,13 +250,14 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         background_task_tracker: server::background_tasks::BackgroundTaskTracker::default(),
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
-        pending_dryruns: server::new_pending_map(),
-        pending_restores: server::new_pending_map(),
-        pending_migrations: server::new_pending_map(),
-        pending_deletes: server::new_pending_map(),
+        pending_dryruns: std::sync::Arc::default(),
+        pending_restores: std::sync::Arc::default(),
+        pending_migrations: std::sync::Arc::default(),
+        pending_deletes: std::sync::Arc::default(),
         shutdown_token,
         client_ip_resolver,
         task_registry,
+        user_rate_limiter,
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
     }
 }
@@ -376,31 +382,31 @@ fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
 /// headroom without meaningfully weakening protection.
 const AUTH_RATE_LIMIT_PER_MINUTE: u32 = 30;
 
-fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) -> Router<AppState> {
-    let login_rate_limiter = RateLimiter::new(
-        AUTH_RATE_LIMIT_PER_MINUTE,
-        Duration::from_mins(1),
-        client_ip_resolver.clone(),
-    );
+fn build_login_router(state: &AppState, client_ip_resolver: &ClientIpResolver) -> Router<AppState> {
+    let login_ip_limiter = IpRateLimiter::new(AUTH_RATE_LIMIT_PER_MINUTE, Duration::from_mins(1));
+    let login_rate_limit_state = IpRateLimitMiddlewareState {
+        limiter: login_ip_limiter,
+        resolver: client_ip_resolver.clone(),
+    };
     let login = Router::new()
         .route("/api/auth/login", post(api::auth::login))
         .layer(axum_middleware::from_fn_with_state(
-            login_rate_limiter,
-            rate_limit_middleware,
+            login_rate_limit_state,
+            ip_rate_limit_middleware,
         ));
 
     // TOTP verify-login and recovery complete a login using only a
     // temp_token, with no username/password - rate limit them too, or an
     // attacker who already has a valid password can brute-force the 6-digit
     // code (or a recovery code) with unlimited attempts. This uses its own
-    // bucket rather than sharing login_rate_limiter's, so a burst of
+    // bucket rather than sharing login_ip_limiter's, so a burst of
     // ordinary password logins from the same IP (e.g. a shared office NAT)
     // can't starve a legitimate user's TOTP step of its own budget.
-    let totp_rate_limiter = RateLimiter::new(
-        AUTH_RATE_LIMIT_PER_MINUTE,
-        Duration::from_mins(1),
-        client_ip_resolver,
-    );
+    let totp_ip_limiter = IpRateLimiter::new(AUTH_RATE_LIMIT_PER_MINUTE, Duration::from_mins(1));
+    let totp_rate_limit_state = IpRateLimitMiddlewareState {
+        limiter: totp_ip_limiter,
+        resolver: client_ip_resolver.clone(),
+    };
     let totp_login = Router::new()
         .route(
             "/api/auth/totp/verify-login",
@@ -408,8 +414,8 @@ fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) ->
         )
         .route("/api/auth/totp/recovery", post(api::totp::totp_recovery))
         .layer(axum_middleware::from_fn_with_state(
-            totp_rate_limiter,
-            rate_limit_middleware,
+            totp_rate_limit_state,
+            ip_rate_limit_middleware,
         ));
 
     login.merge(totp_login).with_state(state.clone())
@@ -417,7 +423,6 @@ fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) ->
 
 fn core_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/health", get(api::health::health))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
         .route("/api/auth/refresh", post(api::auth::refresh_session))
@@ -909,6 +914,7 @@ fn notification_routes() -> Router<AppState> {
 
 fn misc_routes() -> Router<AppState> {
     Router::new()
+        .route("/api/health", get(api::health::health))
         .route(
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
@@ -916,9 +922,15 @@ fn misc_routes() -> Router<AppState> {
         .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
 }
 
-fn build_router(login_router: Router<AppState>) -> Router<AppState> {
-    Router::new()
-        .merge(core_routes())
+fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppState> {
+    // auth_tracking_middleware does a session/user DB lookup for every
+    // request it sees, so it must only wrap routes that actually require
+    // authentication -- login_router (login, TOTP verify/recovery) and
+    // misc_routes() (health check, OpenAPI docs) are intentionally
+    // unauthenticated and merged in outside this layer. Wrapping
+    // login_router in particular would run this lookup before its own
+    // ip_rate_limit_middleware gets a chance to reject the request.
+    let authenticated_routes = core_routes()
         .merge(agent_routes())
         .merge(repo_routes())
         .merge(schedule_and_config_routes())
@@ -928,8 +940,15 @@ fn build_router(login_router: Router<AppState>) -> Router<AppState> {
         .merge(access_control_routes())
         .merge(tunnel_routes())
         .merge(notification_routes())
-        .merge(misc_routes())
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            auth_tracking_middleware,
+        ));
+
+    Router::new()
         .merge(login_router)
+        .merge(authenticated_routes)
+        .merge(misc_routes())
 }
 
 async fn configure_docs_and_static(app: Router) -> Router {

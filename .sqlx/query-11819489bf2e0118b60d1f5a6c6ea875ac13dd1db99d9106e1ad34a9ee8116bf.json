@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE username = $1",
+  "query": "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM users ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -27,20 +27,24 @@
         "ordinal": 4,
         "name": "last_login_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "locked_until",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": [
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "5144531d6e42d4cb0c3b1fa9fa351838aaf25ad14cdc4416d3c824ebace8efc0"
+  "hash": "11819489bf2e0118b60d1f5a6c6ea875ac13dd1db99d9106e1ad34a9ee8116bf"
 }

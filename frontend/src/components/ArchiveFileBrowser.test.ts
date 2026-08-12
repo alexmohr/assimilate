@@ -104,7 +104,7 @@ describe('ArchiveFileBrowser', () => {
 
     expect(wrapper.find('.browser-title').exists()).toBe(true)
     expect(wrapper.text()).toContain('test-archive')
-    expect(wrapper.find('.breadcrumb').exists()).toBe(true)
+    expect(wrapper.find('.archive-breadcrumb').exists()).toBe(true)
     const crumbs = wrapper.findAll('.crumb')
     expect(crumbs.length).toBeGreaterThanOrEqual(1)
     expect(wrapper.text()).toContain('subdir')

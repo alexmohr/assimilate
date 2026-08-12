@@ -134,7 +134,7 @@ onBeforeUnmount(() => {
         <span class="browser-title">Files -- {{ archiveName }}</span>
       </div>
 
-      <div class="breadcrumb">
+      <div class="archive-breadcrumb">
         <button
           v-for="(seg, i) in breadcrumbs"
           :key="seg.path"
@@ -313,7 +313,7 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
-.breadcrumb {
+.archive-breadcrumb {
   display: flex;
   align-items: center;
   flex-wrap: wrap;

@@ -415,54 +415,6 @@ if [ "$STALE_REPORT_COUNT" != "1" ]; then
     exit 1
 fi
 
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
--- web-server-01's server-daily archives match both its own solo daily
--- schedule (line ~265) and the multi-agent sequential schedule (line ~346),
--- since both target the same repo and include this agent. A plain UPDATE ...
--- FROM would pick an unspecified one of the matching schedules per row when
--- more than one qualifies, so the DISTINCT ON below deterministically picks
--- the lowest schedule id (the report's earliest/primary owning schedule) -
--- required for the dashboard's per-schedule average-duration lookups to find
--- a consistent, non-empty history.
-UPDATE backup_reports br
-SET schedule_id = matched.schedule_id
-FROM (
-    SELECT DISTINCT ON (br2.id) br2.id AS report_id, s.id AS schedule_id
-    FROM backup_reports br2
-    JOIN schedules s ON s.repo_id = br2.repo_id
-    JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
-    WHERE br2.schedule_id IS NULL
-      AND s.enabled = true
-      AND s.name <> 'Offline agent due soon'
-    ORDER BY br2.id, s.id
-) matched
-WHERE br.id = matched.report_id;
-SQL
-
-# TEMP broad diagnostic (not a hard gate yet): the previous narrow check came
-# back completely empty rather than reporting a wrong-but-present schedule_id,
-# which means the join itself isn't matching, not just the backfill picking
-# the wrong schedule. Dump every angle needed to tell which join leg is at
-# fault before tightening this back into a real assertion.
-echo "DIAG: repos with imported archives (name:count):"
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-    "SELECT r.name || ':' || COUNT(*) FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
-     WHERE br.archive_name IS NOT NULL GROUP BY r.name ORDER BY r.name"
-echo "DIAG: agents owning server-daily's imported archives (hostname:count):"
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-    "SELECT a.hostname || ':' || COUNT(*) FROM backup_reports br JOIN agents a ON a.id = br.agent_id \
-     JOIN repos r ON r.id = br.repo_id WHERE r.name = 'server-daily' AND br.archive_name IS NOT NULL \
-     GROUP BY a.hostname ORDER BY a.hostname"
-echo "DIAG: all agent hostnames in the agents table:"
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT hostname FROM agents ORDER BY hostname"
-echo "DIAG: schedules targeting server-daily (schedule id:agent_id list):"
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-    "SELECT s.id || ':' || COALESCE(string_agg(st.agent_id::text, ','), 'none') FROM schedules s \
-     JOIN repos r ON r.id = s.repo_id LEFT JOIN schedule_targets st ON st.schedule_id = s.id \
-     WHERE r.name = 'server-daily' GROUP BY s.id ORDER BY s.id"
-echo "DIAG: exiting early to keep this a fast seed-step diagnostic run" >&2
-exit 1
-
 echo "==> Adding global excludes..."
 # /api/excludes stores a single raw_text blob (one pattern per line) - it is not
 # a per-pattern collection endpoint.
@@ -661,5 +613,55 @@ echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
 }
 IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
+
+echo "==> Backfilling schedule_id on imported archives..."
+# Run this as the very last data-mutating step rather than right after
+# wait_for_imports()/wait_for_enrichment() return: a run diagnosed that the
+# imported archives (backup_reports rows with archive_name set, schedule_id
+# still NULL) genuinely did not exist yet at that point even though those
+# waits had already returned - only the manually-inserted stale-report row
+# was present. By here, every other seed step that touches backup_reports
+# (archive tagging, the warnings UPDATE) has already run against the same
+# data, so the import is guaranteed to have landed.
+#
+# web-server-01's server-daily archives match both its own solo daily
+# schedule (line ~265) and the multi-agent sequential schedule (line ~346),
+# since both target the same repo and include this agent. A plain UPDATE ...
+# FROM would pick an unspecified one of the matching schedules per row when
+# more than one qualifies, so the DISTINCT ON below deterministically picks
+# the lowest schedule id (the report's earliest/primary owning schedule) -
+# required for the dashboard's per-schedule average-duration lookups to find
+# a consistent, non-empty history.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE backup_reports br
+SET schedule_id = matched.schedule_id
+FROM (
+    SELECT DISTINCT ON (br2.id) br2.id AS report_id, s.id AS schedule_id
+    FROM backup_reports br2
+    JOIN schedules s ON s.repo_id = br2.repo_id
+    JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
+    WHERE br2.schedule_id IS NULL
+      AND s.enabled = true
+      AND s.name <> 'Offline agent due soon'
+    ORDER BY br2.id, s.id
+) matched
+WHERE br.id = matched.report_id;
+SQL
+
+# Fail loudly here rather than leaving the dashboard ETA e2e test to fail with
+# a confusing "left" timeout 15+ minutes later. The dashboard's per-schedule
+# average-duration lookup (frontend/e2e/fixtures.ts's
+# mockRunningBackupOperation and dashboard.spec.ts) hardcodes schedule_id=1
+# for web-server-01's server-daily archives, so the backfill above must land
+# on exactly that id for all 14 of them.
+WEB01_SERVER_DAILY_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COALESCE(br.schedule_id::text, 'NULL') || ':' || COUNT(*) FROM backup_reports br \
+     JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' AND br.archive_name IS NOT NULL \
+     GROUP BY br.schedule_id ORDER BY br.schedule_id")
+if [ "$WEB01_SERVER_DAILY_SCHEDULE_IDS" != "1:14" ]; then
+    echo "expected all 14 web-server-01/server-daily imported archives to have schedule_id=1, found: $WEB01_SERVER_DAILY_SCHEDULE_IDS" >&2
+    exit 1
+fi
 
 echo "==> Demo data seeded successfully."

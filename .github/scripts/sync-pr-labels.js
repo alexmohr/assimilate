@@ -254,6 +254,21 @@ const SUPPRESSION_LINE_PATTERNS = [/^\+\s*#!?\[allow\(/];
 // not pass/fail); otherwise it's stale, carried over from a prior commit,
 // and the ordinary CI/other-checks pending logic below already handles
 // "still waiting on this check" correctly once it registers.
+// Checks the MOST RECENT run of this name for this sha, not "any" run -
+// re-running CI on an unchanged sha (rather than pushing a new commit) can
+// leave an older, already-completed, since-superseded run of the same name
+// sitting alongside a fresh one still in flight for several seconds to a
+// minute. "any completed run exists" reads the stale one as current and
+// reports its (possibly failing) verdict as settled, even while the fresh
+// rerun that will supersede it hasn't posted yet - PR #383 hit exactly this:
+// a CI rerun after fixing a flaky coverage regression left the original
+// failing "Coverage Diff Check" run queryable here well after the rerun
+// started, long enough for a workflow_run-triggered sync to read it as
+// current and publish "PR Merge Gate" as a hard failure a second before the
+// rerun's own passing verdict landed. Sorting by started_at and checking only
+// the latest run closes that window: a newer run that hasn't completed yet
+// correctly reports false here (falls through to the ordinary pending
+// handling below) instead of resurrecting a superseded verdict.
 async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkName) {
   const runs = await github.paginate(github.rest.checks.listForRef, {
     owner,
@@ -262,7 +277,11 @@ async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkNam
     check_name: checkName,
     per_page: 100,
   });
-  return runs.some((run) => run.status === "completed");
+  if (runs.length === 0) return false;
+  const latest = runs.reduce((newest, run) =>
+    new Date(run.started_at || 0) > new Date(newest.started_at || 0) ? run : newest,
+  );
+  return latest.status === "completed";
 }
 
 async function ensureLabelExists(github, owner, repo, label) {

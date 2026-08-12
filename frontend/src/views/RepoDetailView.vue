@@ -1929,7 +1929,7 @@ async function resetImport(): Promise<void> {
             <div class="card-meta">
               <span class="host-count">
                 {{ s.target_hostnames.length }}
-                host{{ s.target_hostnames.length === 1 ? '' : 's' }}
+                agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
               </span>
               <span
                 class="type-badge"

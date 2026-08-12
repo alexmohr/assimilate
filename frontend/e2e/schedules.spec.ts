@@ -206,6 +206,7 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     const targetsRow = page.locator('.info-row-targets')
+    await expect(targetsRow).toBeVisible({ timeout: 15_000 })
     await expect(targetsRow.getByText('Overdue')).toBeVisible({ timeout: 10_000 })
     const retryButton = targetsRow.getByRole('button', { name: 'Retry' })
     await expect(retryButton).toBeVisible()

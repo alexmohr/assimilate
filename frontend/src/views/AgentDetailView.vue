@@ -609,7 +609,14 @@ async function loadTabData(): Promise<void> {
 watch(
   [reports, pinnedStatus],
   ([, status]) => {
-    if (!status) return
+    if (!status) {
+      if (pinnedReportId.value !== null && expandedReportId.value === pinnedReportId.value) {
+        expandedReportId.value = null
+      }
+      pinnedForStatus.value = undefined
+      pinnedReportId.value = null
+      return
+    }
     if (pinnedForStatus.value === status && pinnedReportId.value !== null) return
     const match = [...reports.value]
       .filter((r) => normalizeBackupStatus(r.status) === status)

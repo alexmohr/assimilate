@@ -439,6 +439,25 @@ FROM (
 WHERE br.id = matched.report_id;
 SQL
 
+# Fail loudly here rather than leaving the dashboard ETA e2e test to fail with
+# a confusing "left" timeout 15+ minutes later - this makes a backfill that
+# silently landed on the wrong schedule_id (or stayed NULL) diagnosable from
+# the seed step itself. The dashboard's per-schedule average-duration lookup
+# (frontend/e2e/fixtures.ts's mockRunningBackupOperation and dashboard.spec.ts)
+# hardcodes schedule_id=1 for web-server-01's server-daily archives, so the
+# backfill above must land on exactly that id, not merely on some single
+# consistent id.
+WEB01_SERVER_DAILY_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COALESCE(br.schedule_id::text, 'NULL') || ':' || COUNT(*) FROM backup_reports br \
+     JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' AND br.archive_name IS NOT NULL \
+     GROUP BY br.schedule_id ORDER BY br.schedule_id")
+echo "web-server-01/server-daily imported archives by schedule_id (id:count): $WEB01_SERVER_DAILY_SCHEDULE_IDS"
+if [ "$WEB01_SERVER_DAILY_SCHEDULE_IDS" != "1:14" ]; then
+    echo "expected all 14 web-server-01/server-daily imported archives to have schedule_id=1, found: $WEB01_SERVER_DAILY_SCHEDULE_IDS" >&2
+    exit 1
+fi
+
 echo "==> Adding global excludes..."
 # /api/excludes stores a single raw_text blob (one pattern per line) - it is not
 # a per-pattern collection endpoint.

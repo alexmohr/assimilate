@@ -313,10 +313,6 @@ pub async fn login(
         return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
 
-    // Login succeeded - clear any account lockout
-    db::clear_account_lockout(&state.pool, &req.username).await?;
-    db::insert_login_attempt(&state.pool, &req.username, &ip, true).await?;
-
     let user_resp = users::user_row_to_response(&state.pool, user).await?;
 
     // Check if TOTP is enabled for this user
@@ -324,7 +320,14 @@ pub async fn login(
     let totp_enabled = totp_fields.is_some_and(|f| f.enabled);
 
     if totp_enabled {
-        // Create a short-lived temp token session for TOTP verification
+        // Password check passed, but authentication isn't complete until the
+        // TOTP step below also succeeds -- deliberately *not* clearing the
+        // account lockout or recording a successful login_attempts row
+        // here. Doing so this early would let a correct-password guess
+        // reset the password-lockout escalation tier (and mark the audit
+        // trail as "successful") before the caller has proven they also
+        // hold the TOTP secret. `totp_verify_login` (totp.rs) records the
+        // real success once the TOTP code is verified.
         let temp_token = Uuid::new_v4().to_string();
         let temp_hashed = hash_token(&temp_token);
         let temp_expires = Utc::now()
@@ -351,6 +354,9 @@ pub async fn login(
         });
         return Ok(body.into_response());
     }
+
+    // No TOTP step required, so this is the actual completion of login.
+    db::record_successful_login(&state.pool, &req.username, &ip).await?;
 
     let response = create_session_response(&state.pool, user_resp, req.remember_me).await?;
     Ok(response)

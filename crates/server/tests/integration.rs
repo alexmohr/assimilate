@@ -2059,6 +2059,149 @@ async fn test_session_idle_timeout_resets_on_activity(pool: sqlx::PgPool) {
     );
 }
 
+/// Regression test: for a TOTP-enabled account, entering the correct
+/// password alone must NOT clear the account's password-lockout escalation
+/// state or record a successful `login_attempts` row -- login isn't
+/// actually complete until the TOTP step also succeeds. Only
+/// `totp_verify_login` should record the real success.
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_login_defers_lockout_clear_until_totp_step_succeeds(pool: sqlx::PgPool) {
+    use std::net::SocketAddr;
+
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let username = "totp-defer-lockout-user";
+    let password = "correct-horse-battery-staple";
+    let password_hash = server::api::helpers::hash_password(password.to_string())
+        .await
+        .unwrap();
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(username)
+    .bind(&password_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x55u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    // Simulate an account that has previously been through a lockout cycle
+    // (escalation level 2) but whose lockout has since expired -- a
+    // realistic pre-condition, since a *currently* locked account would be
+    // rejected by login() before ever reaching the TOTP branch.
+    sqlx::query(
+        "UPDATE users SET lockout_escalation_level = 2, locked_until = NOW() - INTERVAL '1 \
+         minute' WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Step 1: correct password. Should succeed with totp_required, but must
+    // not touch the lockout state or record a success yet.
+    let body = serde_json::json!({ "username": username, "password": password });
+    let mut req = Request::builder()
+        .uri("/api/auth/login")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "password step should succeed"
+    );
+    let json = body_json(resp).await;
+    assert_eq!(json.get("totp_required").unwrap(), true);
+    let temp_token = json
+        .get("temp_token")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let escalation_after_password: i32 =
+        sqlx::query_scalar("SELECT lockout_escalation_level FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        escalation_after_password, 2,
+        "the password step alone must not reset the lockout escalation level"
+    );
+
+    let success_count_after_password: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = $1 AND success = true",
+    )
+    .bind(username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        success_count_after_password, 0,
+        "the password step alone must not record a successful login_attempts row"
+    );
+
+    // Step 2: complete login with the correct TOTP code.
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Raw(secret).to_bytes().unwrap(),
+        None,
+        String::new(),
+    )
+    .unwrap();
+    let code = totp.generate_current().unwrap();
+    let body = serde_json::json!({ "code": code, "temp_token": temp_token });
+    let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "TOTP step should succeed");
+
+    let escalation_after_totp: i32 =
+        sqlx::query_scalar("SELECT lockout_escalation_level FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        escalation_after_totp, 0,
+        "completing the TOTP step must reset the lockout escalation level"
+    );
+
+    let success_count_after_totp: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = $1 AND success = true",
+    )
+    .bind(username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        success_count_after_totp, 1,
+        "completing the TOTP step must record exactly one successful login_attempts row"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_totp_login_rejects_replayed_code_within_window(pool: sqlx::PgPool) {
     use totp_rs::{Algorithm, Secret, TOTP};

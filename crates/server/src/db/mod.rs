@@ -4767,6 +4767,49 @@ pub async fn clear_account_lockout(pool: &PgPool, username: &str) -> Result<(), 
     Ok(())
 }
 
+/// Records a fully-completed successful login: clears any account lockout
+/// and resets the escalation counter, and inserts a `success = true`
+/// `login_attempts` row. Wraps both writes in one transaction (matching
+/// [`record_failed_login_and_check_lockout`]'s treatment of the failure
+/// path) so a mid-write DB error can't wipe the lockout state without also
+/// recording the successful login that justified clearing it.
+///
+/// Callers must only invoke this once authentication has *fully* completed
+/// -- i.e. after any required TOTP step, not merely after the password
+/// check -- since this both resets the password-lockout escalation tier and
+/// records the attempt as successful in the audit trail.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn record_successful_login(
+    pool: &PgPool,
+    username: &str,
+    ip: &str,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    sqlx::query!(
+        "UPDATE users SET locked_until = NULL, lockout_escalation_level = 0 WHERE username = $1",
+        username,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    sqlx::query!(
+        "INSERT INTO login_attempts (username, ip, success) VALUES ($1, $2, true)",
+        username,
+        ip,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(())
+}
+
 /// Count failed login attempts since the last successful login for the given
 /// username. If there has never been a successful login, counts all failures.
 /// Generic over the executor so callers running inside a transaction (e.g.

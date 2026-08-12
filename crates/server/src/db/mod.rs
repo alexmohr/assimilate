@@ -4833,6 +4833,20 @@ pub async fn record_failed_login_and_check_lockout(
     .await
     .map_err(ApiError::Database)?;
 
+    // Lock the user row (a no-op if the username doesn't exist -- the
+    // dummy-hash path) so concurrent failed attempts for the same account
+    // serialize here: without this, two concurrent transactions could each
+    // count the failures committed so far, both land just under
+    // `max_account_failures`, and both skip escalation even though their
+    // combined total already crossed the threshold.
+    sqlx::query!(
+        "SELECT id FROM users WHERE username = $1 FOR UPDATE",
+        username
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
     // Count all failures *since the last successful login* (consecutive failures).
     // This is the key fix: no fixed time window, so escalation can reach any tier
     // regardless of lockout duration.

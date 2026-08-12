@@ -38,6 +38,17 @@ const MAX_ACCOUNT_FAILURES: i64 = 10;
 /// amplification.
 const LAST_SEEN_UPDATE_THROTTLE_SECONDS: i64 = 60;
 
+/// Used in place of a real password hash when a username doesn't exist, so
+/// that `verify_password` below still runs a real bcrypt comparison and
+/// takes comparable time to the real-user paths -- otherwise a nonexistent
+/// username would short-circuit fast and be distinguishable from a real one
+/// by response timing. Must be a valid bcrypt hash at the *same cost* as
+/// [`helpers::hash_password`] (currently 10); a mismatched cost changes
+/// bcrypt's work factor exponentially and reopens the timing side-channel
+/// this exists to close. Never matches any real password -- generated from
+/// an arbitrary fixed string, not derived from user input.
+const DUMMY_BCRYPT_HASH: &str = "$2b$10$C6uGFZbRgasN.5dBXeaw8eCCM2.6QkeETDzx5hiCGnRyfvdYRKmIO";
+
 /// Authenticated user extracted from a session cookie or bearer token.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
@@ -243,10 +254,6 @@ pub async fn login(
     let (user, hash) = match db::get_user_password_hash(&state.pool, &req.username).await {
         Ok(result) => result,
         Err(ApiError::NotFound(_)) => {
-            // Dummy hash -- must be a valid bcrypt hash to keep bcrypt timing
-            // uniform.  Pre-computed with cost 12 (matching the real hashing).
-            let dummy_hash =
-                "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();
             let dummy_user = db::UserRow {
                 id: 0,
                 username: req.username.clone(),
@@ -255,7 +262,7 @@ pub async fn login(
                 last_login_at: None,
                 locked_until: None,
             };
-            (dummy_user, dummy_hash)
+            (dummy_user, DUMMY_BCRYPT_HASH.to_string())
         }
         Err(other) => return Err(other),
     };
@@ -708,18 +715,35 @@ pub async fn revoke_session(
 
 #[cfg(test)]
 mod tests {
-    use super::helpers;
+    use super::{DUMMY_BCRYPT_HASH, helpers};
+
+    #[test]
+    fn dummy_bcrypt_hash_cost_matches_hash_password() {
+        // hash_password() (helpers.rs) hashes real passwords at cost 10. If
+        // DUMMY_BCRYPT_HASH's cost ever drifts from that, bcrypt's
+        // exponential work factor makes the nonexistent-username login path
+        // measurably slower or faster than the real-user paths, reopening
+        // the timing side-channel this constant exists to close. The cost
+        // is encoded as the second '$'-delimited field of the hash string.
+        let cost = DUMMY_BCRYPT_HASH
+            .split('$')
+            .nth(2)
+            .expect("well-formed bcrypt hash has a cost field");
+        assert_eq!(
+            cost, "10",
+            "dummy hash cost must match hash_password's cost of 10"
+        );
+    }
 
     #[tokio::test]
     async fn verify_password_never_matches_the_dummy_hash() {
         // Doesn't measure timing; just confirms the dummy hash used to keep
         // the nonexistent-user login path running bcrypt (for timing
         // uniformity) never verifies as a match for any password.
-        let dummy_hash = "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();
-
-        let result = helpers::verify_password("any-password".to_string(), dummy_hash)
-            .await
-            .unwrap();
+        let result =
+            helpers::verify_password("any-password".to_string(), DUMMY_BCRYPT_HASH.to_string())
+                .await
+                .unwrap();
         assert!(!result, "dummy hash must not match any password");
     }
 }

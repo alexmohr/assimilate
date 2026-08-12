@@ -3076,6 +3076,54 @@ async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgP
     );
 }
 
+/// Pins the invariant the `WHERE locked_until IS NULL OR locked_until <=
+/// NOW()` guard in `record_failed_login_and_check_lockout` exists to
+/// enforce: continued failed attempts against an *already-locked* account
+/// must not extend `locked_until` or advance `lockout_escalation_level`
+/// further. `login()`'s locked-account branch calls this function on every
+/// attempt for timing-uniformity reasons, so without this guard a
+/// brute-force attempt against a locked account would keep re-locking and
+/// re-escalating it on every single try instead of only once per cycle.
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_does_not_reescalate_while_still_locked(pool: PgPool) {
+    db::insert_user(&pool, "stilllocked", "hash").await.unwrap();
+
+    // 10 failures -> lockout triggered, escalation level 1.
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "stilllocked", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "stilllocked")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("account should be locked");
+    assert_eq!(lockout_escalation_level(&pool, "stilllocked").await, 1);
+
+    // Many more failed attempts while still locked (no expire_lockout call
+    // in between) must not move locked_until or the escalation level at
+    // all -- the guard should make every one of these a no-op.
+    for _ in 0..20 {
+        db::record_failed_login_and_check_lockout(&pool, "stilllocked", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "stilllocked")
+        .await
+        .unwrap();
+    assert_eq!(
+        user.locked_until,
+        Some(locked_until),
+        "locked_until must not change while the account is still locked"
+    );
+    assert_eq!(
+        lockout_escalation_level(&pool, "stilllocked").await,
+        1,
+        "escalation level must not advance while the account is still locked"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
     db::insert_user(&pool, "underthreshold", "hash")

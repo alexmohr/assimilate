@@ -4840,11 +4840,13 @@ pub async fn record_failed_login_and_check_lockout(
 
     if count >= max_account_failures {
         // Advance the per-cycle escalation counter only if the account isn't
-        // already locked. `login` short-circuits on an active lockout before
-        // ever calling this function, so in practice this condition is
-        // always true here -- but guarding it directly makes the escalation
-        // correct regardless of caller, instead of relying on that upstream
-        // invariant.
+        // already locked. `login`'s locked-account branch calls this
+        // function on every attempt (to keep DB work -- and therefore
+        // response timing -- identical to the wrong-password branch), so
+        // this guard is load-bearing: without it, continued brute-forcing
+        // against an already-locked account would keep extending
+        // `locked_until` and advancing the escalation tier further on every
+        // single attempt, rather than only once per lockout cycle.
         let escalated: Option<i32> = sqlx::query_scalar!(
             "UPDATE users SET lockout_escalation_level = lockout_escalation_level + 1 WHERE \
              username = $1 AND (locked_until IS NULL OR locked_until <= NOW()) RETURNING \

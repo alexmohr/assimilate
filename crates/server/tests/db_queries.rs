@@ -2955,6 +2955,49 @@ async fn system_events_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn get_system_events_skips_rows_with_unrecognized_event_type(pool: PgPool) {
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSync,
+        Some("host-1"),
+        "Backup finished",
+    )
+    .await
+    .unwrap();
+
+    // Historical/legacy event_type values predate the SystemEventType enum and
+    // the column carries no CHECK constraint, so a row like this can still
+    // exist in a real database; the query must skip it rather than fail the
+    // whole batch.
+    sqlx::query!(
+        "INSERT INTO system_events (event_type, hostname, message) VALUES ($1, $2, $3)",
+        "agent_connected",
+        Some("host-2"),
+        "legacy event",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSyncFailed,
+        None,
+        "Something failed",
+    )
+    .await
+    .unwrap();
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(
+        events
+            .iter()
+            .all(|e| e.hostname.as_deref() != Some("host-2"))
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn system_settings_crud(pool: PgPool) {
     let val = db::get_setting(&pool, "ssh_public_key").await.unwrap();
     assert!(val.is_none());

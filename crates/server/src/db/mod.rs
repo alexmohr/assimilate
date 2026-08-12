@@ -5088,19 +5088,27 @@ pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEv
     .await
     .map_err(ApiError::Database)?;
 
-    rows.into_iter()
-        .map(|r| {
-            Ok(SystemEventRow {
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| match r.event_type.parse() {
+            Ok(event_type) => Some(SystemEventRow {
                 id: r.id,
                 created_at: r.created_at,
-                event_type: r.event_type.parse().map_err(|e| {
-                    ApiError::Internal(format!("invalid system event type in row {}: {e}", r.id))
-                })?,
+                event_type,
                 hostname: r.hostname,
                 message: r.message,
-            })
+            }),
+            Err(e) => {
+                tracing::warn!(
+                    row_id = r.id,
+                    event_type = %r.event_type,
+                    error = %e,
+                    "skipping system event row with unrecognized event_type"
+                );
+                None
+            }
         })
-        .collect()
+        .collect())
 }
 
 /// # Errors

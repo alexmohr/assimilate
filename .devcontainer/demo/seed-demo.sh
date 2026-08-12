@@ -253,6 +253,18 @@ wait_for_imports
 echo "==> Waiting for background stat enrichment to complete..."
 wait_for_enrichment
 
+# TEMP diagnostic: the schedule_id backfill (further down this script) always
+# affects 0 rows and no "synced existing archives" info log line ever
+# appears for server-daily/database-hourly/media-weekly, which only happens
+# when sync_archives()'s to_import.is_empty() early-return fires (i.e. `borg
+# list` itself returned zero archives to the server, not an error). Dump the
+# repos API response directly to confirm archive_count/import_error/importing
+# per repo instead of guessing further, then exit fast.
+echo "DIAG: /api/repos state after sync+enrichment waits:"
+api GET /api/repos | jq -c '.[] | {name, archive_count, importing, import_error, last_synced_at}'
+echo "DIAG: exiting early to keep this a fast seed-step diagnostic run" >&2
+exit 1
+
 echo "==> Fetching agent IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='web-server-01'")
 DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='db-server-01'")

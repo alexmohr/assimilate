@@ -126,6 +126,10 @@ fn test_app_core_routes() -> Router<server::AppState> {
             "/api/auth/totp/disable",
             post(server::api::totp::totp_disable),
         )
+        .route(
+            "/api/auth/totp/recovery",
+            post(server::api::totp::totp_recovery),
+        )
         .route("/api/auth/sessions", get(server::api::auth::list_sessions))
         .route(
             "/api/auth/sessions/{session_id}",
@@ -2199,6 +2203,121 @@ async fn test_totp_login_defers_lockout_clear_until_totp_step_succeeds(pool: sql
     assert_eq!(
         success_count_after_totp, 1,
         "completing the TOTP step must record exactly one successful login_attempts row"
+    );
+}
+
+/// Same regression as `test_totp_login_defers_lockout_clear_until_totp_step_succeeds`,
+/// but for the recovery-code completion path (`totp_recovery`) instead of
+/// the TOTP-code one (`totp_verify_login`). Both are ways login can
+/// actually finish for a TOTP-enabled account, and both must reset the
+/// password-lockout state on success -- `totp_recovery` was initially
+/// missed when `db::record_successful_login` was introduced.
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_recovery_resets_lockout_state_on_success(pool: sqlx::PgPool) {
+    use std::net::SocketAddr;
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let username = "totp-recovery-lockout-user";
+    let password = "correct-horse-battery-staple";
+    let password_hash = server::api::helpers::hash_password(password.to_string())
+        .await
+        .unwrap();
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(username)
+    .bind(&password_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x66u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    let recovery_code = "abcd-1234-ef56-7890";
+    let normalized_code = recovery_code.replace('-', "").to_lowercase();
+    let recovery_code_hash = tokio::task::spawn_blocking(move || {
+        bcrypt::hash(normalized_code, bcrypt::DEFAULT_COST).unwrap()
+    })
+    .await
+    .unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[recovery_code_hash])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    // Simulate an account that previously went through a lockout cycle
+    // (escalation level 2), currently expired but not yet reset.
+    sqlx::query(
+        "UPDATE users SET lockout_escalation_level = 2, locked_until = NOW() - INTERVAL '1 \
+         minute' WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Password step.
+    let body = serde_json::json!({ "username": username, "password": password });
+    let mut req = Request::builder()
+        .uri("/api/auth/login")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "password step should succeed"
+    );
+    let json = body_json(resp).await;
+    let temp_token = json
+        .get("temp_token")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Recovery-code step.
+    let body = serde_json::json!({ "code": recovery_code, "temp_token": temp_token });
+    let req = json_post_request_with_connect_info("/api/auth/totp/recovery", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "recovery-code step should succeed"
+    );
+
+    let escalation_after_recovery: i32 =
+        sqlx::query_scalar("SELECT lockout_escalation_level FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        escalation_after_recovery, 0,
+        "a successful recovery-code login must reset the lockout escalation level"
+    );
+
+    let success_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = $1 AND success = true",
+    )
+    .bind(username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        success_count, 1,
+        "a successful recovery-code login must record a successful login_attempts row"
     );
 }
 
@@ -4517,10 +4636,12 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
     assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
+    assert_eq!(body.get("timezone").unwrap(), "UTC");
+    assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
 
     // Second PUT omits all the optional fields except the required
     // retention_days. Their values must still reflect what was persisted
-    // above, not request-derived defaults (0/365/90/absent).
+    // above, not request-derived defaults (0/365/90/absent/300/system-tz).
     let partial_body = json!({ "retention_days": 7 });
     let req = json_request("PUT", "/api/system/settings", Some(partial_body));
     let resp = oneshot(&mut app, req).await;
@@ -4546,6 +4667,16 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         60,
         "omitted field must echo the persisted value, not a request-derived default"
     );
+    assert_eq!(
+        body.get("timezone").unwrap(),
+        "UTC",
+        "omitted timezone must not be silently reset to the system default"
+    );
+    assert_eq!(
+        body.get("borg_query_timeout_secs").unwrap(),
+        120,
+        "omitted borg_query_timeout_secs must not be silently reset to 300"
+    );
 
     // GET must agree with what the PUT response reported.
     let req = get_request("/api/system/settings");
@@ -4556,4 +4687,6 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
     assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
+    assert_eq!(body.get("timezone").unwrap(), "UTC");
+    assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
 }

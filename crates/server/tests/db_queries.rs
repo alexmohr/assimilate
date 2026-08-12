@@ -2895,10 +2895,21 @@ async fn record_failed_login_triggers_lockout(pool: PgPool) {
 /// successful login, so the next cycle's failures can retrigger it. Pushes
 /// `locked_until` into the past directly rather than through
 /// `clear_account_lockout`, which would also reset the escalation counter.
+///
+/// Sets `locked_until` to `NOW()` (the moment this call runs), not an
+/// arbitrary fixed offset: `count_failed_attempts_in_current_cycle` uses
+/// `locked_until` as the cutoff for "which attempts belong to the next
+/// cycle", so it must land strictly *after* every attempt made in the test
+/// so far (so they're excluded from the next cycle's fresh count) but still
+/// *before* the next real check of `locked_until > NOW()` (so the account
+/// reads as expired). `NOW()` at call time satisfies both: it comes after
+/// every already-committed attempt (each attempt's own `NOW()` is earlier,
+/// since those transactions already completed), and real time will have
+/// moved forward again by the time anything next checks it.
 #[cfg(test)]
 async fn expire_lockout(pool: &PgPool, username: &str) {
     sqlx::query!(
-        "UPDATE users SET locked_until = NOW() - INTERVAL '1 minute' WHERE username = $1",
+        "UPDATE users SET locked_until = NOW() WHERE username = $1",
         username,
     )
     .execute(pool)
@@ -3035,9 +3046,14 @@ async fn lockout_escalation_resets_after_successful_login(pool: PgPool) {
 async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgPool) {
     // Simulate the attack scenario: attacker accumulates failures across
     // multiple lockout periods, without ever logging in successfully. The
-    // lockout-escalation counter must persist across cycles in that case --
-    // unlike a successful login (which resets it via clear_account_lockout),
-    // a lockout that merely expires with time should not reset the counter.
+    // *escalation tier* (`lockout_escalation_level`) must persist and keep
+    // climbing across cycles in that case -- unlike a successful login
+    // (which resets it via clear_account_lockout), a lockout that merely
+    // expires with time should not reset it. Reaching each tier still
+    // requires a genuinely fresh `max_account_failures` batch in the new
+    // cycle, though -- that per-cycle count is a separate thing from the
+    // persistent tier, and does reset at each cycle boundary (see
+    // count_failed_attempts_in_current_cycle).
     db::insert_user(&pool, "slidingwindow", "hash")
         .await
         .unwrap();
@@ -3057,7 +3073,7 @@ async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgP
     // successful login.
     expire_lockout(&pool, "slidingwindow").await;
 
-    // Phase 2: 10 more failures -> level 1 (5 min lockout)
+    // Phase 2: a fresh 10 failures -> level 1 (5 min lockout)
     for _ in 0..10 {
         db::record_failed_login_and_check_lockout(&pool, "slidingwindow", "10.0.0.1", 10)
             .await
@@ -3121,6 +3137,75 @@ async fn record_failed_login_does_not_reescalate_while_still_locked(pool: PgPool
         lockout_escalation_level(&pool, "stilllocked").await,
         1,
         "escalation level must not advance while the account is still locked"
+    );
+}
+
+/// Regression test for the escalation-gate `DoS` bug: after a lockout expires,
+/// a *single* stray failed attempt must not immediately re-trigger
+/// escalation -- a genuinely fresh `max_account_failures` batch is required
+/// each cycle. Before `count_failed_attempts_in_current_cycle` existed, the
+/// gate counted *all* failures since the last successful login (unbounded),
+/// including ones recorded against the account while it was already locked
+/// (`login()`'s locked branch records those too, for timing uniformity).
+/// That meant the count was already >= threshold forever after the first
+/// lockout, so the very next failed attempt post-expiry -- not a fresh
+/// batch -- re-escalated the tier every time: a cheap, persistent `DoS`
+/// against any known username (roughly one request per cycle to keep an
+/// account locked at the maximum 24h tier), and a way for a locked-out
+/// legitimate user to ratchet their own account up just by retrying.
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_requires_a_fresh_batch_to_reescalate_after_expiry(pool: PgPool) {
+    db::insert_user(&pool, "freshbatch", "hash").await.unwrap();
+
+    // Cycle 1: 10 failures -> lockout triggered, escalation level 1.
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    assert_eq!(lockout_escalation_level(&pool, "freshbatch").await, 1);
+
+    // A few more attempts while still locked (as login()'s locked branch
+    // would generate) -- these must not count toward the next cycle either.
+    for _ in 0..3 {
+        db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    expire_lockout(&pool, "freshbatch").await;
+
+    // A single failed attempt after expiry must NOT re-escalate -- only a
+    // fresh batch of max_account_failures should.
+    db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        lockout_escalation_level(&pool, "freshbatch").await,
+        1,
+        "a single stray attempt after expiry must not re-trigger escalation"
+    );
+    let user = db::get_user_by_username(&pool, "freshbatch").await.unwrap();
+    assert!(
+        user.locked_until.is_none_or(|lu| lu <= Utc::now()),
+        "the account must not be re-locked by a single post-expiry attempt"
+    );
+
+    // 9 more (10 total in this fresh cycle) -> now it re-escalates.
+    for _ in 0..9 {
+        db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        lockout_escalation_level(&pool, "freshbatch").await,
+        2,
+        "a genuinely fresh batch of max_account_failures must re-escalate"
+    );
+    let user = db::get_user_by_username(&pool, "freshbatch").await.unwrap();
+    assert!(
+        user.locked_until.is_some_and(|lu| lu > Utc::now()),
+        "the account must be locked again after a fresh full batch"
     );
 }
 

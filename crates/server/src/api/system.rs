@@ -317,15 +317,17 @@ pub async fn update_settings(
         }
     }
 
-    let timezone = body.timezone.unwrap_or_default();
-    if !timezone.is_empty() {
+    if let Some(ref timezone) = body.timezone
+        && !timezone.is_empty()
+    {
         timezone
             .parse::<chrono_tz::Tz>()
             .map_err(|_| ApiError::BadRequest(format!("invalid timezone: {timezone}")))?;
     }
 
-    let borg_query_timeout_secs = body.borg_query_timeout_secs.unwrap_or(300);
-    if borg_query_timeout_secs == 0 {
+    if let Some(borg_query_timeout_secs) = body.borg_query_timeout_secs
+        && borg_query_timeout_secs == 0
+    {
         return Err(ApiError::BadRequest(
             "borg_query_timeout_secs must be greater than zero".to_string(),
         ));
@@ -348,14 +350,23 @@ pub async fn update_settings(
         db::set_setting(&state.pool, "system_event_retention_days", &v.to_string()).await?;
     }
 
-    db::set_setting(&state.pool, "timezone", &timezone).await?;
+    // Unlike the retention fields above, an omitted `timezone`/
+    // `borg_query_timeout_secs` must leave the persisted value untouched
+    // rather than silently resetting it -- these used to be written
+    // unconditionally via `.unwrap_or(default)`, which clobbered the
+    // existing setting on any partial PUT that omitted them.
+    if let Some(timezone) = body.timezone {
+        db::set_setting(&state.pool, "timezone", &timezone).await?;
+    }
 
-    db::set_setting(
-        &state.pool,
-        "borg_query_timeout_secs",
-        &borg_query_timeout_secs.to_string(),
-    )
-    .await?;
+    if let Some(borg_query_timeout_secs) = body.borg_query_timeout_secs {
+        db::set_setting(
+            &state.pool,
+            "borg_query_timeout_secs",
+            &borg_query_timeout_secs.to_string(),
+        )
+        .await?;
+    }
 
     if let Some(v) = body.session_idle_timeout_minutes {
         if v < 1 {

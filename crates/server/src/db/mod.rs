@@ -4756,12 +4756,15 @@ pub async fn count_failed_totp_attempts(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the query fails.
-pub async fn clear_account_lockout(pool: &PgPool, username: &str) -> Result<(), ApiError> {
+pub async fn clear_account_lockout<'e, E>(executor: E, username: &str) -> Result<(), ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     sqlx::query!(
         "UPDATE users SET locked_until = NULL, lockout_escalation_level = 0 WHERE username = $1",
         username,
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?;
     Ok(())
@@ -4789,13 +4792,7 @@ pub async fn record_successful_login(
 ) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
-    sqlx::query!(
-        "UPDATE users SET locked_until = NULL, lockout_escalation_level = 0 WHERE username = $1",
-        username,
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
+    clear_account_lockout(&mut *tx, username).await?;
 
     sqlx::query!(
         "INSERT INTO login_attempts (username, ip, success) VALUES ($1, $2, true)",
@@ -4845,16 +4842,71 @@ where
     Ok(row.count.unwrap_or(0))
 }
 
+/// Counts failed attempts that belong to the *current* lockout cycle --
+/// i.e. failures recorded after the later of the last successful login or
+/// `locked_until` (the account's most recent lock, whether still active or
+/// already expired).
+///
+/// This is deliberately narrower than
+/// [`count_failed_attempts_since_last_success`]: `login()`'s locked-account
+/// branch calls [`record_failed_login_and_check_lockout`] on every attempt
+/// against a locked account (for timing-uniformity reasons), so those
+/// attempts get recorded as failures too. If the escalation gate counted
+/// *all* failures since the last success, that count would never reset on
+/// its own -- once an account first crosses `max_account_failures`, the
+/// count is already inflated past the threshold forever, so the very next
+/// failed attempt after any future lockout expires (not a fresh batch of
+/// `max_account_failures`) would immediately re-trigger escalation. That
+/// both lets an attacker keep an account locked at the maximum tier
+/// indefinitely with roughly one low-frequency attempt per cycle, and lets
+/// a locked-out legitimate user ratchet their own account up through
+/// repeated retries. Excluding everything up to and including
+/// `locked_until` means each lock's window (which is always at least
+/// `LOCKOUT_DURATIONS[0]` long) guarantees every attempt from the prior
+/// cycle -- including ones made while locked -- falls at or before the
+/// cutoff, so a genuinely fresh `max_account_failures` is required to
+/// escalate again after each lock expires.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+async fn count_failed_attempts_in_current_cycle<'e, E>(
+    executor: E,
+    username: &str,
+    locked_until: Option<DateTime<Utc>>,
+) -> Result<i64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > GREATEST(COALESCE((SELECT MAX(attempted_at) FROM login_attempts WHERE \
+         username = $1 AND success = true), '-infinity'::TIMESTAMPTZ), COALESCE($2::TIMESTAMPTZ, \
+         '-infinity'::TIMESTAMPTZ))",
+        username,
+        locked_until,
+    )
+    .fetch_one(executor)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(row.count.unwrap_or(0))
+}
+
 /// Record a failed login attempt and check if the account should be locked.
 ///
 /// Escalates the lockout duration by lockout *cycle*, not by raw failure
 /// count: `users.lockout_escalation_level` only advances when this call
-/// actually establishes a new lockout (the account isn't already locked).
-/// Deriving the tier from the cumulative failure count instead doesn't
-/// work, since an active lockout blocks further attempts from ever
-/// recording a new failure -- in normal usage the count only grows by 1
-/// per cycle, so the tier would advance once every `max_account_failures`
-/// cycles instead of once per cycle.
+/// actually establishes a new lockout (the account isn't already locked),
+/// and the threshold check itself only counts failures from the current
+/// cycle (see [`count_failed_attempts_in_current_cycle`]) so a fresh
+/// `max_account_failures` is required every cycle, not just once ever.
 ///
 /// # Errors
 ///
@@ -4881,19 +4933,24 @@ pub async fn record_failed_login_and_check_lockout(
     // serialize here: without this, two concurrent transactions could each
     // count the failures committed so far, both land just under
     // `max_account_failures`, and both skip escalation even though their
-    // combined total already crossed the threshold.
-    sqlx::query!(
-        "SELECT id FROM users WHERE username = $1 FOR UPDATE",
+    // combined total already crossed the threshold. Also read back
+    // `locked_until` while holding the lock, needed to scope the count
+    // below to the current cycle.
+    let locked_until_before: Option<DateTime<Utc>> = sqlx::query_scalar!(
+        "SELECT locked_until FROM users WHERE username = $1 FOR UPDATE",
         username
     )
     .fetch_optional(&mut *tx)
     .await
-    .map_err(ApiError::Database)?;
+    .map_err(ApiError::Database)?
+    .flatten();
 
-    // Count all failures *since the last successful login* (consecutive failures).
-    // This is the key fix: no fixed time window, so escalation can reach any tier
-    // regardless of lockout duration.
-    let count = count_failed_attempts_since_last_success(&mut *tx, username).await?;
+    // Count failures in the current cycle only -- see
+    // count_failed_attempts_in_current_cycle's doc comment for why this
+    // must exclude attempts made before/during the most recent lock rather
+    // than counting everything since the last successful login.
+    let count =
+        count_failed_attempts_in_current_cycle(&mut *tx, username, locked_until_before).await?;
 
     if count >= max_account_failures {
         // Advance the per-cycle escalation counter only if the account isn't
@@ -4944,15 +5001,20 @@ pub async fn record_failed_login_and_check_lockout(
 
         tx.commit().await.map_err(ApiError::Database)?;
 
-        let _ = insert_system_event(
-            pool,
-            "account_locked",
-            None,
-            &format!(
-                "Account '{username}' locked until {locked_until} after {count} failed attempts"
-            ),
-        )
-        .await;
+        // Spawned rather than awaited: this insert is pure audit logging,
+        // not part of the login response's correctness, and awaiting it
+        // here would make the threshold-crossing attempt measurably slower
+        // than every attempt before it -- a narrow timing signal an
+        // attacker could use to detect exactly which attempt locked the
+        // account, in the same spirit as the timing-uniformity work
+        // elsewhere in this function.
+        let pool = pool.clone();
+        let message = format!(
+            "Account '{username}' locked until {locked_until} after {count} failed attempts"
+        );
+        tokio::spawn(async move {
+            let _ = insert_system_event(&pool, "account_locked", None, &message).await;
+        });
 
         return Ok(());
     }

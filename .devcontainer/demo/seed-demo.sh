@@ -260,8 +260,8 @@ wait_for_enrichment
 # list` itself returned zero archives to the server, not an error). Dump the
 # repos API response directly to confirm archive_count/import_error/importing
 # per repo instead of guessing further, then exit fast.
-echo "DIAG: /api/repos state after sync+enrichment waits:"
-api GET /api/repos | jq -c '.[] | {name, archive_count, importing, import_error, last_synced_at}'
+echo "DIAG: /api/repos/stats state after sync+enrichment waits:"
+api GET /api/repos/stats | jq -c '.[] | {name, archive_count, importing, import_error, last_synced_at}'
 echo "DIAG: exiting early to keep this a fast seed-step diagnostic run" >&2
 exit 1
 

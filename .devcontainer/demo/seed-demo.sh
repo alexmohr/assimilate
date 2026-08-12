@@ -439,24 +439,29 @@ FROM (
 WHERE br.id = matched.report_id;
 SQL
 
-# Fail loudly here rather than leaving the dashboard ETA e2e test to fail with
-# a confusing "left" timeout 15+ minutes later - this makes a backfill that
-# silently landed on the wrong schedule_id (or stayed NULL) diagnosable from
-# the seed step itself. The dashboard's per-schedule average-duration lookup
-# (frontend/e2e/fixtures.ts's mockRunningBackupOperation and dashboard.spec.ts)
-# hardcodes schedule_id=1 for web-server-01's server-daily archives, so the
-# backfill above must land on exactly that id, not merely on some single
-# consistent id.
-WEB01_SERVER_DAILY_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-    "SELECT COALESCE(br.schedule_id::text, 'NULL') || ':' || COUNT(*) FROM backup_reports br \
-     JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
-     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' AND br.archive_name IS NOT NULL \
-     GROUP BY br.schedule_id ORDER BY br.schedule_id")
-echo "web-server-01/server-daily imported archives by schedule_id (id:count): $WEB01_SERVER_DAILY_SCHEDULE_IDS"
-if [ "$WEB01_SERVER_DAILY_SCHEDULE_IDS" != "1:14" ]; then
-    echo "expected all 14 web-server-01/server-daily imported archives to have schedule_id=1, found: $WEB01_SERVER_DAILY_SCHEDULE_IDS" >&2
-    exit 1
-fi
+# TEMP broad diagnostic (not a hard gate yet): the previous narrow check came
+# back completely empty rather than reporting a wrong-but-present schedule_id,
+# which means the join itself isn't matching, not just the backfill picking
+# the wrong schedule. Dump every angle needed to tell which join leg is at
+# fault before tightening this back into a real assertion.
+echo "DIAG: repos with imported archives (name:count):"
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT r.name || ':' || COUNT(*) FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
+     WHERE br.archive_name IS NOT NULL GROUP BY r.name ORDER BY r.name"
+echo "DIAG: agents owning server-daily's imported archives (hostname:count):"
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT a.hostname || ':' || COUNT(*) FROM backup_reports br JOIN agents a ON a.id = br.agent_id \
+     JOIN repos r ON r.id = br.repo_id WHERE r.name = 'server-daily' AND br.archive_name IS NOT NULL \
+     GROUP BY a.hostname ORDER BY a.hostname"
+echo "DIAG: all agent hostnames in the agents table:"
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT hostname FROM agents ORDER BY hostname"
+echo "DIAG: schedules targeting server-daily (schedule id:agent_id list):"
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT s.id || ':' || COALESCE(string_agg(st.agent_id::text, ','), 'none') FROM schedules s \
+     JOIN repos r ON r.id = s.repo_id LEFT JOIN schedule_targets st ON st.schedule_id = s.id \
+     WHERE r.name = 'server-daily' GROUP BY s.id ORDER BY s.id"
+echo "DIAG: exiting early to keep this a fast seed-step diagnostic run" >&2
+exit 1
 
 echo "==> Adding global excludes..."
 # /api/excludes stores a single raw_text blob (one pattern per line) - it is not

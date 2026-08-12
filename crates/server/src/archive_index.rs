@@ -782,6 +782,6 @@ mod tests {
     fn empty_path_skipped() {
         // The archive root "." normalises to "" and must not produce a DB row.
         let path = "";
-        assert!(path.is_empty());
+        assert_eq!(path, "");
     }
 }

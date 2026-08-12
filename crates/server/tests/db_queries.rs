@@ -1097,7 +1097,7 @@ async fn backup_sources_crud(pool: PgPool) {
     let sources = db::list_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(sources.is_empty());
+    assert_eq!(sources, [] as [std::string::String; 0]);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5188,7 +5188,7 @@ async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: 
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_timezone_default(pool: PgPool) {
     let tz = db::get_schedule_timezone(&pool).await.unwrap();
-    assert!(!tz.name().is_empty());
+    assert_ne!(tz.name(), "");
 }
 
 #[sqlx::test(migrations = "./migrations")]

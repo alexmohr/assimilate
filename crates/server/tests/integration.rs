@@ -2159,7 +2159,7 @@ async fn test_import_config_warns_on_missing_repo(pool: sqlx::PgPool) {
     let body = body_json(resp).await;
     assert_eq!(body.get("schedules_created").unwrap(), 0);
     let warnings = body.get("warnings").unwrap().as_array().unwrap();
-    assert!(!warnings.is_empty());
+    assert_ne!(warnings.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]

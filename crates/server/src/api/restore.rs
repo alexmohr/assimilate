@@ -273,7 +273,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(request.paths.is_empty());
+        assert_eq!(request.paths, [] as [std::string::String; 0]);
     }
 
     #[test]

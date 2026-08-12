@@ -9,8 +9,7 @@ use crate::{
     protocol::{RepoOpKind, TunnelStatus},
     types::{
         BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
-        FindingStatus, IndexStatus, OnFailure, QuotaAction, ScheduleType, SearchEntry,
-        SystemEventType, Visibility,
+        FindingStatus, IndexStatus, OnFailure, QuotaAction, ScheduleType, SearchEntry, Visibility,
     },
 };
 
@@ -1492,25 +1491,6 @@ pub struct ActivityEntryResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// Response containing system event.
-pub struct SystemEventResponse {
-    #[ts(type = "number")]
-    /// Unique identifier.
-    pub id: i64,
-    #[ts(type = "string")]
-    /// Type of event that triggers this rule.
-    pub event_type: SystemEventType,
-    #[ts(type = "number | null")]
-    /// Identifier of the associated agent.
-    pub agent_id: Option<i64>,
-    /// Response message.
-    pub message: String,
-    /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
 /// Response containing calendar day.
 pub struct CalendarDayResponse {
     /// Date string.
@@ -2217,14 +2197,6 @@ pub struct RepoPermissionListResponse {
 pub struct ActivityListResponse {
     /// List of items.
     pub items: Vec<ActivityEntryResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// Response containing system event list.
-pub struct SystemEventListResponse {
-    /// List of events for this day.
-    pub events: Vec<SystemEventResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

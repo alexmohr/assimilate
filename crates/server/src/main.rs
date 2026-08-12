@@ -423,7 +423,6 @@ fn build_login_router(state: &AppState, client_ip_resolver: &ClientIpResolver) -
 
 fn core_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/health", get(api::health::health))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
         .route("/api/auth/refresh", post(api::auth::refresh_session))
@@ -915,6 +914,7 @@ fn notification_routes() -> Router<AppState> {
 
 fn misc_routes() -> Router<AppState> {
     Router::new()
+        .route("/api/health", get(api::health::health))
         .route(
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),

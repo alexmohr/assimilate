@@ -224,6 +224,18 @@ pub async fn login(
         .resolve(peer.ip(), &headers)
         .to_string();
 
+    // Per-(username, IP) rate limit check, before touching the user/password
+    // table at all, so a caller already over the limit is fast-rejected
+    // instead of paying for a DB lookup on every throttled request.
+    let failed_count =
+        db::count_failed_login_attempts(&state.pool, &req.username, &ip, LOGIN_WINDOW_MINUTES)
+            .await?;
+    if failed_count >= MAX_LOGIN_ATTEMPTS {
+        return Err(ApiError::TooManyRequests(
+            "Too many failed login attempts. Try again later.".to_string(),
+        ));
+    }
+
     // Look up user. If not found, use a dummy hash so that the bcrypt
     // verification below runs in constant time regardless of whether the
     // username exists -- preventing a timing side-channel that could be used
@@ -247,16 +259,6 @@ pub async fn login(
         }
         Err(other) => return Err(other),
     };
-
-    // Per-IP rate limit check
-    let failed_count =
-        db::count_failed_login_attempts(&state.pool, &req.username, &ip, LOGIN_WINDOW_MINUTES)
-            .await?;
-    if failed_count >= MAX_LOGIN_ATTEMPTS {
-        return Err(ApiError::TooManyRequests(
-            "Too many failed login attempts. Try again later.".to_string(),
-        ));
-    }
 
     // Run the (real or dummy) bcrypt verification unconditionally, before
     // branching on lockout state, so that the locked/not-found/wrong-password

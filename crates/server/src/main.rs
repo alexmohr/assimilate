@@ -923,9 +923,14 @@ fn misc_routes() -> Router<AppState> {
 }
 
 fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppState> {
-    Router::new()
-        .merge(login_router)
-        .merge(core_routes())
+    // auth_tracking_middleware does a session/user DB lookup for every
+    // request it sees, so it must only wrap routes that actually require
+    // authentication -- login_router (login, TOTP verify/recovery) and
+    // misc_routes() (health check, OpenAPI docs) are intentionally
+    // unauthenticated and merged in outside this layer. Wrapping
+    // login_router in particular would run this lookup before its own
+    // ip_rate_limit_middleware gets a chance to reject the request.
+    let authenticated_routes = core_routes()
         .merge(agent_routes())
         .merge(repo_routes())
         .merge(schedule_and_config_routes())
@@ -935,11 +940,15 @@ fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppS
         .merge(access_control_routes())
         .merge(tunnel_routes())
         .merge(notification_routes())
-        .merge(misc_routes())
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             auth_tracking_middleware,
-        ))
+        ));
+
+    Router::new()
+        .merge(login_router)
+        .merge(authenticated_routes)
+        .merge(misc_routes())
 }
 
 async fn configure_docs_and_static(app: Router) -> Router {

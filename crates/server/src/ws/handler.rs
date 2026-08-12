@@ -221,7 +221,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<ServerToAgent>(CHANNEL_BUFFER);
     let ping_tx = outbound_tx.clone();
-    state
+    let replaced_connection = state
         .registry
         .register(
             hostname.clone(),
@@ -232,6 +232,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         .await;
 
     tracing::info!(hostname = %hostname, "agent connected");
+
+    if replaced_connection {
+        abandon_stale_operations_on_reconnect(&state, agent_id, &hostname).await;
+    }
 
     state.ui_broadcast.send(ServerToUi::AgentConnected {
         hostname: hostname.clone(),
@@ -282,6 +286,50 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         hostname: hostname.clone(),
     });
     tracing::info!(hostname = %hostname, "agent disconnected");
+}
+
+/// Called right after [`AgentRegistry::register`] reports that this
+/// connection replaced an already-registered one for the same hostname. The
+/// previous session is gone for good, so any backup it had in flight (on any
+/// repo, not just whatever this new connection does next) is abandoned:
+///
+/// - Marks the stale `backup_reports` rows `failed` (already visible on the
+///   dashboard's Needs Attention panel via the existing `backup_failed`
+///   finding, and in the activity log - no separate alerting needed).
+/// - Publishes a failure to the completion bus for each affected repo, so a
+///   scheduler task still parked in `wait_for_completion` for the old
+///   session wakes up immediately instead of waiting forever. Without this,
+///   `AgentRegistry::is_connected` can't tell the new session apart from the
+///   old one (same hostname key), so the connectivity poll in
+///   `wait_for_completion` never notices anything is wrong - the task keeps
+///   holding its `RepoLock` guard indefinitely, which can wedge the entire
+///   scheduler (`tick()` awaits each due schedule's dispatch in turn) even
+///   for repos this agent has nothing to do with.
+async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, hostname: &str) {
+    match db::fail_started_backups_for_agent_reconnect(&state.pool, agent_id, hostname).await {
+        Ok(repo_ids) => {
+            for repo_id in repo_ids {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id,
+                    "agent reconnected while a backup for this repo was still in flight; \
+                     abandoning it"
+                );
+                state.completion_bus.publish(OperationOutcome {
+                    hostname: hostname.to_owned(),
+                    repo_id,
+                    success: false,
+                });
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to abandon stale in-flight backups on agent reconnect"
+            );
+        }
+    }
 }
 
 async fn send_ws_message(ws_sink: &mut SplitSink<WebSocket, Message>, msg: &ServerToAgent) -> bool {
@@ -1171,10 +1219,19 @@ async fn run_post_backup_sync(
     task_registry: shared::task_registry::TaskRegistry,
 ) {
     let _task_guard = background_task_tracker.begin();
-    if let Err(e) = db::set_repo_importing(&pool, repo_id, true).await {
-        tracing::error!(repo_id, error = %e, "post-backup sync: failed to set importing flag");
-        return;
-    }
+    // Held for the rest of this function so a panic inside sync_new_archives
+    // still clears repo_import_state.importing (via spawned cleanup, since
+    // Drop can't await) instead of leaving it permanently "importing" - see
+    // db::ImportingGuard.
+    let importing_guard = match db::ImportingGuard::acquire(&pool, repo_id, task_registry.clone())
+        .await
+    {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::error!(repo_id, error = %e, "post-backup sync: failed to set importing flag");
+            return;
+        }
+    };
     match sync_new_archives(
         &pool,
         &encryption_key,
@@ -1194,13 +1251,7 @@ async fn run_post_backup_sync(
                     "post-backup sync: failed to update last_synced_at"
                 );
             }
-            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e,
-                    "post-backup sync: failed to clear importing flag"
-                );
-            }
+            importing_guard.clear_now().await;
             if let Err(e) = db::set_repo_import_error(&pool, repo_id, None).await {
                 tracing::error!(
                     repo_id,
@@ -1222,13 +1273,7 @@ async fn run_post_backup_sync(
         }
         Err(e) => {
             tracing::error!(repo_id, error = %e, "post-backup sync failed");
-            if let Err(e2) = db::set_repo_importing(&pool, repo_id, false).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e2,
-                    "post-backup sync: failed to clear importing flag"
-                );
-            }
+            importing_guard.clear_now().await;
             if let Err(e2) = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await
             {
                 tracing::error!(
@@ -1845,9 +1890,17 @@ mod tests {
             pending_restores: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
+            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+                480,
+            )),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),
+
+            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
+                60,
+                std::time::Duration::from_mins(1),
+            ),
         }
     }
 

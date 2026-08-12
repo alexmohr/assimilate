@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND expires_at > NOW()",
+  "query": "SELECT id, user_id, created_at, expires_at, remember_me, last_seen_at, pending_totp FROM sessions WHERE id = $1 AND expires_at > NOW()",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,16 @@
         "ordinal": 4,
         "name": "remember_me",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "pending_totp",
+        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -39,8 +49,10 @@
       false,
       false,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "d8ce2be0cd839a9e1635dc287b2041340f08ab1e5ca5a47d407402213e609e9b"
+  "hash": "723470b0e26f8b8041abb11205aae99596b2268dda90754657b90a9b8a917564"
 }

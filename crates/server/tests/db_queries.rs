@@ -597,7 +597,7 @@ async fn tunnel_crud(pool: PgPool) {
     assert!(!updated.enabled);
 
     let enabled = db::list_enabled_tunnels(&pool).await.unwrap();
-    assert!(enabled.is_empty());
+    assert_eq!(enabled.len(), 0);
 
     db::delete_tunnel(&pool, tunnel.id).await.unwrap();
     let result = db::get_tunnel_by_id(&pool, tunnel.id).await;
@@ -1059,7 +1059,7 @@ async fn schedule_due_and_trigger(pool: PgPool) {
     assert!(fetched.next_run_at.is_some());
 
     let due = db::list_due_schedules(&pool, now).await.unwrap();
-    assert!(due.is_empty());
+    assert_eq!(due.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1097,7 +1097,7 @@ async fn backup_sources_crud(pool: PgPool) {
     let sources = db::list_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert_eq!(sources, [] as [std::string::String; 0]);
+    assert_eq!(sources.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1156,7 +1156,7 @@ async fn backup_sources_per_agent_crud(pool: PgPool) {
     let all_per_agent = db::list_all_per_agent_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(all_per_agent.is_empty());
+    assert_eq!(all_per_agent.len(), 0);
 
     let schedule_level = db::list_backup_sources_for_schedule(&pool, schedule.id)
         .await
@@ -1207,7 +1207,7 @@ async fn excludes_per_agent_crud(pool: PgPool) {
     let all_per_agent = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(all_per_agent.is_empty());
+    assert_eq!(all_per_agent.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1284,7 +1284,7 @@ async fn file_change_patterns_per_agent_crud(pool: PgPool) {
         db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
             .await
             .unwrap();
-    assert!(all_per_agent.is_empty());
+    assert_eq!(all_per_agent.len(), 0);
     assert_eq!(
         db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
             .await
@@ -1725,7 +1725,7 @@ async fn backup_report_list_with_target(pool: PgPool) {
     let reports = db::list_reports_for_agent(&pool, agent.id, Some("nonexistent"), 10)
         .await
         .unwrap();
-    assert!(reports.is_empty());
+    assert_eq!(reports.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1811,7 +1811,7 @@ async fn storage_stats_with_sum(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_stats_empty(pool: PgPool) {
     let stats = db::get_storage_stats(&pool).await.unwrap();
-    assert!(stats.is_empty());
+    assert_eq!(stats.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2488,7 +2488,7 @@ async fn session_crud(pool: PgPool) {
     let user = db::insert_user(&pool, "sessuser", "hash").await.unwrap();
 
     let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
-    db::insert_session(&pool, "sess_abc123", user.id, expires, false)
+    db::insert_session(&pool, "sess_abc123", user.id, expires, false, false)
         .await
         .unwrap();
 
@@ -2496,6 +2496,7 @@ async fn session_crud(pool: PgPool) {
     assert_eq!(session.user_id, user.id);
     assert_eq!(session.id, "sess_abc123");
     assert!(!session.remember_me);
+    assert!(!session.pending_totp);
 
     db::delete_session(&pool, "sess_abc123").await.unwrap();
 
@@ -2508,7 +2509,7 @@ async fn session_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "expuser", "hash").await.unwrap();
 
     let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_expired", user.id, expired, false)
+    db::insert_session(&pool, "sess_expired", user.id, expired, false, false)
         .await
         .unwrap();
 
@@ -2521,7 +2522,7 @@ async fn session_delete_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "cleanuser", "hash").await.unwrap();
 
     let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_old", user.id, expired, false)
+    db::insert_session(&pool, "sess_old", user.id, expired, false, false)
         .await
         .unwrap();
 
@@ -2536,7 +2537,7 @@ async fn session_remember_me(pool: PgPool) {
         .unwrap();
 
     let expires = Utc::now().checked_add_signed(Duration::days(7)).unwrap();
-    db::insert_session(&pool, "sess_remember", user.id, expires, true)
+    db::insert_session(&pool, "sess_remember", user.id, expires, true, false)
         .await
         .unwrap();
 
@@ -2550,7 +2551,7 @@ async fn session_extend(pool: PgPool) {
     let user = db::insert_user(&pool, "extenduser", "hash").await.unwrap();
 
     let original_expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
+    db::insert_session(&pool, "sess_extend", user.id, original_expires, true, false)
         .await
         .unwrap();
 
@@ -2562,6 +2563,230 @@ async fn session_extend(pool: PgPool) {
     let session = db::get_session(&pool, "sess_extend").await.unwrap();
     assert!(session.expires_at > original_expires);
     assert!(session.remember_me);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_revoke_by_id(pool: PgPool) {
+    let user = db::insert_user(&pool, "revokeuser", "hash").await.unwrap();
+    let other = db::insert_user(&pool, "otheruser", "hash2").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_revoke_1", user.id, expires, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "sess_revoke_2", user.id, expires, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "sess_other_user", other.id, expires, false, false)
+        .await
+        .unwrap();
+
+    // Revoke sess_revoke_1 by user - should succeed
+    let deleted = db::delete_session_by_id(&pool, "sess_revoke_1", user.id)
+        .await
+        .unwrap();
+    assert!(deleted);
+
+    // Revoking same session again should return false
+    let deleted = db::delete_session_by_id(&pool, "sess_revoke_1", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted);
+
+    // Other user's session cannot be revoked by user (ownership check)
+    let deleted = db::delete_session_by_id(&pool, "sess_other_user", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted, "cannot revoke another user's session");
+
+    // Other user's session still exists
+    let fetched = db::get_session(&pool, "sess_other_user").await.unwrap();
+    assert_eq!(fetched.user_id, other.id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_last_seen_update(pool: PgPool) {
+    let user = db::insert_user(&pool, "seenuser", "hash").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_seen", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_seen").await.unwrap();
+    let initial_seen = session.last_seen_at;
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    db::update_session_last_seen(&pool, "sess_seen")
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_seen").await.unwrap();
+    assert!(
+        session.last_seen_at > initial_seen,
+        "last_seen_at must be updated"
+    );
+}
+
+/// Verifies the DB primitives that support session idle timeout:
+/// `last_seen_at` is persisted, can be set to an arbitrary past timestamp,
+/// and can be refreshed. The actual timeout enforcement lives in the
+/// `AuthUser` extractor; this test ensures the DB layer exposes the field
+/// correctly so an idle session older than the configured threshold can be
+/// detected and revoked on the next request.
+#[sqlx::test(migrations = "./migrations")]
+async fn session_idle_timeout_tracking(pool: PgPool) {
+    let user = db::insert_user(&pool, "idleuser", "hash").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_idle", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    // Simulate a session that has been idle for longer than the default
+    // 480-minute timeout by backdating last_seen_at.
+    let idle_since = Utc::now()
+        .checked_sub_signed(Duration::minutes(481))
+        .unwrap();
+    sqlx::query!(
+        "UPDATE sessions SET last_seen_at = $1 WHERE id = $2",
+        idle_since,
+        "sess_idle"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The DB layer must still return the session: idle timeout is enforced
+    // in the application layer, not by `get_session`.
+    let session = db::get_session(&pool, "sess_idle").await.unwrap();
+    assert_eq!(session.user_id, user.id);
+    assert!(
+        Utc::now()
+            .signed_duration_since(session.last_seen_at)
+            .num_minutes()
+            >= 480,
+        "session must be idle for at least the default timeout"
+    );
+
+    // list_sessions_for_user should also include the idle session.
+    let listed = db::list_sessions_for_user(&pool, user.id).await.unwrap();
+    assert!(listed.iter().any(|s| s.id == "sess_idle"));
+
+    // Refreshing last_seen_at moves the idle window forward.
+    db::update_session_last_seen(&pool, "sess_idle")
+        .await
+        .unwrap();
+    let session = db::get_session(&pool, "sess_idle").await.unwrap();
+    assert!(
+        Utc::now()
+            .signed_duration_since(session.last_seen_at)
+            .num_minutes()
+            < 1,
+        "last_seen_at must be recent after refresh"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_pending_totp(pool: PgPool) {
+    let user = db::insert_user(&pool, "pendingtotpuser", "hash")
+        .await
+        .unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    // Session with pending_totp = true (temp session during two-step login)
+    db::insert_session(&pool, "sess_pending", user.id, expires, false, true)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_pending").await.unwrap();
+    assert!(session.pending_totp);
+
+    // Regular session with pending_totp = false
+    db::insert_session(&pool, "sess_regular", user.id, expires, false, false)
+        .await
+        .unwrap();
+    let session = db::get_session(&pool, "sess_regular").await.unwrap();
+    assert!(!session.pending_totp);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_crud(pool: PgPool) {
+    let user = db::insert_user(&pool, "totpuser", "hash").await.unwrap();
+
+    // Initially TOTP should not be configured
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none());
+
+    // Set TOTP secret and recovery codes
+    let secret = b"encrypted_secret_bytes";
+    let codes = vec!["bcrypt_code_1".to_string(), "bcrypt_code_2".to_string()];
+    db::set_user_totp_secret(&pool, user.id, secret, &codes)
+        .await
+        .unwrap();
+
+    // Should be present but not enabled
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.secret_encrypted.as_deref(), Some(secret as &[u8]));
+    assert!(!fields.enabled);
+    assert_eq!(fields.recovery_codes.len(), 2);
+    assert!(fields.last_verified_step.is_none());
+
+    // Enable TOTP, recording the step consumed by the enrollment code itself
+    // so it can't be replayed against the login endpoint.
+    db::enable_user_totp(&pool, user.id, 42).await.unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert!(fields.enabled);
+    assert_eq!(
+        fields.last_verified_step,
+        Some(42),
+        "the enrollment code's step must be recorded to prevent its replay"
+    );
+
+    // Record a verified step
+    let consumed = db::try_consume_totp_step(&pool, user.id, 100)
+        .await
+        .unwrap();
+    assert!(consumed);
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.last_verified_step, Some(100));
+
+    // Replace recovery codes (remove one)
+    let remaining = vec!["bcrypt_code_1".to_string()];
+    db::replace_totp_recovery_codes(&pool, user.id, &remaining)
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.recovery_codes.len(), 1);
+    assert_eq!(fields.recovery_codes.first().unwrap(), "bcrypt_code_1");
+
+    // Disable TOTP (clears everything)
+    db::disable_user_totp(&pool, user.id).await.unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_for_nonexistent_user(pool: PgPool) {
+    let fields = db::get_user_totp_fields(&pool, 999_999_999).await.unwrap();
+    assert!(fields.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2585,6 +2810,447 @@ async fn login_attempts(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(count_other_ip, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn account_lockout(pool: PgPool) {
+    // Create a user first
+    db::insert_user(&pool, "lockuser", "hash").await.unwrap();
+
+    // Insert some failed login attempts for the user
+    for _ in 0..3 {
+        db::insert_login_attempt(&pool, "lockuser", "192.168.1.1", false)
+            .await
+            .unwrap();
+    }
+
+    // Verify count across all IPs
+    let count = db::count_failed_attempts_since_last_success(&pool, "lockuser")
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+
+    // Set a lockout
+    let lock_time = Utc::now()
+        .checked_add_signed(Duration::minutes(30))
+        .unwrap();
+    sqlx::query!(
+        "UPDATE users SET locked_until = $1 WHERE username = $2",
+        lock_time,
+        "lockuser",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Verify user is locked
+    let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
+    assert!(user.locked_until.is_some());
+    assert!(user.locked_until.unwrap() > Utc::now());
+
+    // Clear lockout
+    db::clear_account_lockout(&pool, "lockuser").await.unwrap();
+    let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
+    assert!(user.locked_until.is_none());
+
+    // Never gone through record_failed_login_and_check_lockout, so the
+    // escalation counter is still at its default.
+    assert_eq!(lockout_escalation_level(&pool, "lockuser").await, 0);
+
+    // Trigger a real lockout, which advances the counter to 1...
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "lockuser", "192.168.1.1", 10)
+            .await
+            .unwrap();
+    }
+    assert_eq!(lockout_escalation_level(&pool, "lockuser").await, 1);
+
+    // ...and clearing the lockout (a successful login) resets it back to 0.
+    db::clear_account_lockout(&pool, "lockuser").await.unwrap();
+    assert_eq!(lockout_escalation_level(&pool, "lockuser").await, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_triggers_lockout(pool: PgPool) {
+    db::insert_user(&pool, "ratelimituser", "hash")
+        .await
+        .unwrap();
+
+    // Insert 10 failed attempts - this should trigger account lockout
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "ratelimituser", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    // User should be locked
+    let user = db::get_user_by_username(&pool, "ratelimituser")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+    assert!(user.locked_until.unwrap() > Utc::now());
+}
+
+/// Simulates a lockout naturally expiring (time passing) without a
+/// successful login, so the next cycle's failures can retrigger it. Pushes
+/// `locked_until` into the past directly rather than through
+/// `clear_account_lockout`, which would also reset the escalation counter.
+///
+/// Sets `locked_until` to `NOW()` (the moment this call runs), not an
+/// arbitrary fixed offset: `count_failed_attempts_in_current_cycle` uses
+/// `locked_until` as the cutoff for "which attempts belong to the next
+/// cycle", so it must land strictly *after* every attempt made in the test
+/// so far (so they're excluded from the next cycle's fresh count) but still
+/// *before* the next real check of `locked_until > NOW()` (so the account
+/// reads as expired). `NOW()` at call time satisfies both: it comes after
+/// every already-committed attempt (each attempt's own `NOW()` is earlier,
+/// since those transactions already completed), and real time will have
+/// moved forward again by the time anything next checks it.
+#[cfg(test)]
+async fn expire_lockout(pool: &PgPool, username: &str) {
+    sqlx::query!(
+        "UPDATE users SET locked_until = NOW() WHERE username = $1",
+        username,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Reads `users.lockout_escalation_level` directly for test assertions. Not
+/// exposed from `db` since nothing in production code needs to read it back
+/// (`record_failed_login_and_check_lockout` already reads/advances it itself).
+#[cfg(test)]
+async fn lockout_escalation_level(pool: &PgPool, username: &str) -> i32 {
+    sqlx::query_scalar!(
+        "SELECT lockout_escalation_level FROM users WHERE username = $1",
+        username,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_reaches_60min_tier(pool: PgPool) {
+    // The LOCKOUT_DURATIONS are [1, 5, 15, 60, 1440] minutes, and the tier
+    // advances once per lockout *cycle* (a threshold-crossing failure while
+    // not currently locked), not per raw failure count. With
+    // max_account_failures = 5, reaching level 3 (60 min) takes 4 complete
+    // cycles: 1 min -> 5 min -> 15 min -> 60 min.
+    db::insert_user(&pool, "escalation60", "hash")
+        .await
+        .unwrap();
+
+    for cycle in 0..4 {
+        for _ in 0..5 {
+            db::record_failed_login_and_check_lockout(&pool, "escalation60", "10.0.0.1", 5)
+                .await
+                .unwrap();
+        }
+        if cycle < 3 {
+            expire_lockout(&pool, "escalation60").await;
+        }
+    }
+
+    let user = db::get_user_by_username(&pool, "escalation60")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("user should be locked");
+
+    // Lockout duration should be >= 55 minutes (60 min tier, with some slack for test timing)
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 55,
+        "expected ~60 min lockout, got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_reaches_24h_tier(pool: PgPool) {
+    // Reaching level 4 (24h) takes 5 complete lockout cycles.
+    db::insert_user(&pool, "escalation24h", "hash")
+        .await
+        .unwrap();
+
+    for cycle in 0..5 {
+        for _ in 0..5 {
+            db::record_failed_login_and_check_lockout(&pool, "escalation24h", "10.0.0.1", 5)
+                .await
+                .unwrap();
+        }
+        if cycle < 4 {
+            expire_lockout(&pool, "escalation24h").await;
+        }
+    }
+
+    let user = db::get_user_by_username(&pool, "escalation24h")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("user should be locked");
+
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 1430,
+        "expected ~1440 min lockout, got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_resets_after_successful_login(pool: PgPool) {
+    // Verify that the consecutive-failure window resets after a successful login.
+    db::insert_user(&pool, "escalationreset", "hash")
+        .await
+        .unwrap();
+
+    // 10 failures -> level 0 -> locked
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "escalationreset", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+
+    // Simulate a successful login
+    db::clear_account_lockout(&pool, "escalationreset")
+        .await
+        .unwrap();
+    db::insert_login_attempt(&pool, "escalationreset", "10.0.0.1", true)
+        .await
+        .unwrap();
+
+    // Now the count should be 0 (reset by success)
+    let count = db::count_failed_attempts_since_last_success(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // 5 more failures (below threshold of 10)
+    for _ in 0..5 {
+        db::record_failed_login_and_check_lockout(&pool, "escalationreset", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_none(), "should not be locked yet");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgPool) {
+    // Simulate the attack scenario: attacker accumulates failures across
+    // multiple lockout periods, without ever logging in successfully. The
+    // *escalation tier* (`lockout_escalation_level`) must persist and keep
+    // climbing across cycles in that case -- unlike a successful login
+    // (which resets it via clear_account_lockout), a lockout that merely
+    // expires with time should not reset it. Reaching each tier still
+    // requires a genuinely fresh `max_account_failures` batch in the new
+    // cycle, though -- that per-cycle count is a separate thing from the
+    // persistent tier, and does reset at each cycle boundary (see
+    // count_failed_attempts_in_current_cycle).
+    db::insert_user(&pool, "slidingwindow", "hash")
+        .await
+        .unwrap();
+
+    // Phase 1: 10 failures -> lockout triggered
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "slidingwindow", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "slidingwindow")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+
+    // Simulate the lockout naturally expiring (time passing), *not* a
+    // successful login.
+    expire_lockout(&pool, "slidingwindow").await;
+
+    // Phase 2: a fresh 10 failures -> level 1 (5 min lockout)
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "slidingwindow", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "slidingwindow")
+        .await
+        .unwrap();
+    let locked_until = user
+        .locked_until
+        .expect("user should be locked after phase 2");
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 2,
+        "expected level 1 (5 min), got {duration_min} min"
+    );
+}
+
+/// Pins the invariant the `WHERE locked_until IS NULL OR locked_until <=
+/// NOW()` guard in `record_failed_login_and_check_lockout` exists to
+/// enforce: continued failed attempts against an *already-locked* account
+/// must not extend `locked_until` or advance `lockout_escalation_level`
+/// further. `login()`'s locked-account branch calls this function on every
+/// attempt for timing-uniformity reasons, so without this guard a
+/// brute-force attempt against a locked account would keep re-locking and
+/// re-escalating it on every single try instead of only once per cycle.
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_does_not_reescalate_while_still_locked(pool: PgPool) {
+    db::insert_user(&pool, "stilllocked", "hash").await.unwrap();
+
+    // 10 failures -> lockout triggered, escalation level 1.
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "stilllocked", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "stilllocked")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("account should be locked");
+    assert_eq!(lockout_escalation_level(&pool, "stilllocked").await, 1);
+
+    // Many more failed attempts while still locked (no expire_lockout call
+    // in between) must not move locked_until or the escalation level at
+    // all -- the guard should make every one of these a no-op.
+    for _ in 0..20 {
+        db::record_failed_login_and_check_lockout(&pool, "stilllocked", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "stilllocked")
+        .await
+        .unwrap();
+    assert_eq!(
+        user.locked_until,
+        Some(locked_until),
+        "locked_until must not change while the account is still locked"
+    );
+    assert_eq!(
+        lockout_escalation_level(&pool, "stilllocked").await,
+        1,
+        "escalation level must not advance while the account is still locked"
+    );
+}
+
+/// Regression test for the escalation-gate `DoS` bug: after a lockout expires,
+/// a *single* stray failed attempt must not immediately re-trigger
+/// escalation -- a genuinely fresh `max_account_failures` batch is required
+/// each cycle. Before `count_failed_attempts_in_current_cycle` existed, the
+/// gate counted *all* failures since the last successful login (unbounded),
+/// including ones recorded against the account while it was already locked
+/// (`login()`'s locked branch records those too, for timing uniformity).
+/// That meant the count was already >= threshold forever after the first
+/// lockout, so the very next failed attempt post-expiry -- not a fresh
+/// batch -- re-escalated the tier every time: a cheap, persistent `DoS`
+/// against any known username (roughly one request per cycle to keep an
+/// account locked at the maximum 24h tier), and a way for a locked-out
+/// legitimate user to ratchet their own account up just by retrying.
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_requires_a_fresh_batch_to_reescalate_after_expiry(pool: PgPool) {
+    db::insert_user(&pool, "freshbatch", "hash").await.unwrap();
+
+    // Cycle 1: 10 failures -> lockout triggered, escalation level 1.
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    assert_eq!(lockout_escalation_level(&pool, "freshbatch").await, 1);
+
+    // A few more attempts while still locked (as login()'s locked branch
+    // would generate) -- these must not count toward the next cycle either.
+    for _ in 0..3 {
+        db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    expire_lockout(&pool, "freshbatch").await;
+
+    // A single failed attempt after expiry must NOT re-escalate -- only a
+    // fresh batch of max_account_failures should.
+    db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        lockout_escalation_level(&pool, "freshbatch").await,
+        1,
+        "a single stray attempt after expiry must not re-trigger escalation"
+    );
+    let user = db::get_user_by_username(&pool, "freshbatch").await.unwrap();
+    assert!(
+        user.locked_until.is_none_or(|lu| lu <= Utc::now()),
+        "the account must not be re-locked by a single post-expiry attempt"
+    );
+
+    // 9 more (10 total in this fresh cycle) -> now it re-escalates.
+    for _ in 0..9 {
+        db::record_failed_login_and_check_lockout(&pool, "freshbatch", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        lockout_escalation_level(&pool, "freshbatch").await,
+        2,
+        "a genuinely fresh batch of max_account_failures must re-escalate"
+    );
+    let user = db::get_user_by_username(&pool, "freshbatch").await.unwrap();
+    assert!(
+        user.locked_until.is_some_and(|lu| lu > Utc::now()),
+        "the account must be locked again after a fresh full batch"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
+    db::insert_user(&pool, "underthreshold", "hash")
+        .await
+        .unwrap();
+
+    // 5 attempts is below the threshold of 10
+    for _ in 0..5 {
+        db::record_failed_login_and_check_lockout(&pool, "underthreshold", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "underthreshold")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_inserts_exactly_one_attempt(pool: PgPool) {
+    db::insert_user(&pool, "txuser", "hash").await.unwrap();
+
+    let count_before: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    db::record_failed_login_and_check_lockout(&pool, "txuser", "10.0.0.1", 10)
+        .await
+        .unwrap();
+
+    let count_after: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(count_after, count_before.checked_add(1).unwrap());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2617,7 +3283,7 @@ async fn api_token_crud(pool: PgPool) {
 
     db::delete_api_token(&pool, token.id).await.unwrap();
     let tokens = db::list_api_tokens_for_user(&pool, user.id).await.unwrap();
-    assert!(tokens.is_empty());
+    assert_eq!(tokens.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2695,7 +3361,7 @@ async fn system_events_crud(pool: PgPool) {
     assert_eq!(deleted, 2);
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
-    assert!(events.is_empty());
+    assert_eq!(events.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2731,11 +3397,11 @@ async fn tags_crud(pool: PgPool) {
     assert_eq!(tags.len(), 1);
 
     let host_tags = db::list_tags(&pool, "agent").await.unwrap();
-    assert!(host_tags.is_empty());
+    assert_eq!(host_tags.len(), 0);
 
     db::delete_tag(&pool, tag.id).await.unwrap();
     let tags = db::list_tags(&pool, "repo").await.unwrap();
-    assert!(tags.is_empty());
+    assert_eq!(tags.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2774,7 +3440,7 @@ async fn test_tag_remove(pool: PgPool) {
     let tags = db::tags::list_tags_for_archive(&pool, repo.id, "archive-2")
         .await
         .unwrap();
-    assert!(tags.is_empty());
+    assert_eq!(tags.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2882,7 +3548,7 @@ async fn groups_crud(pool: PgPool) {
 
     db::delete_group(&pool, group.id).await.unwrap();
     let groups = db::list_groups(&pool).await.unwrap();
-    assert!(groups.is_empty());
+    assert_eq!(groups.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3492,7 +4158,7 @@ async fn list_schedule_ids_for_ssh_host_and_set_schedule_enabled(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn test_backup_trends_empty(pool: PgPool) {
     let trends = db::get_backup_trends(&pool, None, 30).await.unwrap();
-    assert!(trends.is_empty());
+    assert_eq!(trends.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3527,7 +4193,7 @@ async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
     let trends_other = db::get_backup_trends(&pool, Some(repo.id.saturating_add(999)), 30)
         .await
         .unwrap();
-    assert!(trends_other.is_empty());
+    assert_eq!(trends_other.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3535,7 +4201,7 @@ async fn test_calendar_events_empty(pool: PgPool) {
     let events = db::get_calendar_events(&pool, 2026, 1, None, Tz::UTC)
         .await
         .unwrap();
-    assert!(events.is_empty());
+    assert_eq!(events.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3593,7 +4259,7 @@ async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
     )
     .await
     .unwrap();
-    assert!(events_other.is_empty());
+    assert_eq!(events_other.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3657,7 +4323,7 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
     .unwrap();
 
     assert_eq!(total, 0);
-    assert!(items.is_empty());
+    assert_eq!(items.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3689,7 +4355,7 @@ async fn test_hostname_pattern_crud(pool: PgPool) {
     let patterns = patterns::list_patterns_for_agent(&pool, agent.id)
         .await
         .unwrap();
-    assert!(patterns.is_empty());
+    assert_eq!(patterns.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4943,6 +5609,44 @@ async fn list_importing_repo_ids_test(pool: PgPool) {
     assert!(!cleared.contains(&repo.id));
 }
 
+/// Regression test for `ImportingGuard::clear_now` only disarming `Drop`'s
+/// fallback after the write actually succeeds. Deletes the guarded repo
+/// (cascading away its `repo_import_state` row) right before `clear_now`
+/// runs, so that write hits a foreign-key violation and fails. Asserts via
+/// `TaskRegistry::pending_count` - incremented synchronously by `Drop` the
+/// moment it spawns its retry, before that retry's own future ever runs -
+/// rather than waiting on the retry's outcome, since the retry racing
+/// against any DB state this test could set up afterward would make the
+/// test's own timing nondeterministic. If `clear_now` had already disarmed
+/// `Drop` on the earlier failure (the bug this guards against), `Drop`
+/// would skip spawning a retry entirely and `pending_count` would stay 0.
+#[sqlx::test(migrations = "./migrations")]
+async fn importing_guard_clear_now_leaves_drop_armed_on_write_failure(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let task_registry = shared::task_registry::TaskRegistry::default();
+
+    let guard = db::ImportingGuard::acquire(&pool, repo.id, task_registry.clone())
+        .await
+        .unwrap();
+
+    sqlx::query!("DELETE FROM repos WHERE id = $1", repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    guard.clear_now().await;
+
+    assert_eq!(
+        task_registry.pending_count(),
+        1,
+        "Drop should still spawn its retry after clear_now's own write fails"
+    );
+
+    task_registry
+        .shutdown(std::time::Duration::from_secs(5))
+        .await;
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_import_status_message_test(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
@@ -5143,7 +5847,7 @@ async fn schedule_targets_list_and_delete(pool: PgPool) {
         .unwrap();
 
     let empty = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5222,7 +5926,7 @@ async fn reports_for_schedule_test(pool: PgPool) {
     let empty = db::list_reports_for_schedule(&pool, schedule.id.saturating_add(999), 10)
         .await
         .unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5304,7 +6008,7 @@ async fn activity_feed_repo_filter(pool: PgPool) {
     let all = db::get_activity_feed(&pool, 10, None, None, None, None)
         .await
         .unwrap();
-    assert!(!all.is_empty());
+    assert_ne!(all.len(), 0);
 
     let filtered = db::get_activity_feed(&pool, 10, Some(repo.id), None, None, None)
         .await
@@ -5321,7 +6025,7 @@ async fn activity_feed_repo_filter(pool: PgPool) {
     )
     .await
     .unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5341,7 +6045,7 @@ async fn activity_feed_hostname_filter(pool: PgPool) {
     let empty = db::get_activity_feed(&pool, 10, None, Some("nonexistent-host"), None, None)
         .await
         .unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5356,7 +6060,7 @@ async fn activity_feed_days_test(pool: PgPool) {
     let all = db::get_activity_feed_days(&pool, 7, None, None, None, None)
         .await
         .unwrap();
-    assert!(!all.is_empty());
+    assert_ne!(all.len(), 0);
 
     let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None, None, None)
         .await
@@ -5371,7 +6075,7 @@ async fn activity_feed_days_test(pool: PgPool) {
     let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"), None, None)
         .await
         .unwrap();
-    assert!(no_match.is_empty());
+    assert_eq!(no_match.len(), 0);
 }
 
 #[test]
@@ -5428,7 +6132,7 @@ async fn storage_trends_test(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_trends_by_repo_test(pool: PgPool) {
     let empty = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
 
     let agent = db::insert_agent(&pool, "strend-repo-host", None, "hash", None)
         .await
@@ -5438,7 +6142,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     insert_test_report(&pool, agent.id, repo.id).await;
 
     let trends = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
-    assert!(!trends.is_empty());
+    assert_ne!(trends.len(), 0);
     assert!(
         trends
             .iter()
@@ -5777,7 +6481,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
     let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
         .unwrap();
-    assert!(reports.is_empty());
+    assert_eq!(reports.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6206,7 +6910,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
     let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
         .unwrap();
-    assert!(reports.is_empty());
+    assert_eq!(reports.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6232,31 +6936,12 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
     assert_eq!(events.len(), 1);
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn delete_system_events_before_deletes_old(pool: PgPool) {
-    db::insert_system_event(&pool, "old_event", None, "old event to prune")
-        .await
-        .unwrap();
-
-    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
-    let deleted = db::delete_system_events_before(&pool, cutoff)
-        .await
-        .unwrap();
-    assert_eq!(
-        deleted, 1,
-        "system event must be deleted with future cutoff"
-    );
-
-    let events = db::get_system_events(&pool, 10).await.unwrap();
-    assert!(events.is_empty());
-}
-
 /// Applies the same fallback logic as `get_settings` in `api/system.rs`.
 fn compute_retention_fallbacks(
-    legacy_raw: Option<&str>,
-    report_raw: Option<&str>,
-    failed_raw: Option<&str>,
-    event_raw: Option<&str>,
+    legacy_raw: Option<String>,
+    report_raw: Option<String>,
+    failed_raw: Option<String>,
+    event_raw: Option<String>,
 ) -> (i64, i64, i64, i64) {
     let legacy = legacy_raw.and_then(|v| v.parse::<i64>().ok());
     let retention_days = legacy.unwrap_or(7);
@@ -6294,12 +6979,9 @@ async fn retention_fallback_new_settings_unset_uses_legacy(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 30);
     assert_eq!(
         report, 0,
@@ -6341,12 +7023,9 @@ async fn retention_fallback_new_settings_take_precedence(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 30);
     assert_eq!(report, 180, "explicit report_retention_days must be used");
     assert_eq!(
@@ -6372,12 +7051,9 @@ async fn retention_fallback_nothing_set_uses_defaults(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 7, "default retention_days must be 7");
     assert_eq!(
         report, 0,
@@ -6416,16 +7092,56 @@ async fn retention_fallback_new_settings_without_legacy(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 7, "default retention_days must be 7");
     assert_eq!(report, 100);
     assert_eq!(failed, 200);
     assert_eq!(events, 300);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_system_events_before_deletes_old(pool: PgPool) {
+    db::insert_system_event(&pool, "old_event", None, "old event to prune")
+        .await
+        .unwrap();
+
+    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_system_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "system event must be deleted with future cutoff"
+    );
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert_eq!(events.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_login_attempts_before_deletes_old_keeps_recent(pool: PgPool) {
+    db::insert_login_attempt(&pool, "pruned-user", "10.0.0.1", false)
+        .await
+        .unwrap();
+
+    let past_cutoff = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_login_attempts_before(&pool, past_cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 0, "attempt is newer than the cutoff");
+
+    let future_cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_login_attempts_before(&pool, future_cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1, "attempt must be deleted with future cutoff");
+
+    let count = db::count_failed_attempts_since_last_success(&pool, "pruned-user")
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6739,7 +7455,7 @@ async fn dismiss_finding_roundtrip(pool: PgPool) {
     let ids = db::dashboard::dismissed_finding_ids(&pool, user.id)
         .await
         .unwrap();
-    assert!(ids.is_empty());
+    assert_eq!(ids.len(), 0);
 
     db::dashboard::dismiss_finding(&pool, user.id, "target:1:2:BackupFailed")
         .await
@@ -6821,7 +7537,7 @@ async fn dismissed_findings_are_per_user(pool: PgPool) {
         .unwrap();
 
     assert_eq!(a_ids.len(), 1);
-    assert!(b_ids.is_empty());
+    assert_eq!(b_ids.len(), 0);
 }
 
 /// `update_repo_and_set_relocation_pending` atomically updates the repo path AND sets
@@ -7083,4 +7799,447 @@ async fn repo_tags_use_repo_scope(pool: PgPool) {
 
     let all_repo_tags = db::list_tags(&pool, "repo").await.unwrap();
     assert!(all_repo_tags.iter().any(|t| t.name == "critical"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "reconnect-host", None, "hash", None)
+        .await
+        .unwrap();
+    let other_agent = db::insert_agent(&pool, "other-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo_a = create_test_repo_with_host(&pool, "reconnect-repo-a", "storage-a.local").await;
+    let repo_b = create_test_repo_with_host(&pool, "reconnect-repo-b", "storage-b.local").await;
+
+    db::insert_backup_started(&pool, agent.id, repo_a.id, None, Utc::now(), None, None)
+        .await
+        .unwrap();
+    db::insert_backup_pending(&pool, agent.id, repo_b.id, None, "run-b", Utc::now())
+        .await
+        .unwrap();
+    // A different agent's in-flight backup must be left untouched.
+    db::insert_backup_started(
+        &pool,
+        other_agent.id,
+        repo_a.id,
+        None,
+        Utc::now(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let mut repo_ids =
+        db::fail_started_backups_for_agent_reconnect(&pool, agent.id, "reconnect-host")
+            .await
+            .unwrap();
+    repo_ids.sort_unstable();
+    assert_eq!(repo_ids, vec![repo_a.id, repo_b.id]);
+
+    let reports_a = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert!(reports_a.iter().all(|r| r.status == "failed"
+        && r.error_message.as_deref()
+            == Some("Agent 'reconnect-host' reconnected; previous backup abandoned")));
+
+    let other_reports = db::list_reports_for_agent(&pool, other_agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(other_reports.len(), 1);
+    assert_eq!(other_reports.first().unwrap().status, "started");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_insert_and_get(pool: PgPool) {
+    let user = db::insert_user(&pool, "session-user", "hash")
+        .await
+        .unwrap();
+    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "session-hash-1", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "session-hash-1").await.unwrap();
+    assert_eq!(session.user_id, user.id);
+    assert!(!session.pending_totp);
+    assert!(!session.remember_me);
+    assert_eq!(session.id, "session-hash-1");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_pending_totp_flag_roundtrip(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-pending-user", "hash")
+        .await
+        .unwrap();
+    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "pending-session-1", user.id, expires, false, true)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "pending-session-1").await.unwrap();
+    assert!(session.pending_totp);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_expired_returns_error(pool: PgPool) {
+    let user = db::insert_user(&pool, "expired-session-user", "hash")
+        .await
+        .unwrap();
+    let past = Utc::now().checked_add_signed(Duration::hours(-1)).unwrap();
+
+    db::insert_session(&pool, "expired-session", user.id, past, false, false)
+        .await
+        .unwrap();
+
+    let result = db::get_session(&pool, "expired-session").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_list_for_user_excludes_expired_and_pending_totp(pool: PgPool) {
+    let user = db::insert_user(&pool, "list-session-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let past = Utc::now().checked_add_signed(Duration::hours(-1)).unwrap();
+
+    db::insert_session(&pool, "active-session", user.id, future, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "expired-session", user.id, past, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "pending-session", user.id, future, false, true)
+        .await
+        .unwrap();
+
+    let sessions = db::list_sessions_for_user(&pool, user.id).await.unwrap();
+    let ids: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"active-session"));
+    assert!(!ids.contains(&"expired-session"));
+    assert!(!ids.contains(&"pending-session"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_delete_by_id_with_ownership_check(pool: PgPool) {
+    let user = db::insert_user(&pool, "del-session-user", "hash")
+        .await
+        .unwrap();
+    let other_user = db::insert_user(&pool, "other-del-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "del-session", user.id, future, false, false)
+        .await
+        .unwrap();
+
+    // Other user tries to delete - must fail
+    let deleted = db::delete_session_by_id(&pool, "del-session", other_user.id)
+        .await
+        .unwrap();
+    assert!(!deleted, "other user must not be able to delete session");
+
+    // Owner deletes - must succeed
+    let deleted = db::delete_session_by_id(&pool, "del-session", user.id)
+        .await
+        .unwrap();
+    assert!(deleted, "owner must be able to delete session");
+
+    // Already deleted - must return false
+    let deleted = db::delete_session_by_id(&pool, "del-session", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_update_last_seen(pool: PgPool) {
+    let user = db::insert_user(&pool, "last-seen-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "seen-session", user.id, future, false, false)
+        .await
+        .unwrap();
+
+    // Wait a minimal delta and update
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    db::update_session_last_seen(&pool, "seen-session")
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "seen-session").await.unwrap();
+    assert!(
+        session.last_seen_at > Utc::now().checked_add_signed(Duration::hours(-1)).unwrap(),
+        "last_seen_at must have been updated"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_extend_expiry(pool: PgPool) {
+    let user = db::insert_user(&pool, "extend-user", "hash").await.unwrap();
+    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "extend-session", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    let new_expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::extend_session(&pool, "extend-session", new_expires)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "extend-session").await.unwrap();
+    assert!(
+        session.expires_at > expires,
+        "expires_at must have been extended"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_delete_removes_session(pool: PgPool) {
+    let user = db::insert_user(&pool, "delete-sess-user", "hash")
+        .await
+        .unwrap();
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+
+    db::insert_session(&pool, "delete-me", user.id, future, false, false)
+        .await
+        .unwrap();
+
+    db::delete_session(&pool, "delete-me").await.unwrap();
+
+    let result = db::get_session(&pool, "delete-me").await;
+    assert!(result.is_err(), "deleted session must not be found");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_roundtrip(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-user", "hash").await.unwrap();
+
+    // Initially no TOTP fields
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none(), "no TOTP fields initially");
+
+    let encrypted = b"encrypted_secret_32_bytes_long_here!";
+    let recovery = vec!["code1".to_string(), "code2".to_string()];
+
+    db::set_user_totp_secret(&pool, user.id, encrypted, &recovery)
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.expect("TOTP fields must exist after set");
+    assert_eq!(fields.secret_encrypted.as_deref(), Some(&encrypted[..]));
+    assert!(!fields.enabled, "TOTP must not be enabled yet");
+    assert_eq!(fields.recovery_codes.len(), 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_enable_disable_roundtrip(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-enable-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(&pool, user.id, b"some_secret", &[])
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert!(!fields.enabled);
+
+    db::enable_user_totp(&pool, user.id, 7).await.unwrap();
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert!(fields.enabled);
+    assert_eq!(
+        fields.last_verified_step,
+        Some(7),
+        "the enrollment code's step must be recorded to prevent its replay"
+    );
+
+    db::disable_user_totp(&pool, user.id).await.unwrap();
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    // After disable the TOTP configuration must be fully cleared
+    assert!(fields.is_none(), "TOTP fields must be cleared on disable");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_recovery_codes_replace(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-recovery-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(
+        &pool,
+        user.id,
+        b"secret",
+        &["old1".to_string(), "old2".to_string()],
+    )
+    .await
+    .unwrap();
+
+    db::replace_totp_recovery_codes(&pool, user.id, &["new1".to_string()])
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert_eq!(fields.recovery_codes.len(), 1);
+    assert_eq!(
+        fields.recovery_codes.first().map(String::as_str),
+        Some("new1")
+    );
+}
+
+/// Regression test for the TOCTOU race fixed by consuming a recovery code
+/// via an atomic conditional `UPDATE ... WHERE $hash = ANY(...)` instead of
+/// a read-modify-write of the whole array: a second, concurrent attempt to
+/// consume the same (now-removed) code must be rejected, not silently
+/// no-op into removing an already-removed value or affecting another code.
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_try_consume_recovery_code_rejects_reuse_and_is_atomic(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-recovery-atomic-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(
+        &pool,
+        user.id,
+        b"secret",
+        &["hash-a".to_string(), "hash-b".to_string()],
+    )
+    .await
+    .unwrap();
+
+    let first = db::try_consume_totp_recovery_code(&pool, user.id, "hash-a")
+        .await
+        .unwrap();
+    assert!(first, "consuming a present code must succeed");
+
+    // Simulate a second, concurrent request racing the same code: it must
+    // observe the first request's removal and be rejected, not succeed a
+    // second time.
+    let second = db::try_consume_totp_recovery_code(&pool, user.id, "hash-a")
+        .await
+        .unwrap();
+    assert!(!second, "reusing an already-consumed code must be rejected");
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fields.recovery_codes,
+        vec!["hash-b".to_string()],
+        "only the consumed code must be removed, the other must remain untouched"
+    );
+
+    let unknown = db::try_consume_totp_recovery_code(&pool, user.id, "hash-does-not-exist")
+        .await
+        .unwrap();
+    assert!(
+        !unknown,
+        "consuming a code that was never present must fail"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_last_verified_step_update(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-verified-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(&pool, user.id, b"secret", &[])
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert!(fields.last_verified_step.is_none());
+
+    let consumed = db::try_consume_totp_step(&pool, user.id, 42).await.unwrap();
+    assert!(consumed, "a fresh, newer step must be consumable");
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    let fields = fields.unwrap();
+    assert_eq!(
+        fields.last_verified_step,
+        Some(42),
+        "last_verified_step must be set after update"
+    );
+}
+
+/// Regression test for the TOCTOU race fixed by making the replay check and
+/// the write a single atomic `UPDATE ... WHERE ...`, rather than a
+/// read-then-write: two requests racing the same (or an older) step must
+/// not both be able to consume it.
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_try_consume_step_rejects_replay_and_is_atomic(pool: PgPool) {
+    let user = db::insert_user(&pool, "totp-atomic-user", "hash")
+        .await
+        .unwrap();
+
+    db::set_user_totp_secret(&pool, user.id, b"secret", &[])
+        .await
+        .unwrap();
+
+    let first = db::try_consume_totp_step(&pool, user.id, 10).await.unwrap();
+    assert!(first, "the first attempt at a fresh step must succeed");
+
+    // Simulate a second, concurrent request racing the same step: it must
+    // observe the write from the first request and be rejected, not overwrite
+    // it or otherwise succeed.
+    let replay_same_step = db::try_consume_totp_step(&pool, user.id, 10).await.unwrap();
+    assert!(!replay_same_step, "reusing the same step must be rejected");
+
+    let replay_older_step = db::try_consume_totp_step(&pool, user.id, 5).await.unwrap();
+    assert!(!replay_older_step, "an older step must be rejected");
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fields.last_verified_step,
+        Some(10),
+        "a rejected replay must not change the recorded step"
+    );
+
+    let newer = db::try_consume_totp_step(&pool, user.id, 11).await.unwrap();
+    assert!(newer, "a genuinely newer step must still be accepted");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_per_user_isolation(pool: PgPool) {
+    let user_a = db::insert_user(&pool, "totp-iso-a", "hash").await.unwrap();
+    let user_b = db::insert_user(&pool, "totp-iso-b", "hash").await.unwrap();
+
+    db::set_user_totp_secret(&pool, user_a.id, b"secret_a", &[])
+        .await
+        .unwrap();
+
+    let a_fields = db::get_user_totp_fields(&pool, user_a.id).await.unwrap();
+    assert!(a_fields.is_some(), "user_a must have TOTP fields");
+
+    let b_fields = db::get_user_totp_fields(&pool, user_b.id).await.unwrap();
+    assert!(b_fields.is_none(), "user_b must not have TOTP fields");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_user_without_secret_returns_none(pool: PgPool) {
+    let user = db::insert_user(&pool, "no-totp-user", "hash")
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none(), "user without TOTP setup must return None");
 }

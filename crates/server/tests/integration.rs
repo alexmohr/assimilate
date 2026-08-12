@@ -48,6 +48,27 @@ async fn oneshot(app: &mut Router, req: Request<Body>) -> axum::response::Respon
         .unwrap()
 }
 
+/// Build a JSON POST request with a `ConnectInfo<SocketAddr>` extension
+/// pre-inserted, needed by any handler (e.g. `totp_verify_login`,
+/// `totp_recovery`) that resolves the caller's IP for rate limiting /
+/// brute-force tracking. `oneshot()` calls the router directly, bypassing
+/// the `into_make_service_with_connect_info` wrapper that normally
+/// supplies this extension.
+#[cfg(test)]
+fn json_post_request_with_connect_info(uri: &str, body: &Value) -> Request<Body> {
+    let mut req = Request::builder()
+        .uri(uri)
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(body).unwrap()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    req
+}
+
 #[cfg(test)]
 async fn body_json(response: axum::response::Response) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -78,9 +99,15 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         background_task_tracker: server::background_tasks::BackgroundTaskTracker::default(),
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
+        session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: server::client_ip::ClientIpResolver::new(),
         task_registry: shared::task_registry::TaskRegistry::default(),
+
+        user_rate_limiter: server::rate_limit::UserRateLimiter::new(
+            60,
+            std::time::Duration::from_mins(1),
+        ),
     }
 }
 
@@ -91,6 +118,23 @@ fn test_app_core_routes() -> Router<server::AppState> {
         .route("/api/auth/login", post(server::api::auth::login))
         .route("/api/auth/logout", post(server::api::auth::logout))
         .route("/api/auth/me", get(server::api::auth::me))
+        .route(
+            "/api/auth/totp/verify-login",
+            post(server::api::totp::totp_verify_login),
+        )
+        .route(
+            "/api/auth/totp/disable",
+            post(server::api::totp::totp_disable),
+        )
+        .route(
+            "/api/auth/totp/recovery",
+            post(server::api::totp::totp_recovery),
+        )
+        .route("/api/auth/sessions", get(server::api::auth::list_sessions))
+        .route(
+            "/api/auth/sessions/{session_id}",
+            delete(server::api::auth::revoke_session),
+        )
         .route(
             "/api/users",
             get(server::api::users::list_users).post(server::api::users::create_user),
@@ -218,6 +262,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
                 .put(server::api::tunnels::update_tunnel)
                 .delete(server::api::tunnels::delete_tunnel),
         )
+        .route(
+            "/api/system/settings",
+            get(server::api::system::get_settings).put(server::api::system::update_settings),
+        )
 }
 
 #[cfg(test)]
@@ -230,7 +278,19 @@ fn build_test_app(pool: PgPool) -> Router {
 /// fire-and-forget background task (e.g. archive-stat enrichment after a sync).
 #[cfg(test)]
 fn build_test_app_with_state(pool: PgPool) -> (Router, server::AppState) {
+    build_test_app_with_idle_timeout(pool, 480)
+}
+
+/// Build a test app with a custom session idle timeout (in minutes).
+#[cfg(test)]
+fn build_test_app_with_idle_timeout(
+    pool: PgPool,
+    idle_timeout_minutes: i64,
+) -> (Router, server::AppState) {
     let state = build_test_state(pool);
+    state
+        .session_idle_timeout_minutes
+        .store(idle_timeout_minutes, std::sync::atomic::Ordering::Relaxed);
 
     let router = Router::new()
         .merge(test_app_core_routes())
@@ -1747,6 +1807,964 @@ async fn test_login_response_includes_role(pool: sqlx::PgPool) {
         json.get("user").and_then(|u| u.get("role")).unwrap(),
         "viewer",
         "viewer user should have 'viewer' role"
+    );
+}
+
+/// Drives the full account-lockout flow through the real `login()` HTTP
+/// handler: enough failed attempts to cross `MAX_ACCOUNT_FAILURES`, then
+/// verifies a *correct* password is also rejected while the account is
+/// locked. Locked/wrong-password both return 401 "invalid credentials" by
+/// design (anti-enumeration), so a correct-password attempt is the only way
+/// to observe that lockout, rather than just another wrong password, is
+/// actually in effect.
+///
+/// Failed attempts are spread across several source IPs because
+/// `MAX_LOGIN_ATTEMPTS` (5 failures per username+IP within
+/// `LOGIN_WINDOW_MINUTES`) blocks a 6th attempt from the *same* IP with 429
+/// before it ever reaches the account-wide counter -- one IP alone can never
+/// reach `MAX_ACCOUNT_FAILURES` (10).
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_account_lockout_rejects_correct_password_while_locked(pool: sqlx::PgPool) {
+    use std::net::SocketAddr;
+
+    let mut app = build_test_app(pool.clone());
+
+    let username = "lockout-integration-user";
+    let correct_password = "correct-horse-battery-staple";
+    let hash = tokio::task::spawn_blocking({
+        let correct_password = correct_password.to_string();
+        move || bcrypt::hash(correct_password, 4)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    sqlx::query("INSERT INTO users (username, password_hash) VALUES ($1, $2)")
+        .bind(username)
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let login_request = |ip: &str, password: &str| {
+        let mut req = Request::builder()
+            .uri("/api/auth/login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&json!({ "username": username, "password": password }))
+                    .unwrap(),
+            ))
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo::<SocketAddr>(
+                ip.parse().unwrap(),
+            ));
+        req
+    };
+
+    // 10 wrong-password attempts, 5 per source IP so neither IP alone trips
+    // the per-(username, IP) limiter before the account-wide threshold.
+    for ip in ["10.0.1.1:1", "10.0.1.2:1"] {
+        for _ in 0..5 {
+            let resp = oneshot(&mut app, login_request(ip, "wrong-password")).await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    let user: (Option<chrono::DateTime<chrono::Utc>>,) =
+        sqlx::query_as("SELECT locked_until FROM users WHERE username = $1")
+            .bind(username)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        user.0
+            .is_some_and(|locked_until| locked_until > chrono::Utc::now()),
+        "account should be locked after {} failed attempts",
+        10
+    );
+
+    // A correct password from an unused (0 prior failures) IP would
+    // normally succeed -- confirm it's rejected instead, proving the
+    // lockout itself is blocking it and not a coincidental wrong password.
+    let resp = oneshot(&mut app, login_request("10.0.1.3:1", correct_password)).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "correct password should still be rejected while the account is locked"
+    );
+}
+
+/// Drives real HTTP requests through `auth_tracking_middleware` (rather than
+/// unit-testing `UserRateLimiter` in isolation) to prove the per-user 60
+/// req/min limit on mutating authenticated routes actually engages: an
+/// authenticated caller gets 429 after its 60th mutating request within the
+/// window, and reads are never throttled.
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_user_rate_limiter_returns_429_after_60_mutating_requests(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+
+    let state = build_test_state(pool);
+    let mut app = Router::new()
+        .route(
+            "/api/excludes",
+            get(server::api::excludes::get_excludes).put(server::api::excludes::set_excludes),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            server::rate_limit::auth_tracking_middleware,
+        ))
+        .with_state(state);
+
+    let put_excludes =
+        || json_request("PUT", "/api/excludes", Some(json!({ "raw_text": "*.tmp" })));
+
+    for i in 0..60 {
+        let resp = oneshot(&mut app, put_excludes()).await;
+        assert_eq!(resp.status(), StatusCode::OK, "request {i} should succeed");
+    }
+
+    let resp = oneshot(&mut app, put_excludes()).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "61st mutating request within the window should be rate-limited"
+    );
+
+    // Reads are never throttled, even once the mutating-request budget is spent.
+    let resp = oneshot(&mut app, get_request("/api/excludes")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "GET requests must not count against the mutating-request limiter"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_session_idle_timeout_revokes_inactive_session(pool: sqlx::PgPool) {
+    let mut app = build_test_app_with_idle_timeout(pool.clone(), 1).0;
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, must_change_password)
+         VALUES ('idle-timeout-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', false)
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let admin_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(admin_role_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    let idle_since = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::minutes(2))
+        .unwrap();
+    let session_id = "idle-timeout-session-id-00000000000";
+    let hashed_id = hash_token(session_id);
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at, last_seen_at) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(&hashed_id)
+    .bind(user_id)
+    .bind(expires)
+    .bind(idle_since)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = Request::builder()
+        .uri("/api/auth/me")
+        .method("GET")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "idle session older than timeout must be rejected"
+    );
+
+    // The rejected session should also be deleted from the database.
+    let still_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)")
+            .bind(&hashed_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!still_exists, "idle session must be deleted on rejection");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_session_idle_timeout_resets_on_activity(pool: sqlx::PgPool) {
+    let mut app = build_test_app_with_idle_timeout(pool.clone(), 10).0;
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, must_change_password)
+         VALUES ('idle-active-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', false)
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let admin_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(admin_role_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    let session_id = "idle-active-session-id-000000000000";
+    let hashed_id = hash_token(session_id);
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(&hashed_id)
+        .bind(user_id)
+        .bind(expires)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .uri("/api/auth/me")
+        .method("GET")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "active session must not be rejected"
+    );
+}
+
+/// Regression test: for a TOTP-enabled account, entering the correct
+/// password alone must NOT clear the account's password-lockout escalation
+/// state or record a successful `login_attempts` row -- login isn't
+/// actually complete until the TOTP step also succeeds. Only
+/// `totp_verify_login` should record the real success.
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_login_defers_lockout_clear_until_totp_step_succeeds(pool: sqlx::PgPool) {
+    use std::net::SocketAddr;
+
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let username = "totp-defer-lockout-user";
+    let password = "correct-horse-battery-staple";
+    let password_hash = server::api::helpers::hash_password(password.to_string())
+        .await
+        .unwrap();
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(username)
+    .bind(&password_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x55u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    // Simulate an account that has previously been through a lockout cycle
+    // (escalation level 2) but whose lockout has since expired -- a
+    // realistic pre-condition, since a *currently* locked account would be
+    // rejected by login() before ever reaching the TOTP branch.
+    sqlx::query(
+        "UPDATE users SET lockout_escalation_level = 2, locked_until = NOW() - INTERVAL '1 \
+         minute' WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Step 1: correct password. Should succeed with totp_required, but must
+    // not touch the lockout state or record a success yet.
+    let body = serde_json::json!({ "username": username, "password": password });
+    let mut req = Request::builder()
+        .uri("/api/auth/login")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "password step should succeed"
+    );
+    let json = body_json(resp).await;
+    assert_eq!(json.get("totp_required").unwrap(), true);
+    let temp_token = json
+        .get("temp_token")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let escalation_after_password: i32 =
+        sqlx::query_scalar("SELECT lockout_escalation_level FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        escalation_after_password, 2,
+        "the password step alone must not reset the lockout escalation level"
+    );
+
+    let success_count_after_password: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = $1 AND success = true",
+    )
+    .bind(username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        success_count_after_password, 0,
+        "the password step alone must not record a successful login_attempts row"
+    );
+
+    // Step 2: complete login with the correct TOTP code.
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Raw(secret).to_bytes().unwrap(),
+        None,
+        String::new(),
+    )
+    .unwrap();
+    let code = totp.generate_current().unwrap();
+    let body = serde_json::json!({ "code": code, "temp_token": temp_token });
+    let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "TOTP step should succeed");
+
+    let escalation_after_totp: i32 =
+        sqlx::query_scalar("SELECT lockout_escalation_level FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        escalation_after_totp, 0,
+        "completing the TOTP step must reset the lockout escalation level"
+    );
+
+    let success_count_after_totp: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = $1 AND success = true",
+    )
+    .bind(username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        success_count_after_totp, 1,
+        "completing the TOTP step must record exactly one successful login_attempts row"
+    );
+}
+
+/// Same regression as `test_totp_login_defers_lockout_clear_until_totp_step_succeeds`,
+/// but for the recovery-code completion path (`totp_recovery`) instead of
+/// the TOTP-code one (`totp_verify_login`). Both are ways login can
+/// actually finish for a TOTP-enabled account, and both must reset the
+/// password-lockout state on success -- `totp_recovery` was initially
+/// missed when `db::record_successful_login` was introduced.
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_recovery_resets_lockout_state_on_success(pool: sqlx::PgPool) {
+    use std::net::SocketAddr;
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let username = "totp-recovery-lockout-user";
+    let password = "correct-horse-battery-staple";
+    let password_hash = server::api::helpers::hash_password(password.to_string())
+        .await
+        .unwrap();
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(username)
+    .bind(&password_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x66u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    let recovery_code = "abcd-1234-ef56-7890";
+    let normalized_code = recovery_code.replace('-', "").to_lowercase();
+    let recovery_code_hash = tokio::task::spawn_blocking(move || {
+        bcrypt::hash(normalized_code, bcrypt::DEFAULT_COST).unwrap()
+    })
+    .await
+    .unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[recovery_code_hash])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    // Simulate an account that previously went through a lockout cycle
+    // (escalation level 2), currently expired but not yet reset.
+    sqlx::query(
+        "UPDATE users SET lockout_escalation_level = 2, locked_until = NOW() - INTERVAL '1 \
+         minute' WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Password step.
+    let body = serde_json::json!({ "username": username, "password": password });
+    let mut req = Request::builder()
+        .uri("/api/auth/login")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "password step should succeed"
+    );
+    let json = body_json(resp).await;
+    let temp_token = json
+        .get("temp_token")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Recovery-code step.
+    let body = serde_json::json!({ "code": recovery_code, "temp_token": temp_token });
+    let req = json_post_request_with_connect_info("/api/auth/totp/recovery", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "recovery-code step should succeed"
+    );
+
+    let escalation_after_recovery: i32 =
+        sqlx::query_scalar("SELECT lockout_escalation_level FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        escalation_after_recovery, 0,
+        "a successful recovery-code login must reset the lockout escalation level"
+    );
+
+    let success_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = $1 AND success = true",
+    )
+    .bind(username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        success_count, 1,
+        "a successful recovery-code login must record a successful login_attempts row"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_login_rejects_replayed_code_within_window(pool: sqlx::PgPool) {
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ('totp-replay-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x42u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Raw(secret).to_bytes().unwrap(),
+        None,
+        String::new(),
+    )
+    .unwrap();
+    let code = totp.generate_current().unwrap();
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::minutes(5))
+        .unwrap();
+
+    // First login: a fresh pending_totp session verified with a fresh code succeeds.
+    let temp_token_a = "totp-replay-temp-token-aaaaaaaaaaaaaaaaaaaa";
+    server::db::insert_session(
+        &pool,
+        &hash_token(temp_token_a),
+        user_id,
+        expires,
+        false,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({ "code": code, "temp_token": temp_token_a });
+    let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "first login with a fresh code should succeed"
+    );
+
+    // Second login attempt: a brand new pending session (e.g. re-entering the
+    // password), but replaying the SAME code that was just consumed. Even
+    // though the code is still cryptographically within its valid TOTP
+    // period, the replay-protection window must reject it.
+    let temp_token_b = "totp-replay-temp-token-bbbbbbbbbbbbbbbbbbbb";
+    server::db::insert_session(
+        &pool,
+        &hash_token(temp_token_b),
+        user_id,
+        expires,
+        false,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({ "code": code, "temp_token": temp_token_b });
+    let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "replaying the same TOTP code within the dedup window must be rejected"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_login_accepts_different_code_from_next_step(pool: sqlx::PgPool) {
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ('totp-multidevice-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x77u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Raw(secret).to_bytes().unwrap(),
+        None,
+        String::new(),
+    )
+    .unwrap();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let current_step = now.checked_div(totp.step).unwrap();
+    let code_a = totp.generate(current_step.checked_mul(totp.step).unwrap());
+    // A different, still-valid code from the very next time-step - within
+    // the same ~90s wall-clock window as `code_a`, but not the same code.
+    let next_step = current_step.checked_add(1).unwrap();
+    let code_b = totp.generate(next_step.checked_mul(totp.step).unwrap());
+    assert_ne!(
+        code_a, code_b,
+        "test setup requires two distinct codes across adjacent steps"
+    );
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::minutes(5))
+        .unwrap();
+
+    // First device logs in with code_a.
+    let temp_token_a = "totp-multidevice-temp-token-aaaaaaaaaaaaaaa";
+    server::db::insert_session(
+        &pool,
+        &hash_token(temp_token_a),
+        user_id,
+        expires,
+        false,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({ "code": code_a, "temp_token": temp_token_a });
+    let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "first device's login with a fresh code should succeed"
+    );
+
+    // Second device logs in shortly after, with a different, currently-valid
+    // code from the next time-step. This must succeed - it is not a replay
+    // of code_a, even though it falls within the same wall-clock window a
+    // naive timestamp-only dedup window would have blocked.
+    let temp_token_b = "totp-multidevice-temp-token-bbbbbbbbbbbbbbb";
+    server::db::insert_session(
+        &pool,
+        &hash_token(temp_token_b),
+        user_id,
+        expires,
+        false,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({ "code": code_b, "temp_token": temp_token_b });
+    let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a different, currently-valid code from a later time-step must not be rejected as a replay"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_login_locks_account_after_repeated_failed_codes(pool: sqlx::PgPool) {
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ('totp-lockout-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x11u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Raw(secret).to_bytes().unwrap(),
+        None,
+        String::new(),
+    )
+    .unwrap();
+    let valid_code = totp.generate_current().unwrap();
+    // Guaranteed-wrong code: differs from the valid one in the first digit
+    // (wrapping so it's never identical even in the 9xxxxx case).
+    let wrong_code: String = valid_code
+        .chars()
+        .enumerate()
+        .map(|(i, c)| {
+            if i == 0 {
+                let d = c.to_digit(10).unwrap();
+                char::from_digit(d.wrapping_add(1) % 10, 10).unwrap()
+            } else {
+                c
+            }
+        })
+        .collect();
+    assert_ne!(wrong_code, valid_code);
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::minutes(5))
+        .unwrap();
+    let temp_token = "totp-lockout-temp-token-aaaaaaaaaaaaaaaaaaa";
+    server::db::insert_session(
+        &pool,
+        &hash_token(temp_token),
+        user_id,
+        expires,
+        false,
+        true,
+    )
+    .await
+    .unwrap();
+
+    // A failed attempt doesn't consume the temp session, so the same
+    // pending login can be retried with the wrong code repeatedly - exactly
+    // the scenario the account-level lockout must catch.
+    for attempt in 0..5 {
+        let body = serde_json::json!({ "code": wrong_code, "temp_token": temp_token });
+        let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "attempt {attempt} with a wrong code should be rejected as invalid"
+        );
+    }
+
+    // The account is now locked out - even a correct, currently-valid code
+    // must be rejected, since an attacker who already has the password
+    // could otherwise keep guessing indefinitely (this is the account-level
+    // backstop on top of the coarser per-IP rate limiter).
+    let body = serde_json::json!({ "code": valid_code, "temp_token": temp_token });
+    let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the correct code must still be rejected once the account is locked out"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_totp_disable_locks_account_after_repeated_wrong_passwords(pool: sqlx::PgPool) {
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+
+    let password_hash = server::api::helpers::hash_password("correct-horse-battery".to_string())
+        .await
+        .unwrap();
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ('totp-disable-lockout-user', $1) \
+         RETURNING id",
+    )
+    .bind(&password_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let secret = vec![0x33u8; 20];
+    let encrypted =
+        shared::crypto::encrypt_passphrase(&hex::encode(&secret), &state.encryption_key).unwrap();
+    server::db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
+        .await
+        .unwrap();
+    server::db::enable_user_totp(&pool, user_id, 0)
+        .await
+        .unwrap();
+
+    let session_id = "totp-disable-lockout-session-0000000";
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    server::db::insert_session(
+        &pool,
+        &hash_token(session_id),
+        user_id,
+        expires,
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+
+    // Hijacking an authenticated session must not grant unlimited password
+    // guesses against this endpoint, the same way login/TOTP-verify are
+    // account-locked after repeated failures.
+    for attempt in 0..5 {
+        let body = serde_json::json!({ "password": "wrong-password" });
+        let mut req = Request::builder()
+            .uri("/api/auth/totp/disable")
+            .method("POST")
+            .header("content-type", "application/json")
+            .header("cookie", format!("session={session_id}"))
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+                "127.0.0.1:54321".parse().unwrap(),
+            ));
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "attempt {attempt} with a wrong password should be rejected"
+        );
+    }
+
+    let body = serde_json::json!({ "password": "correct-horse-battery" });
+    let mut req = Request::builder()
+        .uri("/api/auth/totp/disable")
+        .method("POST")
+        .header("content-type", "application/json")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the correct password must still be rejected once the account is locked out"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_revoke_session_rejects_own_current_session(pool: sqlx::PgPool) {
+    let mut app = build_test_app(pool.clone());
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ('revoke-self-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    let session_id = "revoke-self-session-id-0000000000000";
+    let hashed_id = hash_token(session_id);
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(&hashed_id)
+        .bind(user_id)
+        .bind(expires)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .uri(format!("/api/auth/sessions/{hashed_id}"))
+        .method("DELETE")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "revoking one's own current session must be rejected"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_revoke_session_returns_404_for_unknown_session(pool: sqlx::PgPool) {
+    let mut app = build_test_app(pool.clone());
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ('revoke-unknown-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    let session_id = "revoke-unknown-caller-session-id-000";
+    let hashed_id = hash_token(session_id);
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(&hashed_id)
+        .bind(user_id)
+        .bind(expires)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .uri("/api/auth/sessions/this-session-id-does-not-exist")
+        .method("DELETE")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "revoking a nonexistent session must return 404"
     );
 }
 
@@ -3583,4 +4601,92 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
         stats.import_error.is_some(),
         "import_error should be set after no-archives-key sync fails"
     );
+}
+
+/// Regression test for the stale-echo bug: `PUT /api/system/settings` used to
+/// build its response from the request body's fields (falling back to
+/// request-derived defaults for omitted optional fields) instead of reading
+/// back what was actually persisted. A partial update that omits an
+/// already-configured field must still report the previously persisted
+/// value, not a default.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_settings_partial_put_reflects_persisted_values_not_request_defaults() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    // First PUT sets every optional field to a non-default value.
+    let full_body = json!({
+        "retention_days": 7,
+        "report_retention_days": 45,
+        "failed_report_retention_days": 200,
+        "system_event_retention_days": 30,
+        "timezone": "UTC",
+        "borg_query_timeout_secs": 120,
+        "session_idle_timeout_minutes": 60,
+    });
+    let req = json_request("PUT", "/api/system/settings", Some(full_body));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("report_retention_days").unwrap(), 45);
+    assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
+    assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
+    assert_eq!(body.get("timezone").unwrap(), "UTC");
+    assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
+
+    // Second PUT omits all the optional fields except the required
+    // retention_days. Their values must still reflect what was persisted
+    // above, not request-derived defaults (0/365/90/absent/300/system-tz).
+    let partial_body = json!({ "retention_days": 7 });
+    let req = json_request("PUT", "/api/system/settings", Some(partial_body));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("report_retention_days").unwrap(),
+        45,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
+        body.get("failed_report_retention_days").unwrap(),
+        200,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
+        body.get("system_event_retention_days").unwrap(),
+        30,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
+        body.get("session_idle_timeout_minutes").unwrap(),
+        60,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
+        body.get("timezone").unwrap(),
+        "UTC",
+        "omitted timezone must not be silently reset to the system default"
+    );
+    assert_eq!(
+        body.get("borg_query_timeout_secs").unwrap(),
+        120,
+        "omitted borg_query_timeout_secs must not be silently reset to 300"
+    );
+
+    // GET must agree with what the PUT response reported.
+    let req = get_request("/api/system/settings");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("report_retention_days").unwrap(), 45);
+    assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
+    assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
+    assert_eq!(body.get("timezone").unwrap(), "UTC");
+    assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
 }

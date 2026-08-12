@@ -298,7 +298,7 @@ mod tests {
             .await;
 
         let cleared = tracker.clear_for_agent("gremlin").await;
-        assert_eq!(cleared, [] as [i64; 0]);
+        assert_eq!(cleared.len(), 0);
         assert!(tracker.get(1).await.is_some());
     }
 

@@ -273,7 +273,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(request.paths, [] as [std::string::String; 0]);
+        assert_eq!(request.paths.len(), 0);
     }
 
     #[test]

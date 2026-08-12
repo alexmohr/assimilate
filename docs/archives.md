@@ -42,7 +42,11 @@ The deduplicated size is typically much smaller than the original size because b
 
 ## Browsing Archive Contents
 
-From the archive list, click an archive to open the file tree browser in the right panel.
+Archives can be browsed from two places in the UI:
+
+**Repositories page:** From the archive list on a repository detail view, click an archive to open the file tree browser in the right panel.
+
+**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view.
 
 ![Archive Browser](assets/screenshots/archive-browse.png)
 

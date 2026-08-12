@@ -694,7 +694,7 @@ mod tests {
     async fn tunnel_manager_new_creates_empty_map() {
         let mgr = dummy_manager();
         let statuses = mgr.all_statuses().await;
-        assert_eq!(statuses, [] as [(i64, shared::protocol::TunnelStatus); 0]);
+        assert_eq!(statuses.len(), 0);
     }
 
     #[tokio::test]
@@ -702,7 +702,7 @@ mod tests {
         let mgr = dummy_manager();
         mgr.stop_tunnel(999).await;
         let statuses = mgr.all_statuses().await;
-        assert_eq!(statuses, [] as [(i64, shared::protocol::TunnelStatus); 0]);
+        assert_eq!(statuses.len(), 0);
     }
 
     #[tokio::test]

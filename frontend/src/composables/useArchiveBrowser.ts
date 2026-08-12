@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
+import { FilterMatchMode } from '@primevue/core/api'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
+import { formatBytes, formatDate } from '../utils/format'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
@@ -37,6 +39,20 @@ export interface BreadcrumbSegment {
 
 export interface DirDisplayEntry extends ContentEntry {
   displayName: string
+  displaySize: string
+  displayMtime: string
+}
+
+export interface DisplayEntry {
+  type: string
+  path: string
+  size: number
+  mtime: string
+  mode: string
+  displayName: string
+  isDir: boolean
+  displaySize: string
+  displayMtime: string
 }
 
 interface UseArchiveBrowserReturn {
@@ -63,6 +79,12 @@ interface UseArchiveBrowserReturn {
   deleteArchive: (entry: ContentEntry) => Promise<boolean>
   deleteArchiveByName: (archive: ArchiveEntry) => Promise<boolean>
   stopPolling: () => void
+  browserFilters: Ref<{
+    displayName: { value: string; matchMode: string }
+    displaySize: { value: string; matchMode: string }
+    displayMtime: { value: string; matchMode: string }
+  }>
+  browserEntries: ComputedRef<DisplayEntry[]>
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
@@ -136,9 +158,18 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       (e) => e.type === DIRECTORY_ENTRY_TYPE && e.path === currentDir,
     )
     if (currentEntry) {
-      entries.push({ ...currentEntry, displayName: '.' })
+      entries.push({ ...currentEntry, displayName: '.', displaySize: '-', displayMtime: '' })
     } else if (currentPath.value === ROOT_PATH) {
-      entries.push({ type: 'd', path: '', size: 0, mtime: '', mode: '', displayName: '.' })
+      entries.push({
+        type: 'd',
+        path: '',
+        size: 0,
+        mtime: '',
+        mode: '',
+        displayName: '.',
+        displaySize: '-',
+        displayMtime: '',
+      })
     }
 
     if (currentPath.value !== ROOT_PATH) {
@@ -150,6 +181,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         mtime: '',
         mode: '',
         displayName: '..',
+        displaySize: '-',
+        displayMtime: '',
       })
     }
 
@@ -162,7 +195,12 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       .sort((a, b) => a.path.localeCompare(b.path))
     return [
       ...entries,
-      ...childDirs.map((e) => ({ ...e, displayName: e.path.split('/').pop() ?? e.path })),
+      ...childDirs.map((e) => ({
+        ...e,
+        displayName: e.path.split('/').pop() ?? e.path,
+        displaySize: '-',
+        displayMtime: '',
+      })),
     ]
   })
 
@@ -176,6 +214,37 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       })
       .sort((a, b) => a.path.localeCompare(b.path))
   })
+
+  const browserFilters = ref({
+    displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
+    displaySize: { value: '', matchMode: FilterMatchMode.CONTAINS },
+    displayMtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  })
+
+  const browserEntries = computed<DisplayEntry[]>(() => [
+    ...dirs.value.map((d) => ({
+      type: d.type,
+      path: d.path,
+      size: Number(d.size),
+      mtime: d.mtime,
+      mode: d.mode,
+      displayName: d.displayName,
+      isDir: true,
+      displaySize: d.displaySize,
+      displayMtime: d.displayMtime,
+    })),
+    ...files.value.map((f) => ({
+      type: f.type,
+      path: f.path,
+      size: Number(f.size),
+      mtime: f.mtime,
+      mode: f.mode,
+      displayName: entryName(f),
+      isDir: false,
+      displaySize: formatBytes(Number(f.size)),
+      displayMtime: formatDate(f.mtime),
+    })),
+  ])
 
   async function loadArchives(): Promise<void> {
     archivesLoading.value = true
@@ -328,6 +397,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     breadcrumbs,
     dirs,
     files,
+    browserFilters,
+    browserEntries,
     loadArchives,
     selectArchive,
     loadContents,

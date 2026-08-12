@@ -94,15 +94,52 @@ Users with `can_view_all_repos` can see all repositories. For others, fine-grain
 
 Permissions are managed by admins under **Settings → Access Control**.
 
+## Session Idle Timeout
+
+An idle timeout can be configured under **System Settings**. Sessions that have no API activity for longer than the configured duration are automatically revoked on the next request.
+
+- **Default:** 480 minutes (8 hours).
+- When idle timeout is exceeded, the session is deleted from the database and the user receives a `401 Unauthorized` response with the message "session expired due to inactivity".
+- The idle window slides forward on real activity, not just `/api/auth/me` and `/api/auth/refresh`: `AuthUser::from_request_parts` (which runs before every protected handler) writes `last_seen_at` on any authenticated request, throttled to at most once per 60 seconds per session to avoid a DB write on every single API call.
+- This is enforced in `AuthUser::from_request_parts`, which runs before every protected handler, so there is no gap between the timeout elapsing and access being denied.
+
+## Two-Factor Authentication (TOTP)
+
+Users can enable TOTP-based two-factor authentication from their **Profile** page. Once enabled, logging in requires two steps:
+
+1. **Password step** — the user authenticates with their username and password. The server returns a `totp_required: true` flag and a short-lived `temp_token`.
+2. **TOTP step** — the user provides the 6-digit code from their authenticator app, along with the `temp_token`. The server verifies the code and issues a real session cookie.
+
+Security properties:
+
+- **Temp tokens** are stored in the same `sessions` table but with `pending_totp = true`. The `AuthUser` middleware **rejects** pending sessions, so a temp token cannot be used to access any API endpoint except TOTP verification/recovery.
+- **TOTP codes** use RFC 6238 (SHA-1, 30-second period, 6 digits).
+- **Replay protection** — each successful login records the exact 30-second time-step its code belonged to. A later login is rejected as "TOTP code already used" only if its code maps to that same step or an earlier one; a different, currently-valid code from a later step (e.g. a second device logging in shortly after the first) is accepted.
+- **Recovery codes** — 10 codes are generated at enrollment using 8 bytes of cryptographic randomness, formatted as hex groups. They are hashed with **bcrypt** before storage. Each code is single-use: after verification it is removed from the stored set.
+- **Secret encryption** — the TOTP secret is encrypted with AES-256-GCM using the same key derivation as repository passphrases.
+- Enrollment can be cancelled; TOTP is only activated after a successful verification code confirms the user can generate valid codes.
+- Setup (`/api/auth/totp/setup`) is rejected with `400 Bad Request` while TOTP is already enabled, so an authenticated-but-compromised session (e.g. via XSS) cannot silently overwrite a legitimate secret; disabling first requires the current password.
+
+## Session Management
+
+Users can view and manage their active sessions from the **Sessions** tab in their Profile page.
+
+- Each session displays creation time, expiration, last activity, and the "Remember Me" flag.
+- Users can revoke any session **except** their current one.
+- Session revocation checks ownership at the database layer (`DELETE FROM sessions WHERE id = $1 AND user_id = $2`), preventing a user from revoking another user's session.
+- Session IDs are stored as SHA-256 hashes; the plaintext UUID is never persisted.
+
 ## Brute-Force Protection
 
-The login endpoint tracks failed attempts per username and client IP address.
-
-- **5 failed attempts** within a **15-minute window** trigger a lockout.
-- Subsequent login attempts return `429 Too Many Requests` until the window expires.
-- All login attempts (successful and failed) are recorded in the database.
-
-This applies to the password login flow only. API token and agent token authentication is not subject to the same rate limiting, but invalid tokens are rejected immediately.
+- **Password login** additionally tracks failed attempts per username and client IP address in the database: **5 failed attempts** within a **15-minute window** trigger a `429 Too Many Requests` lockout for that username/IP pair, and all attempts (successful and failed) are recorded.
+- **Account-wide lockout**, independent of source IP: after **10 consecutive failed login attempts** for a username (since its last successful login, unbounded window), the account itself is locked via `users.locked_until` and further attempts return `401 Unauthorized` regardless of whether the password is later correct. This closes the gap the per-(username, IP) limiter above leaves open — an attacker who rotates source IPs can't bypass a per-account limit the way they can bypass a per-IP one.
+  - Lockout duration escalates with each consecutive lockout *cycle* (a threshold-crossing failure while the account isn't already locked): **1 minute → 5 minutes → 15 minutes → 1 hour → 24 hours**, capped at 24 hours, tracked via `users.lockout_escalation_level`.
+  - A successful login clears the lockout and resets the escalation counter back to the shortest tier; a lockout that merely expires with time (no successful login in between) does not reset it, so an attacker can't reset the escalation clock just by waiting out each lockout.
+  - Login response timing is uniform across the nonexistent-username, wrong-password, and locked-account cases (a dummy bcrypt hash is used when the username doesn't exist, and the locked-account branch performs the same database work as the wrong-password branch), preventing both username enumeration and lockout-state detection by response time.
+- **TOTP code and recovery-code verification** (`/api/auth/totp/verify-login`, `/api/auth/totp/recovery`, and `/api/auth/totp/disable`) track failed attempts per **user account** the same way: **5 failed attempts** within a **15-minute window** lock out further attempts for that account with `429 Too Many Requests`, regardless of source IP. This closes the gap an IP-only cap leaves open — an attacker who already has a valid password (or a hijacked authenticated session, for the disable endpoint) could otherwise distribute code/recovery-code/password guesses across many source IPs.
+- **`/api/auth/login`** and **`/api/auth/totp/verify-login` + `/api/auth/totp/recovery`** (which share a bucket with each other, separate from plain login) are each capped at **30 requests per minute per IP**, as a coarser backstop on top of the per-account lockouts above. When `ASSIMILATE_TRUSTED_PROXIES` is configured, this per-IP resolution honors `X-Forwarded-For` only from those trusted proxies; otherwise the direct peer address is used.
+- **Per-user API rate limiting**: once authenticated, mutating requests (`POST`/`PUT`/`PATCH`/`DELETE`) to any authenticated route are capped at **60 requests per minute per user**, independent of the login-specific limits above. Read requests (`GET`/`HEAD`/`OPTIONS`) are not throttled, so UI polling and automated test suites aren't affected.
+- API token and agent token authentication is not subject to either of the above; invalid tokens are rejected immediately.
 
 ## Passphrase Encryption
 
@@ -152,7 +189,9 @@ When you start Assimilate for the first time:
 1. **Default credentials** — the server creates an `admin` account with password `admin`.
 2. **Forced password change** — the UI requires you to set a new password before you can use the application.
 3. **Set `ASSIMILATE_SECRET_KEY`** — generate a strong random value and keep it stable. Without it, passphrase encryption cannot function.
-4. **Review user accounts** — create per-user accounts with the least privilege needed. Avoid sharing the admin account.
-5. **Rotate agent tokens** — if an agent token is ever exposed, delete the agent and recreate it to issue a new token.
+4. **Enable TOTP/2FA** — enroll two-factor authentication on the **Profile** page for all administrative accounts.
+5. **Configure idle timeout** — set a session idle timeout under **System Settings** to automatically revoke inactive sessions.
+6. **Review user accounts** — create per-user accounts with the least privilege needed. Avoid sharing the admin account.
+7. **Rotate agent tokens** — if an agent token is ever exposed, delete the agent and recreate it to issue a new token.
 
 See [Getting Started](getting-started.md) for the full setup walkthrough.

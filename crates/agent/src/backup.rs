@@ -1235,7 +1235,7 @@ mod tests {
         assert_eq!(result.repo_unique_csize, 402_653_184);
         assert_eq!(result.files_processed, 1234);
         assert!(result.error_message.is_none());
-        assert_eq!(result.warnings, [] as [std::string::String; 0]);
+        assert_eq!(result.warnings.len(), 0);
     }
 
     #[tokio::test]
@@ -1462,7 +1462,7 @@ mod tests {
         .join("\n");
 
         let warnings = parse_warnings(&stderr);
-        assert_eq!(warnings, [] as [std::string::String; 0]);
+        assert_eq!(warnings.len(), 0);
     }
 
     #[test]
@@ -1495,7 +1495,7 @@ mod tests {
             r#""msgid": "FileChangedWarning", "message": "/tmp/test.log: file changed"}"#,
         );
         let errors = parse_source_not_found_errors(stderr);
-        assert_eq!(errors, [] as [std::string::String; 0]);
+        assert_eq!(errors.len(), 0);
     }
 
     #[tokio::test]

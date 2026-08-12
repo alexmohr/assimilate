@@ -26,7 +26,13 @@ test('logout redirects to login', async ({ page }) => {
   // waitUntil: 'commit' resolves on response headers; without it Playwright
   // throws ERR_ABORTED when the SPA route guard fires a client-side redirect
   // before the page finishes loading.
-  await page.goto('/', { waitUntil: 'commit' })
+  try {
+    await page.goto('/', { waitUntil: 'commit', timeout: 10_000 })
+  } catch {
+    // ERR_ABORTED is expected when the SPA route guard fires before
+    // the page finishes loading - retry once.
+    await page.goto('/', { waitUntil: 'commit', timeout: 10_000 })
+  }
   await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
 })
 

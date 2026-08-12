@@ -1469,7 +1469,7 @@ mod tests {
     #[tokio::test]
     async fn list_agent_binaries_empty_for_missing_dir() {
         let found = list_agent_binaries(std::path::Path::new("/no-such-dir-assimilate-test")).await;
-        assert_eq!(found, [] as [std::string::String; 0]);
+        assert_eq!(found.len(), 0);
     }
 
     // Combined into one test: both helpers read from SSH_KEY_DIR, mutating the

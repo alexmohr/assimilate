@@ -209,10 +209,24 @@ pub async fn run_repo_sync(
             continue;
         }
 
-        if let Err(e) = db::set_repo_importing(pool, repo.id, true).await {
-            tracing::error!(repo_id = repo.id, error = %e, "failed to set importing flag for scheduled sync");
-            continue;
-        }
+        // ImportingGuard::acquire's returned guard is held for the task's lifetime
+        // so a panic inside sync_existing_archives still clears
+        // repo_import_state.importing (via spawned cleanup, since Drop can't
+        // await) instead of leaving it permanently "importing" - which would
+        // also block this repo's own periodic sync forever, since it's skipped
+        // above whenever `importing_ids` contains it.
+        let importing_guard =
+            match db::ImportingGuard::acquire(pool, repo.id, task_registry.clone()).await {
+                Ok(guard) => guard,
+                Err(e) => {
+                    tracing::error!(
+                        repo_id = repo.id,
+                        error = %e,
+                        "failed to set importing flag for scheduled sync"
+                    );
+                    continue;
+                }
+            };
 
         // set_guarded's returned guard is held for the task's lifetime so a panic
         // inside sync_existing_archives still clears this repo's entry (via
@@ -248,6 +262,7 @@ pub async fn run_repo_sync(
             encryption_key: *encryption_key,
             ui_broadcast: ui_broadcast.clone(),
             op_clear_guard,
+            importing_guard,
             repo_lock: repo_lock.clone(),
             background_task_tracker: background_task_tracker.clone(),
             task_guard,
@@ -264,6 +279,7 @@ struct ScheduledRepoSync {
     encryption_key: [u8; 32],
     ui_broadcast: UiBroadcast,
     op_clear_guard: crate::repo_op_tracker::RepoOpGuard,
+    importing_guard: db::ImportingGuard,
     repo_lock: RepoLock,
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     task_guard: crate::background_tasks::BackgroundTaskGuard,
@@ -278,6 +294,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         encryption_key,
         ui_broadcast,
         op_clear_guard,
+        importing_guard,
         repo_lock,
         background_task_tracker,
         task_guard: _task_guard,
@@ -303,15 +320,16 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
 
     match sync_result {
         Ok((added, removed)) => {
-            handle_scheduled_sync_success(
-                &pool,
-                &ui_broadcast,
+            handle_scheduled_sync_success(ScheduledSyncSuccess {
+                pool: &pool,
+                ui_broadcast: &ui_broadcast,
+                importing_guard,
                 repo_id,
-                &repo_name,
-                start.elapsed(),
+                repo_name: &repo_name,
+                elapsed: start.elapsed(),
                 added,
                 removed,
-            )
+            })
             .await;
         }
         Err(crate::error::ApiError::NotFound(ref reason)) => {
@@ -321,9 +339,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
                 reason = %reason,
                 "skipping sync for repo that no longer exists"
             );
-            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                tracing::error!(repo_id, error = %e, "failed to clear importing flag");
-            }
+            importing_guard.clear_now().await;
             crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
             ui_broadcast.send(ServerToUi::DataChanged);
         }
@@ -339,9 +355,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
             {
                 tracing::error!(error = %log_err, "failed to log sync event");
             }
-            if let Err(e2) = db::set_repo_importing(&pool, repo_id, false).await {
-                tracing::error!(repo_id, error = %e2, "failed to clear import flag");
-            }
+            importing_guard.clear_now().await;
             if let Err(e2) = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await
             {
                 tracing::error!(repo_id, error = %e2, "failed to set import_error");
@@ -352,18 +366,33 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
     }
 }
 
-/// Handles bookkeeping and logging after a scheduled sync completed
-/// successfully: clears importing/error state and records a system event for
-/// content changes or a slow-sync warning.
-async fn handle_scheduled_sync_success(
-    pool: &PgPool,
-    ui_broadcast: &UiBroadcast,
+/// Arguments for [`handle_scheduled_sync_success`], bundled (rather than
+/// passed individually) to stay under clippy's argument-count limit.
+struct ScheduledSyncSuccess<'a> {
+    pool: &'a PgPool,
+    ui_broadcast: &'a UiBroadcast,
+    importing_guard: db::ImportingGuard,
     repo_id: i64,
-    repo_name: &str,
+    repo_name: &'a str,
     elapsed: std::time::Duration,
     added: u64,
     removed: u64,
-) {
+}
+
+/// Handles bookkeeping and logging after a scheduled sync completed
+/// successfully: clears importing/error state and records a system event for
+/// content changes or a slow-sync warning.
+async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
+    let ScheduledSyncSuccess {
+        pool,
+        ui_broadcast,
+        importing_guard,
+        repo_id,
+        repo_name,
+        elapsed,
+        added,
+        removed,
+    } = success;
     let duration_secs = elapsed.as_secs();
 
     if let Err(e) = db::update_repo_last_synced(pool, repo_id).await {
@@ -375,9 +404,7 @@ async fn handle_scheduled_sync_success(
         tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
     }
 
-    if let Err(e) = db::set_repo_importing(pool, repo_id, false).await {
-        tracing::error!(repo_id, error = %e, "failed to clear importing flag after sync");
-    }
+    importing_guard.clear_now().await;
     if let Err(e) = db::set_repo_import_error(pool, repo_id, None).await {
         tracing::error!(repo_id, error = %e, "failed to clear import_error after sync");
     }
@@ -406,6 +433,11 @@ async fn handle_scheduled_sync_success(
         }
     }
 }
+
+/// Not user-configurable (unlike the settings-driven cutoffs in
+/// `run_retention_cleanup`): this is background account-security bookkeeping
+/// rather than a report/event retention policy a user would want to tune.
+const LOGIN_ATTEMPT_RETENTION_DAYS: i64 = 90;
 
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {
     let legacy_retention = db::get_setting(pool, "retention_days")
@@ -448,34 +480,48 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut events_deleted: u64 = 0;
     let mut reports_deleted: u64 = 0;
     let mut archive_reports_deleted: u64 = 0;
+    let mut login_attempts_deleted: u64 = 0;
+
+    if let Some(cutoff) =
+        Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
+    {
+        login_attempts_deleted = db::delete_login_attempts_before(pool, cutoff).await?;
+    }
 
     if report_days > 0 {
-        let cutoff = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(report_days))
-            .unwrap_or_else(Utc::now);
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(report_days))
+        else {
+            return Ok(()); // clock went backwards, skip this cycle
+        };
         archive_reports_deleted =
             db::delete_backup_reports_with_archive_before(pool, cutoff).await?;
     }
 
     if failed_days > 0 {
-        let cutoff = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(failed_days))
-            .unwrap_or_else(Utc::now);
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(failed_days))
+        else {
+            return Ok(());
+        };
         reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
     }
 
     if event_days > 0 {
-        let cutoff = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(event_days))
-            .unwrap_or_else(Utc::now);
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(event_days)) else {
+            return Ok(());
+        };
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
     }
 
-    if events_deleted > 0 || reports_deleted > 0 || archive_reports_deleted > 0 {
+    if events_deleted > 0
+        || reports_deleted > 0
+        || archive_reports_deleted > 0
+        || login_attempts_deleted > 0
+    {
         tracing::info!(
             events_deleted,
             reports_deleted,
             archive_reports_deleted,
+            login_attempts_deleted,
             report_days,
             failed_days,
             event_days,
@@ -1015,6 +1061,13 @@ mod tests {
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),
+            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
+                60,
+                std::time::Duration::from_mins(1),
+            ),
+            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+                480,
+            )),
         };
         let shutdown_token = state.shutdown_token.clone();
 

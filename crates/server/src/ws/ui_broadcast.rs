@@ -268,6 +268,6 @@ mod tests {
             }),
         });
 
-        assert!(broadcast.current_active_backups().is_empty());
+        assert_eq!(broadcast.current_active_backups().len(), 0);
     }
 }

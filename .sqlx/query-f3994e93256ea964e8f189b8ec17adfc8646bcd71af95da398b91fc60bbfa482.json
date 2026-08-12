@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET locked_until = NULL, lockout_escalation_level = 0 WHERE username = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f3994e93256ea964e8f189b8ec17adfc8646bcd71af95da398b91fc60bbfa482"
+}

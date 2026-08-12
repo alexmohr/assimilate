@@ -54,6 +54,7 @@ function setupSuccessMocks(): void {
           failed_report_retention_days: 365,
           system_event_retention_days: 90,
           borg_query_timeout_secs: 600,
+          session_idle_timeout_minutes: 480,
         },
       })
     }
@@ -217,6 +218,48 @@ describe('SystemView', () => {
     expect(input.element.value).toBe('600')
   })
 
+  it('renders Session Idle Timeout input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find('#settings-idle-timeout')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('480')
+  })
+
+  it('populates session idle timeout from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find('#settings-idle-timeout')
+    expect((input.element as HTMLInputElement).value).toBe('480')
+  })
+
+  it('updates session idle timeout and persists it via save', async () => {
+    setupSuccessMocks()
+    mockPut.mockResolvedValue({
+      data: {
+        timezone: 'Europe/Berlin',
+        retention_days: 30,
+        report_retention_days: 365,
+        failed_report_retention_days: 365,
+        system_event_retention_days: 90,
+        borg_query_timeout_secs: 600,
+        session_idle_timeout_minutes: 120,
+      },
+    })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-idle-timeout')
+    await input.setValue('120')
+    await wrapper.find('form.settings-form').trigger('submit')
+    await flushPromises()
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({ session_idle_timeout_minutes: 120 }),
+    )
+  })
+
   it('renders Save button for settings', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
@@ -296,12 +339,12 @@ describe('SystemView', () => {
         failed_report_retention_days: 90,
         system_event_retention_days: 45,
         borg_query_timeout_secs: 600,
+        session_idle_timeout_minutes: 480,
       },
     })
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
-    await saveBtn.trigger('click')
+    await wrapper.find('form.settings-form').trigger('submit')
     await flushPromises()
     expect(mockPut).toHaveBeenCalledWith('/system/settings', {
       retention_days: 30,
@@ -310,6 +353,7 @@ describe('SystemView', () => {
       system_event_retention_days: 90,
       timezone: 'Europe/Berlin',
       borg_query_timeout_secs: 600,
+      session_idle_timeout_minutes: 480,
     })
   })
 
@@ -327,8 +371,7 @@ describe('SystemView', () => {
     })
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
-    await saveBtn.trigger('click')
+    await wrapper.find('form.settings-form').trigger('submit')
     await flushPromises()
     const retentionInput = wrapper.find<HTMLInputElement>('#settings-retention')
     expect(retentionInput.element.value).toBe('14')

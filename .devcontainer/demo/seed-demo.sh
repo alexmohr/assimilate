@@ -416,15 +416,27 @@ if [ "$STALE_REPORT_COUNT" != "1" ]; then
 fi
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+-- web-server-01's server-daily archives match both its own solo daily
+-- schedule (line ~265) and the multi-agent sequential schedule (line ~346),
+-- since both target the same repo and include this agent. A plain UPDATE ...
+-- FROM would pick an unspecified one of the matching schedules per row when
+-- more than one qualifies, so the DISTINCT ON below deterministically picks
+-- the lowest schedule id (the report's earliest/primary owning schedule) -
+-- required for the dashboard's per-schedule average-duration lookups to find
+-- a consistent, non-empty history.
 UPDATE backup_reports br
-SET schedule_id = s.id
-FROM schedules s
-JOIN schedule_targets st ON st.schedule_id = s.id
-WHERE br.schedule_id IS NULL
-  AND br.repo_id = s.repo_id
-  AND br.agent_id = st.agent_id
-  AND s.enabled = true
-  AND s.name <> 'Offline agent due soon';
+SET schedule_id = matched.schedule_id
+FROM (
+    SELECT DISTINCT ON (br2.id) br2.id AS report_id, s.id AS schedule_id
+    FROM backup_reports br2
+    JOIN schedules s ON s.repo_id = br2.repo_id
+    JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
+    WHERE br2.schedule_id IS NULL
+      AND s.enabled = true
+      AND s.name <> 'Offline agent due soon'
+    ORDER BY br2.id, s.id
+) matched
+WHERE br.id = matched.report_id;
 SQL
 
 echo "==> Adding global excludes..."

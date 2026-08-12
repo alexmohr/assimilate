@@ -220,9 +220,16 @@ api PUT "/api/repos/$REPO_WEEKLY_ID" "{
 }" > /dev/null
 
 # Blocks until no repo reports importing == true (sync runs in the background).
+# Must poll /api/repos/stats, not /api/repos: the latter returns the plain
+# RepoResponse DTO, which has no `importing` field at all, so `.importing`
+# is always null there and this loop would break on its very first
+# iteration regardless of whether a sync is actually still running -
+# exactly the bug that made every downstream step (schedule_id backfill,
+# archive tagging, the dashboard's per-schedule history) silently race
+# against archives that hadn't been imported yet.
 wait_for_imports() {
     for _attempt in $(seq 1 120); do
-        still=$(curl -sf "$BASE_URL/api/repos" -H "$AUTH_HEADER" \
+        still=$(curl -sf "$BASE_URL/api/repos/stats" -H "$AUTH_HEADER" \
             | jq '[.[] | select(.importing == true)] | length' 2>/dev/null || echo 1)
         [ "$still" = "0" ] && break
         sleep 2
@@ -252,18 +259,6 @@ wait_for_imports
 
 echo "==> Waiting for background stat enrichment to complete..."
 wait_for_enrichment
-
-# TEMP diagnostic: the schedule_id backfill (further down this script) always
-# affects 0 rows and no "synced existing archives" info log line ever
-# appears for server-daily/database-hourly/media-weekly, which only happens
-# when sync_archives()'s to_import.is_empty() early-return fires (i.e. `borg
-# list` itself returned zero archives to the server, not an error). Dump the
-# repos API response directly to confirm archive_count/import_error/importing
-# per repo instead of guessing further, then exit fast.
-echo "DIAG: /api/repos/stats state after sync+enrichment waits:"
-api GET /api/repos/stats | jq -c '.[] | {name, archive_count, importing, import_error, last_synced_at}'
-echo "DIAG: exiting early to keep this a fast seed-step diagnostic run" >&2
-exit 1
 
 echo "==> Fetching agent IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='web-server-01'")
@@ -627,14 +622,12 @@ IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
 
 echo "==> Backfilling schedule_id on imported archives..."
-# Run this as the very last data-mutating step rather than right after
-# wait_for_imports()/wait_for_enrichment() return: a run diagnosed that the
-# imported archives (backup_reports rows with archive_name set, schedule_id
-# still NULL) genuinely did not exist yet at that point even though those
-# waits had already returned - only the manually-inserted stale-report row
-# was present. By here, every other seed step that touches backup_reports
-# (archive tagging, the warnings UPDATE) has already run against the same
-# data, so the import is guaranteed to have landed.
+# Kept as the very last data-mutating step (rather than right after
+# wait_for_imports()/wait_for_enrichment() return) as extra insurance now
+# that wait_for_imports() itself is fixed to poll /api/repos/stats - by here,
+# every other seed step that touches backup_reports (archive tagging, the
+# warnings UPDATE) has already run against the same data, so the import is
+# guaranteed to have landed.
 #
 # web-server-01's server-daily archives match both its own solo daily
 # schedule (line ~265) and the multi-agent sequential schedule (line ~346),

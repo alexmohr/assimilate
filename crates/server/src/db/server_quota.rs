@@ -249,7 +249,7 @@ pub async fn total_deduplicated_size_for_ssh_host(
 
 /// Total deduplicated size across every repo sharing `ssh_host` *other than* `exclude_repo_id`,
 /// from the authoritative `repo_stats` snapshot. Used to combine a just-completed backup's own
-/// (fresh) `report.deduplicated_size` with its sibling repos' (possibly stale, since
+/// (fresh) `report.repo_unique_csize` with its sibling repos' (possibly stale, since
 /// `repo_stats` is only refreshed by a sync/rescan) snapshot, so a quota breach on an otherwise
 /// idle host is detected immediately rather than only after an unrelated rescan.
 ///

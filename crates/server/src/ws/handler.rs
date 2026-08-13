@@ -1056,26 +1056,26 @@ async fn check_repo_quota_after_backup(
     agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
-    deduplicated_size: i64,
+    repo_unique_csize: i64,
     repo_name: &str,
 ) {
     let Ok(Some(quota)) = db::quota::get_quota(&state.pool, repo_id).await else {
         return;
     };
-    let quota_status = db::quota::evaluate_quota(&quota, deduplicated_size);
+    let quota_status = db::quota::evaluate_quota(&quota, repo_unique_csize);
     if matches!(quota_status, db::quota::QuotaStatus::Ok) {
         return;
     }
     tracing::warn!(
         hostname = %hostname,
         repo_id,
-        deduplicated_size,
+        repo_unique_csize,
         quota_status = quota_status_label(quota_status),
         "repository quota exceeded"
     );
 
     let message = format!(
-        "Repository quota {} for repo {repo_name}: deduplicated size {deduplicated_size} bytes \
+        "Repository quota {} for repo {repo_name}: deduplicated size {repo_unique_csize} bytes \
          exceeds configured limits",
         quota_status_label(quota_status),
     );
@@ -1104,7 +1104,7 @@ async fn check_server_quota_after_backup(
     agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
-    deduplicated_size: i64,
+    repo_unique_csize: i64,
     repo_name: &str,
 ) {
     let Ok(ssh_host) = db::get_repo_ssh_host(&state.pool, repo_id).await else {
@@ -1125,11 +1125,12 @@ async fn check_server_quota_after_backup(
         return;
     };
 
-    // Combine the just-completed backup's fresh `deduplicated_size` with the
-    // (possibly stale, since `repo_stats` is only refreshed by a sync/rescan) snapshot
-    // for sibling repos on the host, so a breach on an otherwise idle host is caught
-    // immediately rather than only after an unrelated rescan.
-    let total_deduplicated_size = siblings_deduplicated_size.saturating_add(deduplicated_size);
+    // Combine the just-completed backup's fresh `repo_unique_csize` (this repo's
+    // current repo-wide deduplicated size) with the (possibly stale, since
+    // `repo_stats` is only refreshed by a sync/rescan) snapshot for sibling repos
+    // on the host, so a breach on an otherwise idle host is caught immediately
+    // rather than only after an unrelated rescan.
+    let total_deduplicated_size = siblings_deduplicated_size.saturating_add(repo_unique_csize);
     let quota_status = server_quota.status(total_deduplicated_size);
     if matches!(quota_status, db::quota::QuotaStatus::Ok) {
         return;
@@ -1423,7 +1424,7 @@ async fn handle_backup_completed(
 
     let repo_id = report.repo_id.0;
     let schedule_id = report.schedule_id;
-    let deduplicated_size = report.deduplicated_size;
+    let repo_unique_csize = report.repo_unique_csize;
     let report_status = report.status;
 
     let outcome_success = !matches!(report_status, shared::types::BackupStatus::Failed);
@@ -1467,7 +1468,7 @@ async fn handle_backup_completed(
         agent_id,
         repo_id,
         schedule_id,
-        deduplicated_size,
+        repo_unique_csize,
         &repo_name,
     )
     .await;
@@ -1477,7 +1478,7 @@ async fn handle_backup_completed(
         agent_id,
         repo_id,
         schedule_id,
-        deduplicated_size,
+        repo_unique_csize,
         &repo_name,
     )
     .await;
@@ -2360,6 +2361,24 @@ exit 0
     }
 
     fn backup_completed_message(agent_id: i64, repo_id: i64, deduplicated_size: i64) -> String {
+        backup_completed_message_with_repo_size(
+            agent_id,
+            repo_id,
+            deduplicated_size,
+            deduplicated_size,
+        )
+    }
+
+    /// Like [`backup_completed_message`], but lets the archive-level `deduplicated_size`
+    /// (this backup's own new unique data) and the repo-wide `repo_unique_csize` (the
+    /// repo's total current usage) diverge, matching what a real backup with prior
+    /// archives reports.
+    fn backup_completed_message_with_repo_size(
+        agent_id: i64,
+        repo_id: i64,
+        deduplicated_size: i64,
+        repo_unique_csize: i64,
+    ) -> String {
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
             .single()
@@ -2377,7 +2396,7 @@ exit 0
             original_size: deduplicated_size,
             compressed_size: deduplicated_size,
             deduplicated_size,
-            repo_unique_csize: deduplicated_size,
+            repo_unique_csize,
             files_processed: 3,
             duration_secs: 300,
             error_message: None,

@@ -8,9 +8,11 @@ import { ref, reactive, onMounted } from 'vue'
 import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
+import { logger } from '../utils/logger'
 import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useMobile } from '../composables/useMobile'
+import { useWebSocket } from '../composables/useWebSocket'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
@@ -113,6 +115,10 @@ async function removeQuota(quota: ServerQuotaResponse): Promise<void> {
 }
 
 onMounted(loadQuotas)
+
+const { onMessage } = useWebSocket()
+
+onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 </script>
 
 <template>

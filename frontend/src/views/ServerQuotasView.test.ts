@@ -33,6 +33,15 @@ vi.mock('../components/ToggleSwitch.vue', () => ({
   default: { template: '<input type="checkbox" />', props: ['modelValue'] },
 }))
 
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (payload: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
+}))
+
 import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
 import { renderWithPlugins } from '../test-utils'
 import ServerQuotasView from './ServerQuotasView.vue'
@@ -71,6 +80,9 @@ describe('ServerQuotasView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     isMobileRef.value = false
+    for (const key of Object.keys(wsHandlers)) {
+      delete wsHandlers[key]
+    }
   })
 
   it('shows loading state initially', async () => {
@@ -159,5 +171,20 @@ describe('ServerQuotasView', () => {
     await flushPromises()
 
     expect(mockDelete).toHaveBeenCalledWith('backup.example.com')
+  })
+
+  it('reloads usage totals when a DataChanged event arrives (e.g. after a backup completes)', async () => {
+    mockList.mockResolvedValue([configuredQuota])
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+    expect(wrapper.text()).toContain(`${configuredQuota.total_deduplicated_size} B`)
+
+    const grownQuota = { ...configuredQuota, total_deduplicated_size: 999_999_999_999 }
+    mockList.mockResolvedValue([grownQuota])
+    wsHandlers['DataChanged']?.(undefined)
+    await flushPromises()
+
+    expect(mockList).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('999999999999 B')
   })
 })

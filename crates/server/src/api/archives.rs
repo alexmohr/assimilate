@@ -615,15 +615,14 @@ async fn run_archive_deletion(
 
     let deleted = execute_borg_delete(&state, repo_id, &borg_repo, &archive_name, &env).await;
 
-    state.repo_op_tracker.clear(repo_id).await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged {
-            repo_id,
-            op: state.repo_op_tracker.get(repo_id).await,
-        });
-
     if !deleted {
+        state.repo_op_tracker.clear(repo_id).await;
+        state
+            .ui_broadcast
+            .send(shared::protocol::ServerToUi::RepoOpChanged {
+                repo_id,
+                op: state.repo_op_tracker.get(repo_id).await,
+            });
         state
             .ui_broadcast
             .send(shared::protocol::ServerToUi::DataChanged);
@@ -631,6 +630,43 @@ async fn run_archive_deletion(
     }
 
     finalize_archive_deletion(&state, repo_id, &archive_name, user_id, &username).await;
+
+    // Compacting reclaims the space this deletion just freed. Still holding
+    // `_repo_guard` here means nothing else can start on this repo between
+    // the delete finishing and compact beginning.
+    //
+    // This transitions straight from the delete phase to the compact phase
+    // without an intermediate clear()+broadcast: a momentary `op: None`
+    // here would read to clients as "this repo's delete queue has
+    // drained", which isn't true while we're just switching phases of the
+    // very deletion that's still running - and would wipe every archive's
+    // client-side "deleting" state, including ones genuinely still queued
+    // behind this one. `set()` (not `begin()`) reclaims the active slot
+    // without touching `queued`, since this isn't dequeuing a new item.
+    state
+        .repo_op_tracker
+        .set(
+            repo_id,
+            shared::protocol::RepoOpKind::CompactRepo,
+            username.clone(),
+        )
+        .await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
+
+    execute_borg_compact(&state, repo_id, &borg_repo, &env).await;
+
+    state.repo_op_tracker.clear(repo_id).await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
 
     state
         .ui_broadcast
@@ -753,6 +789,63 @@ async fn finalize_archive_deletion(
         }
         crate::api::repos::clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id)
             .await;
+    }
+}
+
+/// Runs `borg compact` on the whole repository, reclaiming the space freed
+/// by the archive deletion(s) that just completed. Failure is logged and
+/// recorded as a system event but is otherwise non-fatal: the delete(s)
+/// already succeeded, and an unreclaimed segment just waits for the next
+/// compact (e.g. a scheduled backup's own compact step) to free it.
+async fn execute_borg_compact(
+    state: &AppState,
+    repo_id: i64,
+    borg_repo: &str,
+    env: &HashMap<String, String>,
+) {
+    let result = Borg::new()
+        .with_registry(state.task_registry.clone())
+        .run(&["compact", "--lock-wait", LOCK_WAIT_SECS, borg_repo], env)
+        .await;
+
+    match result {
+        Ok(output) => {
+            let exit_code = output.status.code().unwrap_or(-1);
+            if exit_code != 0 && exit_code != 1 {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let err = classify_borg_error(exit_code, &stderr);
+                tracing::error!(repo_id, error = %err, "post-delete repository compact failed");
+                let msg = format!(
+                    "failed to compact repository after archive deletion (repo {repo_id}): {err}"
+                );
+                if let Err(e) = db::insert_system_event(
+                    &state.pool,
+                    SystemEventType::ArchiveCompactFailed,
+                    None,
+                    &msg,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "failed to log repository compact failure");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(repo_id, error = %e, "failed to execute borg compact");
+            let msg = format!(
+                "failed to compact repository after archive deletion (repo {repo_id}): {e}"
+            );
+            if let Err(log_err) = db::insert_system_event(
+                &state.pool,
+                SystemEventType::ArchiveCompactFailed,
+                None,
+                &msg,
+            )
+            .await
+            {
+                tracing::warn!(error = %log_err, "failed to log repository compact failure");
+            }
+        }
     }
 }
 

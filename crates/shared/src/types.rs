@@ -551,6 +551,9 @@ pub enum SystemEventType {
     RepoSyncFailed,
     /// An archive deletion operation failed.
     ArchiveDeleteFailed,
+    /// The repository compact that automatically follows an archive
+    /// deletion failed.
+    ArchiveCompactFailed,
     /// A security-related violation was detected.
     SecurityViolation,
     /// A user account was locked after repeated failed login attempts.
@@ -566,6 +569,7 @@ impl std::fmt::Display for SystemEventType {
             Self::RepoSyncSlow => write!(f, "repo_sync_slow"),
             Self::RepoSyncFailed => write!(f, "repo_sync_failed"),
             Self::ArchiveDeleteFailed => write!(f, "archive_delete_failed"),
+            Self::ArchiveCompactFailed => write!(f, "archive_compact_failed"),
             Self::SecurityViolation => write!(f, "security_violation"),
             Self::AccountLocked => write!(f, "account_locked"),
         }
@@ -583,6 +587,7 @@ impl FromStr for SystemEventType {
             "repo_sync_slow" => Ok(Self::RepoSyncSlow),
             "repo_sync_failed" => Ok(Self::RepoSyncFailed),
             "archive_delete_failed" => Ok(Self::ArchiveDeleteFailed),
+            "archive_compact_failed" => Ok(Self::ArchiveCompactFailed),
             "security_violation" => Ok(Self::SecurityViolation),
             "account_locked" => Ok(Self::AccountLocked),
             other => Err(format!("unknown system event type: {other}")),
@@ -1254,6 +1259,10 @@ mod tests {
             (
                 SystemEventType::ArchiveDeleteFailed,
                 "archive_delete_failed",
+            ),
+            (
+                SystemEventType::ArchiveCompactFailed,
+                "archive_compact_failed",
             ),
             (SystemEventType::SecurityViolation, "security_violation"),
             (SystemEventType::AccountLocked, "account_locked"),

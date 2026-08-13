@@ -60,7 +60,7 @@ describe('ArchiveFileBrowser', () => {
   }
 
   async function mountWithEntries(
-    props: { repoId: number; archive: ArchiveEntry; isAdmin?: boolean } = {
+    props: { repoId: number; archive: ArchiveEntry; isAdmin?: boolean; deleting?: boolean } = {
       repoId: 5,
       archive: makeArchive('test-archive'),
     },
@@ -260,6 +260,20 @@ describe('ArchiveFileBrowser', () => {
 
     expect(wrapper.emitted('delete-archive')).toBeTruthy()
     expect(wrapper.emitted('delete-archive')?.[0]).toEqual([archive])
+  })
+
+  it('disables the whole-archive delete button and blocks the emit while deleting is true', async () => {
+    const archive = makeArchive('test-archive')
+    const wrapper = await mountWithEntries({ repoId: 5, archive, isAdmin: true, deleting: true })
+
+    const deleteBtn = wrapper.find('button[title="Deletion in progress"]')
+    expect(deleteBtn.exists()).toBe(true)
+    expect(deleteBtn.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('button[title="Delete whole archive"]').exists()).toBe(false)
+
+    await deleteBtn.trigger('click')
+
+    expect(wrapper.emitted('delete-archive')).toBeFalsy()
   })
 
   it('renders filter inputs and handles interaction', async () => {

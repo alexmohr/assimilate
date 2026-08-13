@@ -326,7 +326,19 @@ const { onMessage } = useWebSocket()
 
 onMessage('DataChanged', () => {
   refreshRepo().catch(logger.error)
-  loadArchives().catch(logger.error)
+  loadArchives()
+    .then(() => {
+      // An archive that's gone from the freshly-loaded list was actually
+      // deleted - stop tracking it as in-flight. One still present just
+      // hasn't finished yet (or failed and stayed); the RepoOpChanged
+      // handler above sweeps those once the repo's delete queue drains.
+      const stillPresent = new Set(sortedArchives.value.map((a) => a.name))
+      const next = new Set([...deletingArchiveNames.value].filter((name) => stillPresent.has(name)))
+      if (next.size !== deletingArchiveNames.value.size) {
+        deletingArchiveNames.value = next
+      }
+    })
+    .catch(logger.error)
 })
 
 onMessage('ImportProgress', (payload) => {
@@ -347,6 +359,16 @@ onMessage('ImportProgress', (payload) => {
 onMessage('RepoOpChanged', (payload) => {
   if (repo.value && payload.repo_id === repo.value.id) {
     currentOp.value = payload.op
+    // Once this repo's active operation is no longer a delete or the
+    // compact that automatically follows it, every archive delete queued
+    // for it has finished - success or failure - since repo operations run
+    // strictly one at a time. Any name still marked "deleting" at that
+    // point is stale (a failed delete that the DataChanged-driven prune
+    // below never saw disappear from the list), so sweep it clear rather
+    // than leaving its row disabled forever.
+    if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
+      deletingArchiveNames.value = new Set()
+    }
   }
 })
 
@@ -362,8 +384,18 @@ function selectArchive(archive: ArchiveEntry): void {
 
 const archivePendingDeletion = ref<ArchiveEntry | null>(null)
 const archiveDeleteLoading = ref(false)
+// Archive names with a delete already in flight (queued or running on the
+// server). Deletion is async - the DELETE request just enqueues the borg
+// job and returns immediately - so without this a user can re-trigger the
+// same delete indefinitely before the first one has even started.
+const deletingArchiveNames = ref<Set<string>>(new Set())
+
+function isArchiveDeleting(name: string): boolean {
+  return deletingArchiveNames.value.has(name)
+}
 
 function requestArchiveDeletion(archive: ArchiveEntry): void {
+  if (isArchiveDeleting(archive.name)) return
   archivePendingDeletion.value = archive
 }
 
@@ -379,6 +411,7 @@ async function confirmArchiveDeletion(): Promise<void> {
   archiveDeleteLoading.value = true
   try {
     await deleteArchiveByName(archive)
+    deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
     archivePendingDeletion.value = null
     if (selectedArchive.value?.name === archive.name) {
       selectedArchive.value = null
@@ -538,6 +571,8 @@ function repoOpLabel(op: ActiveRepoOp): string {
       return `Integrity check in progress by ${op.actor}${queued}`
     case 'agent_verify':
       return `Verify in progress by ${op.actor}${queued}`
+    case 'compact_repo':
+      return `Compacting repository (started by ${op.actor})${queued}`
   }
 }
 
@@ -548,7 +583,8 @@ function classifyLastOpKind(kind: string | null): RepoOpKind | 'unknown' {
     kind === 'break_lock' ||
     kind === 'delete_archive' ||
     kind === 'agent_check' ||
-    kind === 'agent_verify'
+    kind === 'agent_verify' ||
+    kind === 'compact_repo'
   ) {
     return kind
   }
@@ -569,6 +605,8 @@ function lastOpLabel(kind: string | null): string {
       return 'Integrity check'
     case 'agent_verify':
       return 'Verify'
+    case 'compact_repo':
+      return 'Compact repository'
     case 'unknown':
       return kind ?? 'Unknown'
   }
@@ -1659,10 +1697,22 @@ async function resetImport(): Promise<void> {
                         <button
                           v-if="isAdmin"
                           class="btn btn-sm btn-ghost archive-row-delete"
-                          title="Delete archive"
+                          :disabled="isArchiveDeleting(archive.name)"
+                          :title="
+                            isArchiveDeleting(archive.name)
+                              ? 'Deletion in progress'
+                              : 'Delete archive'
+                          "
                           @click.stop="requestArchiveDeletion(archive)"
                         >
-                          <Trash2 :size="12" />
+                          <BaseSpinner
+                            v-if="isArchiveDeleting(archive.name)"
+                            size="sm"
+                          />
+                          <Trash2
+                            v-else
+                            :size="12"
+                          />
                         </button>
                       </div>
                     </div>
@@ -1689,10 +1739,20 @@ async function resetImport(): Promise<void> {
                     <button
                       v-if="isAdmin"
                       class="btn btn-sm btn-ghost archive-row-delete"
-                      title="Delete archive"
+                      :disabled="isArchiveDeleting(archive.name)"
+                      :title="
+                        isArchiveDeleting(archive.name) ? 'Deletion in progress' : 'Delete archive'
+                      "
                       @click.stop="requestArchiveDeletion(archive)"
                     >
-                      <Trash2 :size="12" />
+                      <BaseSpinner
+                        v-if="isArchiveDeleting(archive.name)"
+                        size="sm"
+                      />
+                      <Trash2
+                        v-else
+                        :size="12"
+                      />
                     </button>
                   </div>
                 </div>
@@ -1705,6 +1765,7 @@ async function resetImport(): Promise<void> {
                 :repo-id="repoId"
                 :archive="selectedArchive"
                 :is-admin="isAdmin"
+                :deleting="selectedArchive !== null && isArchiveDeleting(selectedArchive.name)"
                 @delete-archive="requestArchiveDeletion"
               />
             </div>

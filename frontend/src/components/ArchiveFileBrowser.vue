@@ -26,9 +26,14 @@ const props = withDefaults(
     repoId: number | null
     archive: ArchiveEntry | null
     isAdmin?: boolean
+    // Whether `archive` already has a delete in flight - deletion is async
+    // (the request just enqueues the borg job), so without this the delete
+    // button stays clickable for an archive that's already being removed.
+    deleting?: boolean
   }>(),
   {
     isAdmin: false,
+    deleting: false,
   },
 )
 
@@ -94,7 +99,7 @@ async function handleRestore(entry: ContentEntry): Promise<void> {
 }
 
 function handleDeleteWholeArchive(): void {
-  if (props.archive) emit('delete-archive', props.archive)
+  if (props.archive && !props.deleting) emit('delete-archive', props.archive)
 }
 </script>
 
@@ -280,10 +285,18 @@ function handleDeleteWholeArchive(): void {
               <button
                 v-if="isAdmin && data.displayName === '.' && data.path.length === 0"
                 class="btn btn-sm btn-ghost"
-                title="Delete whole archive"
+                :disabled="deleting"
+                :title="deleting ? 'Deletion in progress' : 'Delete whole archive'"
                 @click.stop="handleDeleteWholeArchive"
               >
-                <Trash2 :size="14" />
+                <BaseSpinner
+                  v-if="deleting"
+                  size="sm"
+                />
+                <Trash2
+                  v-else
+                  :size="14"
+                />
               </button>
             </span>
           </template>

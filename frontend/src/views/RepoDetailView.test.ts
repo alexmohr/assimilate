@@ -43,9 +43,19 @@ vi.mock('../composables/useClipboard', () => ({
   useClipboard: () => ({ copied: ref(false), copy: vi.fn() }),
 }))
 
+// Captured WebSocket message handlers - populated during component setup().
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: () => ({ status: ref('connected'), onMessage: vi.fn() }),
+  useWebSocket: () => ({
+    status: ref('connected'),
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
 }))
+
+const mockDeleteArchiveByName = vi.fn()
 
 vi.mock('../composables/useArchiveBrowser', () => ({
   useArchiveBrowser: () => ({
@@ -62,7 +72,7 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     breadcrumbs: ref([]),
     dirs: ref([]),
     files: ref([]),
-    loadArchives: vi.fn(),
+    loadArchives: vi.fn().mockResolvedValue(undefined),
     selectArchive: vi.fn(),
     loadContents: vi.fn(),
     navigateTo: vi.fn(),
@@ -70,7 +80,7 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     downloadEntry: vi.fn(),
     restoreEntry: vi.fn(),
     deleteArchive: vi.fn(),
-    deleteArchiveByName: vi.fn(),
+    deleteArchiveByName: mockDeleteArchiveByName,
     stopPolling: vi.fn(),
   }),
 }))
@@ -102,6 +112,15 @@ interface RepoWithStats {
   total_compressed_size: number
   total_deduplicated_size: number
   agent_count: number
+  current_op?: {
+    kind: string
+    actor: string
+    started_at: string
+    queued?: number
+  } | null
+  last_op_kind?: string | null
+  last_op_by?: string | null
+  last_op_at?: string | null
 }
 
 const mockRepo: RepoWithStats = {
@@ -224,6 +243,7 @@ describe('RepoDetailView', () => {
     vi.clearAllMocks()
     mockBrowserArchives.value = []
     mockSortedArchives.value = []
+    mockDeleteArchiveByName.mockResolvedValue(true)
   })
 
   it('renders repo name in breadcrumb and info grid', async () => {
@@ -287,6 +307,35 @@ describe('RepoDetailView', () => {
     const wrapper = await renderRepoDetail()
 
     expect(wrapper.text()).toContain('/backup/repos/server-daily')
+  })
+
+  it('shows the compacting-repository label for an in-progress compact op', async () => {
+    setupApiSuccess({
+      ...mockRepo,
+      current_op: {
+        kind: 'compact_repo',
+        actor: 'admin',
+        started_at: new Date().toISOString(),
+        queued: 0,
+      },
+    })
+    const wrapper = await renderRepoDetail()
+
+    expect(wrapper.text()).toContain('Current Operation')
+    expect(wrapper.text()).toContain('Compacting repository (started by admin)')
+  })
+
+  it('shows "Compact repository" as the last-operation label once a compact has run', async () => {
+    setupApiSuccess({
+      ...mockRepo,
+      last_op_kind: 'compact_repo',
+      last_op_by: 'admin',
+      last_op_at: new Date().toISOString(),
+    })
+    const wrapper = await renderRepoDetail()
+
+    expect(wrapper.text()).toContain('Compact repository')
+    expect(wrapper.text()).toContain('by admin')
   })
 
   it('renders stat cards with archive count and agent count', async () => {
@@ -832,6 +881,133 @@ describe('RepoDetailView', () => {
 
       expect(wrapper.vm.hasArchiveFilter).toBe(false)
       expect(wrapper.vm.archiveFilterName).toBeNull()
+    })
+  })
+
+  describe('archive deletion in-progress state', () => {
+    const deletingArchive = {
+      name: 'web-server-01-backup-2026-06-04T02:00:00',
+      start: '2026-06-04T02:00:00',
+      hostname: 'web-server-01',
+      comment: '',
+      original_size: 1_000,
+      deduplicated_size: 500,
+      matched: true,
+      agent_hostname: 'web-server-01',
+    }
+
+    beforeEach(() => {
+      mockBrowserArchives.value = [deletingArchive]
+      mockSortedArchives.value = [deletingArchive]
+      setupApiSuccess()
+    })
+
+    async function openArchivesTab(
+      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    ): Promise<void> {
+      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      await archivesTab!.trigger('click')
+      await flushPromises()
+    }
+
+    // BaseModal renders its footer via <Teleport to="body">, which lands
+    // outside the wrapper's element tree, so it can't be reached with
+    // wrapper.find(); go through the real DOM instead, matching this file's
+    // existing document.body-based assertions for teleported content.
+    async function clickModalConfirm(): Promise<void> {
+      const confirmBtn = document.body.querySelector<HTMLButtonElement>('button.btn-danger')
+      expect(confirmBtn).not.toBeNull()
+      expect(confirmBtn!.textContent).toBe('Delete Archive')
+      confirmBtn!.click()
+      await flushPromises()
+    }
+
+    it('disables the delete button and blocks re-triggering once a delete is confirmed', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      const deleteBtn = wrapper.find('button[title="Delete archive"]')
+      expect(deleteBtn.exists()).toBe(true)
+      await deleteBtn.trigger('click')
+      await flushPromises()
+
+      await clickModalConfirm()
+
+      expect(mockDeleteArchiveByName).toHaveBeenCalledWith(deletingArchive)
+      // The modal closed and the row's button now reflects the in-flight delete.
+      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(false)
+      const pendingBtn = wrapper.find('button[title="Deletion in progress"]')
+      expect(pendingBtn.exists()).toBe(true)
+      expect(pendingBtn.attributes('disabled')).toBeDefined()
+
+      // Re-requesting deletion for the same archive while it's still pending
+      // must not reopen the confirmation modal (the actual guard being tested).
+      wrapper.vm.requestArchiveDeletion(deletingArchive)
+      await flushPromises()
+      expect(wrapper.vm.archivePendingDeletion).toBeNull()
+    })
+
+    it('clears the in-progress state once the archive disappears from a DataChanged refresh', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // Simulate the server finishing the borg delete: the archive is gone
+      // from the reloaded list, then a DataChanged event notifies the UI.
+      mockBrowserArchives.value = []
+      mockSortedArchives.value = []
+      wsHandlers.DataChanged({})
+      await flushPromises()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('clears stale in-progress state once RepoOpChanged reports the repo is no longer deleting', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // The archive is still in the list (e.g. the borg delete itself
+      // failed), but the repo's delete queue has fully drained - the stale
+      // "deleting" marker must not stick around forever.
+      wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
+      await flushPromises()
+
+      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('keeps the in-progress state while the automatic post-delete compact is running', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // The delete itself finished (the tracked op moved on to the compact
+      // that automatically follows it) but the archive hasn't disappeared
+      // from the list yet - the row must stay disabled through the compact,
+      // not just through the delete.
+      wsHandlers.RepoOpChanged({
+        repo_id: mockRepo.id,
+        op: { kind: 'compact_repo', actor: 'admin', started_at: new Date().toISOString() },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
     })
   })
 })

@@ -9,4 +9,5 @@ export type RepoOpKind =
   | "agent_verify"
   | "server_sync"
   | "break_lock"
-  | "delete_archive";
+  | "delete_archive"
+  | "compact_repo";

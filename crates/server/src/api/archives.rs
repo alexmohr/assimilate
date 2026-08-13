@@ -19,7 +19,7 @@ use shared::{
         ArchiveEntryResponse, ArchiveIndexStatusResponse, ArchiveInfoResponse,
         DeleteArchiveResponse as SharedDeleteArchiveResponse,
     },
-    types::build_repo_url,
+    types::{IndexStatus, SystemEventType, build_repo_url},
 };
 use sqlx::PgPool;
 use tokio::{
@@ -30,16 +30,6 @@ use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, borg::Borg, db, error::ApiError};
-
-fn index_status_to_string(s: &crate::archive_index::IndexStatus) -> String {
-    match s {
-        crate::archive_index::IndexStatus::Pending => "pending",
-        crate::archive_index::IndexStatus::Indexing => "indexing",
-        crate::archive_index::IndexStatus::Done => "done",
-        crate::archive_index::IndexStatus::Failed => "failed",
-    }
-    .to_string()
-}
 
 /// Number of seconds to wait for a lock before timing out.
 pub const LOCK_WAIT_SECS: &str = "60";
@@ -313,7 +303,7 @@ pub use shared::responses::ContentEntryResponse as ContentEntry;
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContentsResponse {
     /// Status of the content index (pending, indexing, done, failed).
-    pub index_status: String,
+    pub index_status: IndexStatus,
     /// Immediate child entries at the requested path.
     pub entries: Vec<ContentEntry>,
 }
@@ -322,7 +312,7 @@ pub struct ContentsResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ArchiveIndexStatus {
     /// Current indexing status.
-    pub status: crate::archive_index::IndexStatus,
+    pub status: IndexStatus,
     /// Number of files indexed (if done).
     pub file_count: Option<i64>,
     /// Error message if indexing failed.
@@ -715,8 +705,13 @@ async fn execute_borg_delete(
                 tracing::error!(repo_id, archive = %archive_name, error = %err, "archive deletion failed");
                 let msg =
                     format!("failed to delete archive '{archive_name}' (repo {repo_id}): {err}");
-                if let Err(e) =
-                    db::insert_system_event(&state.pool, "archive_delete_failed", None, &msg).await
+                if let Err(e) = db::insert_system_event(
+                    &state.pool,
+                    SystemEventType::ArchiveDeleteFailed,
+                    None,
+                    &msg,
+                )
+                .await
                 {
                     tracing::warn!(error = %e, "failed to log archive delete failure");
                 }
@@ -727,8 +722,13 @@ async fn execute_borg_delete(
         Err(e) => {
             tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to execute borg delete");
             let msg = format!("failed to delete archive '{archive_name}' (repo {repo_id}): {e}");
-            if let Err(log_err) =
-                db::insert_system_event(&state.pool, "archive_delete_failed", None, &msg).await
+            if let Err(log_err) = db::insert_system_event(
+                &state.pool,
+                SystemEventType::ArchiveDeleteFailed,
+                None,
+                &msg,
+            )
+            .await
             {
                 tracing::warn!(error = %log_err, "failed to log archive delete failure");
             }
@@ -818,8 +818,13 @@ async fn execute_borg_compact(
                 let msg = format!(
                     "failed to compact repository after archive deletion (repo {repo_id}): {err}"
                 );
-                if let Err(e) =
-                    db::insert_system_event(&state.pool, "archive_compact_failed", None, &msg).await
+                if let Err(e) = db::insert_system_event(
+                    &state.pool,
+                    SystemEventType::ArchiveCompactFailed,
+                    None,
+                    &msg,
+                )
+                .await
                 {
                     tracing::warn!(error = %e, "failed to log repository compact failure");
                 }
@@ -830,8 +835,13 @@ async fn execute_borg_compact(
             let msg = format!(
                 "failed to compact repository after archive deletion (repo {repo_id}): {e}"
             );
-            if let Err(log_err) =
-                db::insert_system_event(&state.pool, "archive_compact_failed", None, &msg).await
+            if let Err(log_err) = db::insert_system_event(
+                &state.pool,
+                SystemEventType::ArchiveCompactFailed,
+                None,
+                &msg,
+            )
+            .await
             {
                 tracing::warn!(error = %log_err, "failed to log repository compact failure");
             }
@@ -984,7 +994,7 @@ pub async fn list_contents(
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Query(query): Query<ContentsQuery>,
 ) -> Result<Json<ContentsResponse>, ApiError> {
-    use crate::archive_index::{self, IndexStatus};
+    use crate::archive_index;
 
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
     let path = query.path.as_deref();
@@ -1008,16 +1018,16 @@ pub async fn list_contents(
             )
             .await?;
             return Ok(Json(ContentsResponse {
-                index_status: index_status_to_string(&IndexStatus::Done),
+                index_status: IndexStatus::Done,
                 entries,
             }));
         }
         Some(IndexStatus::Failed) => {
             // Fall through to the borg-based path below so browsing still works.
         }
-        Some(ref pending @ (IndexStatus::Pending | IndexStatus::Indexing)) => {
+        Some(status @ (IndexStatus::Pending | IndexStatus::Indexing)) => {
             return Ok(Json(ContentsResponse {
-                index_status: index_status_to_string(pending),
+                index_status: status,
                 entries: vec![],
             }));
         }
@@ -1034,7 +1044,7 @@ pub async fn list_contents(
             )
             .await?;
             return Ok(Json(ContentsResponse {
-                index_status: index_status_to_string(&triggered),
+                index_status: triggered,
                 entries: vec![],
             }));
         }
@@ -1052,7 +1062,7 @@ pub async fn list_contents(
     let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
 
     Ok(Json(ContentsResponse {
-        index_status: index_status_to_string(&IndexStatus::Failed),
+        index_status: shared::types::IndexStatus::Failed,
         entries: limited,
     }))
 }
@@ -1195,18 +1205,21 @@ pub async fn get_archive_index_status(
     .await
     .map_err(ApiError::Database)?;
 
-    let response = row.map_or(
-        ArchiveIndexStatusResponse {
-            status: "pending".to_string(),
+    let response = match row {
+        None => ArchiveIndexStatusResponse {
+            status: IndexStatus::Pending,
             file_count: None,
             error: None,
         },
-        |r| ArchiveIndexStatusResponse {
-            status: r.status,
+        Some(r) => ArchiveIndexStatusResponse {
+            status: r
+                .status
+                .parse()
+                .map_err(|_| ApiError::Internal(format!("invalid index status: {}", r.status)))?,
             file_count: r.file_count,
             error: r.error_message,
         },
-    );
+    };
 
     Ok(Json(response))
 }

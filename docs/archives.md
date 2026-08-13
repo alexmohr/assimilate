@@ -10,6 +10,8 @@ You can also browse archives per schedule: open a schedule's detail view and swi
 
 Use the list mode selector to switch between **Host groups** and flat archive ordering by **date**, **original size**, or **deduplicated size**, each in ascending or descending order.
 
+In **Host groups** mode the groups start **collapsed**, showing one row per host with its archive count. Click a group header to expand it and list that host's archives. This keeps the list readable on repositories that hold archives from many hosts.
+
 The table supports **sorting** (click any column header) and **inline filtering** (type in the filter row below headers to narrow results).
 
 Each row displays:
@@ -24,6 +26,12 @@ Each row displays:
 Click an archive row to open its detail view.
 
 ![Archives](assets/screenshots/archives.png)
+
+### Viewing a Single Archive
+
+Links that point at one specific archive (for example from a host's backup history) open the **Archives** tab with an `?archive=<name>` query parameter. In this mode the page shows only a **Showing only `<name>`** banner and the file browser for that archive — the archive list, filter box, sort selector, and group toggle are hidden, since none of them apply to a single result.
+
+Click **Show all archives** in the banner to clear the filter and return to the full list.
 
 ## Archive Details
 

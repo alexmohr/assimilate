@@ -169,3 +169,23 @@ export const test = base.extend<{ page: Page }>({
 })
 
 export { expect }
+
+// Archive host groups start collapsed by default, so .archive-row elements
+// are hidden until their group is expanded. Wait for the list to settle into
+// some terminal state first, since callers vary in how much they've already
+// waited for the archives fetch to resolve.
+export async function expandAllArchiveGroups(page: Page): Promise<void> {
+  await page
+    .locator('.archive-group, .archive-row-detailed, .state-msg-sm')
+    .first()
+    .waitFor({ state: 'visible', timeout: 20_000 })
+    .catch(() => {})
+  // Click the chevron, not the header button itself: the header also
+  // contains a BaseHostLink that fills most of its width, and clicking the
+  // button's center can land on that link (navigating away) instead of
+  // toggling the group.
+  const collapsedChevrons = page.locator('.group-header.collapsed .group-chevron')
+  while ((await collapsedChevrons.count()) > 0) {
+    await collapsedChevrons.first().click()
+  }
+}

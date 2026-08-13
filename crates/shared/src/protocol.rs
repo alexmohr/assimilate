@@ -589,6 +589,19 @@ mod tests {
     use super::*;
     use crate::types::{DryRunFile, SearchEntry};
 
+    /// Serializes `msg`, deserializes it back, re-serializes the result, and
+    /// asserts the two JSON strings match - the round-trip check every
+    /// protocol message variant test below needs.
+    fn assert_round_trips<T>(msg: &T)
+    where
+        T: Serialize + serde::de::DeserializeOwned,
+    {
+        let json = serde_json::to_string(msg).unwrap();
+        let msg2: T = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
     #[test]
     fn tunnel_status_connected_round_trips_json() {
         let status = TunnelStatus::Connected;
@@ -616,10 +629,7 @@ mod tests {
             pattern: "*.log".into(),
             max_archives: Some(5),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -631,10 +641,7 @@ mod tests {
             paths: vec!["/etc/hosts".into(), "/var/log".into()],
             target_path: "/tmp/restore".into(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -644,10 +651,7 @@ mod tests {
             repo_id: RepoId(2),
             schedule_id: 42,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -657,10 +661,7 @@ mod tests {
             repo_id: RepoId(1),
             archive_name: "daily-2024-01-01".into(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -669,10 +670,7 @@ mod tests {
             request_id: "req-5".into(),
             repo_id: RepoId(7),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -682,10 +680,7 @@ mod tests {
             repo_id: RepoId(7),
             key_data: "BORG_KEY abc123".into(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -695,10 +690,7 @@ mod tests {
             repo_id: RepoId(2),
             new_passphrase: "new-secret".into(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -709,10 +701,7 @@ mod tests {
             request_id: Some("req-8".into()),
             run_id: Some("run-abc".into()),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -733,10 +722,7 @@ mod tests {
             request_id: None,
             run_id: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -769,10 +755,7 @@ mod tests {
             }],
             done: true,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -783,10 +766,7 @@ mod tests {
             files_restored: 42,
             error_message: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -800,10 +780,7 @@ mod tests {
             total_size: 2048,
             error_message: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -813,10 +790,7 @@ mod tests {
             success: true,
             error_message: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -826,10 +800,7 @@ mod tests {
             key_data: "BORG_KEY abc".into(),
             error_message: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -839,10 +810,7 @@ mod tests {
             success: true,
             error_message: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -852,10 +820,7 @@ mod tests {
             success: true,
             error_message: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -865,10 +830,7 @@ mod tests {
             percent: 50,
             message: "Extracting files...".into(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -877,10 +839,7 @@ mod tests {
             request_id: "req-9".into(),
             error: "Repository locked".into(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -890,10 +849,7 @@ mod tests {
             repo_id: RepoId(5),
             archive_names: vec!["daily-2026-01-01".into(), "daily-2026-01-02".into()],
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -904,10 +860,7 @@ mod tests {
             deleted_count: 2,
             error_message: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -917,10 +870,7 @@ mod tests {
             success: false,
             error_message: Some("key mismatch".into()),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -935,10 +885,7 @@ mod tests {
             supports_restart: true,
             restart_unavailable_reason: None,
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -946,10 +893,7 @@ mod tests {
         let msg = ServerToAgent::CancelBackup {
             repo_id: RepoId(42),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -957,10 +901,7 @@ mod tests {
         let msg = AgentToServer::BackupCancelled {
             repo_id: RepoId(42),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -971,10 +912,7 @@ mod tests {
             line: r#"{"type":"log_message","levelname":"INFO","message":"Creating archive"}"#
                 .to_owned(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 
     #[test]
@@ -986,9 +924,6 @@ mod tests {
             line: r#"{"type":"log_message","levelname":"WARNING","message":"File changed"}"#
                 .to_owned(),
         };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: ServerToUi = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        assert_round_trips(&msg);
     }
 }

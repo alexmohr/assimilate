@@ -328,7 +328,19 @@ const { onMessage } = useWebSocket()
 
 onMessage('DataChanged', () => {
   refreshRepo().catch(logger.error)
-  loadArchives().catch(logger.error)
+  loadArchives()
+    .then(() => {
+      // An archive that's gone from the freshly-loaded list was actually
+      // deleted - stop tracking it as in-flight. One still present just
+      // hasn't finished yet (or failed and stayed); the RepoOpChanged
+      // handler above sweeps those once the repo's delete queue drains.
+      const stillPresent = new Set(sortedArchives.value.map((a) => a.name))
+      const next = new Set([...deletingArchiveNames.value].filter((name) => stillPresent.has(name)))
+      if (next.size !== deletingArchiveNames.value.size) {
+        deletingArchiveNames.value = next
+      }
+    })
+    .catch(logger.error)
 })
 
 onMessage('ImportProgress', (payload) => {
@@ -349,6 +361,15 @@ onMessage('ImportProgress', (payload) => {
 onMessage('RepoOpChanged', (payload) => {
   if (repo.value && payload.repo_id === repo.value.id) {
     currentOp.value = payload.op
+    // Once this repo's active operation is no longer a delete (or there is
+    // none), every archive delete queued for it has finished - success or
+    // failure - since repo operations run strictly one at a time. Any name
+    // still marked "deleting" at that point is stale (a failed delete that
+    // the DataChanged-driven prune below never saw disappear from the list),
+    // so sweep it clear rather than leaving its row disabled forever.
+    if (payload.op?.kind !== 'delete_archive') {
+      deletingArchiveNames.value = new Set()
+    }
   }
 })
 
@@ -375,8 +396,18 @@ const {
 
 const archivePendingDeletion = ref<ArchiveEntry | null>(null)
 const archiveDeleteLoading = ref(false)
+// Archive names with a delete already in flight (queued or running on the
+// server). Deletion is async - the DELETE request just enqueues the borg
+// job and returns immediately - so without this a user can re-trigger the
+// same delete indefinitely before the first one has even started.
+const deletingArchiveNames = ref<Set<string>>(new Set())
+
+function isArchiveDeleting(name: string): boolean {
+  return deletingArchiveNames.value.has(name)
+}
 
 function requestArchiveDeletion(archive: ArchiveEntry): void {
+  if (isArchiveDeleting(archive.name)) return
   archivePendingDeletion.value = archive
 }
 
@@ -402,6 +433,7 @@ async function confirmArchiveDeletion(): Promise<void> {
   archiveDeleteLoading.value = true
   try {
     await deleteArchiveByName(archive)
+    deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
     archivePendingDeletion.value = null
     await refreshRepo()
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
@@ -1683,10 +1715,22 @@ async function resetImport(): Promise<void> {
                       <button
                         v-if="isAdmin"
                         class="btn btn-sm btn-ghost archive-row-delete"
-                        title="Delete archive"
+                        :disabled="isArchiveDeleting(archive.name)"
+                        :title="
+                          isArchiveDeleting(archive.name)
+                            ? 'Deletion in progress'
+                            : 'Delete archive'
+                        "
                         @click.stop="requestArchiveDeletion(archive)"
                       >
-                        <Trash2 :size="12" />
+                        <BaseSpinner
+                          v-if="isArchiveDeleting(archive.name)"
+                          size="sm"
+                        />
+                        <Trash2
+                          v-else
+                          :size="12"
+                        />
                       </button>
                     </div>
                   </div>
@@ -1711,10 +1755,20 @@ async function resetImport(): Promise<void> {
                   <button
                     v-if="isAdmin"
                     class="btn btn-sm btn-ghost archive-row-delete"
-                    title="Delete archive"
+                    :disabled="isArchiveDeleting(archive.name)"
+                    :title="
+                      isArchiveDeleting(archive.name) ? 'Deletion in progress' : 'Delete archive'
+                    "
                     @click.stop="requestArchiveDeletion(archive)"
                   >
-                    <Trash2 :size="12" />
+                    <BaseSpinner
+                      v-if="isArchiveDeleting(archive.name)"
+                      size="sm"
+                    />
+                    <Trash2
+                      v-else
+                      :size="12"
+                    />
                   </button>
                 </div>
               </div>
@@ -1834,10 +1888,22 @@ async function resetImport(): Promise<void> {
                       <button
                         v-if="isAdmin && entry.path.length === 0 && selectedArchive"
                         class="btn btn-sm btn-ghost"
-                        title="Delete whole archive"
+                        :disabled="isArchiveDeleting(selectedArchive.name)"
+                        :title="
+                          isArchiveDeleting(selectedArchive.name)
+                            ? 'Deletion in progress'
+                            : 'Delete whole archive'
+                        "
                         @click.stop="requestArchiveDeletion(selectedArchive)"
                       >
-                        <Trash2 :size="14" />
+                        <BaseSpinner
+                          v-if="isArchiveDeleting(selectedArchive.name)"
+                          size="sm"
+                        />
+                        <Trash2
+                          v-else
+                          :size="14"
+                        />
                       </button>
                     </span>
                   </td>

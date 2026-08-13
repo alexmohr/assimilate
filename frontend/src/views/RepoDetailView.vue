@@ -1453,8 +1453,9 @@ async function resetImport(): Promise<void> {
             <div class="danger-info">
               <span class="danger-heading">Break Repository Lock</span>
               <span class="danger-desc">
-                Remove a stale lock from the repository. Using this while a backup is in progress
-                will corrupt the repository.
+                Remove a stale lock from the repository, including a stale local cache lock left
+                behind by a crashed or forcibly killed backup process. Using this while a backup is
+                in progress will corrupt the repository.
               </span>
             </div>
             <div class="danger-action-wrap">
@@ -2334,8 +2335,9 @@ async function resetImport(): Promise<void> {
           </div>
           <div class="dialog-body">
             <p class="break-lock-warning">
-              This will forcibly remove the lock from the repository. Only use this if you are
-              certain no backup is currently running. Breaking a lock during an active backup
+              This will forcibly remove the lock from the repository, and clear any stale local
+              cache lock found for it. Only use this if you are certain no backup is currently
+              running. Breaking a lock during an active backup
               <strong>will corrupt the repository</strong>.
             </p>
             <div

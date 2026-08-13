@@ -39,3 +39,6 @@ futures-util = { workspace = true }
 # same way rather than making it an unconditional build requirement for every platform.
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

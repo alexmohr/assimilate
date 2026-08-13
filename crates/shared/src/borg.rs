@@ -365,6 +365,71 @@ fn run_break_lock_blocking(
     }
 }
 
+/// True if `dir` looks like borg's own local, on-disk *cache* lock directory rather than a
+/// repository's lock directory. Borg's cache lock lives at
+/// `<cache-base>/borg/<repository-id-hex>` (`<cache-base>` is `$BORG_CACHE_DIR` if set, else the
+/// platform cache dir, e.g. `~/.cache` on Linux) - a directory named after the repository's
+/// internal ID, itself directly inside a directory named `borg`. A repository's own lock, by
+/// contrast, lives inside the repository itself and won't match this shape.
+fn looks_like_borg_cache_lock_dir(dir: &Path) -> bool {
+    let is_hex_repo_id = dir
+        .file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|s| s.len() >= 32 && s.chars().all(|c| c.is_ascii_hexdigit()));
+    let parent_is_borg_cache_dir = dir
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(OsStr::to_str)
+        .is_some_and(|s| s.eq_ignore_ascii_case("borg"));
+    is_hex_repo_id && parent_is_borg_cache_dir
+}
+
+/// If `stderr` is a borg `"Failed to create/acquire the lock <path> (timeout)."` error naming
+/// borg's local cache lock (see [`looks_like_borg_cache_lock_dir`]) rather than the repository's
+/// own lock, returns that lock's directory.
+///
+/// This exists because `borg break-lock` only ever clears the *repository's* lock - never
+/// borg's own local on-disk cache lock. A borg process killed (crash, OOM, forced container
+/// restart) while holding the cache lock leaves it stuck until someone removes
+/// `lock.exclusive`/`lock.roster` from this directory by hand; borg's own error message is the
+/// most reliable source for that directory's exact path, since the cache base dir is
+/// configurable (`BORG_CACHE_DIR`) and its default varies by platform.
+#[must_use]
+pub fn cache_lock_dir_from_timeout_error(stderr: &str) -> Option<PathBuf> {
+    const MARKER: &str = "Failed to create/acquire the lock ";
+    let (_, after_marker) = stderr.split_once(MARKER)?;
+    let (lock_file, _) = after_marker.split_once(" (timeout)")?;
+    let lock_file = lock_file.trim();
+    if lock_file.is_empty() {
+        return None;
+    }
+    let dir = Path::new(lock_file).parent()?;
+    looks_like_borg_cache_lock_dir(dir).then(|| dir.to_path_buf())
+}
+
+/// Removes borg's local cache-lock files (`lock.exclusive`, `lock.roster`) from `dir`.
+/// Idempotent: a file that is already missing is not an error.
+///
+/// This is deliberately as unsafe as `borg break-lock` itself, which does not verify staleness
+/// either - it is documented as a manual-recovery tool for a repository the caller is already
+/// sure is not in concurrent use. Callers must only pass a `dir` that
+/// [`cache_lock_dir_from_timeout_error`] already confirmed is borg's own local cache lock
+/// directory, never an arbitrary path.
+///
+/// # Errors
+///
+/// Returns the first I/O error hit removing an existing lock file.
+pub async fn clear_stale_cache_lock(dir: &Path) -> std::io::Result<()> {
+    for name in ["lock.exclusive", "lock.roster"] {
+        match tokio::fs::remove_file(dir.join(name)).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 /// Spawns `binary` with `args`/`env` (optionally in `dir`), waits for it to finish via a
 /// [`GracefulChild`] (SIGTERM then SIGKILL+break-lock if it doesn't exit within
 /// [`kill_escalation_delay`]), and logs the outcome. This is the spawn/wait/log pattern
@@ -418,6 +483,10 @@ pub async fn run_command<A: AsRef<OsStr>>(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::path::Path::exists for simple synchronous assertions"
+)]
 mod tests {
     use super::*;
 
@@ -667,5 +736,67 @@ mod tests {
         assert!(output.status.success());
         let printed = String::from_utf8_lossy(&output.stdout);
         assert_eq!(printed.trim(), dir.to_string_lossy().trim_end_matches('/'));
+    }
+
+    #[test]
+    fn cache_lock_dir_from_timeout_error_matches_the_reported_cache_lock_path() {
+        let stderr = "Failed to create/acquire the lock \
+                      /app/.cache/borg/\
+                      85f318afefc47f30136bd60f6b33c78ea215f18b468afafd09feee11d687c1f1/lock.\
+                      exclusive (timeout).\n";
+        assert_eq!(
+            cache_lock_dir_from_timeout_error(stderr),
+            Some(PathBuf::from(
+                "/app/.cache/borg/85f318afefc47f30136bd60f6b33c78ea215f18b468afafd09feee11d687c1f1"
+            ))
+        );
+    }
+
+    #[test]
+    fn cache_lock_dir_from_timeout_error_ignores_a_repository_lock_path() {
+        let stderr =
+            "Failed to create/acquire the lock /home/backups/gremlin/lock.exclusive (timeout).\n";
+        assert_eq!(cache_lock_dir_from_timeout_error(stderr), None);
+    }
+
+    #[test]
+    fn cache_lock_dir_from_timeout_error_ignores_unrelated_stderr() {
+        assert_eq!(
+            cache_lock_dir_from_timeout_error(
+                "passphrase supplied in BORG_PASSPHRASE is incorrect"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn cache_lock_dir_from_timeout_error_ignores_a_message_missing_the_timeout_suffix() {
+        // Same wording borg uses for lock contention that isn't a hard timeout - no path to act on.
+        assert_eq!(
+            cache_lock_dir_from_timeout_error("Failed to create/acquire the lock, waiting"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_stale_cache_lock_removes_existing_lock_files() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("lock.exclusive"), b"")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("lock.roster"), b"{}")
+            .await
+            .unwrap();
+
+        clear_stale_cache_lock(dir.path()).await.unwrap();
+
+        assert!(!dir.path().join("lock.exclusive").exists());
+        assert!(!dir.path().join("lock.roster").exists());
+    }
+
+    #[tokio::test]
+    async fn clear_stale_cache_lock_is_a_noop_when_files_are_already_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        clear_stale_cache_lock(dir.path()).await.unwrap();
     }
 }

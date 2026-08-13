@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id ), daily AS ( SELECT br.repo_id, br.started_at::date AS date, SUM(br.original_size) AS day_original, SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize ORDER BY br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.status = 'success' GROUP BY br.repo_id, br.started_at::date ), joined AS ( SELECT rl.repo_id, rl.repo_name, d.date, dl.day_original, dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (PARTITION BY rl.repo_id ORDER BY d.date) AS fill_grp FROM repos_list rl CROSS JOIN days d LEFT JOIN daily dl ON dl.repo_id = rl.repo_id AND dl.date = d.date ) SELECT date AS \"date!\", repo_id AS \"repo_id!\", repo_name AS \"repo_name!\", COALESCE(SUM(day_original) OVER (PARTITION BY repo_id ORDER BY date), 0)::INT8 AS \"original_size!\", COALESCE(SUM(day_compressed) OVER (PARTITION BY repo_id ORDER BY date), 0)::INT8 AS \"compressed_size!\", NULLIF(MAX(day_csize) OVER (PARTITION BY repo_id, fill_grp), 0)::INT8 AS \"deduplicated_size?\" FROM joined ORDER BY date, repo_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "original_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "deduplicated_size?",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "26c4b12026f4eb7a01fcdc972ef5d4d7776bec7faff9dd24b5fe5ebde7bd6d0b"
+}

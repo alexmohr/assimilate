@@ -163,8 +163,8 @@ const mockRepoSchedule = {
   keep_monthly: 6,
   keep_yearly: 1,
   compact_enabled: true,
-  pre_backup_commands: '[]',
-  post_backup_commands: '[]',
+  pre_backup_commands: [],
+  post_backup_commands: [],
 }
 
 let repoState: RepoWithStats

@@ -231,6 +231,7 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
             "/api/stats/storage-breakdown",
             get(server::api::stats::storage_breakdown),
         )
+        .route("/api/stats/calendar", get(server::api::stats::calendar))
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
         .route("/api/logs", get(server::api::logs::get_logs))
         .route(
@@ -2991,7 +2992,7 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
          canary_enabled, exclude_patterns_raw, ignore_global_excludes, keep_daily, keep_weekly, \
          keep_monthly, keep_yearly, compact_enabled, pre_backup_commands, post_backup_commands, \
          execution_mode, on_failure) VALUES ($1, 'test', 'backup', '0 3 * * *', true, false, $2, \
-         false, 7, 4, 6, 0, true, '[]', '[]', 'parallel', 'stop') RETURNING id",
+         false, 7, 4, 6, 0, true, '[]', '[]', 'sequential', 'stop') RETURNING id",
     )
     .bind(repo_id)
     .bind("")
@@ -3075,6 +3076,45 @@ async fn test_global_excludes_overwrite_replaces_fully(pool: sqlx::PgPool) {
     let resp = oneshot(&mut app, get_request("/api/excludes")).await;
     let body = body_json(resp).await;
     assert_eq!(body.get("raw_text").unwrap(), "only-this-one");
+}
+
+/// Regression test for `project_upcoming_schedule_events`'s batch-hostname rewrite: the
+/// projected "Scheduled" calendar event for an enabled schedule must still carry its target
+/// agent's hostname, now that the lookup is a single batched query instead of one query per
+/// schedule inside the loop.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_calendar_upcoming_schedule_includes_target_hostname(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('calendar-host', 'hash-cal') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo_id = insert_test_repo(&pool, "calendar-repo").await;
+    insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let now = chrono::Utc::now();
+    let month = format!("{}-{:02}", now.format("%Y"), now.format("%m"));
+    let req = get_request(&format!("/api/stats/calendar?month={month}"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = body_json(resp).await;
+    let days = body.as_array().unwrap();
+    let scheduled_event = days
+        .iter()
+        .flat_map(|d| d.get("events").and_then(|e| e.as_array()).unwrap())
+        .find(|e| e.get("status").and_then(|s| s.as_str()) == Some("scheduled"));
+    let event = scheduled_event.expect("an upcoming scheduled event for the new schedule");
+    assert_eq!(
+        event.get("hostname").and_then(|h| h.as_str()),
+        Some("calendar-host")
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3235,8 +3275,8 @@ async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
                 "display_name": "New Host 1",
                 "default_backup_paths": ["/etc", "/home"],
                 "default_exclude_patterns": ["*.log"],
-                "default_pre_backup_commands": "[]",
-                "default_post_backup_commands": "[]",
+                "default_pre_backup_commands": [],
+                "default_post_backup_commands": [],
                 "hostname_patterns": []
             }
         ],
@@ -3283,8 +3323,8 @@ async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
                 "display_name": "Updated Name",
                 "default_backup_paths": ["/var"],
                 "default_exclude_patterns": [],
-                "default_pre_backup_commands": "[]",
-                "default_post_backup_commands": "[]",
+                "default_pre_backup_commands": [],
+                "default_post_backup_commands": [],
                 "hostname_patterns": []
             }
         ],
@@ -4828,6 +4868,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "report_retention_days": 45,
         "failed_report_retention_days": 200,
         "system_event_retention_days": 30,
+        "notification_delivery_retention_days": 15,
         "timezone": "UTC",
         "borg_query_timeout_secs": 120,
         "session_idle_timeout_minutes": 60,
@@ -4839,6 +4880,10 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("report_retention_days").unwrap(), 45);
     assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
     assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(
+        body.get("notification_delivery_retention_days").unwrap(),
+        15
+    );
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
@@ -4867,6 +4912,11 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "omitted field must echo the persisted value, not a request-derived default"
     );
     assert_eq!(
+        body.get("notification_delivery_retention_days").unwrap(),
+        15,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
         body.get("session_idle_timeout_minutes").unwrap(),
         60,
         "omitted field must echo the persisted value, not a request-derived default"
@@ -4890,6 +4940,10 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("report_retention_days").unwrap(), 45);
     assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
     assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(
+        body.get("notification_delivery_retention_days").unwrap(),
+        15
+    );
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);

@@ -8,7 +8,7 @@
 // isn't `ready to merge` then requires an explicit branch-protection bypass,
 // not just human attentiveness. See skills/review/SKILL.md.
 
-const { waitForAllChecks } = require("./lib/wait-for-check");
+const { waitForAllChecks, latestRunPerName } = require("./lib/wait-for-check");
 
 const CI_WORKFLOW_FILE = "ci.yml";
 
@@ -254,6 +254,27 @@ const SUPPRESSION_LINE_PATTERNS = [/^\+\s*#!?\[allow\(/];
 // not pass/fail); otherwise it's stale, carried over from a prior commit,
 // and the ordinary CI/other-checks pending logic below already handles
 // "still waiting on this check" correctly once it registers.
+// Checks the MOST RECENT run of this name for this sha, not "any" run -
+// re-running CI on an unchanged sha (rather than pushing a new commit) can
+// leave an older, already-completed, since-superseded run of the same name
+// sitting alongside a fresh one still in flight for several seconds to a
+// minute. "any completed run exists" reads the stale one as current and
+// reports its (possibly failing) verdict as settled, even while the fresh
+// rerun that will supersede it hasn't posted yet - PR #383 hit exactly this:
+// a CI rerun after fixing a flaky coverage regression left the original
+// failing "Coverage Diff Check" run queryable here well after the rerun
+// started, long enough for a workflow_run-triggered sync to read it as
+// current and publish "PR Merge Gate" as a hard failure a second before the
+// rerun's own passing verdict landed. Collapsing to the latest attempt closes
+// that window: a newer run that hasn't completed yet correctly reports false
+// here (falling through to the ordinary pending handling below) instead of
+// resurrecting a superseded verdict. Reuses lib/wait-for-check.js's
+// latestRunPerName rather than re-deriving "latest" here, so both callers
+// agree on what "latest" means - and specifically so this orders by the
+// monotonic `id` instead of `started_at`, which a queued-but-not-yet-started
+// rerun hasn't populated yet (that would let the stale completed run win and
+// reopen a narrower version of this same bug). Filtering the query by
+// check_name means the helper collapses to at most one entry.
 async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkName) {
   const runs = await github.paginate(github.rest.checks.listForRef, {
     owner,
@@ -262,7 +283,8 @@ async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkNam
     check_name: checkName,
     per_page: 100,
   });
-  return runs.some((run) => run.status === "completed");
+  const [latest] = latestRunPerName(runs);
+  return latest !== undefined && latest.status === "completed";
 }
 
 async function ensureLabelExists(github, owner, repo, label) {

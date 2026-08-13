@@ -53,6 +53,7 @@ function setupSuccessMocks(): void {
           report_retention_days: 365,
           failed_report_retention_days: 365,
           system_event_retention_days: 90,
+          notification_delivery_retention_days: 30,
           borg_query_timeout_secs: 600,
           session_idle_timeout_minutes: 480,
         },
@@ -203,6 +204,21 @@ describe('SystemView', () => {
     expect(input.element.value).toBe('90')
   })
 
+  it('renders Notification Delivery Retention input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-notification-delivery-retention').exists()).toBe(true)
+  })
+
+  it('populates notification delivery retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-notification-delivery-retention')
+    expect(input.element.value).toBe('30')
+  })
+
   it('renders Borg Timeout input', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
@@ -244,6 +260,7 @@ describe('SystemView', () => {
         report_retention_days: 365,
         failed_report_retention_days: 365,
         system_event_retention_days: 90,
+        notification_delivery_retention_days: 30,
         borg_query_timeout_secs: 600,
         session_idle_timeout_minutes: 120,
       },
@@ -294,6 +311,7 @@ describe('SystemView', () => {
             report_retention_days: 0,
             failed_report_retention_days: 365,
             system_event_retention_days: 90,
+            notification_delivery_retention_days: 30,
             borg_query_timeout_secs: 300,
           },
         })
@@ -338,6 +356,7 @@ describe('SystemView', () => {
         report_retention_days: 180,
         failed_report_retention_days: 90,
         system_event_retention_days: 45,
+        notification_delivery_retention_days: 15,
         borg_query_timeout_secs: 600,
         session_idle_timeout_minutes: 480,
       },
@@ -351,6 +370,7 @@ describe('SystemView', () => {
       report_retention_days: 365,
       failed_report_retention_days: 365,
       system_event_retention_days: 90,
+      notification_delivery_retention_days: 30,
       timezone: 'Europe/Berlin',
       borg_query_timeout_secs: 600,
       session_idle_timeout_minutes: 480,
@@ -366,6 +386,7 @@ describe('SystemView', () => {
         report_retention_days: 0,
         failed_report_retention_days: 365,
         system_event_retention_days: 90,
+        notification_delivery_retention_days: 30,
         borg_query_timeout_secs: 120,
       },
     })

@@ -27,6 +27,7 @@ async function interceptSystemApis(page: Page): Promise<void> {
             report_retention_days: 365,
             failed_report_retention_days: 365,
             system_event_retention_days: 90,
+            notification_delivery_retention_days: 30,
             borg_query_timeout_secs: 300,
           }),
         })
@@ -95,6 +96,7 @@ test('admin can update borg timeout and save settings', async ({ page }) => {
             report_retention_days: 365,
             failed_report_retention_days: 365,
             system_event_retention_days: 90,
+            notification_delivery_retention_days: 30,
             borg_query_timeout_secs: 600,
           }),
         })

@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
+import { FilterMatchMode } from '@primevue/core/api'
 
 const mockBrowserArchives = ref<
   Array<{
@@ -62,6 +63,17 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     breadcrumbs: ref([]),
     dirs: ref([]),
     files: ref([]),
+    // ArchiveFileBrowser renders for real here (not stubbed) and binds these
+    // straight into its DataTable, so they must exist even though every
+    // scenario in this file keeps `contents` empty and never reaches that
+    // branch - otherwise the first test that populates contents fails on
+    // undefined, far from whatever it was actually asserting.
+    browserFilters: ref({
+      displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
+      displaySize: { value: '', matchMode: FilterMatchMode.CONTAINS },
+      displayMtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
+    }),
+    browserEntries: ref([]),
     loadArchives: vi.fn(),
     selectArchive: vi.fn(),
     loadContents: vi.fn(),

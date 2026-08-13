@@ -41,6 +41,10 @@ function paginatorControlClasses(): string {
   return 'inline-flex h-8 min-w-8 items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--bg-input)] px-2 text-sm text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50'
 }
 
+function columnHeaderCellClasses(options: { props: { sortable?: boolean } }): string {
+  return options.props.sortable ? 'cursor-pointer select-none' : ''
+}
+
 export const globalPrimeVuePT: PrimeVuePTOptions = {
   button: {
     root: buttonRootClasses,
@@ -55,6 +59,13 @@ export const globalPrimeVuePT: PrimeVuePTOptions = {
     tbody: 'divide-y divide-[var(--border-subtle)]',
     bodyRow: 'transition-colors hover:bg-[var(--bg-hover)]',
     emptyMessageCell: 'px-4 py-8 text-center text-sm text-[var(--text-muted)]',
+    column: {
+      headerCell: columnHeaderCellClasses,
+      // Tailwind's preflight sets `svg { display: block }`, which knocks the sort
+      // icon onto its own line below the title unless the wrapper is a flex row.
+      columnHeaderContent: 'flex items-center gap-1',
+      sortIcon: 'h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]',
+    },
   },
   dialog: {
     root: 'fixed inset-0 z-50 flex items-center justify-center p-4',

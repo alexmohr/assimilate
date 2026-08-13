@@ -8,7 +8,7 @@
 // isn't `ready to merge` then requires an explicit branch-protection bypass,
 // not just human attentiveness. See skills/review/SKILL.md.
 
-const { waitForAllChecks } = require("./lib/wait-for-check");
+const { waitForAllChecks, latestRunPerName } = require("./lib/wait-for-check");
 
 const CI_WORKFLOW_FILE = "ci.yml";
 
@@ -265,10 +265,16 @@ const SUPPRESSION_LINE_PATTERNS = [/^\+\s*#!?\[allow\(/];
 // failing "Coverage Diff Check" run queryable here well after the rerun
 // started, long enough for a workflow_run-triggered sync to read it as
 // current and publish "PR Merge Gate" as a hard failure a second before the
-// rerun's own passing verdict landed. Sorting by started_at and checking only
-// the latest run closes that window: a newer run that hasn't completed yet
-// correctly reports false here (falls through to the ordinary pending
-// handling below) instead of resurrecting a superseded verdict.
+// rerun's own passing verdict landed. Collapsing to the latest attempt closes
+// that window: a newer run that hasn't completed yet correctly reports false
+// here (falling through to the ordinary pending handling below) instead of
+// resurrecting a superseded verdict. Reuses lib/wait-for-check.js's
+// latestRunPerName rather than re-deriving "latest" here, so both callers
+// agree on what "latest" means - and specifically so this orders by the
+// monotonic `id` instead of `started_at`, which a queued-but-not-yet-started
+// rerun hasn't populated yet (that would let the stale completed run win and
+// reopen a narrower version of this same bug). Filtering the query by
+// check_name means the helper collapses to at most one entry.
 async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkName) {
   const runs = await github.paginate(github.rest.checks.listForRef, {
     owner,
@@ -277,11 +283,8 @@ async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkNam
     check_name: checkName,
     per_page: 100,
   });
-  if (runs.length === 0) return false;
-  const latest = runs.reduce((newest, run) =>
-    new Date(run.started_at || 0) > new Date(newest.started_at || 0) ? run : newest,
-  );
-  return latest.status === "completed";
+  const [latest] = latestRunPerName(runs);
+  return latest !== undefined && latest.status === "completed";
 }
 
 async function ensureLabelExists(github, owner, repo, label) {

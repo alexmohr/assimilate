@@ -1099,3 +1099,77 @@ async fn bootstrap_admin(pool: &PgPool) -> Result<(), StartupError> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn test_app_state(pool: PgPool) -> AppState {
+        let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
+        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        build_app_state(BuildAppStateArgs {
+            encryption_key: shared::crypto::derive_key(b"test-secret-key-for-main").unwrap(),
+            tunnel_manager: TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr),
+            ui_broadcast,
+            log_buffer: LogBuffer::default(),
+            notification_service: NotificationService::new(pool.clone()),
+            client_ip_resolver: ClientIpResolver::from_env(None),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
+            pool,
+        })
+    }
+
+    /// Exercises `resume_interrupted_imports`/`resume_single_import` - the
+    /// startup routine that resumes a repo left `importing = true` from before
+    /// a server restart (e.g. after a crash). This was previously only ever
+    /// incidentally covered when a demo container happened to restart
+    /// mid-import during CI - the same non-deterministic-coverage class
+    /// already fixed for `enrich_archive_stats_background` (#371) and
+    /// `run_repo_sync` (`scheduler.rs`) - so it exercises the function
+    /// directly and deterministically instead. No fake `borg` binary is on
+    /// `PATH` in the test environment, so `sync_existing_archives` fails fast
+    /// ("No such file or directory"), driving the resume through its
+    /// error-handling path.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn resume_interrupted_imports_clears_importing_flag_on_failure(pool: sqlx::PgPool) {
+        let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-main").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "resume-test-repo",
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+
+        let state = test_app_state(pool.clone());
+        resume_interrupted_imports(state.clone()).await;
+
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+
+        let still_importing = db::list_importing_repo_ids(&pool).await.unwrap();
+        assert!(!still_importing.contains(&repo.id));
+
+        let repo_row = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+        assert!(repo_row.import_error.is_some());
+    }
+}

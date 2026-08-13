@@ -220,9 +220,16 @@ api PUT "/api/repos/$REPO_WEEKLY_ID" "{
 }" > /dev/null
 
 # Blocks until no repo reports importing == true (sync runs in the background).
+# Must poll /api/repos/stats, not /api/repos: the latter returns the plain
+# RepoResponse DTO, which has no `importing` field at all, so `.importing`
+# is always null there and this loop would break on its very first
+# iteration regardless of whether a sync is actually still running -
+# exactly the bug that made every downstream step (schedule_id backfill,
+# archive tagging, the dashboard's per-schedule history) silently race
+# against archives that hadn't been imported yet.
 wait_for_imports() {
     for _attempt in $(seq 1 120); do
-        still=$(curl -sf "$BASE_URL/api/repos" -H "$AUTH_HEADER" \
+        still=$(curl -sf "$BASE_URL/api/repos/stats" -H "$AUTH_HEADER" \
             | jq '[.[] | select(.importing == true)] | length' 2>/dev/null || echo 1)
         [ "$still" = "0" ] && break
         sleep 2
@@ -414,18 +421,6 @@ if [ "$STALE_REPORT_COUNT" != "1" ]; then
     echo "expected exactly 1 backdated backup_reports row for stale-report-01, found $STALE_REPORT_COUNT" >&2
     exit 1
 fi
-
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-UPDATE backup_reports br
-SET schedule_id = s.id
-FROM schedules s
-JOIN schedule_targets st ON st.schedule_id = s.id
-WHERE br.schedule_id IS NULL
-  AND br.repo_id = s.repo_id
-  AND br.agent_id = st.agent_id
-  AND s.enabled = true
-  AND s.name <> 'Offline agent due soon';
-SQL
 
 echo "==> Adding global excludes..."
 # /api/excludes stores a single raw_text blob (one pattern per line) - it is not
@@ -629,5 +624,53 @@ echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
 }
 IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
+
+echo "==> Backfilling schedule_id on imported archives..."
+# Kept as the very last data-mutating step (rather than right after
+# wait_for_imports()/wait_for_enrichment() return) as extra insurance now
+# that wait_for_imports() itself is fixed to poll /api/repos/stats - by here,
+# every other seed step that touches backup_reports (archive tagging, the
+# warnings UPDATE) has already run against the same data, so the import is
+# guaranteed to have landed.
+#
+# web-server-01's server-daily archives match both its own solo daily
+# schedule (line ~265) and the multi-agent sequential schedule (line ~346),
+# since both target the same repo and include this agent. A plain UPDATE ...
+# FROM would pick an unspecified one of the matching schedules per row when
+# more than one qualifies, so the DISTINCT ON below deterministically picks
+# the lowest schedule id (the report's earliest/primary owning schedule) -
+# required for the dashboard's per-schedule average-duration lookups to find
+# a consistent, non-empty history.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE backup_reports br
+SET schedule_id = matched.schedule_id
+FROM (
+    SELECT DISTINCT ON (br2.id) br2.id AS report_id, s.id AS schedule_id
+    FROM backup_reports br2
+    JOIN schedules s ON s.repo_id = br2.repo_id
+    JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
+    WHERE br2.schedule_id IS NULL
+      AND s.enabled = true
+      AND s.name <> 'Offline agent due soon'
+    ORDER BY br2.id, s.id
+) matched
+WHERE br.id = matched.report_id;
+SQL
+
+# Fail loudly here rather than leaving the dashboard ETA e2e test to fail with
+# a confusing "left" timeout 15+ minutes later. The dashboard's per-schedule
+# average-duration lookup (frontend/e2e/fixtures.ts's
+# mockRunningBackupOperation and dashboard.spec.ts) hardcodes schedule_id=1
+# for web-server-01's server-daily archives, so the backfill above must land
+# on exactly that id for all 14 of them.
+WEB01_SERVER_DAILY_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COALESCE(br.schedule_id::text, 'NULL') || ':' || COUNT(*) FROM backup_reports br \
+     JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' AND br.archive_name IS NOT NULL \
+     GROUP BY br.schedule_id ORDER BY br.schedule_id")
+if [ "$WEB01_SERVER_DAILY_SCHEDULE_IDS" != "1:14" ]; then
+    echo "expected all 14 web-server-01/server-daily imported archives to have schedule_id=1, found: $WEB01_SERVER_DAILY_SCHEDULE_IDS" >&2
+    exit 1
+fi
 
 echo "==> Demo data seeded successfully."

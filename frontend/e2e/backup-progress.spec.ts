@@ -102,6 +102,25 @@ function sendWsMsg(ws: WebSocketRoute, type: string, payload: unknown): void {
   ws.send(JSON.stringify({ type, payload }))
 }
 
+// Routes the UI WebSocket, invoking onRoute for every connection (the app may
+// reconnect more than once) so callers can keep tracking the latest live
+// route, and returns a promise resolving with the first connection so callers
+// can await readiness before navigating.
+async function connectWs(
+  page: Page,
+  onRoute: (route: WebSocketRoute) => void,
+): Promise<{ wsReady: Promise<WebSocketRoute> }> {
+  let resolveWs!: (w: WebSocketRoute) => void
+  const wsReady = new Promise<WebSocketRoute>((resolve) => {
+    resolveWs = resolve
+  })
+  await page.routeWebSocket('**/ws/ui', (route) => {
+    onRoute(route)
+    resolveWs(route)
+  })
+  return { wsReady }
+}
+
 function makeArchiveProgressLine(nfiles: number, originalSize: number, path: string): string {
   return JSON.stringify({ type: 'archive_progress', nfiles, original_size: originalSize, path })
 }
@@ -111,14 +130,8 @@ test.describe('backup progress card', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    let resolveWs!: (w: WebSocketRoute) => void
-    const wsReady = new Promise<WebSocketRoute>((resolve) => {
-      resolveWs = resolve
-    })
-
-    await page.routeWebSocket('**/ws/ui', (route) => {
+    const { wsReady } = await connectWs(page, (route) => {
       ws = route
-      resolveWs(route)
     })
 
     await mockScheduleDetailApis(page)
@@ -249,14 +262,8 @@ test.describe('backup progress card — mid-backup page load', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    let resolveWs!: (w: WebSocketRoute) => void
-    const wsReady = new Promise<WebSocketRoute>((resolve) => {
-      resolveWs = resolve
-    })
-
-    await page.routeWebSocket('**/ws/ui', (route) => {
+    const { wsReady } = await connectWs(page, (route) => {
       ws = route
-      resolveWs(route)
     })
 
     // Override the reports endpoint to return an in-progress report so that
@@ -412,8 +419,9 @@ test.describe('backup progress card — mid-backup page load', () => {
     await expect(page.locator('.progress-body')).toContainText('data.db')
   })
 
-  test('non-progress log lines appear in the live log output panel', async ({ page }) => {
-    // Send a non-progress BackupLog line (e.g. a borg log_message JSON).
+  test('non-progress log lines do not render a raw log output panel', async ({ page }) => {
+    // Send a non-progress BackupLog line (e.g. a borg log_message JSON). The schedule
+    // detail card only surfaces parsed progress stats, not raw log output.
     const logLine = JSON.stringify({
       type: 'log_message',
       levelname: 'WARNING',
@@ -427,8 +435,9 @@ test.describe('backup progress card — mid-backup page load', () => {
       line: logLine,
     })
 
-    await expect(page.locator('.live-log-output')).toBeVisible({ timeout: 3_000 })
-    await expect(page.locator('.live-log-output')).toContainText('WARNING')
+    await page.waitForTimeout(300)
+    await expect(page.locator('.live-log-output')).toHaveCount(0)
+    await expect(page.locator('.live-log-card')).not.toContainText('WARNING')
   })
 
   test('BackupLog matched by schedule_id updates progress even without repo data loaded', async ({
@@ -475,13 +484,8 @@ test.describe('activity log — live backup log', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    let resolveWs!: (w: WebSocketRoute) => void
-    const wsReady = new Promise<WebSocketRoute>((resolve) => {
-      resolveWs = resolve
-    })
-    await page.routeWebSocket('**/ws/ui', (route) => {
+    const { wsReady } = await connectWs(page, (route) => {
       ws = route
-      resolveWs(route)
     })
     await mockActivityLogApis(page)
     await loginAsAdmin(page)

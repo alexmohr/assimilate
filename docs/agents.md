@@ -155,6 +155,8 @@ The server tracks liveness via WebSocket pings. If the agent stops responding to
 
 "Disconnected" does not mean the agent is deleted or its data is lost — it simply means the agent is not currently reachable. Scheduled backups for that agent will fail until the agent reconnects.
 
+While a backup is running for an agent, its card on the Agents list shows a **Running** pill naming the target repository. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
+
 ## Agent Detail View
 
 The agent detail page shows:

@@ -4,13 +4,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
+import { useElapsedClock } from '../composables/useElapsedTimer'
 import { formatDate, formatDateShort, formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -594,13 +595,10 @@ async function loadTabData(): Promise<void> {
           targetName: r.repo_name,
           archiveName: r.archive_name,
           startedAt,
-          elapsedSecs: Math.floor((Date.now() - startedAt) / 1000),
           progress: null,
-          logLines: [],
         },
       ]
     })
-    if (runningReports.length > 0) ensureElapsedTimer()
   } catch (e: unknown) {
     logger.error('loadTabData failed', e)
   }
@@ -810,29 +808,15 @@ interface ActiveBackup {
   targetName: string
   archiveName: string | null
   startedAt: number
-  elapsedSecs: number
   progress: ArchiveProgressData | null
-  logLines: string[]
 }
 
-const MAX_LIVE_LOG_LINES = 200
 const activeBackups = ref<ActiveBackup[]>([])
-let elapsedTimer: ReturnType<typeof setInterval> | null = null
+const hasActiveBackups = computed(() => activeBackups.value.length > 0)
+const { now } = useElapsedClock(hasActiveBackups)
 
-function ensureElapsedTimer(): void {
-  if (elapsedTimer !== null) return
-  elapsedTimer = setInterval(() => {
-    activeBackups.value.forEach((b) => {
-      b.elapsedSecs = Math.floor((Date.now() - b.startedAt) / 1000)
-    })
-  }, 1000)
-}
-
-function stopElapsedTimerIfIdle(): void {
-  if (activeBackups.value.length === 0 && elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = null
-  }
+function elapsedSecsFor(backup: ActiveBackup): number {
+  return Math.max(0, Math.floor((now.value - backup.startedAt) / 1000))
 }
 
 interface BorgArchiveProgress {
@@ -861,18 +845,14 @@ onMessage('BackupStarted', (payload) => {
       targetName: payload.target_name,
       archiveName: payload.archive_name ?? null,
       startedAt: Date.now(),
-      elapsedSecs: 0,
       progress: null,
-      logLines: [],
     },
   ]
-  ensureElapsedTimer()
 })
 
 onMessage('BackupCompleted', (payload) => {
   if (payload.hostname === props.hostname) {
     activeBackups.value = activeBackups.value.filter((b) => b.targetName !== payload.target_name)
-    stopElapsedTimerIfIdle()
   }
   loadAgent().catch(logger.error)
 })
@@ -890,13 +870,7 @@ onMessage('BackupLog', (payload) => {
       originalSize: progress.original_size,
       currentPath: progress.path ?? '',
     }
-  } else {
-    backup.logLines = [...backup.logLines.slice(-(MAX_LIVE_LOG_LINES - 1)), payload.line]
   }
-})
-
-onBeforeUnmount(() => {
-  if (elapsedTimer !== null) clearInterval(elapsedTimer)
 })
 
 watch(wsStatus, (newStatus, oldStatus) => {
@@ -992,10 +966,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
             :key="b.targetName"
             :badge="b.targetName"
             :archive-name="b.archiveName"
-            :elapsed-secs="b.elapsedSecs"
+            :elapsed-secs="elapsedSecsFor(b)"
             :estimated-remaining-secs="null"
             :progress="b.progress"
-            :log-lines="b.logLines"
           />
           <div class="info-actions">
             <button

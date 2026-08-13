@@ -630,40 +630,35 @@ async fn run_archive_deletion(
         return;
     }
 
-    let queue_drained =
-        finalize_archive_deletion(&state, repo_id, &archive_name, user_id, &username).await;
+    finalize_archive_deletion(&state, repo_id, &archive_name, user_id, &username).await;
 
-    // Compacting reclaims the space a deletion frees, but rewrites segment
-    // files and is not cheap - only run it once the repo's whole delete
-    // queue has drained rather than after every archive in a batch. Still
-    // holding `_repo_guard` here means nothing else can start on this repo
-    // between the last delete finishing and compact beginning.
-    if queue_drained {
-        state
-            .repo_op_tracker
-            .begin(
-                repo_id,
-                shared::protocol::RepoOpKind::CompactRepo,
-                username.clone(),
-            )
-            .await;
-        state
-            .ui_broadcast
-            .send(shared::protocol::ServerToUi::RepoOpChanged {
-                repo_id,
-                op: state.repo_op_tracker.get(repo_id).await,
-            });
+    // Compacting reclaims the space this deletion just freed. Still holding
+    // `_repo_guard` here means nothing else can start on this repo between
+    // the delete finishing and compact beginning.
+    state
+        .repo_op_tracker
+        .begin(
+            repo_id,
+            shared::protocol::RepoOpKind::CompactRepo,
+            username.clone(),
+        )
+        .await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
 
-        execute_borg_compact(&state, repo_id, &borg_repo, &env).await;
+    execute_borg_compact(&state, repo_id, &borg_repo, &env).await;
 
-        state.repo_op_tracker.clear(repo_id).await;
-        state
-            .ui_broadcast
-            .send(shared::protocol::ServerToUi::RepoOpChanged {
-                repo_id,
-                op: state.repo_op_tracker.get(repo_id).await,
-            });
-    }
+    state.repo_op_tracker.clear(repo_id).await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
 
     state
         .ui_broadcast
@@ -740,15 +735,14 @@ async fn execute_borg_delete(
 /// Deletes the local archive records, writes an audit log entry, and (once
 /// the deletion queue for this repo has drained) reconciles the archive list
 /// and repo stats by reusing the metadata import path. Content indexing is
-/// deliberately not run here. Returns `true` if the deletion queue had
-/// drained (no other delete still queued behind this one).
+/// deliberately not run here.
 async fn finalize_archive_deletion(
     state: &AppState,
     repo_id: i64,
     archive_name: &str,
     user_id: i64,
     username: &str,
-) -> bool {
+) {
     if let Err(e) =
         db::delete_archive_records_by_names(&state.pool, repo_id, &[archive_name.to_owned()]).await
     {
@@ -772,8 +766,7 @@ async fn finalize_archive_deletion(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    let queue_drained = state.repo_op_tracker.queued_count(repo_id).await == 0;
-    if queue_drained {
+    if state.repo_op_tracker.queued_count(repo_id).await == 0 {
         if let Err(e) = crate::api::repos::sync_existing_archives(
             &state.pool,
             &state.encryption_key,
@@ -789,7 +782,6 @@ async fn finalize_archive_deletion(
         crate::api::repos::clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id)
             .await;
     }
-    queue_drained
 }
 
 /// Runs `borg compact` on the whole repository, reclaiming the space freed

@@ -1353,15 +1353,14 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
             .unwrap();
     assert_eq!(remaining, 0, "every queued archive should be deleted");
 
-    // Compact should only run once the whole batch has drained, not once per
-    // queued delete - rewriting segments for every archive in a batch would
-    // be wasteful.
-    let count = wait_for_calls_log_count(&borg_dir, "compact", 1).await;
+    // Each queued delete runs its own compact once it completes.
+    let count = wait_for_calls_log_count(&borg_dir, "compact", names.len()).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     let settled = wait_for_calls_log_count(&borg_dir, "compact", count).await;
     assert_eq!(
-        settled, 1,
-        "compact should run exactly once after a batch of queued deletes drains"
+        settled,
+        names.len(),
+        "each successful delete in the batch should trigger its own compact"
     );
 }
 

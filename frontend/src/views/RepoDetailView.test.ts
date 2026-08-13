@@ -118,6 +118,9 @@ interface RepoWithStats {
     started_at: string
     queued?: number
   } | null
+  last_op_kind?: string | null
+  last_op_by?: string | null
+  last_op_at?: string | null
 }
 
 const mockRepo: RepoWithStats = {
@@ -320,6 +323,19 @@ describe('RepoDetailView', () => {
 
     expect(wrapper.text()).toContain('Current Operation')
     expect(wrapper.text()).toContain('Compacting repository (started by admin)')
+  })
+
+  it('shows "Compact repository" as the last-operation label once a compact has run', async () => {
+    setupApiSuccess({
+      ...mockRepo,
+      last_op_kind: 'compact_repo',
+      last_op_by: 'admin',
+      last_op_at: new Date().toISOString(),
+    })
+    const wrapper = await renderRepoDetail()
+
+    expect(wrapper.text()).toContain('Compact repository')
+    expect(wrapper.text()).toContain('by admin')
   })
 
   it('renders stat cards with archive count and agent count', async () => {

@@ -122,13 +122,40 @@ describe('ServerQuotasView', () => {
     await wrapper.find('button.btn-ghost').trigger('click')
     await nextTick()
 
+    await wrapper.find('#warn-gb').setValue(5)
+    await wrapper.find('#warn-action').setValue('block_backups')
+    await wrapper.find('#critical-gb').setValue(10)
+    await wrapper.find('#critical-action').setValue('disable_schedule')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
     expect(mockUpsert).toHaveBeenCalledWith(
       'other.example.com',
-      expect.objectContaining({ warn_action: 'notify_only', critical_action: 'notify_only' }),
+      expect.objectContaining({
+        warn_action: 'block_backups',
+        critical_action: 'disable_schedule',
+      }),
     )
+  })
+
+  it('shows an error and lets the user cancel the edit modal', async () => {
+    mockList.mockResolvedValue([configuredQuota])
+    mockUpsert.mockRejectedValue(new Error('save failed'))
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('API error')
+
+    await wrapper.find('button.close-btn').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
   it('removes a configured quota', async () => {

@@ -118,4 +118,40 @@ describe('TokensView', () => {
 
     expect(wrapper.text()).toContain('No API tokens')
   })
+
+  it('creates a token and shows the plaintext once', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({
+      data: { token: mockTokens[0], plaintext: 'secret-token-value' },
+    })
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button')
+    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+
+    await wrapper.find('#token-name').setValue('deploy-key')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'deploy-key' })
+    expect(wrapper.text()).toContain('secret-token-value')
+    expect(wrapper.text()).toContain('Token Created')
+  })
+
+  it('deletes a token via the confirm dialog', async () => {
+    const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
+    mockApiDelete.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
+    await deleteButton!.trigger('click')
+    expect(wrapper.text()).toContain('CI pipeline')
+
+    await wrapper.find('button.btn-danger').trigger('click')
+    await flushPromises()
+
+    expect(mockApiDelete).toHaveBeenCalledWith('/tokens/1')
+  })
 })

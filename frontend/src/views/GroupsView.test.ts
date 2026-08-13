@@ -131,4 +131,95 @@ describe('GroupsView', () => {
     expect(headerText).toContain('Members')
     expect(headerText).toContain('Actions')
   })
+
+  it('creates a group via the create modal', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button')
+    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+
+    await wrapper.find('#create-name').setValue('new-team')
+    await wrapper.find('#create-desc').setValue('A new team')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPost).toHaveBeenCalledWith('/groups', {
+      name: 'new-team',
+      description: 'A new team',
+    })
+  })
+
+  it('shows a validation error when creating a group without a name', async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button')
+    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Name is required')
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('edits a group via the edit modal', async () => {
+    const mockApiPut = apiClient.put as ReturnType<typeof vi.fn>
+    mockApiPut.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((b) => b.text() === 'Edit')
+    await editButton!.trigger('click')
+
+    await wrapper.find('#edit-name').setValue('backend-team-renamed')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPut).toHaveBeenCalledWith('/groups/1', {
+      name: 'backend-team-renamed',
+      description: 'Backend engineers',
+    })
+  })
+
+  it('deletes a group via the confirm dialog', async () => {
+    const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
+    mockApiDelete.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
+    await deleteButton!.trigger('click')
+    expect(wrapper.text()).toContain('backend-team')
+
+    await wrapper.find('button.btn-danger').trigger('click')
+    await flushPromises()
+
+    expect(mockApiDelete).toHaveBeenCalledWith('/groups/1')
+  })
+
+  it('toggles and saves group members', async () => {
+    const mockApiPut = apiClient.put as ReturnType<typeof vi.fn>
+    mockApiPut.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const membersButton = wrapper.findAll('button').find((b) => b.text() === 'Members')
+    await membersButton!.trigger('click')
+    await flushPromises()
+
+    const checkboxes = wrapper.findAll('input[type="checkbox"]')
+    await checkboxes[0]!.trigger('change')
+
+    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('Save Members'))
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiPut).toHaveBeenCalledWith(
+      '/groups/1/members',
+      expect.objectContaining({ user_ids: expect.any(Array) }),
+    )
+  })
 })

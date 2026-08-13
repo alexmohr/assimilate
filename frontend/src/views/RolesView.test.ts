@@ -59,6 +59,7 @@ const mockRoles: Role[] = [
   makeRole(1, 'admin', true, true),
   makeRole(2, 'operator', true, false),
   makeRole(3, 'viewer', true, false),
+  makeRole(4, 'custom-role', false, false),
 ]
 
 const mockApiGet = apiClient.get as ReturnType<typeof vi.fn>
@@ -128,5 +129,77 @@ describe('RolesView', () => {
     const no = wrapper.findAll('.perm-no')
     expect(yes.length).toBeGreaterThan(0)
     expect(no.length).toBeGreaterThan(0)
+  })
+
+  it('creates a role via the create modal', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button')
+    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+
+    await wrapper.find('#create-role-name').setValue('editor')
+    const permCheckboxes = wrapper.findAll('.permissions-grid input[type="checkbox"]')
+    await permCheckboxes[0]!.setValue(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/roles',
+      expect.objectContaining({ name: 'editor', can_create_agent: true }),
+    )
+  })
+
+  it('shows a validation error when creating a role without a name', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button')
+    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Name is required')
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('edits a role via the edit modal', async () => {
+    const mockApiPut = apiClient.put as ReturnType<typeof vi.fn>
+    mockApiPut.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((b) => b.text() === 'Edit')
+    await editButton!.trigger('click')
+
+    const permCheckboxes = wrapper.findAll('.permissions-grid input[type="checkbox"]')
+    await permCheckboxes[0]!.setValue(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPut).toHaveBeenCalledWith(
+      '/roles/1',
+      expect.objectContaining({ can_create_agent: true }),
+    )
+  })
+
+  it('deletes a non-seeded role via the confirm dialog', async () => {
+    const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
+    mockApiDelete.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    const deleteButtons = wrapper.findAll('button.btn-danger-text')
+    const enabledDelete = deleteButtons.find((b) => b.attributes('disabled') === undefined)
+    expect(enabledDelete).toBeDefined()
+    await enabledDelete!.trigger('click')
+    expect(wrapper.text()).toContain('custom-role')
+
+    await wrapper.find('button.btn-danger').trigger('click')
+    await flushPromises()
+
+    expect(mockApiDelete).toHaveBeenCalledWith('/roles/4')
   })
 })

@@ -72,4 +72,12 @@ describe('ConfirmDeleteDialog', () => {
     })
     expect(wrapper.find('.form-error').exists()).toBe(false)
   })
+
+  it('emits cancel when the overlay backdrop is clicked', async () => {
+    const wrapper = mount(ConfirmDeleteDialog, {
+      props: { show: true, title: 'Delete Group', submitting: false },
+    })
+    await wrapper.find('.overlay').trigger('click')
+    expect(wrapper.emitted('cancel')).toBeTruthy()
+  })
 })

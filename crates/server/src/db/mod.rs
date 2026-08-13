@@ -16,7 +16,7 @@ pub mod tags;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::{Compression, ScheduleType};
+use shared::types::{BackupStatus, ScheduleType, SystemEventType};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -182,7 +182,7 @@ pub struct AgentRow {
     pub last_seen_at: Option<DateTime<Utc>>,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
-    /// Visibility scope (e.g. "public", "private").
+    /// Visibility scope.
     pub visibility: String,
     /// Default backup paths for schedules targeting this agent.
     #[serde(default)]
@@ -2141,20 +2141,6 @@ pub async fn update_schedule_repo(pool: &PgPool, id: i64, repo_id: i64) -> Resul
     Ok(())
 }
 
-/// Converts a [`Compression`] enum to its string representation.
-#[must_use]
-pub fn compression_to_str(c: &Compression) -> String {
-    c.to_string()
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::Internal`] if an internal error occurs.
-pub fn compression_from_str(s: &str) -> Result<Compression, ApiError> {
-    s.parse::<Compression>()
-        .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))
-}
-
 /// A row from the `repos` table including the encrypted passphrase.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct RepoWithPassphraseRow {
@@ -3525,7 +3511,7 @@ pub struct InsertReportParams {
     /// When the backup finished.
     pub finished_at: DateTime<Utc>,
     /// Backup status.
-    pub status: String,
+    pub status: BackupStatus,
     /// Total original size in bytes.
     pub original_size: i64,
     /// Total compressed size in bytes.
@@ -3764,7 +3750,7 @@ async fn update_backup_report_by_run_id(
          status IN ('pending', 'started')",
         params.schedule_id,
         params.finished_at,
-        &params.status,
+        &params.status.to_string(),
         params.original_size,
         params.compressed_size,
         params.deduplicated_size,
@@ -3791,6 +3777,7 @@ async fn upsert_backup_report_with_archive_name(
     pool: &PgPool,
     params: &InsertReportParams,
 ) -> Result<(), ApiError> {
+    let status_str = params.status.to_string();
     sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
          status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
@@ -3811,7 +3798,7 @@ async fn upsert_backup_report_with_archive_name(
         params.schedule_id,
         params.started_at,
         params.finished_at,
-        &params.status,
+        &status_str,
         params.original_size,
         params.compressed_size,
         params.deduplicated_size,
@@ -3835,6 +3822,7 @@ async fn upsert_backup_report_without_archive_name(
     pool: &PgPool,
     params: &InsertReportParams,
 ) -> Result<(), ApiError> {
+    let status_str = params.status.to_string();
     sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
          status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
@@ -3855,7 +3843,7 @@ async fn upsert_backup_report_without_archive_name(
         params.schedule_id,
         params.started_at,
         params.finished_at,
-        &params.status,
+        &status_str,
         params.original_size,
         params.compressed_size,
         params.deduplicated_size,
@@ -3890,7 +3878,7 @@ pub async fn bulk_insert_backup_reports(
     let mut repo_ids = Vec::with_capacity(params.len());
     let mut started_ats = Vec::with_capacity(params.len());
     let mut finished_ats = Vec::with_capacity(params.len());
-    let mut statuses: Vec<&str> = Vec::with_capacity(params.len());
+    let mut statuses: Vec<String> = Vec::with_capacity(params.len());
     let mut original_sizes = Vec::with_capacity(params.len());
     let mut compressed_sizes = Vec::with_capacity(params.len());
     let mut deduplicated_sizes = Vec::with_capacity(params.len());
@@ -3908,7 +3896,7 @@ pub async fn bulk_insert_backup_reports(
         repo_ids.push(p.repo_id);
         started_ats.push(p.started_at);
         finished_ats.push(p.finished_at);
-        statuses.push(p.status.as_str());
+        statuses.push(p.status.to_string());
         original_sizes.push(p.original_size);
         compressed_sizes.push(p.compressed_size);
         deduplicated_sizes.push(p.deduplicated_size);
@@ -3921,6 +3909,8 @@ pub async fn bulk_insert_backup_reports(
         archive_names.push(p.archive_name.as_deref());
         borg_commands.push(p.borg_command.as_deref());
     }
+
+    let status_strs: Vec<&str> = statuses.iter().map(String::as_str).collect();
 
     let result = sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
@@ -3941,7 +3931,7 @@ pub async fn bulk_insert_backup_reports(
         &repo_ids,
         &started_ats,
         &finished_ats,
-        &statuses as &[&str],
+        &status_strs as &[&str],
         &original_sizes,
         &compressed_sizes,
         &deduplicated_sizes,
@@ -5096,7 +5086,8 @@ pub async fn record_failed_login_and_check_lockout(
             "Account '{username}' locked until {locked_until} after {count} failed attempts"
         );
         tokio::spawn(async move {
-            let _ = insert_system_event(&pool, "account_locked", None, &message).await;
+            let _ =
+                insert_system_event(&pool, SystemEventType::AccountLocked, None, &message).await;
         });
 
         return Ok(());
@@ -5413,14 +5404,14 @@ pub async fn list_repo_permissions_for_repo(
 }
 
 /// A row from the `system_events` table.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct SystemEventRow {
     /// Unique identifier.
     pub id: i64,
     /// When the event occurred.
     pub created_at: DateTime<Utc>,
-    /// Event type (e.g. ``agent_connected``, ``backup_failed``).
-    pub event_type: String,
+    /// Event type.
+    pub event_type: SystemEventType,
     /// Hostname the event relates to, if any.
     pub hostname: Option<String>,
     /// Human-readable event message.
@@ -5432,13 +5423,14 @@ pub struct SystemEventRow {
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_system_event(
     pool: &PgPool,
-    event_type: &str,
+    event_type: SystemEventType,
     hostname: Option<&str>,
     message: &str,
 ) -> Result<(), ApiError> {
+    let event_type_str = event_type.to_string();
     sqlx::query!(
         "INSERT INTO system_events (event_type, hostname, message) VALUES ($1, $2, $3)",
-        event_type,
+        event_type_str,
         hostname,
         message,
     )
@@ -5452,15 +5444,36 @@ pub async fn insert_system_event(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEventRow>, ApiError> {
-    sqlx::query_as!(
-        SystemEventRow,
+    let rows = sqlx::query!(
         "SELECT id, created_at, event_type, hostname, message FROM system_events ORDER BY \
          created_at DESC LIMIT $1",
         limit,
     )
     .fetch_all(pool)
     .await
-    .map_err(ApiError::Database)
+    .map_err(ApiError::Database)?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| match r.event_type.parse() {
+            Ok(event_type) => Some(SystemEventRow {
+                id: r.id,
+                created_at: r.created_at,
+                event_type,
+                hostname: r.hostname,
+                message: r.message,
+            }),
+            Err(e) => {
+                tracing::warn!(
+                    row_id = r.id,
+                    event_type = %r.event_type,
+                    error = %e,
+                    "skipping system event row with unrecognized event_type"
+                );
+                None
+            }
+        })
+        .collect())
 }
 
 /// # Errors

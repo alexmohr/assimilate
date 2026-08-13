@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
-    types::{OnFailure, RepoId, ScheduleType},
+    types::{OnFailure, RepoId, ScheduleType, SystemEventType},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -351,7 +351,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
             );
             tracing::error!("{msg}");
             if let Err(log_err) =
-                db::insert_system_event(&pool, "repo_sync_failed", None, &msg).await
+                db::insert_system_event(&pool, SystemEventType::RepoSyncFailed, None, &msg).await
             {
                 tracing::error!(error = %log_err, "failed to log sync event");
             }
@@ -417,7 +417,7 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
              {duration_secs}s",
         );
         tracing::info!("{msg}");
-        if let Err(e) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
+        if let Err(e) = db::insert_system_event(pool, SystemEventType::RepoSync, None, &msg).await {
             tracing::error!(error = %e, "failed to log sync event");
         }
     }
@@ -428,7 +428,9 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
             SYNC_WARN_DURATION.as_secs()
         );
         tracing::error!("{msg}");
-        if let Err(e) = db::insert_system_event(pool, "repo_sync_slow", None, &msg).await {
+        if let Err(e) =
+            db::insert_system_event(pool, SystemEventType::RepoSyncSlow, None, &msg).await
+        {
             tracing::error!(error = %e, "failed to log slow sync event");
         }
     }

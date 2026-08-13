@@ -504,12 +504,12 @@ SQL
 echo "==> Adding system events..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
-    (NOW() - interval '5 minutes', 'agent_connected', 'web-server-01', 'Agent connected (version 0.1.0)'),
-    (NOW() - interval '4 minutes', 'agent_connected', 'db-server-01', 'Agent connected (version 0.1.0)'),
-    (NOW() - interval '3 minutes', 'agent_connected', 'media-store-01', 'Agent connected (version 0.1.0)'),
-    (NOW() - interval '2 days', 'agent_disconnected', 'media-store-01', 'Agent disconnected: connection timeout'),
-    (NOW() - interval '7 days', 'backup_failed', 'web-server-01', 'Backup failed: Repository lock could not be acquired'),
-    (NOW() - interval '1 day', 'backup_warning', 'web-server-01', 'Backup completed with warnings');
+    (NOW() - interval '5 minutes', 'repo_sync', 'web-server-01', 'Repository sync completed'),
+    (NOW() - interval '4 minutes', 'repo_sync', 'db-server-01', 'Repository sync completed'),
+    (NOW() - interval '3 minutes', 'repo_sync', 'media-store-01', 'Repository sync completed'),
+    (NOW() - interval '2 days', 'repo_sync_slow', 'media-store-01', 'Repository sync took longer than the warning threshold'),
+    (NOW() - interval '7 days', 'repo_sync_failed', 'web-server-01', 'Repository sync failed: repository lock could not be acquired'),
+    (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token');
 SQL
 
 echo "==> Adding audit log entries..."

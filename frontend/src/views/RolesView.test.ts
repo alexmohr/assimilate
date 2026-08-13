@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { clickButtonWithText, renderWithPlugins } from '../test-utils'
 import RolesView from './RolesView.vue'
 
 vi.mock('../api/client', () => ({
@@ -131,14 +131,18 @@ describe('RolesView', () => {
     expect(no.length).toBeGreaterThan(0)
   })
 
-  it('creates a role via the create modal', async () => {
+  it('rejects an empty name, then creates a role once the name field is filled in', async () => {
     const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
     mockApiPost.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(RolesView)
     await flushPromises()
 
-    const buttons = wrapper.findAll('button')
-    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+    await clickButtonWithText(wrapper, 'New')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Name is required')
+    expect(mockApiPost).not.toHaveBeenCalled()
 
     await wrapper.find('#create-role-name').setValue('editor')
     const permCheckboxes = wrapper.findAll('.permissions-grid input[type="checkbox"]')
@@ -150,19 +154,6 @@ describe('RolesView', () => {
       '/roles',
       expect.objectContaining({ name: 'editor', can_create_agent: true }),
     )
-  })
-
-  it('shows a validation error when creating a role without a name', async () => {
-    const wrapper = renderWithPlugins(RolesView)
-    await flushPromises()
-
-    const buttons = wrapper.findAll('button')
-    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
-    await wrapper.find('form').trigger('submit')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Name is required')
-    expect(apiClient.post).not.toHaveBeenCalled()
   })
 
   it('edits a role via the edit modal', async () => {

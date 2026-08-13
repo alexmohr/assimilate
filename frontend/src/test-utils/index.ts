@@ -103,6 +103,16 @@ export function createMockRouter(): ReturnType<typeof createRouter> {
   })
 }
 
+/** Finds a `<button>` by its visible text and clicks it - shared by tests that open a modal via a toolbar action button. */
+export async function clickButtonWithText(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  text: string,
+): Promise<void> {
+  const button = wrapper.findAll('button').find((b) => b.text().includes(text))
+  if (!button) throw new Error(`No button found with text containing "${text}"`)
+  await button.trigger('click')
+}
+
 export function renderWithPlugins(
   component: Component,
   options: RenderWithPluginsOptions = {},

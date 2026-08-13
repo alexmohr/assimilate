@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { clickButtonWithText, renderWithPlugins } from '../test-utils'
 import GroupsView from './GroupsView.vue'
 
 vi.mock('../api/client', () => ({
@@ -132,14 +132,18 @@ describe('GroupsView', () => {
     expect(headerText).toContain('Actions')
   })
 
-  it('creates a group via the create modal', async () => {
+  it('rejects an empty name, then creates a group once the name field is filled in', async () => {
     const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
     mockApiPost.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(GroupsView)
     await flushPromises()
 
-    const buttons = wrapper.findAll('button')
-    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+    await clickButtonWithText(wrapper, 'New')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Name is required')
+    expect(mockApiPost).not.toHaveBeenCalled()
 
     await wrapper.find('#create-name').setValue('new-team')
     await wrapper.find('#create-desc').setValue('A new team')
@@ -150,19 +154,6 @@ describe('GroupsView', () => {
       name: 'new-team',
       description: 'A new team',
     })
-  })
-
-  it('shows a validation error when creating a group without a name', async () => {
-    const wrapper = renderWithPlugins(GroupsView)
-    await flushPromises()
-
-    const buttons = wrapper.findAll('button')
-    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
-    await wrapper.find('form').trigger('submit')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Name is required')
-    expect(apiClient.post).not.toHaveBeenCalled()
   })
 
   it('edits a group via the edit modal', async () => {

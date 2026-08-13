@@ -411,6 +411,10 @@ EOF
     exit 0
     ;;
   compact)
+    if [ -n "${{FAKE_BORG_COMPACT_EXIT:-}}" ]; then
+      echo "fake compact failure" >&2
+      exit "$FAKE_BORG_COMPACT_EXIT"
+    fi
     exit 0
     ;;
   *)
@@ -1266,6 +1270,107 @@ async fn test_delete_archive_runs_compact_afterwards() {
         settled, 1,
         "exactly one compact should run after a single archive delete"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_archive_logs_system_event_when_compact_fails() {
+    use tokio::time::{Duration, timeout};
+
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    sqlx::query("DELETE FROM system_events WHERE event_type = 'archive_compact_failed'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+
+    // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
+    unsafe { std::env::set_var("FAKE_BORG_COMPACT_EXIT", "2") };
+
+    let mut app = build_test_app(pool.clone());
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-fail-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "delete-archive-compact-fail-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The delete itself must still succeed even though the compact that
+    // follows it fails.
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let audit_rows: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'delete_archive' AND target_id = $1",
+            )
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if audit_rows == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the delete should complete even though the follow-up compact fails");
+
+    let event_rows: i64 = timeout(Duration::from_secs(10), async {
+        loop {
+            let rows: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM system_events WHERE event_type = 'archive_compact_failed'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if rows > 0 {
+                return rows;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("a failed compact should log an archive_compact_failed system event");
+    assert_eq!(event_rows, 1);
+
+    // SAFETY: env var must remain set until the background task finishes -
+    // cleared here, before dropping the borg binary lock, same as other
+    // tests that mutate process-global borg-related env vars.
+    unsafe { std::env::remove_var("FAKE_BORG_COMPACT_EXIT") };
 }
 
 #[tokio::test]

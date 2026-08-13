@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { cancelThenConfirmDelete, renderWithPlugins } from '../test-utils'
 import TokensView from './TokensView.vue'
 
 vi.mock('../api/client', () => ({
@@ -15,8 +15,9 @@ vi.mock('../api/client', () => ({
   },
 }))
 
+const mockCopyToClipboard = vi.fn()
 vi.mock('../composables/useClipboard', () => ({
-  useClipboard: () => ({ copied: { value: false }, copy: vi.fn() }),
+  useClipboard: () => ({ copied: { value: false }, copy: mockCopyToClipboard }),
 }))
 
 vi.mock('../utils/format', () => ({
@@ -137,21 +138,25 @@ describe('TokensView', () => {
     expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'deploy-key' })
     expect(wrapper.text()).toContain('secret-token-value')
     expect(wrapper.text()).toContain('Token Created')
+
+    await wrapper.find('.token-box button').trigger('click')
+    expect(mockCopyToClipboard).toHaveBeenCalledWith('secret-token-value')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Done')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.overlay').exists()).toBe(false)
   })
 
-  it('deletes a token via the confirm dialog', async () => {
+  it('cancels the delete confirm dialog, then deletes a token once confirmed', async () => {
     const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
     mockApiDelete.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(TokensView)
     await flushPromises()
-
-    const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
-    await deleteButton!.trigger('click')
     expect(wrapper.text()).toContain('CI pipeline')
 
-    await wrapper.find('button.btn-danger').trigger('click')
-    await flushPromises()
-
-    expect(mockApiDelete).toHaveBeenCalledWith('/tokens/1')
+    await cancelThenConfirmDelete(wrapper, mockApiDelete, '/tokens/1')
   })
 })

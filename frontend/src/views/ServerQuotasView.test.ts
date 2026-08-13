@@ -26,7 +26,11 @@ vi.mock('../components/BaseSpinner.vue', () => ({
 }))
 
 vi.mock('../components/ToggleSwitch.vue', () => ({
-  default: { template: '<input type="checkbox" />', props: ['modelValue'] },
+  default: {
+    template: `<input type="checkbox" :checked="modelValue" @change="$emit('update:modelValue', $event.target.checked)" />`,
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+  },
 }))
 
 const wsHandlers: Record<string, (payload: unknown) => void> = {}
@@ -126,6 +130,7 @@ describe('ServerQuotasView', () => {
     await wrapper.find('#warn-action').setValue('block_backups')
     await wrapper.find('#critical-gb').setValue(10)
     await wrapper.find('#critical-action').setValue('disable_schedule')
+    await wrapper.find('.toggle-row input[type="checkbox"]').setValue(false)
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
@@ -134,6 +139,7 @@ describe('ServerQuotasView', () => {
       expect.objectContaining({
         warn_action: 'block_backups',
         critical_action: 'disable_schedule',
+        enabled: false,
       }),
     )
   })

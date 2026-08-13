@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { clickButtonWithText, renderWithPlugins } from '../test-utils'
+import { cancelThenConfirmDelete, clickButtonWithText, renderWithPlugins } from '../test-utils'
 import GroupsView from './GroupsView.vue'
 
 vi.mock('../api/client', () => ({
@@ -156,7 +156,24 @@ describe('GroupsView', () => {
     })
   })
 
-  it('edits a group via the edit modal', async () => {
+  it('closes the create modal via the close button and the Cancel button', async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    await clickButtonWithText(wrapper, 'New')
+    await wrapper.find('button.close-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#create-name').exists()).toBe(false)
+
+    await clickButtonWithText(wrapper, 'New')
+    await clickButtonWithText(wrapper, 'Cancel')
+    await flushPromises()
+    expect(wrapper.find('#create-name').exists()).toBe(false)
+
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('edits a group via the edit modal, including its description', async () => {
     const mockApiPut = apiClient.put as ReturnType<typeof vi.fn>
     mockApiPut.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(GroupsView)
@@ -166,29 +183,42 @@ describe('GroupsView', () => {
     await editButton!.trigger('click')
 
     await wrapper.find('#edit-name').setValue('backend-team-renamed')
+    await wrapper.find('#edit-desc').setValue('Renamed description')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
     expect(mockApiPut).toHaveBeenCalledWith('/groups/1', {
       name: 'backend-team-renamed',
-      description: 'Backend engineers',
+      description: 'Renamed description',
     })
   })
 
-  it('deletes a group via the confirm dialog', async () => {
+  it('closes the edit modal via the close button and the Cancel button', async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+    const editButton = wrapper.findAll('button').find((b) => b.text() === 'Edit')
+
+    await editButton!.trigger('click')
+    await wrapper.find('button.close-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#edit-name').exists()).toBe(false)
+
+    await editButton!.trigger('click')
+    await clickButtonWithText(wrapper, 'Cancel')
+    await flushPromises()
+    expect(wrapper.find('#edit-name').exists()).toBe(false)
+
+    expect(apiClient.put).not.toHaveBeenCalled()
+  })
+
+  it('cancels the delete confirm dialog, then deletes a group once confirmed', async () => {
     const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
     mockApiDelete.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(GroupsView)
     await flushPromises()
-
-    const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
-    await deleteButton!.trigger('click')
     expect(wrapper.text()).toContain('backend-team')
 
-    await wrapper.find('button.btn-danger').trigger('click')
-    await flushPromises()
-
-    expect(mockApiDelete).toHaveBeenCalledWith('/groups/1')
+    await cancelThenConfirmDelete(wrapper, mockApiDelete, '/groups/1')
   })
 
   it('toggles and saves group members', async () => {
@@ -212,5 +242,20 @@ describe('GroupsView', () => {
       '/groups/1/members',
       expect.objectContaining({ user_ids: expect.any(Array) }),
     )
+  })
+
+  it('cancels the members modal without saving', async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const membersButton = wrapper.findAll('button').find((b) => b.text() === 'Members')
+    await membersButton!.trigger('click')
+    await flushPromises()
+
+    await clickButtonWithText(wrapper, 'Cancel')
+    await flushPromises()
+
+    expect(wrapper.find('.members-list').exists()).toBe(false)
+    expect(apiClient.put).not.toHaveBeenCalled()
   })
 })

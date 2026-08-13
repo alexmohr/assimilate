@@ -3110,6 +3110,44 @@ pub async fn get_schedule_target_hostnames(
     Ok(rows.into_iter().map(|r| r.hostname).collect())
 }
 
+/// Batched form of [`get_schedule_target_hostnames`] for callers that need target hostnames
+/// for many schedules at once (e.g. projecting calendar events for every schedule in a
+/// fleet) -- one round trip instead of one query per schedule.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_schedule_target_hostnames_by_schedule(
+    pool: &PgPool,
+    schedule_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<String>>, ApiError> {
+    struct Row {
+        schedule_id: i64,
+        hostname: String,
+    }
+
+    let rows = sqlx::query_as!(
+        Row,
+        "SELECT st.schedule_id, a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id \
+         = a.id WHERE st.schedule_id = ANY($1) AND a.is_hidden = false ORDER BY st.schedule_id, \
+         st.execution_order",
+        schedule_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut by_schedule: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        by_schedule
+            .entry(row.schedule_id)
+            .or_default()
+            .push(row.hostname);
+    }
+    Ok(by_schedule)
+}
+
 /// A target agent for a schedule run.
 #[derive(Debug, sqlx::FromRow)]
 pub struct ScheduleRunTarget {
@@ -4106,18 +4144,19 @@ pub async fn get_activity_feed(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
+    // Single LATERAL join per (schedule, agent) row instead of three separate correlated
+    // subqueries that each re-sorted the same filtered backup_reports rows -- matches the
+    // pattern already used by dashboard::targets() for the equivalent "latest report" lookup.
     sqlx::query_as!(
         HealthRow,
-        "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, (SELECT \
-         br.status FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id \
-         ORDER BY br.started_at DESC LIMIT 1) AS last_status, (SELECT br.finished_at FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY \
-         br.started_at DESC LIMIT 1) AS last_backup_at, (SELECT br.error_message FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY \
-         br.started_at DESC LIMIT 1) AS last_error_message, s.cron_expression, s.enabled AS \
+        "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
+         latest.status AS \"last_status?\", latest.finished_at AS \"last_backup_at?\", \
+         latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS \
          schedule_enabled FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
-         agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id WHERE a.is_hidden = \
-         false ORDER BY a.hostname, r.name",
+         agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( \
+         SELECT br.status, br.finished_at, br.error_message FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) \
+         latest ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -6050,56 +6089,65 @@ pub struct DashboardSummaryRow {
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
+    // Rewritten from ~18 independent correlated "last matching row" subqueries (each a
+    // full sort of the filtered backup_reports rows, run on every dashboard load) into a
+    // handful of CTEs that each scan/sort once. Every CTE's WHERE clause is copied verbatim
+    // from the subquery(s) it replaces -- including the couple of intentional asymmetries
+    // in the original (e.g. last_backup_at applies the epoch-sentinel guard but
+    // last_backup_repo_id/last_backup_archive_name don't; the *_schedule_id/*_schedule_name
+    // fields require a resolvable schedule_id while the sibling *_at/*_message/*_repo_*
+    // fields don't) -- so the result set is identical, just computed more cheaply now that
+    // `idx_backup_reports_status_finished_at` covers the ORDER BY.
     sqlx::query_as!(
         DashboardSummaryRow,
-        "SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS \"total_agents!\", \
-         (SELECT COUNT(*) FROM repos) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE \
-         enabled = true) AS \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \
-         \"total_schedules!\", COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 \
-         AS \"total_storage_bytes!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = \
-         'success' AND finished_at > '1970-01-01T00:00:00Z') AS last_backup_at, (SELECT \
-         MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = \
-         true AND r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW()) AS \
-         next_backup_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS \
-         NOT NULL ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT \
-         br.repo_id FROM backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at \
-         DESC LIMIT 1) AS last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br \
-         WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_backup_archive_name, (SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id \
-         WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
-         s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS next_backup_schedule_id, \
-         (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' AND started_at > NOW() - \
-         INTERVAL '30 days') AS \"success_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE \
-         status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \"failed_30d!\", \
-         (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 days') AS \
-         \"total_30d!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'failed' AND \
-         finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT MAX(finished_at) FROM \
-         backup_reports WHERE status = 'warning' AND finished_at > '1970-01-01T00:00:00Z') AS \
-         last_warning_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS \
-         NOT NULL AND br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_failure_schedule_id, (SELECT br.schedule_id FROM \
-         backup_reports br WHERE br.schedule_id IS NOT NULL AND br.status = 'warning' AND \
-         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_warning_schedule_id, (SELECT br.error_message FROM backup_reports br WHERE \
-         br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at \
-         DESC LIMIT 1) AS last_failure_message, (SELECT br.warnings[1] FROM backup_reports br \
+        "WITH last_success_at AS ( SELECT MAX(finished_at) AS finished_at FROM backup_reports \
+         WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z' ), last_success_row AS \
+         ( SELECT br.repo_id, br.archive_name FROM backup_reports br WHERE br.status = 'success' \
+         ORDER BY br.finished_at DESC LIMIT 1 ), last_backup_row AS ( SELECT br.schedule_id FROM \
+         backup_reports br WHERE br.schedule_id IS NOT NULL ORDER BY br.finished_at DESC LIMIT 1 \
+         ), next_backup_row AS ( SELECT s.id, s.next_run_at FROM schedules s JOIN repos r ON r.id \
+         = s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL \
+         AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1 ), last_failure_general AS ( \
+         SELECT br.finished_at, br.error_message, br.repo_id, r.name AS repo_name FROM \
+         backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = 'failed' AND \
+         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1 ), \
+         last_failure_scheduled AS ( SELECT br.schedule_id, s.cron_expression AS schedule_name \
+         FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE br.status = \
+         'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT \
+         1 ), last_warning_general AS ( SELECT br.finished_at, br.warnings[1] AS warning_message, \
+         br.repo_id, r.name AS repo_name FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
          WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_warning_message, (SELECT br.repo_id FROM \
-         backup_reports br WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
-         ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_repo_id, (SELECT br.repo_id FROM \
-         backup_reports br WHERE br.status = 'warning' AND br.finished_at > \
-         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_id, \
-         (SELECT r.name FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status \
-         = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC \
-         LIMIT 1) AS last_failure_repo_name, (SELECT r.name FROM backup_reports br JOIN repos r \
-         ON r.id = br.repo_id WHERE br.status = 'warning' AND br.finished_at > \
-         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_name, \
-         (SELECT s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
-         ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_schedule_name, (SELECT \
-         s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE \
-         br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_warning_schedule_name",
+         br.finished_at DESC LIMIT 1 ), last_warning_scheduled AS ( SELECT br.schedule_id, \
+         s.cron_expression AS schedule_name FROM backup_reports br JOIN schedules s ON s.id = \
+         br.schedule_id WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' \
+         ORDER BY br.finished_at DESC LIMIT 1 ) SELECT (SELECT COUNT(*) FROM agents WHERE \
+         is_hidden = false) AS \"total_agents!\", (SELECT COUNT(*) FROM repos) AS \
+         \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE enabled = true) AS \
+         \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \"total_schedules!\", \
+         COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 AS \
+         \"total_storage_bytes!\", last_success_at.finished_at AS last_backup_at, \
+         next_backup_row.next_run_at AS next_backup_at, last_backup_row.schedule_id AS \
+         last_backup_schedule_id, last_success_row.repo_id AS last_backup_repo_id, \
+         last_success_row.archive_name AS last_backup_archive_name, next_backup_row.id AS \
+         next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' \
+         AND started_at > NOW() - INTERVAL '30 days') AS \"success_30d!\", (SELECT COUNT(*) FROM \
+         backup_reports WHERE status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \
+         \"failed_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - \
+         INTERVAL '30 days') AS \"total_30d!\", last_failure_general.finished_at AS \
+         last_failure_at, last_warning_general.finished_at AS last_warning_at, \
+         last_failure_scheduled.schedule_id AS last_failure_schedule_id, \
+         last_warning_scheduled.schedule_id AS last_warning_schedule_id, \
+         last_failure_general.error_message AS last_failure_message, \
+         last_warning_general.warning_message AS last_warning_message, \
+         last_failure_general.repo_id AS last_failure_repo_id, last_warning_general.repo_id AS \
+         last_warning_repo_id, last_failure_general.repo_name AS last_failure_repo_name, \
+         last_warning_general.repo_name AS last_warning_repo_name, \
+         last_failure_scheduled.schedule_name AS last_failure_schedule_name, \
+         last_warning_scheduled.schedule_name AS last_warning_schedule_name FROM (SELECT 1) AS \
+         one LEFT JOIN last_success_at ON true LEFT JOIN last_success_row ON true LEFT JOIN \
+         last_backup_row ON true LEFT JOIN next_backup_row ON true LEFT JOIN last_failure_general \
+         ON true LEFT JOIN last_failure_scheduled ON true LEFT JOIN last_warning_general ON true \
+         LEFT JOIN last_warning_scheduled ON true",
     )
     .fetch_one(pool)
     .await
@@ -6879,19 +6927,24 @@ pub async fn get_storage_trends(
 ) -> Result<Vec<StorageTrendRow>, ApiError> {
     let days = i32::try_from(days).unwrap_or(30);
     if let Some(rid) = repo_id {
+        // Single-pass rewrite: aggregate each day's reports once (`daily`), then derive the
+        // cumulative original/compressed totals and the forward-filled latest dedup snapshot
+        // via window functions over just the (bounded) `days` series, instead of re-scanning
+        // the entire report history with a correlated subquery per displayed day.
         sqlx::query_as!(
             StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
-             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
-             \"date!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
-             COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
-             NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" \
-             FROM days d LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS original_size, \
-             SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE br.repo_id = \
-             $2 AND br.started_at::date <= d.date AND br.status = 'success' ) totals ON true LEFT \
-             JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = \
-             $2 AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY \
-             br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date",
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), daily AS ( SELECT \
+             br.started_at::date AS date, SUM(br.original_size) AS day_original, \
+             SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize ORDER BY \
+             br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.repo_id = $2 \
+             AND br.status = 'success' GROUP BY br.started_at::date ), joined AS ( SELECT d.date, \
+             dl.day_original, dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (ORDER BY \
+             d.date) AS fill_grp FROM days d LEFT JOIN daily dl ON dl.date = d.date ) SELECT date \
+             AS \"date!\", COALESCE(SUM(day_original) OVER (ORDER BY date), 0)::INT8 AS \
+             \"original_size!\", COALESCE(SUM(day_compressed) OVER (ORDER BY date), 0)::INT8 AS \
+             \"compressed_size!\", NULLIF(MAX(day_csize) OVER (PARTITION BY fill_grp), 0)::INT8 \
+             AS \"deduplicated_size?\" FROM joined ORDER BY date",
             days,
             rid,
         )
@@ -6899,20 +6952,34 @@ pub async fn get_storage_trends(
         .await
         .map_err(ApiError::Database)
     } else {
+        // Same single-pass approach, but the daily rollup and cumulative window are computed
+        // per repo first (`per_repo`) -- matching the original per-repo "latest known dedup
+        // size" semantics -- then summed across repos per day. `days LEFT JOIN fleet_by_date`
+        // (rather than driving from `days CROSS JOIN repos_list`) keeps the "always emit one
+        // row per requested day" behaviour even when no repos have any reports yet.
         sqlx::query_as!(
             StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
-             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
-             \"date!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
-             COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
-             NULLIF(COALESCE(dedup.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" FROM \
-             days d LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS original_size, \
-             SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE \
-             br.started_at::date <= d.date AND br.status = 'success' ) totals ON true LEFT JOIN \
-             LATERAL ( SELECT SUM(latest.repo_unique_csize) AS repo_unique_csize FROM ( SELECT \
-             DISTINCT ON (br.repo_id) br.repo_unique_csize FROM backup_reports br WHERE \
-             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
-             br.started_at DESC ) latest ) dedup ON true ORDER BY d.date",
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( \
+             SELECT DISTINCT br.repo_id FROM backup_reports br WHERE br.status = 'success' ), \
+             daily AS ( SELECT br.repo_id, br.started_at::date AS date, SUM(br.original_size) AS \
+             day_original, SUM(br.compressed_size) AS day_compressed, \
+             (ARRAY_AGG(br.repo_unique_csize ORDER BY br.started_at DESC))[1] AS day_csize FROM \
+             backup_reports br WHERE br.status = 'success' GROUP BY br.repo_id, \
+             br.started_at::date ), joined AS ( SELECT rl.repo_id, d.date, dl.day_original, \
+             dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (PARTITION BY rl.repo_id ORDER \
+             BY d.date) AS fill_grp FROM repos_list rl CROSS JOIN days d LEFT JOIN daily dl ON \
+             dl.repo_id = rl.repo_id AND dl.date = d.date ), per_repo AS ( SELECT repo_id, date, \
+             COALESCE(SUM(day_original) OVER (PARTITION BY repo_id ORDER BY date), 0) AS \
+             cum_original, COALESCE(SUM(day_compressed) OVER (PARTITION BY repo_id ORDER BY \
+             date), 0) AS cum_compressed, MAX(day_csize) OVER (PARTITION BY repo_id, fill_grp) AS \
+             cum_csize FROM joined ), fleet_by_date AS ( SELECT date, SUM(cum_original) AS \
+             original_size, SUM(cum_compressed) AS compressed_size, SUM(COALESCE(cum_csize, 0)) \
+             AS csize_sum FROM per_repo GROUP BY date ) SELECT d.date AS \"date!\", \
+             COALESCE(f.original_size, 0)::INT8 AS \"original_size!\", \
+             COALESCE(f.compressed_size, 0)::INT8 AS \"compressed_size!\", \
+             NULLIF(COALESCE(f.csize_sum, 0), 0)::INT8 AS \"deduplicated_size?\" FROM days d LEFT \
+             JOIN fleet_by_date f ON f.date = d.date ORDER BY d.date",
             days,
         )
         .fetch_all(pool)
@@ -7129,22 +7196,28 @@ pub async fn get_storage_trends_by_repo(
     days: i64,
 ) -> Result<Vec<StorageTrendByRepoRow>, ApiError> {
     let days_i32 = i32::try_from(days).unwrap_or(30);
+    // Same single-pass rewrite as `get_storage_trends`: aggregate each repo's reports per day
+    // once (`daily`), then derive per-(repo, day) cumulative totals and the forward-filled
+    // latest dedup snapshot via window functions, instead of a correlated subquery per
+    // (day, repo) pair that re-scans that repo's entire history each time.
     sqlx::query_as!(
         StorageTrendByRepoRow,
         "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, \
          CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id \
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
-         ) SELECT d.date AS \"date!\", rl.repo_id AS \"repo_id!\", rl.repo_name AS \
-         \"repo_name!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
-         COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
-         NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" FROM \
-         days d CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS \
-         original_size, SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE \
-         br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ) \
-         totals ON true LEFT JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br \
-         WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = \
-         'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, \
-         rl.repo_name",
+         ), daily AS ( SELECT br.repo_id, br.started_at::date AS date, SUM(br.original_size) AS \
+         day_original, SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize \
+         ORDER BY br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.status = \
+         'success' GROUP BY br.repo_id, br.started_at::date ), joined AS ( SELECT rl.repo_id, \
+         rl.repo_name, d.date, dl.day_original, dl.day_compressed, dl.day_csize, COUNT(dl.date) \
+         OVER (PARTITION BY rl.repo_id ORDER BY d.date) AS fill_grp FROM repos_list rl CROSS JOIN \
+         days d LEFT JOIN daily dl ON dl.repo_id = rl.repo_id AND dl.date = d.date ) SELECT date \
+         AS \"date!\", repo_id AS \"repo_id!\", repo_name AS \"repo_name!\", \
+         COALESCE(SUM(day_original) OVER (PARTITION BY repo_id ORDER BY date), 0)::INT8 AS \
+         \"original_size!\", COALESCE(SUM(day_compressed) OVER (PARTITION BY repo_id ORDER BY \
+         date), 0)::INT8 AS \"compressed_size!\", NULLIF(MAX(day_csize) OVER (PARTITION BY \
+         repo_id, fill_grp), 0)::INT8 AS \"deduplicated_size?\" FROM joined ORDER BY date, \
+         repo_name",
         days_i32,
     )
     .fetch_all(pool)

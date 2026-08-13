@@ -1098,6 +1098,13 @@ async fn project_upcoming_schedule_events(
     month_end: chrono::NaiveDate,
     day_map: &mut std::collections::BTreeMap<String, Vec<CalendarEventResponse>>,
 ) {
+    // Batch-fetch target hostnames for every schedule up front instead of one query per
+    // schedule inside the loop below -- this scales with fleet size on every calendar load.
+    let schedule_ids: Vec<i64> = schedules.iter().map(|s| s.id).collect();
+    let hostnames_by_schedule = db::get_schedule_target_hostnames_by_schedule(pool, &schedule_ids)
+        .await
+        .unwrap_or_default();
+
     for schedule in schedules {
         if filter_repo_id.is_some_and(|rid| schedule.repo_id != Some(rid)) {
             continue;
@@ -1107,10 +1114,10 @@ async fn project_upcoming_schedule_events(
             .and_then(|rid| repos.iter().find(|r| r.id == rid))
             .map(|r| r.name.clone())
             .unwrap_or_default();
-        let hostname = db::get_schedule_target_hostnames(pool, schedule.id)
-            .await
-            .ok()
-            .and_then(|h| h.into_iter().next())
+        let hostname = hostnames_by_schedule
+            .get(&schedule.id)
+            .and_then(|h| h.first())
+            .cloned()
             .unwrap_or_default();
 
         let mut cursor = now;

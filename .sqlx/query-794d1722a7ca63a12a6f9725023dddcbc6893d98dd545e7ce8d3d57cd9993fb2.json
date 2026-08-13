@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, (SELECT br.status FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1) AS last_status, (SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1) AS last_backup_at, (SELECT br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1) AS last_error_message, s.cron_expression, s.enabled AS schedule_enabled FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", latest.finished_at AS \"last_backup_at?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.finished_at, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
   "describe": {
     "columns": [
       {
@@ -25,17 +25,17 @@
       },
       {
         "ordinal": 4,
-        "name": "last_status",
+        "name": "last_status?",
         "type_info": "Text"
       },
       {
         "ordinal": 5,
-        "name": "last_backup_at",
+        "name": "last_backup_at?",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 6,
-        "name": "last_error_message",
+        "name": "last_error_message?",
         "type_info": "Text"
       },
       {
@@ -57,12 +57,12 @@
       false,
       false,
       false,
-      null,
-      null,
-      null,
+      false,
+      false,
+      true,
       false,
       false
     ]
   },
-  "hash": "a856ca6a0d0b35a6e3635174ae1f703a629b83ed1ee23a9c9b90bad23503bdcb"
+  "hash": "794d1722a7ca63a12a6f9725023dddcbc6893d98dd545e7ce8d3d57cd9993fb2"
 }

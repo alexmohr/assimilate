@@ -2403,6 +2403,90 @@ async fn dashboard_summary_empty(pool: PgPool) {
     assert_eq!(summary.total_storage_bytes, 0);
 }
 
+/// Regression test for `get_dashboard_summary`'s CTE rewrite: the "latest failure/warning"
+/// fields (`last_failure_at`/`last_failure_message`/`last_failure_repo_*`) must reflect the
+/// single most recent report of that status regardless of whether it has a schedule, while
+/// `last_failure_schedule_id`/`last_failure_schedule_name` must reflect the most recent report
+/// of that status that *does* have a resolvable schedule -- which can be a different (older)
+/// row. Same split for warnings.
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+
+    // Older failure, with a schedule.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: Some(schedule.id),
+            started_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("older scheduled failure".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Newer failure, no schedule (e.g. an ad-hoc/manual run).
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            finished_at: now,
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("newer unscheduled failure".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let summary = db::get_dashboard_summary(&pool).await.unwrap();
+
+    // The general "latest failure" fields must pick the newer, schedule-less row.
+    assert_eq!(
+        summary.last_failure_message.as_deref(),
+        Some("newer unscheduled failure")
+    );
+    assert_eq!(summary.last_failure_repo_id, Some(repo.id));
+
+    // The schedule-scoped fields must instead pick the older row that has a schedule.
+    assert_eq!(summary.last_failure_schedule_id, Some(schedule.id));
+    assert_eq!(
+        summary.last_failure_schedule_name.as_deref(),
+        Some(schedule.cron_expression.as_str())
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn user_crud(pool: PgPool) {
     let user = db::insert_user(&pool, "testuser", "hashed_pw")

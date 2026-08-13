@@ -1,0 +1,134 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.pattern, a.id, a.hostname, a.display_name, a.agent_version, a.agent_git_sha, a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, a.visibility, a.default_backup_paths, a.default_exclude_patterns, a.default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", a.default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", a.default_file_change_patterns_raw, a.agent_token_hash, a.is_hidden, a.last_ssh_user FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY p.pattern",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pattern",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "agent_git_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "agent_build_time",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "agent_commit_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "default_backup_paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 13,
+        "name": "default_exclude_patterns",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 14,
+        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 15,
+        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 16,
+        "name": "default_file_change_patterns_raw",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "agent_token_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "is_hidden",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 19,
+        "name": "last_ssh_user",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "b151d6abd9cf07f886fba89c77a2a6dc28a95bd17a27ce45bd8a3afe272b3bbf"
+}

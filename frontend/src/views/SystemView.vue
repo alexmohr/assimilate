@@ -58,6 +58,7 @@ const settingsForm = reactive({
   report_retention_days: 0,
   failed_report_retention_days: 365,
   system_event_retention_days: 90,
+  notification_delivery_retention_days: 30,
   borg_query_timeout_secs: 300,
   session_idle_timeout_minutes: 480,
 })
@@ -87,6 +88,9 @@ onMounted(async () => {
     settingsForm.report_retention_days = Number(res.data.report_retention_days)
     settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
     settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
+    settingsForm.notification_delivery_retention_days = Number(
+      res.data.notification_delivery_retention_days,
+    )
     settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
     settingsForm.session_idle_timeout_minutes = res.data.session_idle_timeout_minutes ?? 480
   } catch (e: unknown) {
@@ -210,6 +214,7 @@ async function saveSettings(): Promise<void> {
       report_retention_days: settingsForm.report_retention_days,
       failed_report_retention_days: settingsForm.failed_report_retention_days,
       system_event_retention_days: settingsForm.system_event_retention_days,
+      notification_delivery_retention_days: settingsForm.notification_delivery_retention_days,
       timezone: settingsForm.timezone || undefined,
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
       session_idle_timeout_minutes: settingsForm.session_idle_timeout_minutes,
@@ -219,6 +224,9 @@ async function saveSettings(): Promise<void> {
     settingsForm.report_retention_days = Number(res.data.report_retention_days)
     settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
     settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
+    settingsForm.notification_delivery_retention_days = Number(
+      res.data.notification_delivery_retention_days,
+    )
     settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
     setTimezone(res.data.timezone || undefined)
     settingsSaved.value = true
@@ -456,6 +464,28 @@ async function resetSystem(): Promise<void> {
                 class="form-input retention-input"
               />
               <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label
+              class="setting-label"
+              for="settings-notification-delivery-retention"
+            >
+              Notification Delivery Retention (days)
+            </label>
+            <div class="setting-input-group">
+              <input
+                id="settings-notification-delivery-retention"
+                v-model.number="settingsForm.notification_delivery_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="form-input retention-input"
+              />
+              <span class="field-hint"
+                >Days to keep notification delivery-attempt history. 0 = keep forever.</span
+              >
             </div>
           </div>
 

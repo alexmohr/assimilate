@@ -1598,7 +1598,10 @@ watch(activeTab, (tab) => {
         >
           No backup archives found for this schedule.
         </div>
-        <ArchiveBrowserLayout v-else>
+        <ArchiveBrowserLayout
+          v-else
+          narrow-list
+        >
           <template #list>
             <!-- Archive list -->
             <div class="panel backups-list-panel">

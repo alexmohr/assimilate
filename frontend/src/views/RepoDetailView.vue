@@ -480,13 +480,6 @@ const orderedArchives = computed<ArchiveEntry[]>(() => {
       break
   }
 
-  // Additional filter: when navigating from an agent backup via ?archive=xxx,
-  // show only the matching archive in the list
-  const filterName = archiveFilterName.value
-  if (filterName) {
-    return sorted.filter((a) => a.name === filterName)
-  }
-
   return sorted
 })
 

@@ -159,4 +159,19 @@ describe('TokensView', () => {
 
     await cancelThenConfirmDelete(wrapper, mockApiDelete, '/tokens/1')
   })
+
+  it('shows an error when deleting a token fails', async () => {
+    const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
+    mockApiDelete.mockRejectedValue(new Error('network error'))
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
+    await deleteButton!.trigger('click')
+    await wrapper.find('button.btn-danger').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').exists()).toBe(true)
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+  })
 })

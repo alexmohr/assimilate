@@ -39,7 +39,7 @@ const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
 
 const showDeleteModal = ref(false)
 const deleteTarget = ref<ApiToken | null>(null)
-const { loading: deleteSubmitting, run: runDelete } = useAsyncAction()
+const { loading: deleteSubmitting, error: deleteError, run: runDelete } = useAsyncAction()
 
 async function fetchTokens(): Promise<void> {
   loading.value = true
@@ -237,6 +237,7 @@ onMounted(fetchTokens)
       :show="showDeleteModal"
       title="Delete Token"
       :submitting="deleteSubmitting"
+      :error="deleteError"
       @cancel="showDeleteModal = false"
       @confirm="confirmDelete"
     >

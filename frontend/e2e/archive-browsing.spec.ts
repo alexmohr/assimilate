@@ -43,7 +43,7 @@ test.describe('Archive browsing & diff journey', () => {
     await page.waitForTimeout(1000)
 
     await expect(page.locator('.browser-title').filter({ hasText: /Files/ })).toBeVisible()
-    await expect(page.locator('.breadcrumb')).toBeVisible()
+    await expect(page.locator('.archive-breadcrumb')).toBeVisible()
 
     const browserPanel = page.locator('.browser-panel').last()
     await expect(browserPanel).toBeVisible()
@@ -83,7 +83,7 @@ test.describe('Archive browsing & diff journey', () => {
       .click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.breadcrumb').getByText('~')).toBeVisible()
+    await expect(page.locator('.archive-breadcrumb').getByText('~')).toBeVisible()
   })
 
   test('clicking a directory in file browser navigates into it', async ({ page }) => {
@@ -105,7 +105,7 @@ test.describe('Archive browsing & diff journey', () => {
     await tmpEntry.click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.breadcrumb')).toContainText('tmp')
+    await expect(page.locator('.archive-breadcrumb')).toContainText('tmp')
   })
 
   test('archive tags API endpoint is accessible and returns structured data', async ({ page }) => {

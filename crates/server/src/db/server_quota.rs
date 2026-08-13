@@ -214,7 +214,7 @@ pub async fn list_server_quotas_with_usage(
 
 /// Total deduplicated size across every repo sharing `ssh_host`, from the authoritative
 /// `repo_stats` snapshot (never derived from `backup_reports`). When `exclude_repo_id` is
-/// `Some`, that repo is left out of the sum — used to combine a just-completed backup's own
+/// `Some`, that repo is left out of the sum - used to combine a just-completed backup's own
 /// (fresh) `report.repo_unique_csize` with its sibling repos' (possibly stale, since
 /// `repo_stats` is only refreshed by a sync/rescan) snapshot, so a quota breach on an otherwise
 /// idle host is detected immediately rather than only after an unrelated rescan.

@@ -24,6 +24,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
   align-items: start;
 }
 
+.archive-browser-layout > * {
+  /* Grid items default to min-width: auto, so a wide table/DataTable inside
+     either pane can force this track -- and the whole grid -- past the
+     viewport instead of shrinking to fit. */
+  min-width: 0;
+}
+
 @media (max-width: 1100px) {
   .archive-browser-layout {
     grid-template-columns: 1fr;

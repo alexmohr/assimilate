@@ -2557,6 +2557,13 @@ watch(activeTab, (tab) => {
 
 /* Backups tab layout */
 
+.panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
 .backups-list-panel .panel-header {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);

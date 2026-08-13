@@ -422,6 +422,9 @@ function handleDeleteWholeArchive(): void {
   font-size: 0.85rem;
 }
 
+/* No border-bottom here: the global PrimeVue passthrough config
+   (primevue-pt.ts) already draws row separators via `tbody: divide-y` and
+   `headerRow: border-b`. Adding a second border on th/td doubled the line. */
 :deep(.data-table th) {
   text-align: left;
   padding: 0.5rem 1rem;
@@ -430,17 +433,11 @@ function handleDeleteWholeArchive(): void {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border);
 }
 
 :deep(.data-table td) {
   padding: 0.6rem 1rem;
   color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-:deep(.data-table tr:last-child td) {
-  border-bottom: none;
 }
 
 :deep(.data-table tr.clickable) {

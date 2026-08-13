@@ -307,6 +307,41 @@ describe('ArchiveFileBrowser', () => {
     expect(rows.length).toBeLessThan(rowsBefore.length)
   })
 
+  it('clicking a sortable column header reorders rows by that field', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: '-', path: 'zebra.txt', size: 10, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+          { type: '-', path: 'apple.txt', size: 20, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archive: makeArchive('test-archive') },
+    })
+    await flushPromises()
+    await nextTick()
+
+    const nameHeader = wrapper.findAll('th').find((h) => h.text().includes('Name'))
+    expect(nameHeader).toBeTruthy()
+
+    // The initial render is already ascending by name, so the first click
+    // (ascending) is a no-op and the second click (descending) is the one
+    // that proves the header is actually wired up to sorting.
+    await nameHeader!.trigger('click')
+    await nextTick()
+    await nameHeader!.trigger('click')
+    await nextTick()
+
+    const fileRows = wrapper
+      .findAll('tbody tr')
+      .map((r) => r.text())
+      .filter((t) => t.includes('.txt'))
+    expect(fileRows[0]).toContain('zebra.txt')
+    expect(fileRows[1]).toContain('apple.txt')
+  })
+
   it('filters files by display date', async () => {
     const wrapper = await mountWithEntries()
 

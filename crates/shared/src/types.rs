@@ -553,6 +553,8 @@ pub enum SystemEventType {
     ArchiveDeleteFailed,
     /// A security-related violation was detected.
     SecurityViolation,
+    /// A user account was locked after repeated failed login attempts.
+    AccountLocked,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -565,6 +567,7 @@ impl std::fmt::Display for SystemEventType {
             Self::RepoSyncFailed => write!(f, "repo_sync_failed"),
             Self::ArchiveDeleteFailed => write!(f, "archive_delete_failed"),
             Self::SecurityViolation => write!(f, "security_violation"),
+            Self::AccountLocked => write!(f, "account_locked"),
         }
     }
 }
@@ -581,6 +584,7 @@ impl FromStr for SystemEventType {
             "repo_sync_failed" => Ok(Self::RepoSyncFailed),
             "archive_delete_failed" => Ok(Self::ArchiveDeleteFailed),
             "security_violation" => Ok(Self::SecurityViolation),
+            "account_locked" => Ok(Self::AccountLocked),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -1251,6 +1255,7 @@ mod tests {
                 "archive_delete_failed",
             ),
             (SystemEventType::SecurityViolation, "security_violation"),
+            (SystemEventType::AccountLocked, "account_locked"),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);

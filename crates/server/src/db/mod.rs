@@ -5003,7 +5003,8 @@ pub async fn record_failed_login_and_check_lockout(
             "Account '{username}' locked until {locked_until} after {count} failed attempts"
         );
         tokio::spawn(async move {
-            let _ = insert_system_event(&pool, "account_locked", None, &message).await;
+            let _ =
+                insert_system_event(&pool, SystemEventType::AccountLocked, None, &message).await;
         });
 
         return Ok(());

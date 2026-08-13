@@ -1075,8 +1075,8 @@ async fn check_repo_quota_after_backup(
     );
 
     let message = format!(
-        "Repository quota {} for repo {repo_name}: deduplicated size {repo_unique_csize} bytes \
-         exceeds configured limits",
+        "Repository quota {} for repo {repo_name}: current size {repo_unique_csize} bytes exceeds \
+         configured limits",
         quota_status_label(quota_status),
     );
     dispatch_quota_breach_notification(

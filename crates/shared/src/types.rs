@@ -1248,6 +1248,7 @@ mod tests {
         let variants = [
             (SystemEventType::AuthFailed, "auth_failed"),
             (SystemEventType::RepoSync, "repo_sync"),
+            (SystemEventType::RepoSyncCancelled, "repo_sync_cancelled"),
             (SystemEventType::RepoSyncSlow, "repo_sync_slow"),
             (SystemEventType::RepoSyncFailed, "repo_sync_failed"),
             (

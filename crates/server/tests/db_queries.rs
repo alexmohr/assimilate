@@ -3506,10 +3506,15 @@ async fn get_system_events_skips_rows_with_unrecognized_event_type(pool: PgPool)
     .await
     .unwrap();
 
-    // Historical/legacy event_type values predate the SystemEventType enum and
-    // the column carries no CHECK constraint, so a row like this can still
-    // exist in a real database; the query must skip it rather than fail the
-    // whole batch.
+    // Historical/legacy event_type values predate both the SystemEventType enum and the
+    // system_events_event_type_check CHECK constraint, so a row like this can still exist in
+    // a real database that was migrated after such data was written; the query must skip it
+    // rather than fail the whole batch. Drop the constraint to simulate that pre-existing
+    // row in this test's isolated database.
+    sqlx::query!("ALTER TABLE system_events DROP CONSTRAINT system_events_event_type_check")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query!(
         "INSERT INTO system_events (event_type, hostname, message) VALUES ($1, $2, $3)",
         "agent_connected",

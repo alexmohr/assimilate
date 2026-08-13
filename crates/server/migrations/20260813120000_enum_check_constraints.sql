@@ -17,14 +17,19 @@ ALTER TABLE backup_reports
     ADD CONSTRAINT backup_reports_status_check
     CHECK (status IN ('pending', 'started', 'cancelled', 'success', 'warning', 'failed'));
 
--- Closed set of event types the server ever inserts (see call sites of
--- db::insert_system_event); not user- or agent-supplied.
+-- Closed set of event types the server itself ever inserts (see call sites of
+-- db::insert_system_event); not user- or agent-supplied. NOT VALID: older
+-- deployments may carry now-retired event_type values (e.g. a historical
+-- 'agent_connected' event) that predate this constraint, and get_system_events
+-- is deliberately tolerant of such rows (skips rather than fails the whole
+-- query) -- validating existing data here would break the migration on any
+-- database that still has one.
 ALTER TABLE system_events
     ADD CONSTRAINT system_events_event_type_check
     CHECK (event_type IN (
         'repo_sync', 'repo_sync_slow', 'repo_sync_failed', 'repo_sync_cancelled',
         'archive_delete_failed', 'account_locked', 'auth_failed', 'security_violation'
-    ));
+    )) NOT VALID;
 
 -- shared::types::ScheduleType
 ALTER TABLE schedules

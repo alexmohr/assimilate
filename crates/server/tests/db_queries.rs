@@ -2424,12 +2424,13 @@ async fn dashboard_summary_empty(pool: PgPool) {
     assert_eq!(summary.total_storage_bytes, 0);
 }
 
-/// Regression test for `get_dashboard_summary`'s CTE rewrite: the "latest failure/warning"
-/// fields (`last_failure_at`/`last_failure_message`/`last_failure_repo_*`) must reflect the
-/// single most recent report of that status regardless of whether it has a schedule, while
-/// `last_failure_schedule_id`/`last_failure_schedule_name` must reflect the most recent report
-/// of that status that *does* have a resolvable schedule -- which can be a different (older)
-/// row. Same split for warnings.
+/// Regression test for `get_dashboard_summary`'s CTE rewrite: the "latest failure" fields
+/// (`last_failure_at`/`last_failure_message`/`last_failure_repo_*`) must reflect the single
+/// most recent failed report regardless of whether it has a schedule, while
+/// `last_failure_schedule_id`/`last_failure_schedule_name` must reflect the most recent
+/// failed report that *does* have a resolvable schedule -- which can be a different (older)
+/// row. The dashboard summary query builds the same split for warnings, via an identical CTE
+/// shape.
 #[sqlx::test(migrations = "./migrations")]
 async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
@@ -2444,7 +2445,7 @@ async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
             schedule_id: Some(schedule.id),
             started_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
-            status: "failed".to_string(),
+            status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -2472,7 +2473,7 @@ async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
-            status: "failed".to_string(),
+            status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,

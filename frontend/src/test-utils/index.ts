@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { defineComponent, h, type ComponentPublicInstance } from 'vue'
-import { mount, type VueWrapper } from '@vue/test-utils'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import {
   createRouter,
   createMemoryHistory,
@@ -10,7 +10,7 @@ import {
   type RouteRecordRaw,
 } from 'vue-router'
 import { createPinia, type Pinia } from 'pinia'
-import { vi } from 'vitest'
+import { vi, expect } from 'vitest'
 import type { Component } from 'vue'
 import { router as appRouter } from '../router'
 
@@ -101,6 +101,42 @@ export function createMockRouter(): ReturnType<typeof createRouter> {
     history: createMemoryHistory(),
     routes,
   })
+}
+
+/** Finds a `<button>` by its visible text and clicks it - shared by tests that open a modal via a toolbar action button. */
+export async function clickButtonWithText(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  text: string,
+): Promise<void> {
+  const button = wrapper.findAll('button').find((b) => b.text().includes(text))
+  if (!button) throw new Error(`No button found with text containing "${text}"`)
+  await button.trigger('click')
+}
+
+/**
+ * Drives the common "row action opens a ConfirmDeleteDialog" flow: opens it via the row's
+ * first `.btn-danger-text` button, dismisses it via the close button and asserts the delete
+ * API was not called, then reopens and confirms, asserting the delete API was called with
+ * `expectedArg`. Shared by list views (Groups, Roles, Tokens, ...) whose delete confirmation
+ * is otherwise identical apart from the API call being asserted.
+ */
+export async function cancelThenConfirmDelete(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  mockDelete: ReturnType<typeof vi.fn>,
+  expectedArg: string,
+): Promise<void> {
+  const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
+  await deleteButton!.trigger('click')
+
+  await wrapper.find('button.close-btn').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('.overlay').exists()).toBe(false)
+  expect(mockDelete).not.toHaveBeenCalled()
+
+  await deleteButton!.trigger('click')
+  await wrapper.find('button.btn-danger').trigger('click')
+  await flushPromises()
+  expect(mockDelete).toHaveBeenCalledWith(expectedArg)
 }
 
 export function renderWithPlugins(

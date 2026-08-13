@@ -129,7 +129,7 @@ pub async fn upsert_server_quota(
     .map_err(ApiError::Database)?;
 
     let total_deduplicated_size =
-        db::server_quota::total_deduplicated_size_for_ssh_host(&state.pool, &ssh_host)
+        db::server_quota::total_deduplicated_size_for_ssh_host(&state.pool, &ssh_host, None)
             .await
             .map_err(ApiError::Database)?;
     let repo_count = db::server_quota::repo_count_for_ssh_host(&state.pool, &ssh_host)

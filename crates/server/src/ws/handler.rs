@@ -1114,13 +1114,12 @@ async fn check_server_quota_after_backup(
     else {
         return;
     };
-    let Ok(siblings_deduplicated_size) =
-        db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
-            &state.pool,
-            &ssh_host,
-            repo_id,
-        )
-        .await
+    let Ok(siblings_deduplicated_size) = db::server_quota::total_deduplicated_size_for_ssh_host(
+        &state.pool,
+        &ssh_host,
+        Some(repo_id),
+    )
+    .await
     else {
         return;
     };
@@ -2482,6 +2481,100 @@ exit 0
 
         let state = build_test_state(pool.clone());
         let msg = backup_completed_message(agent.id, repo.id, 200);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let updated = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .expect("get schedule");
+        assert!(!updated.enabled);
+
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+    }
+
+    /// Regression test for the archive-level-vs-repo-wide size mixup: a backup that adds
+    /// almost no new unique data (`deduplicated_size`) to an already-large repo must still
+    /// breach the repo's quota, because enforcement is decided by `repo_unique_csize` (the
+    /// repo's actual current total), not by how much this one archive contributed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_uses_repo_unique_csize_not_archive_delta_for_repo_quota(
+        pool: PgPool,
+    ) {
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "quota-repo",
+                repo_path: "/backups/quota",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "quota-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "",
+                post_backup_commands: "",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        db::quota::upsert_quota(
+            &pool,
+            repo.id,
+            Some(50),
+            Some(100),
+            QuotaAction::NotifyOnly,
+            QuotaAction::BlockBackups,
+            true,
+        )
+        .await
+        .expect("upsert quota");
+
+        let state = build_test_state(pool.clone());
+        // This archive itself only added 5 bytes of new unique data (well under the
+        // warn/critical thresholds), but the repo's actual current total is 150 bytes,
+        // over the critical threshold of 100.
+        let msg = backup_completed_message_with_repo_size(agent.id, repo.id, 5, 150);
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         let updated = crate::db::get_schedule_by_id(&pool, schedule.id)

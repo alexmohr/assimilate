@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { renderWithPlugins } from '../test-utils'
+import { mockErrorUtils, mockFormatBytes } from '../test-utils/sharedMocks'
 import QuotaPanel from './QuotaPanel.vue'
 import { apiClient } from '../api/client'
 
@@ -15,14 +16,9 @@ vi.mock('../api/client', () => ({
   },
 }))
 
-vi.mock('../utils/format', () => ({
-  formatBytes: (bytes: number): string => `${bytes} B`,
-}))
+vi.mock('../utils/format', () => mockFormatBytes())
 
-vi.mock('../utils/error', () => ({
-  extractError: (_e: unknown): string => 'API error',
-  extractBlobError: async (_e: unknown): Promise<string> => 'API error',
-}))
+vi.mock('../utils/error', () => mockErrorUtils())
 
 vi.mock('./ToggleSwitch.vue', () => ({
   default: { template: '<input type="checkbox" />', props: ['modelValue'] },

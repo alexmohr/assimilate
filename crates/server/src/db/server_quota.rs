@@ -6,7 +6,7 @@ use serde::Serialize;
 use shared::types::QuotaAction;
 use sqlx::PgPool;
 
-use super::quota::{QuotaStatus, evaluate_thresholds};
+use super::quota::{QuotaStatus, action_for_status, evaluate_thresholds};
 
 /// Storage quota shared across every repo whose `ssh_host` matches, for the case where
 /// multiple repositories reside on one server with a shared disk quota.
@@ -43,11 +43,7 @@ impl ServerQuota {
     /// Action configured for the given breach status, or `None` when the quota is not breached.
     #[must_use]
     pub fn action_for(&self, status: QuotaStatus) -> Option<QuotaAction> {
-        match status {
-            QuotaStatus::Ok => None,
-            QuotaStatus::Warning => Some(self.warn_action.parse().unwrap_or_default()),
-            QuotaStatus::Critical => Some(self.critical_action.parse().unwrap_or_default()),
-        }
+        action_for_status(status, &self.warn_action, &self.critical_action)
     }
 }
 
@@ -217,38 +213,8 @@ pub async fn list_server_quotas_with_usage(
 }
 
 /// Total deduplicated size across every repo sharing `ssh_host`, from the authoritative
-/// `repo_stats` snapshot (never derived from `backup_reports`).
-///
-/// # Errors
-///
-/// Returns an error if the database query fails.
-pub async fn total_deduplicated_size_for_ssh_host(
-    pool: &PgPool,
-    ssh_host: &str,
-) -> Result<i64, sqlx::Error> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        total: i64,
-    }
-
-    let row = sqlx::query_as!(
-        Row,
-        r#"
-        SELECT COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS "total!"
-        FROM repos r
-        LEFT JOIN repo_stats rs ON rs.repo_id = r.id
-        WHERE r.ssh_host = $1
-        "#,
-        ssh_host,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(row.total)
-}
-
-/// Total deduplicated size across every repo sharing `ssh_host` *other than* `exclude_repo_id`,
-/// from the authoritative `repo_stats` snapshot. Used to combine a just-completed backup's own
+/// `repo_stats` snapshot (never derived from `backup_reports`). When `exclude_repo_id` is
+/// `Some`, that repo is left out of the sum — used to combine a just-completed backup's own
 /// (fresh) `report.repo_unique_csize` with its sibling repos' (possibly stale, since
 /// `repo_stats` is only refreshed by a sync/rescan) snapshot, so a quota breach on an otherwise
 /// idle host is detected immediately rather than only after an unrelated rescan.
@@ -256,10 +222,10 @@ pub async fn total_deduplicated_size_for_ssh_host(
 /// # Errors
 ///
 /// Returns an error if the database query fails.
-pub async fn total_deduplicated_size_for_ssh_host_excluding(
+pub async fn total_deduplicated_size_for_ssh_host(
     pool: &PgPool,
     ssh_host: &str,
-    exclude_repo_id: i64,
+    exclude_repo_id: Option<i64>,
 ) -> Result<i64, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -272,7 +238,7 @@ pub async fn total_deduplicated_size_for_ssh_host_excluding(
         SELECT COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS "total!"
         FROM repos r
         LEFT JOIN repo_stats rs ON rs.repo_id = r.id
-        WHERE r.ssh_host = $1 AND r.id != $2
+        WHERE r.ssh_host = $1 AND ($2::BIGINT IS NULL OR r.id != $2)
         "#,
         ssh_host,
         exclude_repo_id,
@@ -309,31 +275,27 @@ pub async fn repo_count_for_ssh_host(pool: &PgPool, ssh_host: &str) -> Result<i6
 mod tests {
     use super::*;
 
-    #[test]
-    fn action_for_ok_is_none() {
-        let quota = ServerQuota {
+    fn sample_quota(enabled: bool, warn_action: &str, critical_action: &str) -> ServerQuota {
+        ServerQuota {
             ssh_host: "backup.example.com".to_owned(),
             warn_bytes: Some(100),
             critical_bytes: Some(200),
-            warn_action: "block_backups".to_owned(),
-            critical_action: "disable_schedule".to_owned(),
-            enabled: true,
+            warn_action: warn_action.to_owned(),
+            critical_action: critical_action.to_owned(),
+            enabled,
             updated_at: Utc::now(),
-        };
+        }
+    }
+
+    #[test]
+    fn action_for_ok_is_none() {
+        let quota = sample_quota(true, "block_backups", "disable_schedule");
         assert_eq!(quota.action_for(QuotaStatus::Ok), None);
     }
 
     #[test]
     fn action_for_warning_and_critical_parse_configured_action() {
-        let quota = ServerQuota {
-            ssh_host: "backup.example.com".to_owned(),
-            warn_bytes: Some(100),
-            critical_bytes: Some(200),
-            warn_action: "block_backups".to_owned(),
-            critical_action: "disable_schedule".to_owned(),
-            enabled: true,
-            updated_at: Utc::now(),
-        };
+        let quota = sample_quota(true, "block_backups", "disable_schedule");
         assert_eq!(
             quota.action_for(QuotaStatus::Warning),
             Some(QuotaAction::BlockBackups)
@@ -346,15 +308,7 @@ mod tests {
 
     #[test]
     fn disabled_quota_is_always_ok() {
-        let quota = ServerQuota {
-            ssh_host: "backup.example.com".to_owned(),
-            warn_bytes: Some(100),
-            critical_bytes: Some(200),
-            warn_action: "block_backups".to_owned(),
-            critical_action: "block_backups".to_owned(),
-            enabled: false,
-            updated_at: Utc::now(),
-        };
+        let quota = sample_quota(false, "block_backups", "block_backups");
         assert_eq!(quota.status(1_000_000), QuotaStatus::Ok);
     }
 }

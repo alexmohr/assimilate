@@ -4115,9 +4115,10 @@ async fn server_quota_aggregates_usage_across_repos_sharing_host(pool: PgPool) {
     set_test_repo_info_stats(&pool, repo_b.id, 1).await;
     set_test_repo_info_stats(&pool, repo_c.id, 1).await;
 
-    let total = db::server_quota::total_deduplicated_size_for_ssh_host(&pool, "shared.example.com")
-        .await
-        .unwrap();
+    let total =
+        db::server_quota::total_deduplicated_size_for_ssh_host(&pool, "shared.example.com", None)
+            .await
+            .unwrap();
     assert_eq!(total, 500_000);
 
     let repo_count = db::server_quota::repo_count_for_ssh_host(&pool, "shared.example.com")
@@ -4188,19 +4189,19 @@ async fn server_quota_total_deduplicated_size_excludes_given_repo(pool: PgPool) 
     .await
     .unwrap();
 
-    let total_excluding_a = db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+    let total_excluding_a = db::server_quota::total_deduplicated_size_for_ssh_host(
         &pool,
         "shared.example.com",
-        repo_a.id,
+        Some(repo_a.id),
     )
     .await
     .unwrap();
     assert_eq!(total_excluding_a, 70_000);
 
-    let total_excluding_b = db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+    let total_excluding_b = db::server_quota::total_deduplicated_size_for_ssh_host(
         &pool,
         "shared.example.com",
-        repo_b.id,
+        Some(repo_b.id),
     )
     .await
     .unwrap();

@@ -79,6 +79,8 @@ const mockAgent = {
   restart_unavailable_reason: null,
   default_backup_paths: [],
   default_exclude_patterns: [],
+  default_pre_backup_commands: [],
+  default_post_backup_commands: [],
 }
 
 const mockReports = [

@@ -50,8 +50,10 @@ pub async fn resolve_agent_for_hostname(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE hostname = $1 AND agent_token_hash != \
          'imported:no-auth'",
         hostname,
@@ -84,8 +86,10 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE id = $1",
         source_id,
     )
@@ -187,9 +191,11 @@ pub struct AgentRow {
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
     /// Default pre-backup commands.
-    pub default_pre_backup_commands: String,
+    #[schema(value_type = Vec<String>)]
+    pub default_pre_backup_commands: sqlx::types::Json<Vec<String>>,
     /// Default post-backup commands.
-    pub default_post_backup_commands: String,
+    #[schema(value_type = Vec<String>)]
+    pub default_post_backup_commands: sqlx::types::Json<Vec<String>>,
     /// Default file-change detection patterns (raw text).
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
@@ -354,10 +360,12 @@ pub struct ScheduleRow {
     pub compact_enabled: bool,
     /// Rate limit in KB/s, if any.
     pub rate_limit_kbps: Option<i32>,
-    /// Pre-backup commands (raw text).
-    pub pre_backup_commands: String,
-    /// Post-backup commands (raw text).
-    pub post_backup_commands: String,
+    /// Pre-backup commands.
+    #[schema(value_type = Vec<String>)]
+    pub pre_backup_commands: sqlx::types::Json<Vec<String>>,
+    /// Post-backup commands.
+    #[schema(value_type = Vec<String>)]
+    pub post_backup_commands: sqlx::types::Json<Vec<String>>,
     /// Execution mode (e.g. "sequential").
     pub execution_mode: String,
     /// On-failure behaviour (e.g. "continue", "abort").
@@ -416,8 +424,10 @@ pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<Agen
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE hostname = $1",
         hostname,
     )
@@ -439,8 +449,10 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE id = $1",
         agent_id,
     )
@@ -564,9 +576,11 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
             AgentRow,
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
              agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-             default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-             default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
-             is_hidden, last_ssh_user FROM agents ORDER BY hostname",
+             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+             \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+             default_post_backup_commands AS \"default_post_backup_commands: \
+             sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
+             agent_token_hash, is_hidden, last_ssh_user FROM agents ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -576,9 +590,12 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
             AgentRow,
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
              agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-             default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-             default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
-             is_hidden, last_ssh_user FROM agents WHERE is_hidden = false ORDER BY hostname",
+             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+             \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+             default_post_backup_commands AS \"default_post_backup_commands: \
+             sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
+             agent_token_hash, is_hidden, last_ssh_user FROM agents WHERE is_hidden = false ORDER \
+             BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -601,7 +618,9 @@ pub async fn set_agent_hidden(
         "UPDATE agents SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
+         \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
         hostname,
         hidden,
@@ -628,8 +647,10 @@ pub async fn get_or_create_agent_by_hostname(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE hostname = $1",
         hostname,
     )
@@ -646,8 +667,10 @@ pub async fn get_or_create_agent_by_hostname(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         Some(format!("{hostname} (imported)")),
@@ -673,8 +696,10 @@ pub async fn insert_agent(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         display_name,
@@ -695,9 +720,9 @@ pub struct AgentDefaults<'a> {
     /// Default exclude patterns.
     pub default_exclude_patterns: &'a [String],
     /// Default pre-backup commands.
-    pub default_pre_backup_commands: &'a str,
+    pub default_pre_backup_commands: &'a [String],
     /// Default post-backup commands.
-    pub default_post_backup_commands: &'a str,
+    pub default_post_backup_commands: &'a [String],
     /// Default file-change detection patterns (raw text).
     pub default_file_change_patterns_raw: &'a str,
 }
@@ -718,16 +743,18 @@ pub async fn insert_agent_with_paths(
          default_file_change_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, \
          hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         defaults.display_name,
         token_hash,
         defaults.default_backup_paths,
         defaults.default_exclude_patterns,
-        defaults.default_pre_backup_commands,
-        defaults.default_post_backup_commands,
+        sqlx::types::Json(defaults.default_pre_backup_commands) as _,
+        sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
     )
     .fetch_one(pool)
@@ -753,16 +780,18 @@ pub async fn update_agent(
          default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname \
          = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         new_hostname,
         defaults.display_name,
         defaults.default_backup_paths,
         defaults.default_exclude_patterns,
-        defaults.default_pre_backup_commands,
-        defaults.default_post_backup_commands,
+        sqlx::types::Json(defaults.default_pre_backup_commands) as _,
+        sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
     )
     .fetch_one(pool)
@@ -788,7 +817,9 @@ pub async fn regenerate_agent_token(
         "UPDATE agents SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
+         \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
         hostname,
         token_hash,
@@ -1931,10 +1962,12 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a \
-         ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
-         a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER BY s.id",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM \
+         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
+         ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER \
+         BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -1977,9 +2010,9 @@ pub struct ScheduleParams<'a> {
     /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<i32>,
     /// Pre-backup commands.
-    pub pre_backup_commands: &'a str,
+    pub pre_backup_commands: &'a [String],
     /// Post-backup commands.
-    pub post_backup_commands: &'a str,
+    pub post_backup_commands: &'a [String],
     /// On-failure behaviour.
     pub on_failure: &'a str,
     /// Raw file-change detection pattern text.
@@ -2006,8 +2039,10 @@ pub async fn insert_schedule(
          cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
          exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
          keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+         pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -2024,8 +2059,8 @@ pub async fn insert_schedule(
         params.keep_yearly,
         params.compact_enabled,
         params.rate_limit_kbps,
-        params.pre_backup_commands,
-        params.post_backup_commands,
+        sqlx::types::Json(params.pre_backup_commands) as _,
+        sqlx::types::Json(params.post_backup_commands) as _,
         params.on_failure,
         owner_id,
     )
@@ -2054,9 +2089,10 @@ pub async fn update_schedule(
          $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\"",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         id,
         params.name,
         params.cron_expression,
@@ -2072,8 +2108,8 @@ pub async fn update_schedule(
         params.keep_yearly,
         params.compact_enabled,
         params.rate_limit_kbps,
-        params.pre_backup_commands,
-        params.post_backup_commands,
+        sqlx::types::Json(params.pre_backup_commands) as _,
+        sqlx::types::Json(params.post_backup_commands) as _,
         params.on_failure,
     )
     .fetch_one(pool)
@@ -2554,9 +2590,9 @@ pub struct PerAgentCommands {
     /// Agent ID.
     pub agent_id: i64,
     /// Pre-backup commands for this agent.
-    pub pre_backup_commands: String,
+    pub pre_backup_commands: Vec<String>,
     /// Post-backup commands for this agent.
-    pub post_backup_commands: String,
+    pub post_backup_commands: Vec<String>,
 }
 
 /// # Errors
@@ -2566,17 +2602,18 @@ pub async fn list_all_per_agent_commands_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
 ) -> Result<Vec<PerAgentCommands>, ApiError> {
-    #[derive(sqlx::FromRow)]
     struct Row {
         agent_id: i64,
-        pre_backup_commands: String,
-        post_backup_commands: String,
+        pre_backup_commands: sqlx::types::Json<Vec<String>>,
+        post_backup_commands: sqlx::types::Json<Vec<String>>,
     }
 
     let rows = sqlx::query_as!(
         Row,
-        "SELECT agent_id, pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
-         schedule_id = $1 ORDER BY agent_id",
+        "SELECT agent_id, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\" FROM per_agent_commands WHERE schedule_id = $1 ORDER BY \
+         agent_id",
         schedule_id,
     )
     .fetch_all(pool)
@@ -2587,8 +2624,8 @@ pub async fn list_all_per_agent_commands_for_schedule(
         .into_iter()
         .map(|r| PerAgentCommands {
             agent_id: r.agent_id,
-            pre_backup_commands: r.pre_backup_commands,
-            post_backup_commands: r.post_backup_commands,
+            pre_backup_commands: r.pre_backup_commands.0,
+            post_backup_commands: r.post_backup_commands.0,
         })
         .collect())
 }
@@ -2601,16 +2638,16 @@ pub async fn get_per_agent_commands(
     schedule_id: i64,
     agent_id: i64,
 ) -> Result<Option<PerAgentCommands>, ApiError> {
-    #[derive(sqlx::FromRow)]
     struct Row {
-        pre_backup_commands: String,
-        post_backup_commands: String,
+        pre_backup_commands: sqlx::types::Json<Vec<String>>,
+        post_backup_commands: sqlx::types::Json<Vec<String>>,
     }
 
     let row = sqlx::query_as!(
         Row,
-        "SELECT pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
-         schedule_id = $1 AND agent_id = $2",
+        "SELECT pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\" FROM \
+         per_agent_commands WHERE schedule_id = $1 AND agent_id = $2",
         schedule_id,
         agent_id,
     )
@@ -2620,8 +2657,8 @@ pub async fn get_per_agent_commands(
 
     Ok(row.map(|r| PerAgentCommands {
         agent_id,
-        pre_backup_commands: r.pre_backup_commands,
-        post_backup_commands: r.post_backup_commands,
+        pre_backup_commands: r.pre_backup_commands.0,
+        post_backup_commands: r.post_backup_commands.0,
     }))
 }
 
@@ -2632,8 +2669,8 @@ pub async fn upsert_per_agent_commands(
     pool: &PgPool,
     schedule_id: i64,
     agent_id: i64,
-    pre_backup_commands: &str,
-    post_backup_commands: &str,
+    pre_backup_commands: &[String],
+    post_backup_commands: &[String],
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO per_agent_commands (schedule_id, agent_id, pre_backup_commands, \
@@ -2642,8 +2679,8 @@ pub async fn upsert_per_agent_commands(
          EXCLUDED.post_backup_commands",
         schedule_id,
         agent_id,
-        pre_backup_commands,
-        post_backup_commands,
+        sqlx::types::Json(pre_backup_commands) as _,
+        sqlx::types::Json(post_backup_commands) as _,
     )
     .execute(pool)
     .await
@@ -2779,9 +2816,10 @@ pub async fn get_schedule_for_repo(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -2810,10 +2848,12 @@ pub async fn get_schedule_for_hostname_repo(
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN \
-         schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE \
-         m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
+         JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
+         s.schedule_type = $3 LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -2836,11 +2876,12 @@ pub async fn list_schedules_for_repo(
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN \
-         agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
-         a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id \
-         = $1 ORDER BY s.id",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, COALESCE(ARRAY(SELECT \
+         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
+         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \
+         \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -2878,9 +2919,11 @@ pub async fn list_schedules_for_agent(
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN \
-         schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
+         WHERE st.agent_id = $1 ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3028,9 +3071,10 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE id = $1",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -5497,6 +5541,27 @@ pub async fn delete_system_events_before(
     Ok(result.rows_affected())
 }
 
+/// Prunes old notification delivery-attempt history by age. The table is
+/// kept "for debugging and retry" (see `0002_notifications.sql`), not as a
+/// permanent audit log, so it grows without bound otherwise.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_notification_deliveries_before(
+    pool: &PgPool,
+    before: DateTime<Utc>,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM notification_deliveries WHERE attempted_at < $1",
+        before
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 /// Prunes old backup-run history by age.
 ///
 /// Reports that carry an `archive_name` represent an actual borg archive and
@@ -7098,9 +7163,10 @@ pub async fn get_enabled_schedules_for_calendar(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE enabled = true",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

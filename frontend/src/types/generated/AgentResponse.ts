@@ -51,11 +51,11 @@ export type AgentResponse = {
   /**
    * Default commands to run before backups.
    */
-  default_pre_backup_commands: string;
+  default_pre_backup_commands: Array<string>;
   /**
    * Default commands to run after backups.
    */
-  default_post_backup_commands: string;
+  default_post_backup_commands: Array<string>;
   /**
    * Default file change patterns.
    */

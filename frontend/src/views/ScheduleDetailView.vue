@@ -272,8 +272,8 @@ function populateForm(s: ScheduleRow): void {
     keep_yearly: s.keep_yearly,
     compact_enabled: s.compact_enabled,
     rate_limit_kbps: s.rate_limit_kbps ?? 0,
-    pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
-    post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
+    pre_backup_commands: s.pre_backup_commands.join('\n'),
+    post_backup_commands: s.post_backup_commands.join('\n'),
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
@@ -372,12 +372,8 @@ async function loadData(): Promise<void> {
         const preMap: Record<number, string> = {}
         const postMap: Record<number, string> = {}
         for (const entry of perAgentCmdEntries) {
-          preMap[Number(entry.agent_id)] = (
-            JSON.parse(entry.pre_backup_commands || '[]') as string[]
-          ).join('\n')
-          postMap[Number(entry.agent_id)] = (
-            JSON.parse(entry.post_backup_commands || '[]') as string[]
-          ).join('\n')
+          preMap[Number(entry.agent_id)] = entry.pre_backup_commands.join('\n')
+          postMap[Number(entry.agent_id)] = entry.post_backup_commands.join('\n')
         }
         perAgentPreCmds.value = preMap
         perAgentPostCmds.value = postMap

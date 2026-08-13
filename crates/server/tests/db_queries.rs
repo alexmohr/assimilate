@@ -12,7 +12,7 @@
 //! Each test uses `#[sqlx::test]` which creates an isolated database per test
 //! and applies migrations automatically.
 
-use chrono::{Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use chrono_tz::Tz;
 use server::db::{self, patterns, *};
 use shared::types::QuotaAction;
@@ -174,8 +174,8 @@ async fn agent_update(pool: PgPool) {
             display_name: Some("New Name"),
             default_backup_paths: &[],
             default_exclude_patterns: &[],
-            default_pre_backup_commands: "[]",
-            default_post_backup_commands: "[]",
+            default_pre_backup_commands: &[],
+            default_post_backup_commands: &[],
             default_file_change_patterns_raw: "*/tmp/* ignore",
         },
     )
@@ -783,8 +783,8 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: Some(5000),
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -834,8 +834,8 @@ async fn schedule_update(pool: PgPool) {
             keep_yearly: 2,
             compact_enabled: false,
             rate_limit_kbps: None,
-            pre_backup_commands: "echo pre",
-            post_backup_commands: "echo post",
+            pre_backup_commands: &["echo pre".to_string()],
+            post_backup_commands: &["echo post".to_string()],
             on_failure: "continue",
         },
     )
@@ -850,8 +850,11 @@ async fn schedule_update(pool: PgPool) {
     assert_eq!(updated.keep_daily, 14);
     assert!(!updated.compact_enabled);
     assert_eq!(updated.rate_limit_kbps, None);
-    assert_eq!(updated.pre_backup_commands, "echo pre");
-    assert_eq!(updated.post_backup_commands, "echo post");
+    assert_eq!(updated.pre_backup_commands.0, vec!["echo pre".to_string()]);
+    assert_eq!(
+        updated.post_backup_commands.0,
+        vec!["echo post".to_string()]
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -959,8 +962,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             keep_yearly: 0,
             compact_enabled: false,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -991,8 +994,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             keep_yearly: 0,
             compact_enabled: false,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -1338,8 +1341,8 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
     )
@@ -1416,8 +1419,8 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
     )
@@ -1506,8 +1509,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
     )
@@ -1522,8 +1525,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             display_name: agent.display_name.as_deref(),
             default_backup_paths: &agent.default_backup_paths,
             default_exclude_patterns: &agent.default_exclude_patterns,
-            default_pre_backup_commands: &agent.default_pre_backup_commands,
-            default_post_backup_commands: &agent.default_post_backup_commands,
+            default_pre_backup_commands: &agent.default_pre_backup_commands.0,
+            default_post_backup_commands: &agent.default_post_backup_commands.0,
             default_file_change_patterns_raw: "*/agent-fallback* fatal",
         },
     )
@@ -1886,8 +1889,8 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -1919,10 +1922,14 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn health_summary_with_invalid_status_silently_returns_none(pool: PgPool) {
+async fn backup_reports_status_check_constraint_rejects_invalid_status(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
 
-    sqlx::query!(
+    // backup_reports.status is now guarded by a CHECK constraint (see
+    // 20260813120000_enum_check_constraints.sql), mirroring
+    // shared::types::BackupStatus. An arbitrary status must be rejected at
+    // the DB layer instead of being silently accepted.
+    let result = sqlx::query!(
         r#"INSERT INTO backup_reports
            (agent_id, repo_id, schedule_id, started_at, finished_at, status, matched)
            VALUES ($1, $2, $3, NOW() - INTERVAL '5 minutes', NOW(), $4, true)"#,
@@ -1932,17 +1939,25 @@ async fn health_summary_with_invalid_status_silently_returns_none(pool: PgPool) 
         "completely_invalid_status_value",
     )
     .execute(&pool)
-    .await
-    .unwrap();
+    .await;
+
+    let err = result.expect_err("invalid status must be rejected by the CHECK constraint");
+    let db_err = err.as_database_error().expect("expected a database error");
+    assert_eq!(
+        db_err.constraint(),
+        Some("backup_reports_status_check"),
+        "insert must fail specifically on the status CHECK constraint"
+    );
 
     let health = db::get_health_summary(&pool).await.unwrap();
-    assert_eq!(health.len(), 1);
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
     assert_eq!(
-        health.first().unwrap().last_status.as_deref(),
-        Some("completely_invalid_status_value"),
-        "raw invalid status is returned as-is from the db layer"
+        entry.last_status, None,
+        "rejected insert must not leave a report behind"
     );
-    assert_eq!(health.first().unwrap().schedule_id, schedule.id);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1967,8 +1982,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -2001,8 +2016,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -3344,10 +3359,10 @@ async fn repo_permissions_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn system_events_crud(pool: PgPool) {
-    db::insert_system_event(&pool, "backup_complete", Some("host-1"), "Backup finished")
+    db::insert_system_event(&pool, "repo_sync", Some("host-1"), "Backup finished")
         .await
         .unwrap();
-    db::insert_system_event(&pool, "error", None, "Something failed")
+    db::insert_system_event(&pool, "repo_sync_failed", None, "Something failed")
         .await
         .unwrap();
 
@@ -5746,8 +5761,8 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -5954,8 +5969,8 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             keep_yearly: 0,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -6916,7 +6931,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_system_events_before_keeps_recent(pool: PgPool) {
     let before_insert = Utc::now();
-    db::insert_system_event(&pool, "test_event", None, "recent event")
+    db::insert_system_event(&pool, "repo_sync", None, "recent event")
         .await
         .unwrap();
 
@@ -6934,6 +6949,56 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
     assert_eq!(events.len(), 1);
+}
+
+#[cfg(test)]
+async fn insert_test_notification_delivery(pool: &PgPool, attempted_at: DateTime<Utc>) {
+    let channel_id: i64 = sqlx::query_scalar!(
+        "INSERT INTO notification_channels (name, channel_type) VALUES ('test-channel', \
+         'webhook') RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    sqlx::query!(
+        "INSERT INTO notification_deliveries (channel_id, event_type, status, attempted_at) \
+         VALUES ($1, 'backup_success', 'sent', $2)",
+        channel_id,
+        attempted_at,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_notification_deliveries_before_deletes_old(pool: PgPool) {
+    let old = Utc::now().checked_sub_signed(Duration::days(60)).unwrap();
+    insert_test_notification_delivery(&pool, old).await;
+
+    let cutoff = Utc::now().checked_sub_signed(Duration::days(30)).unwrap();
+    let deleted = db::delete_notification_deliveries_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1, "delivery older than cutoff must be deleted");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_notification_deliveries_before_keeps_recent(pool: PgPool) {
+    let before_insert = Utc::now();
+    insert_test_notification_delivery(&pool, before_insert).await;
+
+    let cutoff = before_insert
+        .checked_sub_signed(Duration::seconds(1))
+        .unwrap();
+    let deleted = db::delete_notification_deliveries_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 0,
+        "delivery created after cutoff must not be deleted"
+    );
 }
 
 /// Applies the same fallback logic as `get_settings` in `api/system.rs`.
@@ -7103,7 +7168,7 @@ async fn retention_fallback_new_settings_without_legacy(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_system_events_before_deletes_old(pool: PgPool) {
-    db::insert_system_event(&pool, "old_event", None, "old event to prune")
+    db::insert_system_event(&pool, "repo_sync_failed", None, "old event to prune")
         .await
         .unwrap();
 
@@ -7355,8 +7420,8 @@ async fn agent_insert_with_paths(pool: PgPool) {
             display_name: Some("Paths Host"),
             default_backup_paths: &paths,
             default_exclude_patterns: &excludes,
-            default_pre_backup_commands: "[]",
-            default_post_backup_commands: "[]",
+            default_pre_backup_commands: &[],
+            default_post_backup_commands: &[],
             default_file_change_patterns_raw: "*/etc/config* fatal",
         },
     )

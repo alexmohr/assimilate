@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -100,13 +100,13 @@
       },
       {
         "ordinal": 19,
-        "name": "pre_backup_commands",
-        "type_info": "Text"
+        "name": "pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 20,
-        "name": "post_backup_commands",
-        "type_info": "Text"
+        "name": "post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 21,
@@ -136,7 +136,9 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text",
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -168,5 +170,5 @@
       null
     ]
   },
-  "hash": "c3013fd5dd11307a064401cee8142c5387cb2c06996bf5d42c776bdff4d7b1f0"
+  "hash": "a12b73b1dc483045e049c336390646321f07e63a006ac519c7884b9c70c7e9a4"
 }

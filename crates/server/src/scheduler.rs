@@ -439,6 +439,28 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
 /// rather than a report/event retention policy a user would want to tune.
 const LOGIN_ATTEMPT_RETENTION_DAYS: i64 = 90;
 
+/// Reads a `*_retention_days` setting, falling back to `legacy` (the old
+/// single `retention_days` setting) and then `default` if unset or
+/// unparseable.
+async fn retention_days_setting(
+    pool: &PgPool,
+    key: &str,
+    legacy: Option<i64>,
+    default: i64,
+) -> Result<i64, crate::error::ApiError> {
+    Ok(db::get_setting(pool, key)
+        .await?
+        .and_then(|v| {
+            v.parse::<i64>()
+                .inspect_err(|e| {
+                    tracing::warn!(setting = key, value = %v, error = %e, "failed to parse retention setting");
+                })
+                .ok()
+        })
+        .or(legacy)
+        .unwrap_or(default))
+}
+
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {
     let legacy_retention = db::get_setting(pool, "retention_days")
         .await?
@@ -448,39 +470,24 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             }).ok()
         });
 
-    let report_days = db::get_setting(pool, "report_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
-            }).ok()
-        })
-        .unwrap_or(0);
-
-    let failed_days = db::get_setting(pool, "failed_report_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
-            }).ok()
-        })
-        .or(legacy_retention)
-        .unwrap_or(365);
-
-    let event_days = db::get_setting(pool, "system_event_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse system_event_retention_days setting");
-            }).ok()
-        })
-        .or(legacy_retention)
-        .unwrap_or(90);
+    let report_days = retention_days_setting(pool, "report_retention_days", None, 0).await?;
+    let failed_days =
+        retention_days_setting(pool, "failed_report_retention_days", legacy_retention, 365).await?;
+    let event_days =
+        retention_days_setting(pool, "system_event_retention_days", legacy_retention, 90).await?;
+    let notification_delivery_days = retention_days_setting(
+        pool,
+        "notification_delivery_retention_days",
+        legacy_retention,
+        30,
+    )
+    .await?;
 
     let mut events_deleted: u64 = 0;
     let mut reports_deleted: u64 = 0;
     let mut archive_reports_deleted: u64 = 0;
     let mut login_attempts_deleted: u64 = 0;
+    let mut notification_deliveries_deleted: u64 = 0;
 
     if let Some(cutoff) =
         Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
@@ -512,19 +519,32 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
     }
 
+    if notification_delivery_days > 0 {
+        let Some(cutoff) =
+            Utc::now().checked_sub_signed(chrono::Duration::days(notification_delivery_days))
+        else {
+            return Ok(());
+        };
+        notification_deliveries_deleted =
+            db::delete_notification_deliveries_before(pool, cutoff).await?;
+    }
+
     if events_deleted > 0
         || reports_deleted > 0
         || archive_reports_deleted > 0
         || login_attempts_deleted > 0
+        || notification_deliveries_deleted > 0
     {
         tracing::info!(
             events_deleted,
             reports_deleted,
             archive_reports_deleted,
             login_attempts_deleted,
+            notification_deliveries_deleted,
             report_days,
             failed_days,
             event_days,
+            notification_delivery_days,
             "retention cleanup completed"
         );
     }
@@ -1474,8 +1494,8 @@ esac
                 keep_yearly: 0,
                 compact_enabled: true,
                 rate_limit_kbps: None,
-                pre_backup_commands: "[]",
-                post_backup_commands: "[]",
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
                 on_failure: "stop",
             },
             None,
@@ -1685,8 +1705,8 @@ esac
                 keep_yearly: 0,
                 compact_enabled: true,
                 rate_limit_kbps: None,
-                pre_backup_commands: "[]",
-                post_backup_commands: "[]",
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
                 on_failure: "stop",
             },
             None,

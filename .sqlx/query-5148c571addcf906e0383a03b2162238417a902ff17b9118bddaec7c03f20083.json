@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
   "describe": {
     "columns": [
       {
@@ -70,13 +70,13 @@
       },
       {
         "ordinal": 13,
-        "name": "default_pre_backup_commands",
-        "type_info": "Text"
+        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 14,
-        "name": "default_post_backup_commands",
-        "type_info": "Text"
+        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 15,
@@ -103,8 +103,7 @@
       "Left": [
         "Text",
         "Text",
-        "Text",
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
@@ -129,5 +128,5 @@
       true
     ]
   },
-  "hash": "15de7b39f55aa9c0ad5fd34cc53efb504f5e83cc8f536771b32a927726b86f72"
+  "hash": "5148c571addcf906e0383a03b2162238417a902ff17b9118bddaec7c03f20083"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
   "describe": {
     "columns": [
       {
@@ -70,13 +70,13 @@
       },
       {
         "ordinal": 13,
-        "name": "default_pre_backup_commands",
-        "type_info": "Text"
+        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 14,
-        "name": "default_post_backup_commands",
-        "type_info": "Text"
+        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 15,
@@ -103,6 +103,11 @@
       "Left": [
         "Text",
         "Text",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "Jsonb",
+        "Jsonb",
         "Text"
       ]
     },
@@ -128,5 +133,5 @@
       true
     ]
   },
-  "hash": "78e694cd515756ceb3b1646c19f277e7d8f0c8fa0fe7715d9d8cf995bfc77732"
+  "hash": "77b2a5d6dba3d548d892173071675070173a98b273d5ce5e0437beca64a807e8"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, default_exclude_patterns = $5, default_pre_backup_commands = $6, default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
   "describe": {
     "columns": [
       {
@@ -70,13 +70,13 @@
       },
       {
         "ordinal": 13,
-        "name": "default_pre_backup_commands",
-        "type_info": "Text"
+        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 14,
-        "name": "default_post_backup_commands",
-        "type_info": "Text"
+        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 15,
@@ -104,11 +104,7 @@
         "Text",
         "Text",
         "Text",
-        "TextArray",
-        "TextArray",
-        "Text",
-        "Text",
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
@@ -133,5 +129,5 @@
       true
     ]
   },
-  "hash": "58224b1be685cc32d296c500e7b4a27f3664b0507906f3b582cf3fed88c500ef"
+  "hash": "51685e09dc73e53c9dc48847c5848242f7424437f5099704374585cb08aaf7c3"
 }

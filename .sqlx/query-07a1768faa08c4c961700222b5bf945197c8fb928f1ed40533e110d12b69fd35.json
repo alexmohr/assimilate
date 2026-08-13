@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
+  "query": "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, exclude_patterns_raw = $6, file_change_patterns_raw = $7, ignore_global_excludes = $8, keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18 WHERE id = $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
   "describe": {
     "columns": [
       {
@@ -100,13 +100,13 @@
       },
       {
         "ordinal": 19,
-        "name": "pre_backup_commands",
-        "type_info": "Text"
+        "name": "pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 20,
-        "name": "post_backup_commands",
-        "type_info": "Text"
+        "name": "post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
       },
       {
         "ordinal": 21,
@@ -136,7 +136,24 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Text",
+        "Text",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Int4",
+        "Jsonb",
+        "Jsonb",
+        "Text"
       ]
     },
     "nullable": [
@@ -168,5 +185,5 @@
       null
     ]
   },
-  "hash": "0b55990cf6dacec2c34e467baab86f4327cca5834794186357988951a7e1c412"
+  "hash": "07a1768faa08c4c961700222b5bf945197c8fb928f1ed40533e110d12b69fd35"
 }

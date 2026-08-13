@@ -2787,7 +2787,7 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
          canary_enabled, exclude_patterns_raw, ignore_global_excludes, keep_daily, keep_weekly, \
          keep_monthly, keep_yearly, compact_enabled, pre_backup_commands, post_backup_commands, \
          execution_mode, on_failure) VALUES ($1, 'test', 'backup', '0 3 * * *', true, false, $2, \
-         false, 7, 4, 6, 0, true, '[]', '[]', 'parallel', 'stop') RETURNING id",
+         false, 7, 4, 6, 0, true, '[]', '[]', 'sequential', 'stop') RETURNING id",
     )
     .bind(repo_id)
     .bind("")
@@ -3031,8 +3031,8 @@ async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
                 "display_name": "New Host 1",
                 "default_backup_paths": ["/etc", "/home"],
                 "default_exclude_patterns": ["*.log"],
-                "default_pre_backup_commands": "[]",
-                "default_post_backup_commands": "[]",
+                "default_pre_backup_commands": [],
+                "default_post_backup_commands": [],
                 "hostname_patterns": []
             }
         ],
@@ -3079,8 +3079,8 @@ async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
                 "display_name": "Updated Name",
                 "default_backup_paths": ["/var"],
                 "default_exclude_patterns": [],
-                "default_pre_backup_commands": "[]",
-                "default_post_backup_commands": "[]",
+                "default_pre_backup_commands": [],
+                "default_post_backup_commands": [],
                 "hostname_patterns": []
             }
         ],
@@ -4624,6 +4624,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "report_retention_days": 45,
         "failed_report_retention_days": 200,
         "system_event_retention_days": 30,
+        "notification_delivery_retention_days": 15,
         "timezone": "UTC",
         "borg_query_timeout_secs": 120,
         "session_idle_timeout_minutes": 60,
@@ -4635,6 +4636,10 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("report_retention_days").unwrap(), 45);
     assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
     assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(
+        body.get("notification_delivery_retention_days").unwrap(),
+        15
+    );
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
@@ -4663,6 +4668,11 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "omitted field must echo the persisted value, not a request-derived default"
     );
     assert_eq!(
+        body.get("notification_delivery_retention_days").unwrap(),
+        15,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
         body.get("session_idle_timeout_minutes").unwrap(),
         60,
         "omitted field must echo the persisted value, not a request-derived default"
@@ -4686,6 +4696,10 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("report_retention_days").unwrap(), 45);
     assert_eq!(body.get("failed_report_retention_days").unwrap(), 200);
     assert_eq!(body.get("system_event_retention_days").unwrap(), 30);
+    assert_eq!(
+        body.get("notification_delivery_retention_days").unwrap(),
+        15
+    );
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);

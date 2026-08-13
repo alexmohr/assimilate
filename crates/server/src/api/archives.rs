@@ -615,15 +615,14 @@ async fn run_archive_deletion(
 
     let deleted = execute_borg_delete(&state, repo_id, &borg_repo, &archive_name, &env).await;
 
-    state.repo_op_tracker.clear(repo_id).await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged {
-            repo_id,
-            op: state.repo_op_tracker.get(repo_id).await,
-        });
-
     if !deleted {
+        state.repo_op_tracker.clear(repo_id).await;
+        state
+            .ui_broadcast
+            .send(shared::protocol::ServerToUi::RepoOpChanged {
+                repo_id,
+                op: state.repo_op_tracker.get(repo_id).await,
+            });
         state
             .ui_broadcast
             .send(shared::protocol::ServerToUi::DataChanged);
@@ -635,9 +634,18 @@ async fn run_archive_deletion(
     // Compacting reclaims the space this deletion just freed. Still holding
     // `_repo_guard` here means nothing else can start on this repo between
     // the delete finishing and compact beginning.
+    //
+    // This transitions straight from the delete phase to the compact phase
+    // without an intermediate clear()+broadcast: a momentary `op: None`
+    // here would read to clients as "this repo's delete queue has
+    // drained", which isn't true while we're just switching phases of the
+    // very deletion that's still running - and would wipe every archive's
+    // client-side "deleting" state, including ones genuinely still queued
+    // behind this one. `set()` (not `begin()`) reclaims the active slot
+    // without touching `queued`, since this isn't dequeuing a new item.
     state
         .repo_op_tracker
-        .begin(
+        .set(
             repo_id,
             shared::protocol::RepoOpKind::CompactRepo,
             username.clone(),

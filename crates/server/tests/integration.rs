@@ -1376,6 +1376,109 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_delete_archive_transitions_straight_to_compact_without_a_stale_drained_broadcast() {
+    use tokio::time::{Duration, timeout};
+
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let mut ws_rx = state.ui_broadcast.subscribe();
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('broadcast-order-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "delete-archive-broadcast-order-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // Collect every RepoOpChanged kind broadcast for this repo (as
+    // Option<RepoOpKind>, None meaning "op cleared") until the compact
+    // phase begins.
+    let mut kinds: Vec<Option<shared::protocol::RepoOpKind>> = Vec::new();
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = loop {
+                match ws_rx.recv().await {
+                    Ok(m) => break m,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(e) => panic!("ui broadcast channel closed unexpectedly: {e}"),
+                }
+            };
+            if let shared::protocol::ServerToUi::RepoOpChanged { repo_id: rid, op } = msg
+                && rid == repo_id
+            {
+                let kind = op.map(|o| o.kind);
+                let reached_compact = kind == Some(shared::protocol::RepoOpKind::CompactRepo);
+                kinds.push(kind);
+                if reached_compact {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("should observe the delete phase transition into the compact phase");
+
+    let delete_idx = kinds
+        .iter()
+        .position(|k| *k == Some(shared::protocol::RepoOpKind::DeleteArchive))
+        .expect("should have broadcast a delete_archive op");
+    let compact_idx = kinds
+        .iter()
+        .position(|k| *k == Some(shared::protocol::RepoOpKind::CompactRepo))
+        .expect("should have broadcast a compact_repo op");
+
+    // A `None` here would tell clients this repo's delete queue has fully
+    // drained while the compact that follows this very delete hasn't even
+    // started yet - wiping every archive's client-side "deleting" state
+    // prematurely (see PR #410 review).
+    assert!(
+        !kinds
+            .get(delete_idx..compact_idx)
+            .expect("delete_idx and compact_idx should be valid bounds into kinds")
+            .contains(&None),
+        "no RepoOpChanged with a cleared op should be broadcast between the delete and compact \
+         phases of the same archive deletion, got {kinds:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_delete_multiple_archives_queues_without_conflict() {
     use tokio::time::{Duration, timeout};
 

@@ -361,13 +361,14 @@ onMessage('ImportProgress', (payload) => {
 onMessage('RepoOpChanged', (payload) => {
   if (repo.value && payload.repo_id === repo.value.id) {
     currentOp.value = payload.op
-    // Once this repo's active operation is no longer a delete (or there is
-    // none), every archive delete queued for it has finished - success or
-    // failure - since repo operations run strictly one at a time. Any name
-    // still marked "deleting" at that point is stale (a failed delete that
-    // the DataChanged-driven prune below never saw disappear from the list),
-    // so sweep it clear rather than leaving its row disabled forever.
-    if (payload.op?.kind !== 'delete_archive') {
+    // Once this repo's active operation is no longer a delete or the
+    // compact that automatically follows it, every archive delete queued
+    // for it has finished - success or failure - since repo operations run
+    // strictly one at a time. Any name still marked "deleting" at that
+    // point is stale (a failed delete that the DataChanged-driven prune
+    // below never saw disappear from the list), so sweep it clear rather
+    // than leaving its row disabled forever.
+    if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
       deletingArchiveNames.value = new Set()
     }
   }
@@ -597,6 +598,8 @@ function repoOpLabel(op: ActiveRepoOp): string {
       return `Integrity check in progress by ${op.actor}${queued}`
     case 'agent_verify':
       return `Verify in progress by ${op.actor}${queued}`
+    case 'compact_repo':
+      return `Compacting repository (started by ${op.actor})${queued}`
   }
 }
 
@@ -607,7 +610,8 @@ function classifyLastOpKind(kind: string | null): RepoOpKind | 'unknown' {
     kind === 'break_lock' ||
     kind === 'delete_archive' ||
     kind === 'agent_check' ||
-    kind === 'agent_verify'
+    kind === 'agent_verify' ||
+    kind === 'compact_repo'
   ) {
     return kind
   }
@@ -628,6 +632,8 @@ function lastOpLabel(kind: string | null): string {
       return 'Integrity check'
     case 'agent_verify':
       return 'Verify'
+    case 'compact_repo':
+      return 'Compact repository'
     case 'unknown':
       return kind ?? 'Unknown'
   }

@@ -362,9 +362,13 @@ async fn install_fake_borg(
     json_lines: &str,
 ) -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
+    // Every invoked subcommand is appended here so tests can assert which
+    // borg operations actually ran (e.g. that compact follows a delete).
+    let calls_log = tempdir.path().join("calls.log").display().to_string();
     let script = format!(
         r#"#!/bin/sh
 set -eu
+echo "$1" >> "{calls_log}"
 case "$1" in
   list)
     case " $* " in
@@ -404,6 +408,9 @@ EOF
     esac
     ;;
   delete)
+    exit 0
+    ;;
+  compact)
     exit 0
     ;;
   *)
@@ -513,6 +520,30 @@ async fn install_hanging_borg() -> (TempDir, BorgBinaryGuard) {
     // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
     unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
     (tempdir, BorgBinaryGuard { previous })
+}
+
+/// Polls `install_fake_borg`'s call log until `subcommand` has been invoked
+/// at least `expected` times, then returns the count actually observed.
+#[cfg(test)]
+async fn wait_for_calls_log_count(tempdir: &TempDir, subcommand: &str, expected: usize) -> usize {
+    use tokio::time::{Duration, timeout};
+
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let content = tokio::fs::read_to_string(tempdir.path().join("calls.log"))
+                .await
+                .unwrap_or_default();
+            let count = content.lines().filter(|l| *l == subcommand).count();
+            if count >= expected {
+                return count;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!("timed out waiting for {expected} '{subcommand}' call(s) in the fake borg log")
+    })
 }
 
 #[cfg(test)]
@@ -1181,6 +1212,64 @@ async fn test_delete_archive_runs_in_background() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_delete_archive_runs_compact_afterwards() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+
+    let mut app = build_test_app(pool.clone());
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "delete-archive-compact-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // A single delete should trigger exactly one compact once it finishes.
+    let count = wait_for_calls_log_count(&borg_dir, "compact", 1).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let settled = wait_for_calls_log_count(&borg_dir, "compact", count).await;
+    assert_eq!(
+        settled, 1,
+        "exactly one compact should run after a single archive delete"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_delete_multiple_archives_queues_without_conflict() {
     use tokio::time::{Duration, timeout};
 
@@ -1201,7 +1290,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
     }
   }
 }"#;
-    let (_borg_dir, _borg_guard) =
+    let (borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
     let mut app = build_test_app(pool.clone());
@@ -1263,6 +1352,17 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
             .await
             .unwrap();
     assert_eq!(remaining, 0, "every queued archive should be deleted");
+
+    // Compact should only run once the whole batch has drained, not once per
+    // queued delete - rewriting segments for every archive in a batch would
+    // be wasteful.
+    let count = wait_for_calls_log_count(&borg_dir, "compact", 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let settled = wait_for_calls_log_count(&borg_dir, "compact", count).await;
+    assert_eq!(
+        settled, 1,
+        "compact should run exactly once after a batch of queued deletes drains"
+    );
 }
 
 #[tokio::test]

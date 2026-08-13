@@ -107,6 +107,12 @@ interface RepoWithStats {
   total_compressed_size: number
   total_deduplicated_size: number
   agent_count: number
+  current_op?: {
+    kind: string
+    actor: string
+    started_at: string
+    queued?: number
+  } | null
 }
 
 const mockRepo: RepoWithStats = {
@@ -266,6 +272,22 @@ describe('RepoDetailView', () => {
     const wrapper = await renderRepoDetail()
 
     expect(wrapper.text()).toContain('/backup/repos/server-daily')
+  })
+
+  it('shows the compacting-repository label for an in-progress compact op', async () => {
+    setupApiSuccess({
+      ...mockRepo,
+      current_op: {
+        kind: 'compact_repo',
+        actor: 'admin',
+        started_at: new Date().toISOString(),
+        queued: 0,
+      },
+    })
+    const wrapper = await renderRepoDetail()
+
+    expect(wrapper.text()).toContain('Current Operation')
+    expect(wrapper.text()).toContain('Compacting repository (started by admin)')
   })
 
   it('renders stat cards with archive count and agent count', async () => {
@@ -775,6 +797,29 @@ describe('RepoDetailView', () => {
 
       expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('keeps the in-progress state while the automatic post-delete compact is running', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // The delete itself finished (the tracked op moved on to the compact
+      // that automatically follows it) but the archive hasn't disappeared
+      // from the list yet - the row must stay disabled through the compact,
+      // not just through the delete.
+      wsHandlers.RepoOpChanged({
+        repo_id: mockRepo.id,
+        op: { kind: 'compact_repo', actor: 'admin', started_at: new Date().toISOString() },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
     })
   })
 })

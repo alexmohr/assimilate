@@ -29,6 +29,9 @@ pub enum RepoOpKind {
     BreakLock,
     /// Delete one or more archives from the repository.
     DeleteArchive,
+    /// Compact the repository, reclaiming space freed by a prior operation
+    /// (e.g. an archive deletion).
+    CompactRepo,
 }
 
 impl FromStr for RepoOpKind {

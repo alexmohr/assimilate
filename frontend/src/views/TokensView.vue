@@ -7,11 +7,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import { useClipboard } from '../composables/useClipboard'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { formatDate } from '../utils/format'
-import { extractError } from '../utils/error'
 import { Plus, Key, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import ModalFormActions from '../components/ModalFormActions.vue'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 interface ApiToken {
   id: number
@@ -26,15 +28,18 @@ const loading = ref(true)
 
 const showCreateModal = ref(false)
 const createName = ref('')
-const createError = ref('')
-const createSubmitting = ref(false)
+const {
+  loading: createSubmitting,
+  error: createError,
+  run: runCreate,
+} = useAsyncAction('Failed to create token')
 
 const newTokenPlaintext = ref('')
 const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
 
 const showDeleteModal = ref(false)
 const deleteTarget = ref<ApiToken | null>(null)
-const deleteSubmitting = ref(false)
+const { loading: deleteSubmitting, run: runDelete } = useAsyncAction()
 
 async function fetchTokens(): Promise<void> {
   loading.value = true
@@ -48,25 +53,19 @@ async function fetchTokens(): Promise<void> {
 
 function openCreate(): void {
   createName.value = ''
-  createError.value = ''
+  createError.value = null
   newTokenPlaintext.value = ''
   showCreateModal.value = true
 }
 
 async function submitCreate(): Promise<void> {
-  createError.value = ''
-  createSubmitting.value = true
-  try {
+  await runCreate(async () => {
     const res = await apiClient.post<{ token: ApiToken; plaintext: string }>('/tokens', {
       name: createName.value,
     })
     newTokenPlaintext.value = res.data.plaintext
     await fetchTokens()
-  } catch (e: unknown) {
-    createError.value = extractError(e, 'Failed to create token')
-  } finally {
-    createSubmitting.value = false
-  }
+  })
 }
 
 function closeCreateModal(): void {
@@ -81,16 +80,14 @@ function openDelete(token: ApiToken): void {
 }
 
 async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleteSubmitting.value = true
-  try {
-    await apiClient.delete(`/tokens/${deleteTarget.value.id}`)
+  const target = deleteTarget.value
+  if (!target) return
+  await runDelete(async () => {
+    await apiClient.delete(`/tokens/${target.id}`)
     showDeleteModal.value = false
     deleteTarget.value = null
     await fetchTokens()
-  } finally {
-    deleteSubmitting.value = false
-  }
+  })
 }
 
 onMounted(fetchTokens)
@@ -167,62 +164,64 @@ onMounted(fetchTokens)
       class="overlay"
       @click.self="closeCreateModal"
     >
-      <div class="modal">
+      <div class="dialog">
         <template v-if="!newTokenPlaintext">
-          <h2>Create API Token</h2>
-          <form
-            class="modal-form"
-            @submit.prevent="submitCreate"
-          >
-            <div class="form-group">
-              <label for="token-name">Token Name</label>
-              <input
-                id="token-name"
-                v-model="createName"
-                type="text"
-                required
-                placeholder="e.g. CI pipeline"
-              />
-            </div>
-            <div
-              v-if="createError"
-              class="modal-error"
+          <div class="dialog-header">
+            <h2 class="dialog-title">Create API Token</h2>
+            <button
+              class="close-btn"
+              @click="closeCreateModal"
             >
-              {{ createError }}
+              &times;
+            </button>
+          </div>
+          <form @submit.prevent="submitCreate">
+            <div class="dialog-body">
+              <div class="field">
+                <label
+                  class="field-label"
+                  for="token-name"
+                  >Token Name</label
+                >
+                <input
+                  id="token-name"
+                  v-model="createName"
+                  type="text"
+                  class="input"
+                  required
+                  placeholder="e.g. CI pipeline"
+                />
+              </div>
             </div>
-            <div class="modal-actions">
-              <button
-                type="button"
-                class="btn btn-ghost"
-                @click="closeCreateModal"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                class="btn btn-primary"
-                :disabled="createSubmitting || !createName.trim()"
-              >
-                Create
-              </button>
-            </div>
+            <ModalFormActions
+              :submitting="createSubmitting"
+              :disabled="!createName.trim()"
+              :error="createError"
+              submit-label="Create"
+              submitting-label="Create"
+              @cancel="closeCreateModal"
+            />
           </form>
         </template>
         <template v-else>
-          <h2>Token Created</h2>
-          <div class="token-notice">
-            <p class="token-warning">Copy this token now. It will not be shown again.</p>
-            <div class="token-box">
-              <code class="token-text">{{ newTokenPlaintext }}</code>
-              <button
-                class="btn btn-sm"
-                @click="copyToClipboard(newTokenPlaintext)"
-              >
-                {{ tokenCopied ? 'Copied!' : 'Copy' }}
-              </button>
+          <div class="dialog-header">
+            <h2 class="dialog-title">Token Created</h2>
+          </div>
+          <div class="dialog-body">
+            <div class="token-notice">
+              <p class="token-warning">Copy this token now. It will not be shown again.</p>
+              <div class="token-box">
+                <code class="token-text">{{ newTokenPlaintext }}</code>
+                <button
+                  class="btn btn-sm"
+                  @click="copyToClipboard(newTokenPlaintext)"
+                >
+                  {{ tokenCopied ? 'Copied!' : 'Copy' }}
+                </button>
+              </div>
             </div>
           </div>
-          <div class="modal-actions">
+          <div class="dialog-footer">
             <button
               class="btn btn-primary"
               @click="closeCreateModal"
@@ -234,51 +233,22 @@ onMounted(fetchTokens)
       </div>
     </div>
 
-    <div
-      v-if="showDeleteModal"
-      class="overlay"
-      @click.self="showDeleteModal = false"
+    <ConfirmDeleteDialog
+      :show="showDeleteModal"
+      title="Delete Token"
+      :submitting="deleteSubmitting"
+      @cancel="showDeleteModal = false"
+      @confirm="confirmDelete"
     >
-      <div class="modal">
-        <h2>Delete Token</h2>
-        <p>
-          Are you sure you want to delete token <strong>{{ deleteTarget?.name }}</strong
-          >? This action cannot be undone.
-        </p>
-        <div class="modal-actions">
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-danger"
-            :disabled="deleteSubmitting"
-            @click="confirmDelete"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
+      Are you sure you want to delete token <strong>{{ deleteTarget?.name }}</strong
+      >? This action cannot be undone.
+    </ConfirmDeleteDialog>
   </div>
 </template>
 
 <style scoped>
 .tokens-page {
   max-width: 900px;
-}
-
-.loading {
-  color: var(--text-muted);
-  padding: 2rem 0;
-}
-
-.empty-state {
-  color: var(--text-muted);
-  padding: 2rem 0;
-  font-size: 0.875rem;
 }
 
 .tokens-table {
@@ -333,69 +303,5 @@ onMounted(fetchTokens)
   font-family: monospace;
   word-break: break-all;
   color: var(--text-primary);
-}
-
-.modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  width: 100%;
-  max-width: 480px;
-  box-shadow: var(--shadow-lg);
-}
-
-.modal h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.modal-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
 }
 </style>

@@ -21,6 +21,7 @@ import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
+import EntityCard, { type EntityCardStat } from '../components/EntityCard.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
@@ -217,6 +218,14 @@ function formatVersion(v: string | null | undefined): string {
 
 function scheduleCount(agent: AgentRow): number {
   return machineScheduleCount.value[agent.id] ?? 0
+}
+
+function agentStats(agent: AgentRow): EntityCardStat[] {
+  return [
+    { value: scheduleCount(agent), label: 'Schedules' },
+    { value: formatLastSeen(agent.last_seen_at), label: 'Last seen' },
+    { value: formatVersion(agent.agent_version), label: 'Agent', mono: true },
+  ]
 }
 
 function agentTags(agent: AgentRow): { name: string; color: string }[] {
@@ -723,61 +732,47 @@ watch(
       v-else
       class="host-grid"
     >
-      <div
+      <EntityCard
         v-for="agent in filteredAgents"
         :key="agent.id"
         class="host-card"
         :class="{ 'host-card-hidden': agent.is_hidden, 'host-card-notable': !isOnline(agent) }"
+        :title="agent.hostname"
+        :subtitle="agent.display_name"
+        :stats="agentStats(agent)"
         @click="navigateToAgent(agent)"
       >
-        <div class="card-top">
-          <div class="card-info">
-            <span class="card-hostname">{{ agent.hostname }}</span>
-            <span
-              v-if="agent.display_name"
-              class="card-display"
-              >{{ agent.display_name }}</span
-            >
-          </div>
-          <div class="card-top-badges">
-            <span
-              v-if="agent.is_hidden"
-              class="badge-hidden"
-            >
-              Hidden
-            </span>
-            <span
-              v-if="isImported(agent)"
-              class="badge-imported"
-            >
-              Imported
-            </span>
-          </div>
-        </div>
-        <div class="card-stats">
-          <div class="stat">
-            <span class="stat-value">{{ scheduleCount(agent) }}</span>
-            <span class="stat-label">Schedules</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatLastSeen(agent.last_seen_at) }}</span>
-            <span class="stat-label">Last seen</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value mono">{{ formatVersion(agent.agent_version) }}</span>
-            <span class="stat-label">Agent</span>
-          </div>
-        </div>
-        <EntityStatusBadges
-          :notable="!isOnline(agent)"
-          notable-label="Offline"
-          :running="hostActiveBackups(agent).length > 0"
-          :running-label="hostRunningLabel(agent)"
-          :issues="agentIssues(agent)"
-        />
-        <div
+        <template
+          v-if="agent.is_hidden || isImported(agent)"
+          #top-badges
+        >
+          <span
+            v-if="agent.is_hidden"
+            class="badge-hidden"
+          >
+            Hidden
+          </span>
+          <span
+            v-if="isImported(agent)"
+            class="badge-imported"
+          >
+            Imported
+          </span>
+        </template>
+
+        <template #status>
+          <EntityStatusBadges
+            :notable="!isOnline(agent)"
+            notable-label="Offline"
+            :running="hostActiveBackups(agent).length > 0"
+            :running-label="hostRunningLabel(agent)"
+            :issues="agentIssues(agent)"
+          />
+        </template>
+
+        <template
           v-if="agentTags(agent).length > 0"
-          class="card-tags"
+          #meta
         >
           <span
             v-for="tag in agentTags(agent)"
@@ -791,11 +786,9 @@ watch(
           >
             {{ tag.name }}
           </span>
-        </div>
-        <div
-          class="card-actions"
-          @click.stop
-        >
+        </template>
+
+        <template #actions>
           <template v-if="agent.is_hidden">
             <button
               class="btn btn-sm btn-ghost"
@@ -827,8 +820,8 @@ watch(
               {{ deployButtonLabel(agent) }}
             </button>
           </template>
-        </div>
-      </div>
+        </template>
+      </EntityCard>
     </div>
 
     <!-- Add Agent Dialog -->
@@ -1100,104 +1093,8 @@ watch(
   gap: 1rem;
 }
 
-.host-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.host-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
 .host-card-notable {
   background: var(--bg-hover);
-}
-
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.card-hostname {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: 0.9rem;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-display {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.5rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.stat-value {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: auto;
-}
-
-/* Tag pills */
-.card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 500;
-  border: 1px solid;
 }
 
 /* Tag filter dropdown */
@@ -1301,13 +1198,6 @@ watch(
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.5;
-}
-
-.card-top-badges {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-shrink: 0;
 }
 
 .badge-imported {

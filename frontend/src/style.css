@@ -330,6 +330,16 @@
     color: var(--danger, #dc2626);
   }
 
+  .tag-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 500;
+    border: 1px solid;
+  }
+
   @keyframes pulse-importing {
     0%,
     100% {

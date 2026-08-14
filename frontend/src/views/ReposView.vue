@@ -12,7 +12,6 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { useMobile } from '../composables/useMobile'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
-import { formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
@@ -21,7 +20,8 @@ import BaseModal from '../components/BaseModal.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
-import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import RepoCard from '../components/RepoCard.vue'
+import type { EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { Repo, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 
@@ -227,10 +227,6 @@ function toggleTagFilter(tagId: number): void {
 
 function repoTags(repo: RepoWithStats): { name: string; color: string }[] {
   return repoTagsMap.value[repo.id] ?? []
-}
-
-function repoImportPhaseVerb(repo: RepoWithStats): string {
-  return (repo.import_status_message ?? '').startsWith('Indexing') ? 'Indexing' : 'Importing'
 }
 
 const defaultRepoForm = (): RepoForm => ({
@@ -783,93 +779,14 @@ onMounted(loadRepos)
       v-else-if="!groupByTag"
       class="repo-grid"
     >
-      <div
+      <RepoCard
         v-for="repo in filteredRepos"
         :key="repo.id"
-        class="repo-card"
-        :class="{ 'repo-card-notable': !repo.enabled }"
+        :repo="repo"
+        :tags="repoTags(repo)"
+        :issues="repoIssues(repo)"
         @click="navigateToRepo(repo)"
-      >
-        <div class="card-top">
-          <div class="card-info">
-            <span class="card-name">{{ repo.name }}</span>
-            <span class="card-ssh"
-              >{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span
-            >
-          </div>
-          <div class="card-badges">
-            <span
-              v-if="repo.import_error || repo.importing"
-              class="status-badge"
-              :class="repo.import_error ? 'status-error' : 'status-importing'"
-              :title="repo.import_error ?? undefined"
-            >
-              {{
-                repo.import_error
-                  ? 'Import Failed'
-                  : repo.import_total > 0
-                    ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
-                    : `${repoImportPhaseVerb(repo)}\u2026`
-              }}
-            </span>
-          </div>
-        </div>
-        <div
-          v-if="repo.importing && repo.import_total > 0"
-          class="import-progress"
-        >
-          <div class="import-progress-track">
-            <div
-              class="import-progress-bar"
-              :style="{ width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%` }"
-            ></div>
-          </div>
-          <span class="import-progress-label">
-            {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
-          </span>
-        </div>
-        <p
-          v-if="repo.importing && repo.import_status_message"
-          class="import-status-inline"
-        >
-          {{ repo.import_status_message }}
-        </p>
-        <EntityStatusBadges
-          :notable="!repo.enabled"
-          notable-label="Disabled"
-          :issues="repoIssues(repo)"
-        />
-        <div class="card-meta">
-          <span class="meta-pill">{{ repo.encryption }}</span>
-          <span class="meta-pill">{{ repo.compression }}</span>
-          <span
-            v-for="tag in repoTags(repo)"
-            :key="tag.name"
-            class="tag-pill"
-            :style="{
-              background: tag.color + '22',
-              color: tag.color,
-              borderColor: tag.color + '44',
-            }"
-          >
-            {{ tag.name }}
-          </span>
-        </div>
-        <div class="card-stats">
-          <div class="stat">
-            <span class="stat-value">{{ repo.archive_count }}</span>
-            <span class="stat-label">Archives</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-            <span class="stat-label">Deduplicated</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
-            <span class="stat-label">Last backup</span>
-          </div>
-        </div>
-      </div>
+      />
     </div>
 
     <div
@@ -891,95 +808,14 @@ onMounted(loadRepos)
           <span class="tag-group-count">{{ group.repos.length }}</span>
         </div>
         <div class="repo-grid">
-          <div
+          <RepoCard
             v-for="repo in group.repos"
             :key="`${group.label}-${repo.id}`"
-            class="repo-card"
-            :class="{ 'repo-card-notable': !repo.enabled }"
+            :repo="repo"
+            :tags="repoTags(repo)"
+            :issues="repoIssues(repo)"
             @click="navigateToRepo(repo)"
-          >
-            <div class="card-top">
-              <div class="card-info">
-                <span class="card-name">{{ repo.name }}</span>
-                <span class="card-ssh"
-                  >{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span
-                >
-              </div>
-              <div class="card-badges">
-                <span
-                  v-if="repo.import_error || repo.importing"
-                  class="status-badge"
-                  :class="repo.import_error ? 'status-error' : 'status-importing'"
-                  :title="repo.import_error ?? undefined"
-                >
-                  {{
-                    repo.import_error
-                      ? 'Import Failed'
-                      : repo.import_total > 0
-                        ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
-                        : `${repoImportPhaseVerb(repo)}\u2026`
-                  }}
-                </span>
-              </div>
-            </div>
-            <div
-              v-if="repo.importing && repo.import_total > 0"
-              class="import-progress"
-            >
-              <div class="import-progress-track">
-                <div
-                  class="import-progress-bar"
-                  :style="{
-                    width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%`,
-                  }"
-                ></div>
-              </div>
-              <span class="import-progress-label">
-                {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
-              </span>
-            </div>
-            <p
-              v-if="repo.importing && repo.import_status_message"
-              class="import-status-inline"
-            >
-              {{ repo.import_status_message }}
-            </p>
-            <EntityStatusBadges
-              :notable="!repo.enabled"
-              notable-label="Disabled"
-              :issues="repoIssues(repo)"
-            />
-            <div class="card-meta">
-              <span class="meta-pill">{{ repo.encryption }}</span>
-              <span class="meta-pill">{{ repo.compression }}</span>
-              <span
-                v-for="tag in repoTags(repo)"
-                :key="tag.name"
-                class="tag-pill"
-                :style="{
-                  background: tag.color + '22',
-                  color: tag.color,
-                  borderColor: tag.color + '44',
-                }"
-              >
-                {{ tag.name }}
-              </span>
-            </div>
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{ repo.archive_count }}</span>
-                <span class="stat-label">Archives</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-                <span class="stat-label">Deduplicated</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
-                <span class="stat-label">Last backup</span>
-              </div>
-            </div>
-          </div>
+          />
         </div>
       </div>
     </div>
@@ -1452,152 +1288,6 @@ onMounted(loadRepos)
   gap: 1rem;
 }
 
-.repo-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.repo-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.repo-card-notable {
-  background: var(--bg-hover);
-}
-
-.import-progress {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.import-progress-track {
-  flex: 1;
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.import-progress-bar {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 3px;
-  transition: width 0.4s ease;
-}
-
-.import-progress-label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.import-status-inline {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-badges {
-  display: flex;
-  gap: 0.35rem;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.card-name {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: 0.9rem;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-ssh {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-meta {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.meta-pill {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 500;
-  background: var(--bg-card);
-  color: var(--text-muted);
-  text-transform: lowercase;
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.stat-value {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: auto;
-}
-
 /* Overlay & Dialog */
 
 .dialog-lg {
@@ -1873,17 +1563,6 @@ onMounted(loadRepos)
 
 .tag-dropdown-name {
   white-space: nowrap;
-}
-
-/* Tag pills on cards */
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 500;
-  border: 1px solid;
 }
 
 /* Grouped view */

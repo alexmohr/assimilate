@@ -161,6 +161,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
     Router::new()
         .route("/api/repos", get(server::api::repos::list_repos))
         .route(
+            "/api/repos/stats",
+            get(server::api::repos::list_repos_with_stats),
+        )
+        .route(
             "/api/repos/{repo_id}",
             get(server::api::repos::get_repo)
                 .put(server::api::repos::update_repo)
@@ -4231,6 +4235,55 @@ fn non_admin_get_request(uri: &str) -> Request<Body> {
         .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
         .body(Body::empty())
         .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_list_hides_quota_config_from_viewer_but_shows_it_to_admin(pool: sqlx::PgPool) {
+    let repo_id = insert_test_repo(&pool, "quota-visibility-repo").await;
+    server::db::quota::upsert_quota(
+        &pool,
+        repo_id,
+        Some(500),
+        Some(1_000),
+        shared::types::QuotaAction::NotifyOnly,
+        shared::types::QuotaAction::BlockBackups,
+        true,
+    )
+    .await
+    .unwrap();
+
+    create_non_admin_user_and_session(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool);
+
+    let viewer_resp = oneshot(&mut app, non_admin_get_request("/api/repos/stats")).await;
+    let viewer_status = viewer_resp.status();
+    let viewer_repos = body_json(viewer_resp).await;
+    assert_eq!(viewer_status, StatusCode::OK, "body: {viewer_repos:?}");
+    let viewer_repo = viewer_repos
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r.get("name").is_some_and(|n| n == "quota-visibility-repo"))
+        .expect("viewer should still see the repo itself");
+    assert!(
+        viewer_repo.get("quota").is_some_and(Value::is_null),
+        "a viewer must not see quota configuration, which is otherwise gated to operators/admins"
+    );
+
+    let admin_resp = oneshot(&mut app, get_request("/api/repos/stats")).await;
+    assert_eq!(admin_resp.status(), StatusCode::OK);
+    let admin_repos = body_json(admin_resp).await;
+    let admin_repo = admin_repos
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r.get("name").is_some_and(|n| n == "quota-visibility-repo"))
+        .expect("admin should see the repo");
+    let admin_quota = admin_repo.get("quota").unwrap();
+    assert_eq!(admin_quota.get("warn_bytes").unwrap(), 500);
+    assert_eq!(admin_quota.get("critical_bytes").unwrap(), 1_000);
+    assert_eq!(admin_quota.get("critical_action").unwrap(), "block_backups");
 }
 
 #[sqlx::test(migrations = "./migrations")]

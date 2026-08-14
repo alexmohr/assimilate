@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 
 vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
@@ -21,8 +22,10 @@ vi.mock('../composables/useWebSocket', () => ({
   }),
 }))
 
+// A real ref, not a plain `{ value: false }` object - the template relies on Vue's
+// auto-unwrapping of genuine refs (e.g. `v-if="isMobile"`), which a plain object bypasses.
 vi.mock('../composables/useMobile', () => ({
-  useMobile: () => ({ isMobile: { value: false } }),
+  useMobile: () => ({ isMobile: ref(false) }),
 }))
 
 import { apiClient } from '../api/client'
@@ -50,6 +53,13 @@ interface RepoWithStats {
   total_deduplicated_size: number
   agent_count: number
   unmatched_count: number
+  quota: {
+    warn_bytes: number | null
+    critical_bytes: number | null
+    warn_action: string
+    critical_action: string
+    enabled: boolean
+  } | null
 }
 
 const baseRepo = {
@@ -71,6 +81,7 @@ const baseRepo = {
   total_deduplicated_size: 2_684_354_560,
   agent_count: 1,
   unmatched_count: 0,
+  quota: null,
 }
 
 const mockRepos: RepoWithStats[] = [
@@ -373,5 +384,221 @@ describe('ReposView', () => {
 
     expect(wrapper.text()).toContain('Indexing 10/50')
     expect(wrapper.text()).not.toContain('Importing')
+  })
+})
+
+describe('ReposView quota filter chips', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const reposWithQuota: RepoWithStats[] = [
+    {
+      ...baseRepo,
+      id: 1,
+      name: 'over-warn',
+      repo_path: '/backup/over-warn',
+      total_deduplicated_size: 600,
+      quota: {
+        warn_bytes: 500,
+        critical_bytes: 1000,
+        warn_action: 'notify_only',
+        critical_action: 'block_backups',
+        enabled: true,
+      },
+    },
+    {
+      ...baseRepo,
+      id: 2,
+      name: 'healthy',
+      repo_path: '/backup/healthy',
+      total_deduplicated_size: 100,
+      quota: {
+        warn_bytes: 500,
+        critical_bytes: 1000,
+        warn_action: 'notify_only',
+        critical_action: 'block_backups',
+        enabled: true,
+      },
+    },
+    {
+      ...baseRepo,
+      id: 3,
+      name: 'unconfigured',
+      repo_path: '/backup/unconfigured',
+      total_deduplicated_size: 100,
+      quota: null,
+    },
+  ]
+
+  it('shows correct counts on the All, At risk, and No quota chips', async () => {
+    setupApiSuccess(reposWithQuota)
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const chips = wrapper.findAll('.quota-fchip')
+    expect(chips[0]!.text()).toContain('All')
+    expect(chips[0]!.text()).toContain('3')
+    expect(chips[1]!.text()).toContain('At risk')
+    expect(chips[1]!.text()).toContain('1')
+    expect(chips[2]!.text()).toContain('No quota')
+    expect(chips[2]!.text()).toContain('1')
+  })
+
+  it('filters to only at-risk repos when the At risk chip is clicked', async () => {
+    setupApiSuccess(reposWithQuota)
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const chips = wrapper.findAll('.quota-fchip')
+    await chips[1]!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('over-warn')
+    expect(wrapper.text()).not.toContain('healthy')
+    expect(wrapper.text()).not.toContain('unconfigured')
+  })
+
+  it('filters to only unconfigured repos when the No quota chip is clicked', async () => {
+    setupApiSuccess(reposWithQuota)
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const chips = wrapper.findAll('.quota-fchip')
+    await chips[2]!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('unconfigured')
+    expect(wrapper.text()).not.toContain('over-warn')
+    expect(wrapper.text()).not.toContain('healthy')
+  })
+
+  it('renders a quota meter on a card with a configured quota', async () => {
+    setupApiSuccess(reposWithQuota)
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const cards = wrapper.findAll('.repo-card')
+    const overWarnCard = cards.find((c) => c.text().includes('over-warn'))
+    expect(overWarnCard!.find('.quota-meter').exists()).toBe(true)
+    expect(overWarnCard!.text()).toContain('Warning')
+
+    const unconfiguredCard = cards.find((c) => c.text().includes('unconfigured'))
+    expect(unconfiguredCard!.find('.quota-meter').exists()).toBe(false)
+  })
+})
+
+describe('ReposView group by host', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('groups repos sharing an ssh_host under one pool header', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const groupButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
+    await groupButton!.trigger('click')
+    await flushPromises()
+
+    const headers = wrapper.findAll('.pool-header')
+    expect(headers).toHaveLength(1)
+    expect(headers[0]!.text()).toContain('backup.example.com')
+    expect(headers[0]!.text()).toContain('3 repos')
+
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).toContain('database-hourly')
+    expect(wrapper.text()).toContain('media-weekly')
+  })
+
+  it('is mutually exclusive with group by tag', async () => {
+    setupApiSuccess()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
+      if (url === '/repo-tags') return Promise.resolve({ data: [] })
+      if (String(url).startsWith('/tags')) {
+        return Promise.resolve({ data: [{ id: 1, name: 'critical', color: '#ff0000' }] })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const tagButton = wrapper.findAll('button').find((b) => b.text() === 'Group by tag')
+    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
+
+    await hostButton!.trigger('click')
+    await flushPromises()
+    expect(hostButton!.classes()).toContain('active')
+    expect(tagButton!.classes()).not.toContain('active')
+    expect(wrapper.find('.pool-header').exists()).toBe(true)
+
+    await tagButton!.trigger('click')
+    await flushPromises()
+    expect(tagButton!.classes()).toContain('active')
+    expect(hostButton!.classes()).not.toContain('active')
+    expect(wrapper.find('.pool-header').exists()).toBe(false)
+  })
+
+  it('dims filtered-out repos instead of removing them from the group', async () => {
+    const repos: RepoWithStats[] = [
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'at-risk-repo',
+        repo_path: '/backup/at-risk-repo',
+        total_deduplicated_size: 600,
+        quota: {
+          warn_bytes: 500,
+          critical_bytes: 1000,
+          warn_action: 'notify_only',
+          critical_action: 'block_backups',
+          enabled: true,
+        },
+      },
+      {
+        ...baseRepo,
+        id: 2,
+        name: 'healthy-repo',
+        repo_path: '/backup/healthy-repo',
+        total_deduplicated_size: 100,
+        quota: null,
+      },
+    ]
+    setupApiSuccess(repos)
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
+    await hostButton!.trigger('click')
+    await flushPromises()
+
+    const atRiskChip = wrapper.findAll('.quota-fchip').find((c) => c.text().includes('At risk'))
+    await atRiskChip!.trigger('click')
+    await flushPromises()
+
+    // Both cards still render (the group keeps its full picture)...
+    const cards = wrapper.findAll('.repo-card')
+    expect(cards).toHaveLength(2)
+    // ...but only the one that doesn't match the filter is dimmed.
+    const healthyCard = cards.find((c) => c.text().includes('healthy-repo'))
+    expect(healthyCard!.classes()).toContain('repo-card-dim')
+    const atRiskCard = cards.find((c) => c.text().includes('at-risk-repo'))
+    expect(atRiskCard!.classes()).not.toContain('repo-card-dim')
   })
 })

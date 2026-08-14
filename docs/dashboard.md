@@ -36,6 +36,8 @@ Findings include the affected agent, schedule, or repository, the reason, an age
 - Repository quota warning and critical states.
 - Repository import failures with reliable persisted error state.
 
+A finding reason that comes from an agent or a repository import (Borg output can run to kilobytes of stderr) is normalized to a single line and capped at 200 characters, with an ellipsis marking the cut. Each row additionally clamps the reason to two lines, so one verbose failure cannot stretch the panel. Hovering the reason shows it in full, and the finding's link opens the activity record that carries the untruncated message.
+
 When no findings exist, the Needs Attention panel is hidden entirely and the sidebar panels span the full row side by side.
 
 ## Protection Coverage

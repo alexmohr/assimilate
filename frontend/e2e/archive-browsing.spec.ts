@@ -211,9 +211,7 @@ test.describe('Archive browsing & diff journey', () => {
       .then(() => true)
       .catch(() => false)
     const disabled = appeared
-      ? await pendingBtn
-          .evaluate((el) => (el as HTMLButtonElement).disabled)
-          .catch(() => null)
+      ? await pendingBtn.evaluate((el) => (el as HTMLButtonElement).disabled).catch(() => null)
       : null
     if (disabled === null) {
       await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible()

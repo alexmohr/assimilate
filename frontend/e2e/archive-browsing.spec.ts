@@ -178,6 +178,34 @@ test.describe('Archive browsing & diff journey', () => {
     // import.spec.ts's allowance for the same class of slow borg operation).
     test.setTimeout(180_000)
 
+    // RepoDetailView marks the row as deleting synchronously, before the
+    // DELETE request even goes out - but two independent WebSocket-driven
+    // updates race to end that pending state, and on this backend either can
+    // win before Playwright's own assertion polling samples the DOM:
+    // DataChanged triggers a list refetch that prunes the row once the
+    // archive is confirmed gone, and RepoOpChanged unconditionally clears
+    // *every* in-flight delete marker the instant the repo's op queue (delete
+    // then its automatic compact) goes idle again - a real, correct piece of
+    // stale-marker cleanup, not a bug, that just doesn't know to wait for the
+    // slower of the two signals. Delaying every WebSocket message for a few
+    // seconds right after confirming gives the synchronous "mark before the
+    // request goes out" state a real window to be observed, without touching
+    // or weakening the assertion itself. Registered before login/navigation:
+    // the app connects its one WebSocket at module load, so routing it after
+    // the page has already loaded would miss the existing connection.
+    let delayWsMessages = false
+    await page.routeWebSocket('**/ws/ui', (ws) => {
+      const server = ws.connectToServer()
+      server.onMessage((message) => {
+        if (delayWsMessages) {
+          setTimeout(() => ws.send(message), 3_000)
+        } else {
+          ws.send(message)
+        }
+      })
+      ws.onMessage((message) => server.send(message))
+    })
+
     await loginAsAdmin(page)
     await navigateToMediaWeeklyArchives(page)
     await expandAllArchiveGroups(page)
@@ -190,23 +218,16 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
+    delayWsMessages = true
     await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
 
-    // RepoDetailView marks the row as deleting synchronously, before the
-    // DELETE request even goes out. A CI trace of an earlier failure here
-    // showed the real bug: the DataChanged-triggered background refresh of
-    // the archive list was blanking the *entire* panel to a "Loading
-    // archives..." placeholder for the duration of the refetch (see
-    // useArchiveBrowser.ts's loadArchives), hiding this row - "Deletion in
-    // progress" state and all - regardless of how long that refetch took.
-    // Fixed by making that background refresh silent (it no longer toggles
-    // archivesLoading), so the row now stays visible and this can be a
-    // plain, unconditional assertion.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
     await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
     await expect(pendingBtn).toBeDisabled()
+
+    delayWsMessages = false
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

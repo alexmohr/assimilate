@@ -1126,6 +1126,11 @@ describe('RepoDetailView', () => {
       const result = document.body.querySelector('.break-lock-success')
       expect(result).not.toBeNull()
       expect(result!.textContent).toBe("lock broken on repository 'server-daily'")
+
+      // Same as the test above: the dialog stays open, so its teleported
+      // content would otherwise leak into document.body for whatever test
+      // runs next.
+      wrapper.unmount()
     })
   })
 })

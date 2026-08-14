@@ -8,6 +8,7 @@ vi.mock('../api/client', () => ({
   apiClient: {
     get: vi.fn(),
     post: vi.fn(),
+    put: vi.fn(),
     delete: vi.fn(),
   },
 }))
@@ -65,6 +66,7 @@ import SchedulesView from './SchedulesView.vue'
 const mockApiClient = apiClient as {
   get: ReturnType<typeof vi.fn>
   post: ReturnType<typeof vi.fn>
+  put: ReturnType<typeof vi.fn>
   delete: ReturnType<typeof vi.fn>
 }
 
@@ -196,7 +198,9 @@ const overdueWebServerHealth = [
 
 function setupApiSuccess(): void {
   mockApiClient.get.mockImplementation((url: string) => {
-    if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+    // Cloned so a toggle handler mutating the returned array (schedules.value[i] = ...)
+    // can't leak state into later tests that share this same mockSchedules array.
+    if (url === '/schedules') return Promise.resolve({ data: mockSchedules.map((s) => ({ ...s })) })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
@@ -586,6 +590,63 @@ describe('SchedulesView', () => {
 
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
     expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/cancel/i))
+  })
+
+  it('disables an enabled schedule via the card toggle and shows a toast', async () => {
+    setupApiSuccess()
+    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedules[0], enabled: false } })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('server-daily'))
+    expect(card!.find('.schedule-toggle-label').text()).toBe('Enabled')
+
+    await card!.find('button[role="switch"]').trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ cron_expression: '0 2 * * *', enabled: false }),
+    )
+    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/disabled/i))
+  })
+
+  it('enables a disabled schedule via the card toggle', async () => {
+    setupApiSuccess()
+    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedules[2], enabled: true } })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('media-weekly'))
+    expect(card!.find('.schedule-toggle-label').text()).toBe('Disabled')
+
+    await card!.find('button[role="switch"]').trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/3',
+      expect.objectContaining({ enabled: true }),
+    )
+    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/enabled/i))
+
+    // Once the API confirms the flip, the badge disappears and the label updates.
+    expect(card!.find('.schedule-toggle-label').text()).toBe('Enabled')
+    expect(card!.find('.entity-status-pill').exists()).toBe(false)
+  })
+
+  it('shows an error toast when toggling a schedule fails', async () => {
+    setupApiSuccess()
+    mockApiClient.put.mockRejectedValue({ response: { data: { error: 'update failed' } } })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('server-daily'))
+    await card!.find('button[role="switch"]').trigger('click')
+    await flushPromises()
+
+    expect(mockToastError).toHaveBeenCalled()
+    // The card keeps its prior state since the update was rejected.
+    expect(card!.find('.schedule-toggle-label').text()).toBe('Enabled')
   })
 
   it('has New button linking to /schedules/new', async () => {

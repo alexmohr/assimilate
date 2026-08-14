@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { ref } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 
 vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
@@ -127,6 +128,32 @@ function setupApiSuccess(repos: RepoWithStats[] = mockRepos): void {
     if (String(url).startsWith('/tags')) return Promise.resolve({ data: [] })
     return Promise.resolve({ data: [] })
   })
+}
+
+/** Mounts ReposView as an admin. Call `setupApiSuccess` (or a custom mock) first. */
+async function mountAsAdmin(): Promise<VueWrapper<ComponentPublicInstance>> {
+  const wrapper = renderWithPlugins(ReposView, {
+    storeState: { auth: { user: { role: 'admin' } } },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+async function clickButton(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  matches: (text: string) => boolean,
+): Promise<void> {
+  const button = wrapper.findAll('button').find((b) => matches(b.text()))
+  await button!.trigger('click')
+  await flushPromises()
+}
+
+function clickGroupByHost(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+  return clickButton(wrapper, (text) => text === 'Group by host')
+}
+
+function clickQuotaSort(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+  return clickButton(wrapper, (text) => text.startsWith('Quota'))
 }
 
 describe('ReposView', () => {
@@ -504,14 +531,8 @@ describe('ReposView group by host', () => {
 
   it('groups repos sharing an ssh_host under one pool header', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const groupButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
-    await groupButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const headers = wrapper.findAll('.pool-header')
     expect(headers).toHaveLength(1)
@@ -533,16 +554,12 @@ describe('ReposView group by host', () => {
       }
       return Promise.resolve({ data: [] })
     })
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
 
     const tagButton = wrapper.findAll('button').find((b) => b.text() === 'Group by tag')
     const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
 
-    await hostButton!.trigger('click')
-    await flushPromises()
+    await clickGroupByHost(wrapper)
     expect(hostButton!.classes()).toContain('active')
     expect(tagButton!.classes()).not.toContain('active')
     expect(wrapper.find('.pool-header').exists()).toBe(true)
@@ -580,14 +597,8 @@ describe('ReposView group by host', () => {
       },
     ]
     setupApiSuccess(repos)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
-    await hostButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const atRiskChip = wrapper.findAll('.quota-fchip').find((c) => c.text().includes('At risk'))
     await atRiskChip!.trigger('click')
@@ -621,14 +632,8 @@ describe('ReposView group by host', () => {
       },
     ]
     setupApiSuccess(repos)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
-    await hostButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const hosts = wrapper.findAll('.pool-host').map((h) => h.text())
     expect(hosts).toEqual(['a.example.com', 'z.example.com'])
@@ -640,24 +645,15 @@ describe('ReposView group by host', () => {
       if (url === '/server-quotas') return Promise.reject(new Error('network error'))
       return Promise.resolve({ data: [] })
     })
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
 
     expect(wrapper.text()).toContain('server-daily')
   })
 
   it('navigates to the repo detail page when a card inside a host group is clicked', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
-    await hostButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const card = wrapper
       .findAll('.repo-hostgrouped .repo-card')
@@ -704,14 +700,8 @@ describe('ReposView group by host', () => {
     setupApiSuccessWithServerQuota(
       serverQuota({ warn_bytes: 21_474_836_480, critical_bytes: 32_212_254_720 }),
     )
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
-    await hostButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const track = wrapper.find('.pool-track')
     expect(track.exists()).toBe(true)
@@ -729,14 +719,8 @@ describe('ReposView group by host', () => {
         critical_action: 'block_backups',
       }),
     )
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
-    await hostButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const note = wrapper.find('.pool-note').text()
     expect(note).toContain('over critical')
@@ -747,14 +731,8 @@ describe('ReposView group by host', () => {
     setupApiSuccessWithServerQuota(
       serverQuota({ warn_bytes: null, critical_bytes: 32_212_254_720 }),
     )
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
-    await hostButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     expect(wrapper.find('.pool-note').text()).toContain('healthy')
     expect(wrapper.find('.pool-mark').exists()).toBe(false)
@@ -807,14 +785,8 @@ describe('ReposView quota sort', () => {
 
   it('sorts by quota utilization ascending, with unconfigured repos always last', async () => {
     setupApiSuccess(reposForSort)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const quotaSortButton = wrapper.findAll('button').find((b) => b.text().startsWith('Quota'))
-    await quotaSortButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickQuotaSort(wrapper)
 
     const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
     expect(names).toEqual(['lightly-used', 'over-warn', 'unconfigured'])
@@ -839,14 +811,8 @@ describe('ReposView quota sort', () => {
       },
     ]
     setupApiSuccess(repos)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const quotaSortButton = wrapper.findAll('button').find((b) => b.text().startsWith('Quota'))
-    await quotaSortButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickQuotaSort(wrapper)
 
     const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
     expect(names.slice(0, 2)).toEqual(['lightly-used', 'over-warn'])
@@ -855,10 +821,7 @@ describe('ReposView quota sort', () => {
 
   it('resets to the full list when the All chip is clicked after filtering', async () => {
     setupApiSuccess(reposForSort)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
 
     const chips = wrapper.findAll('.quota-fchip')
     const atRiskChip = chips.find((c) => c.text().includes('At risk'))

@@ -326,7 +326,11 @@ const { onMessage } = useWebSocket()
 
 onMessage('DataChanged', () => {
   refreshRepo().catch(logger.error)
-  loadArchives()
+  // Silent: this refresh runs in the background on every DataChanged event,
+  // not just ones the user triggered - blanking the whole list to a loading
+  // placeholder while it's in flight would hide unrelated UI state (like an
+  // in-progress delete's row) for no reason.
+  loadArchives(true)
     .then(() => {
       // An archive that's gone from the freshly-loaded list was actually
       // deleted - stop tracking it as in-flight. One still present just

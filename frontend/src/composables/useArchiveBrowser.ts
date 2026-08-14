@@ -69,7 +69,7 @@ interface UseArchiveBrowserReturn {
   breadcrumbs: ComputedRef<BreadcrumbSegment[]>
   dirs: ComputedRef<DirDisplayEntry[]>
   files: ComputedRef<ContentEntry[]>
-  loadArchives: () => Promise<void>
+  loadArchives: (silent?: boolean) => Promise<void>
   selectArchive: (archive: ArchiveEntry) => Promise<void>
   loadContents: (path: string) => Promise<void>
   navigateTo: (path: string) => void
@@ -246,8 +246,14 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     })),
   ])
 
-  async function loadArchives(): Promise<void> {
-    archivesLoading.value = true
+  // `silent` skips the archivesLoading flag - the list stays as-is (including
+  // any in-flight delete's "Deletion in progress" row state) while the
+  // refetch is outstanding, instead of the whole panel flashing to a
+  // "Loading archives..." placeholder. Used for background refreshes
+  // triggered by a DataChanged WebSocket message, where blanking the list
+  // the caller didn't ask for would hide other UI state for no reason.
+  async function loadArchives(silent = false): Promise<void> {
+    if (!silent) archivesLoading.value = true
     archivesError.value = null
     try {
       const res = await apiClient.get<ArchiveEntry[]>(`/repos/${repoId.value}/archives`)
@@ -255,7 +261,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     } catch (e: unknown) {
       archivesError.value = extractError(e)
     } finally {
-      archivesLoading.value = false
+      if (!silent) archivesLoading.value = false
     }
   }
 

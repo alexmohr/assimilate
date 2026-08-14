@@ -217,6 +217,43 @@ describe('useArchiveBrowser', () => {
     expect(browser.archivesLoading.value).toBe(false)
   })
 
+  it('loadArchives sets archivesLoading while the request is in flight', async () => {
+    let resolveGet: (value: { data: ArchiveEntry[] }) => void = () => {}
+    vi.mocked(apiClient.get).mockReturnValue(
+      new Promise((resolve) => {
+        resolveGet = resolve
+      }),
+    )
+
+    const browser = useArchiveBrowser(ref(5))
+    const pending = browser.loadArchives()
+
+    expect(browser.archivesLoading.value).toBe(true)
+    resolveGet({ data: [ARCHIVE] })
+    await pending
+
+    expect(browser.archivesLoading.value).toBe(false)
+  })
+
+  it('loadArchives(true) fetches silently, without ever setting archivesLoading', async () => {
+    let resolveGet: (value: { data: ArchiveEntry[] }) => void = () => {}
+    vi.mocked(apiClient.get).mockReturnValue(
+      new Promise((resolve) => {
+        resolveGet = resolve
+      }),
+    )
+
+    const browser = useArchiveBrowser(ref(5))
+    const pending = browser.loadArchives(true)
+
+    expect(browser.archivesLoading.value).toBe(false)
+    resolveGet({ data: [ARCHIVE] })
+    await pending
+
+    expect(browser.archives.value).toEqual([ARCHIVE])
+    expect(browser.archivesLoading.value).toBe(false)
+  })
+
   it('restoreEntry throws when the API reports failure', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       data: { success: false, error_message: 'restore failed' },

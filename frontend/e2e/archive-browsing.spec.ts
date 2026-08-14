@@ -190,35 +190,23 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
-    // RepoDetailView marks the row as deleting synchronously, before the
-    // DELETE request even goes out - but the DataChanged notification that
-    // follows the server-side delete+compact triggers a refetch of the
-    // archive list, which prunes this row (button included) from the DOM.
-    // On a fast backend that whole round trip can complete faster than a
-    // single assertion-polling tick, so CI has intermittently - and on one
-    // run, on every retry - missed the pending state entirely (see PR #408
-    // discussion). Delaying just that one refetch guarantees the pending
-    // state a real window to be observed without weakening what's actually
-    // asserted below: the button must still become visible and disabled,
-    // unconditionally.
-    let delayedRefetch = false
-    await page.route('**/api/repos/*/archives', async (route) => {
-      if (route.request().method() === 'GET' && !delayedRefetch) {
-        delayedRefetch = true
-        await new Promise((resolve) => setTimeout(resolve, 2_000))
-      }
-      await route.continue()
-    })
-
     await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
 
+    // RepoDetailView marks the row as deleting synchronously, before the
+    // DELETE request even goes out. A CI trace of an earlier failure here
+    // showed the real bug: the DataChanged-triggered background refresh of
+    // the archive list was blanking the *entire* panel to a "Loading
+    // archives..." placeholder for the duration of the refetch (see
+    // useArchiveBrowser.ts's loadArchives), hiding this row - "Deletion in
+    // progress" state and all - regardless of how long that refetch took.
+    // Fixed by making that background refresh silent (it no longer toggles
+    // archivesLoading), so the row now stays visible and this can be a
+    // plain, unconditional assertion.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
     await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
     await expect(pendingBtn).toBeDisabled()
-
-    await page.unroute('**/api/repos/*/archives')
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

@@ -947,6 +947,33 @@ describe('RepoDetailView', () => {
       expect(wrapper.vm.archivePendingDeletion).toBeNull()
     })
 
+    it('marks the row as deleting immediately, before the delete request resolves', async () => {
+      // On a fast demo repo, the DELETE's own DataChanged notification can
+      // reach the WebSocket handler - and prune the archive from the list -
+      // before this request's promise would otherwise resolve. The
+      // in-progress state must be set synchronously on confirm, not after
+      // awaiting deleteArchiveByName, or that race means it's never observed.
+      let resolveDelete: (() => void) | undefined
+      mockDeleteArchiveByName.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveDelete = () => resolve(true)
+          }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      resolveDelete?.()
+      await flushPromises()
+    })
+
     it('clears the in-progress state once the archive disappears from a DataChanged refresh', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)

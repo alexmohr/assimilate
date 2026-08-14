@@ -409,9 +409,15 @@ async function confirmArchiveDeletion(): Promise<void> {
   const archive = archivePendingDeletion.value
   if (!archive) return
   archiveDeleteLoading.value = true
+  // Mark it as deleting before the request even goes out, not after it
+  // resolves. On a fast demo repo the DELETE's DataChanged notification can
+  // reach the WebSocket handler - and prune this archive from the list -
+  // before the await below would otherwise return, which would mean the
+  // "deleting" state was never observed and the row just vanishes instead
+  // of showing the in-flight state the UI promises.
+  deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
   try {
     await deleteArchiveByName(archive)
-    deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
     archivePendingDeletion.value = null
     if (selectedArchive.value?.name === archive.name) {
       selectedArchive.value = null
@@ -419,6 +425,9 @@ async function confirmArchiveDeletion(): Promise<void> {
     await refreshRepo()
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
+    const next = new Set(deletingArchiveNames.value)
+    next.delete(archive.name)
+    deletingArchiveNames.value = next
     toastError(extractError(e))
   } finally {
     archiveDeleteLoading.value = false

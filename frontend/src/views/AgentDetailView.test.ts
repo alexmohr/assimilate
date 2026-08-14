@@ -804,3 +804,42 @@ describe('AgentDetailView — default file change patterns', () => {
     )
   })
 })
+
+describe('AgentDetailView — deploy/upgrade button permission gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function setupApiWithUpgradeAvailable(): void {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/system/version')
+        return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+  }
+
+  it('shows the Upgrade button when the user has can_upgrade_agent', async () => {
+    setupApiWithUpgradeAvailable()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Upgrade')
+  })
+
+  it('hides the Upgrade button without can_upgrade_agent permission', async () => {
+    setupApiWithUpgradeAvailable()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: false } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Upgrade')
+  })
+})

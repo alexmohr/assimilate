@@ -333,12 +333,12 @@ fn agent_is_current(
 /// Require the calling user to have the `can_upgrade_agent` permission.
 async fn require_upgrade_agent(pool: &sqlx::PgPool, user_id: i64) -> Result<(), ApiError> {
     let effective = db::get_effective_permissions(pool, user_id).await?;
-    if !effective.can_upgrade_agent {
-        return Err(ApiError::Forbidden(
-            "upgrade agent permission required".to_string(),
-        ));
+    if effective.can_delete_repo || effective.can_upgrade_agent {
+        return Ok(());
     }
-    Ok(())
+    Err(ApiError::Forbidden(
+        "upgrade agent permission required".to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -417,5 +417,82 @@ mod tests {
             Some("1.2.4"),
             Some("1.2.3")
         ));
+    }
+
+    fn empty_role_params(name: &str) -> db::InsertRoleParams<'_> {
+        db::InsertRoleParams {
+            name,
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+            can_upgrade_agent: false,
+        }
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn require_upgrade_agent_rejects_user_without_the_permission(pool: sqlx::PgPool) {
+        let user = db::insert_user(&pool, "no-perms", "hash")
+            .await
+            .expect("insert user");
+        let role = db::insert_role(&pool, &empty_role_params("no-perms-role"))
+            .await
+            .expect("insert role");
+        db::set_user_roles(&pool, user.id, &[role.id])
+            .await
+            .expect("assign role");
+
+        let result = require_upgrade_agent(&pool, user.id).await;
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn require_upgrade_agent_allows_user_with_can_upgrade_agent(pool: sqlx::PgPool) {
+        let user = db::insert_user(&pool, "upgrader", "hash")
+            .await
+            .expect("insert user");
+        let mut params = empty_role_params("upgrader-role");
+        params.can_upgrade_agent = true;
+        let role = db::insert_role(&pool, &params).await.expect("insert role");
+        db::set_user_roles(&pool, user.id, &[role.id])
+            .await
+            .expect("assign role");
+
+        require_upgrade_agent(&pool, user.id)
+            .await
+            .expect("user with can_upgrade_agent should pass");
+    }
+
+    // Regression test for the missing admin-bypass clause: a role with
+    // can_delete_repo (the codebase-wide "admin" bit - see
+    // docs/access-control.md) but without can_upgrade_agent explicitly set
+    // must still pass, matching every other per-capability check
+    // (tags.rs::ensure_manage_tags and friends).
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn require_upgrade_agent_allows_admin_bypass_via_can_delete_repo(pool: sqlx::PgPool) {
+        let user = db::insert_user(&pool, "admin-like", "hash")
+            .await
+            .expect("insert user");
+        let mut params = empty_role_params("admin-like-role");
+        params.can_delete_repo = true;
+        let role = db::insert_role(&pool, &params).await.expect("insert role");
+        db::set_user_roles(&pool, user.id, &[role.id])
+            .await
+            .expect("assign role");
+
+        require_upgrade_agent(&pool, user.id)
+            .await
+            .expect("can_delete_repo should bypass the upgrade-agent check");
     }
 }

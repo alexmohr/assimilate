@@ -2930,12 +2930,7 @@ fn parse_archive_stats(json: &serde_json::Value, info: &serde_json::Value) -> db
             .get("duration")
             .and_then(serde_json::Value::as_f64)
             .map_or(0, |d| {
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "borg durations are small positive second counts"
-                )]
-                let secs = d as i64;
-                secs
+                format!("{:.0}", d.round()).parse::<i64>().unwrap_or(0)
             }),
         repo_unique_csize: json
             .get("cache")

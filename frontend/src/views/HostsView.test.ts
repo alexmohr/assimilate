@@ -77,6 +77,7 @@ function makeRouter(): ReturnType<typeof createRouter> {
 async function mountWithAgent(
   agentOverrides: Record<string, unknown>,
   versionData: Record<string, unknown>,
+  authUserOverrides: Record<string, unknown> = {},
 ): Promise<ReturnType<typeof mount>> {
   const agent = {
     id: 99,
@@ -124,6 +125,7 @@ async function mountWithAgent(
     created_at: '2026-01-01T00:00:00Z',
     last_login_at: null,
     can_upgrade_agent: true,
+    ...authUserOverrides,
   } as AuthUser
   const wrapper = mount(HostsView, { global: { plugins: [pinia, router] } })
   await flushPromises()
@@ -457,6 +459,16 @@ describe('HostsView deploy button label', () => {
       { agent_version: '0.2.0', server_commit_count: null },
     )
     expect(wrapper.text()).toContain('Upgrade')
+  })
+
+  it('hides the Deploy/Upgrade button without can_upgrade_agent permission', async () => {
+    const wrapper = await mountWithAgent(
+      { agent_version: '0.1.0', agent_commit_count: null },
+      { agent_version: '0.2.0', server_commit_count: null },
+      { can_upgrade_agent: false },
+    )
+    expect(wrapper.text()).not.toContain('Upgrade')
+    expect(wrapper.text()).not.toContain('Deploy')
   })
 
   it('shows no button when agent commit count matches server', async () => {

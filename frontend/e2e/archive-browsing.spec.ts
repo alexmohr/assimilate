@@ -193,20 +193,24 @@ test.describe('Archive browsing & diff journey', () => {
 
     // The row's own button must reflect the in-flight delete immediately -
     // disabled, spinner, and re-titled - not just clickable-again once the
-    // confirmation dialog closes. Best-effort, like the Overview-tab check
-    // below: on a very fast demo repo, borg can finish the delete (and the
-    // compact that follows it) between these two assertions, so the whole
-    // row - button included - is already gone by the time the second one
-    // runs. That's a stronger proof of the same guarantee, not a failure,
-    // so fall back to confirming the archive is gone rather than failing
-    // the test over a transient state that was simply too fast to observe.
+    // confirmation dialog closes. Only the *first* check (the button ever
+    // appearing at all) is best-effort: on a very fast demo repo, borg can
+    // finish the delete (and the compact that follows it) before this
+    // check gets a look in, in which case the whole row - button included
+    // - is already gone, which is a stronger proof of the same guarantee,
+    // not a failure. Once the button IS observed, though, it being
+    // disabled is a hard, unforgiving assertion - a regression there must
+    // still fail the test, even if the archive disappears moments later.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
-    try {
-      await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
+    const pendingBtnAppeared = await pendingBtn
+      .waitFor({ state: 'visible', timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (pendingBtnAppeared) {
       await expect(pendingBtn).toBeDisabled()
-    } catch {
+    } else {
       await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible()
     }
 

@@ -813,7 +813,13 @@ async function confirmBreakLock(): Promise<void> {
     const res = await apiClient.post<{ message: string; borg_output: string }>(
       `/repos/${repoId.value}/break-lock`,
     )
-    breakLockResult.value = res.data.message
+    // borg_output carries the actual detail of what happened - notably
+    // whether a stale local cache lock was found and cleared (or found but
+    // left in place) - which message alone never conveys; it's the static
+    // "lock broken on repository '<name>'" confirmation every time.
+    breakLockResult.value = res.data.borg_output
+      ? `${res.data.message}\n${res.data.borg_output}`
+      : res.data.message
   } catch (e: unknown) {
     breakLockError.value = extractError(e)
   } finally {
@@ -2787,6 +2793,7 @@ async function resetImport(): Promise<void> {
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   color: var(--success);
+  white-space: pre-line;
 }
 
 .current-op-running {

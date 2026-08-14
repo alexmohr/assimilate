@@ -1060,4 +1060,72 @@ describe('RepoDetailView', () => {
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
     })
   })
+
+  describe('Break Lock', () => {
+    async function openBreakLockDialog(
+      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    ): Promise<void> {
+      const breakLockBtn = wrapper.findAll('button').find((b) => b.text() === 'Break Lock')
+      expect(breakLockBtn).toBeDefined()
+      await breakLockBtn!.trigger('click')
+      await flushPromises()
+    }
+
+    async function clickBreakLockConfirm(): Promise<void> {
+      const confirmBtn = document.body.querySelector<HTMLButtonElement>('button.btn-danger')
+      expect(confirmBtn).not.toBeNull()
+      expect(confirmBtn!.textContent).toBe('Yes, Break Lock')
+      confirmBtn!.click()
+      await flushPromises()
+    }
+
+    it('shows borg_output alongside the confirmation message, not just the static message', async () => {
+      setupApiSuccess()
+      vi.mocked(apiClient.post).mockImplementation((url: string) => {
+        if (url === '/repos/1/break-lock') {
+          return Promise.resolve({
+            data: {
+              message: "lock broken on repository 'server-daily'",
+              borg_output: 'cleared stale local cache lock at /cache/borg/abc123',
+            },
+          })
+        }
+        return Promise.resolve({ data: {} })
+      })
+
+      const wrapper = await renderRepoDetail()
+      await openBreakLockDialog(wrapper)
+      await clickBreakLockConfirm()
+
+      const result = document.body.querySelector('.break-lock-success')
+      expect(result).not.toBeNull()
+      expect(result!.textContent).toContain("lock broken on repository 'server-daily'")
+      expect(result!.textContent).toContain('cleared stale local cache lock at /cache/borg/abc123')
+
+      // The dialog stays open after a successful break-lock so the admin can
+      // read the result - its teleported content would otherwise leak into
+      // document.body and break the next test's lookup, so tear it down.
+      wrapper.unmount()
+    })
+
+    it('falls back to the plain message when there is no borg output to show', async () => {
+      setupApiSuccess()
+      vi.mocked(apiClient.post).mockImplementation((url: string) => {
+        if (url === '/repos/1/break-lock') {
+          return Promise.resolve({
+            data: { message: "lock broken on repository 'server-daily'", borg_output: '' },
+          })
+        }
+        return Promise.resolve({ data: {} })
+      })
+
+      const wrapper = await renderRepoDetail()
+      await openBreakLockDialog(wrapper)
+      await clickBreakLockConfirm()
+
+      const result = document.body.querySelector('.break-lock-success')
+      expect(result).not.toBeNull()
+      expect(result!.textContent).toBe("lock broken on repository 'server-daily'")
+    })
+  })
 })

@@ -372,10 +372,14 @@ fn run_break_lock_blocking(
 /// internal ID, itself directly inside a directory named `borg`. A repository's own lock, by
 /// contrast, lives inside the repository itself and won't match this shape.
 fn looks_like_borg_cache_lock_dir(dir: &Path) -> bool {
-    let is_hex_repo_id = dir
-        .file_name()
-        .and_then(OsStr::to_str)
-        .is_some_and(|s| s.len() >= 32 && s.chars().all(|c| c.is_ascii_hexdigit()));
+    // Borg's repository IDs (and thus its cache-lock directory names) are always a 256-bit
+    // hash rendered as 64 hex characters - require the exact length rather than a loose lower
+    // bound, so a repository whose own storage path happens to look hex-ish isn't misidentified
+    // as borg's cache dir.
+    const BORG_REPO_ID_HEX_LEN: usize = 64;
+    let is_hex_repo_id = dir.file_name().and_then(OsStr::to_str).is_some_and(|s| {
+        s.len() == BORG_REPO_ID_HEX_LEN && s.chars().all(|c| c.is_ascii_hexdigit())
+    });
     let parent_is_borg_cache_dir = dir
         .parent()
         .and_then(Path::file_name)
@@ -394,6 +398,11 @@ fn looks_like_borg_cache_lock_dir(dir: &Path) -> bool {
 /// `lock.exclusive`/`lock.roster` from this directory by hand; borg's own error message is the
 /// most reliable source for that directory's exact path, since the cache base dir is
 /// configurable (`BORG_CACHE_DIR`) and its default varies by platform.
+///
+/// The exact wording parsed here - `Failed to create/acquire the lock <path> (timeout).`, no
+/// quoting around the path - is cross-checked against real-world `borg` output reported across
+/// several independent, multi-year-apart user reports (e.g. borgbackup/borg#3191, #4913), not
+/// just this crate's own hand-authored test fixtures.
 #[must_use]
 pub fn cache_lock_dir_from_timeout_error(stderr: &str) -> Option<PathBuf> {
     const MARKER: &str = "Failed to create/acquire the lock ";
@@ -772,6 +781,16 @@ mod tests {
             cache_lock_dir_from_timeout_error("Failed to create/acquire the lock, waiting"),
             None
         );
+    }
+
+    #[test]
+    fn cache_lock_dir_from_timeout_error_ignores_a_non_64_char_hex_id() {
+        // Borg's own cache-lock IDs are always exactly 64 hex chars; a shorter (or longer)
+        // hex-looking name under a `borg` directory is a repository's own path that merely
+        // happens to look similar, not borg's cache dir - must not be treated as one.
+        let stderr = "Failed to create/acquire the lock \
+                      /srv/repos/borg/85f318afefc47f30136bd60f6b33c78e/lock.exclusive (timeout).\n";
+        assert_eq!(cache_lock_dir_from_timeout_error(stderr), None);
     }
 
     #[tokio::test]

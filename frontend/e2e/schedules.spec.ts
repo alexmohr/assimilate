@@ -250,12 +250,13 @@ test.describe('Schedules management', () => {
     // Snapshot the seeded row so the mocked PUT response below can echo back a
     // complete ScheduleResponse, without ever sending the PUT to the real
     // backend (which would mutate demo data other, possibly-parallel, tests rely on).
-    const listResp = await page.request.get('/api/schedules')
-    expect(listResp.ok()).toBe(true)
-    const schedules = (await listResp.json()) as Record<string, unknown>[]
-    const original = schedules.find((s) => s.name === 'server-daily')
-    expect(original).toBeDefined()
-    const scheduleId = original!.id as number
+    // Schedule 1 is the daily web-server-01/server-daily schedule (see other
+    // tests in this file, e.g. the direct `/schedules/1` navigations below) -
+    // its own `name` field is blank, so the card falls back to the repo name.
+    const scheduleId = 1
+    const getResp = await page.request.get(`/api/schedules/${scheduleId}`)
+    expect(getResp.ok()).toBe(true)
+    const original = (await getResp.json()) as Record<string, unknown>
 
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')

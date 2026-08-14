@@ -253,6 +253,9 @@ test.describe('Schedules management', () => {
     // Schedule 1 is the daily web-server-01/server-daily schedule (see other
     // tests in this file, e.g. the direct `/schedules/1` navigations below) -
     // its own `name` field is blank, so the card falls back to the repo name.
+    // The other schedules seeded/created against the same repo across the
+    // full e2e run also fall back to "server-daily", so the card is located
+    // by its data-schedule-id rather than by text.
     const scheduleId = 1
     const getResp = await page.request.get(`/api/schedules/${scheduleId}`)
     expect(getResp.ok()).toBe(true)
@@ -261,7 +264,7 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const card = page.locator(`.schedule-card[data-schedule-id="${scheduleId}"]`)
     await expect(card.locator('.schedule-toggle-label')).toHaveText('Enabled')
     await expect(card).not.toHaveClass(/schedule-card-notable/)
 

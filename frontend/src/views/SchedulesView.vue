@@ -438,6 +438,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         :key="s.id"
         class="schedule-card"
         :class="{ 'schedule-card-notable': !s.enabled }"
+        :data-schedule-id="s.id"
         @click="navigateToSchedule(s)"
       >
         <span class="card-hostname">{{

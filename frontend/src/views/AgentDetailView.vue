@@ -176,14 +176,6 @@ function cancelEditPaths(): void {
   editingPaths.value = false
 }
 
-function parseAgentCommands(json: string | undefined): string[] {
-  try {
-    return JSON.parse(json ?? '[]') as string[]
-  } catch {
-    return []
-  }
-}
-
 async function savePaths(): Promise<void> {
   if (!agent.value) return
   pathsSaving.value = true
@@ -193,8 +185,8 @@ async function savePaths(): Promise<void> {
       display_name: agent.value.display_name,
       default_backup_paths: parseLines(pathsText.value),
       default_exclude_patterns: agent.value.default_exclude_patterns,
-      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
-      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_pre_backup_commands: agent.value.default_pre_backup_commands,
+      default_post_backup_commands: agent.value.default_post_backup_commands,
       default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
     })
     agent.value = { ...agent.value, ...res.data }
@@ -256,8 +248,8 @@ async function saveIdentity(): Promise<void> {
       display_name: identityDisplayName.value.trim() || null,
       default_backup_paths: agent.value.default_backup_paths,
       default_exclude_patterns: agent.value.default_exclude_patterns,
-      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
-      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_pre_backup_commands: agent.value.default_pre_backup_commands,
+      default_post_backup_commands: agent.value.default_post_backup_commands,
       default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
     })
     if (hostnameChanged) {
@@ -406,8 +398,8 @@ async function saveExcludes(): Promise<void> {
       display_name: agent.value.display_name,
       default_backup_paths: agent.value.default_backup_paths,
       default_exclude_patterns: parseLines(excludesText.value),
-      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
-      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_pre_backup_commands: agent.value.default_pre_backup_commands,
+      default_post_backup_commands: agent.value.default_post_backup_commands,
       default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
     })
     agent.value = { ...agent.value, ...res.data }
@@ -444,8 +436,8 @@ async function saveFileChangePatterns(): Promise<void> {
       display_name: agent.value.display_name,
       default_backup_paths: agent.value.default_backup_paths,
       default_exclude_patterns: agent.value.default_exclude_patterns,
-      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
-      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_pre_backup_commands: agent.value.default_pre_backup_commands,
+      default_post_backup_commands: agent.value.default_post_backup_commands,
       default_file_change_patterns_raw: fileChangePatternsText.value,
     })
     agent.value = { ...agent.value, ...res.data }
@@ -465,8 +457,8 @@ const hookCmdsSaving = ref(false)
 const hookCmdsError = ref<string | null>(null)
 
 function startEditHookCmds(): void {
-  preCmdsText.value = parseAgentCommands(agent.value?.default_pre_backup_commands).join('\n')
-  postCmdsText.value = parseAgentCommands(agent.value?.default_post_backup_commands).join('\n')
+  preCmdsText.value = (agent.value?.default_pre_backup_commands ?? []).join('\n')
+  postCmdsText.value = (agent.value?.default_post_backup_commands ?? []).join('\n')
   hookCmdsError.value = null
   editingHookCmds.value = true
 }
@@ -1413,11 +1405,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
               <div class="hook-cmds-group">
                 <span class="hook-cmds-label">Pre-backup</span>
                 <div
-                  v-if="parseAgentCommands(agent.default_pre_backup_commands).length > 0"
+                  v-if="agent.default_pre_backup_commands.length > 0"
                   class="paths-list"
                 >
                   <code
-                    v-for="(cmd, idx) in parseAgentCommands(agent.default_pre_backup_commands)"
+                    v-for="(cmd, idx) in agent.default_pre_backup_commands"
                     :key="idx"
                     class="path-item mono"
                   >
@@ -1433,11 +1425,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
               <div class="hook-cmds-group">
                 <span class="hook-cmds-label">Post-backup</span>
                 <div
-                  v-if="parseAgentCommands(agent.default_post_backup_commands).length > 0"
+                  v-if="agent.default_post_backup_commands.length > 0"
                   class="paths-list"
                 >
                   <code
-                    v-for="(cmd, idx) in parseAgentCommands(agent.default_post_backup_commands)"
+                    v-for="(cmd, idx) in agent.default_post_backup_commands"
                     :key="idx"
                     class="path-item mono"
                   >

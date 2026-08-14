@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), daily AS ( SELECT br.started_at::date AS date, SUM(br.original_size) AS day_original, SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize ORDER BY br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.repo_id = $2 AND br.status = 'success' GROUP BY br.started_at::date ), joined AS ( SELECT d.date, dl.day_original, dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (ORDER BY d.date) AS fill_grp FROM days d LEFT JOIN daily dl ON dl.date = d.date ) SELECT date AS \"date!\", COALESCE(SUM(day_original) OVER (ORDER BY date), 0)::INT8 AS \"original_size!\", COALESCE(SUM(day_compressed) OVER (ORDER BY date), 0)::INT8 AS \"compressed_size!\", NULLIF(MAX(day_csize) OVER (PARTITION BY fill_grp), 0)::INT8 AS \"deduplicated_size?\" FROM joined ORDER BY date",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "original_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "deduplicated_size?",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "222d0c685b96a1468325564b3a17b1553bace76717d02a912a93c1ecb5f21f12"
+}

@@ -7,11 +7,7 @@ use shared::{
 };
 use sqlx::PgPool;
 
-use crate::{
-    AppState,
-    db::{self, compression_from_str},
-    error::ApiError,
-};
+use crate::{AppState, db, error::ApiError};
 
 /// # Errors
 ///
@@ -132,28 +128,15 @@ fn effective_pre_backup_commands(
     schedule: &db::ScheduleRow,
     per_agent_cmds: Option<&db::PerAgentCommands>,
 ) -> Vec<String> {
-    let agent_defaults: Vec<String> = serde_json::from_str(&agent.default_pre_backup_commands)
-        .inspect_err(|e| {
-            tracing::warn!(
-                agent_id = agent.id,
-                error = %e,
-                "failed to parse agent default_pre_backup_commands"
-            );
-        })
-        .unwrap_or_default();
-    let effective_pre = per_agent_cmds.map_or(schedule.pre_backup_commands.as_str(), |c| {
-        c.pre_backup_commands.as_str()
-    });
-    let schedule_cmds: Vec<String> = serde_json::from_str(effective_pre)
-        .inspect_err(|e| {
-            tracing::warn!(
-                schedule_id = schedule.id,
-                error = %e,
-                "failed to parse pre_backup_commands, defaulting to empty"
-            );
-        })
-        .unwrap_or_default();
-    agent_defaults.into_iter().chain(schedule_cmds).collect()
+    let schedule_cmds =
+        per_agent_cmds.map_or(&schedule.pre_backup_commands.0, |c| &c.pre_backup_commands);
+    agent
+        .default_pre_backup_commands
+        .0
+        .iter()
+        .chain(schedule_cmds)
+        .cloned()
+        .collect()
 }
 
 fn effective_post_backup_commands(
@@ -161,28 +144,14 @@ fn effective_post_backup_commands(
     schedule: &db::ScheduleRow,
     per_agent_cmds: Option<&db::PerAgentCommands>,
 ) -> Vec<String> {
-    let effective_post = per_agent_cmds.map_or(schedule.post_backup_commands.as_str(), |c| {
-        c.post_backup_commands.as_str()
+    let schedule_cmds = per_agent_cmds.map_or(&schedule.post_backup_commands.0, |c| {
+        &c.post_backup_commands
     });
-    let schedule_cmds: Vec<String> = serde_json::from_str(effective_post)
-        .inspect_err(|e| {
-            tracing::warn!(
-                schedule_id = schedule.id,
-                error = %e,
-                "failed to parse post_backup_commands, defaulting to empty"
-            );
-        })
-        .unwrap_or_default();
-    let agent_defaults: Vec<String> = serde_json::from_str(&agent.default_post_backup_commands)
-        .inspect_err(|e| {
-            tracing::warn!(
-                agent_id = agent.id,
-                error = %e,
-                "failed to parse agent default_post_backup_commands"
-            );
-        })
-        .unwrap_or_default();
-    schedule_cmds.into_iter().chain(agent_defaults).collect()
+    schedule_cmds
+        .iter()
+        .chain(&agent.default_post_backup_commands.0)
+        .cloned()
+        .collect()
 }
 
 async fn build_schedule_config(
@@ -273,7 +242,10 @@ async fn build_repo_config(
     let passphrase = shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to decrypt passphrase: {e}")))?;
 
-    let compression = compression_from_str(&repo.compression)?;
+    let compression = repo
+        .compression
+        .parse()
+        .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))?;
 
     let ssh_port = u16::try_from(repo.ssh_port)
         .map_err(|_| ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port)))?;

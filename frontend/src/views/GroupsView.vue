@@ -11,6 +11,8 @@ import { logger } from '../utils/logger'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import ModalFormActions from '../components/ModalFormActions.vue'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 interface Group {
   id: number
@@ -36,19 +38,28 @@ loading.value = true
 
 const showCreateModal = ref(false)
 const createForm = ref({ name: '', description: '' })
-const createError = ref<string | null>(null)
-const createSubmitting = ref(false)
+const {
+  loading: createSubmitting,
+  error: createError,
+  run: runCreate,
+} = useAsyncAction('Failed to create group')
 
 const showEditModal = ref(false)
 const editTarget = ref<Group | null>(null)
 const editForm = ref({ name: '', description: '' })
-const editError = ref<string | null>(null)
-const editSubmitting = ref(false)
+const {
+  loading: editSubmitting,
+  error: editError,
+  run: runEdit,
+} = useAsyncAction('Failed to update group')
 
 const showDeleteModal = ref(false)
 const deleteTarget = ref<Group | null>(null)
-const deleteSubmitting = ref(false)
-const deleteError = ref<string | null>(null)
+const {
+  loading: deleteSubmitting,
+  error: deleteError,
+  run: runDelete,
+} = useAsyncAction('Failed to delete group')
 
 const showMembersModal = ref(false)
 const membersTarget = ref<Group | null>(null)
@@ -110,20 +121,14 @@ async function submitCreate(): Promise<void> {
     createError.value = 'Name is required'
     return
   }
-  createSubmitting.value = true
-  createError.value = null
-  try {
+  await runCreate(async () => {
     await apiClient.post('/groups', {
       name: createForm.value.name.trim(),
       description: createForm.value.description.trim() || null,
     })
     showCreateModal.value = false
     await fetchGroups()
-  } catch (e: unknown) {
-    createError.value = extractError(e, 'Failed to create group')
-  } finally {
-    createSubmitting.value = false
-  }
+  })
 }
 
 function openEdit(group: Group): void {
@@ -134,25 +139,20 @@ function openEdit(group: Group): void {
 }
 
 async function submitEdit(): Promise<void> {
-  if (!editTarget.value) return
+  const target = editTarget.value
+  if (!target) return
   if (!editForm.value.name.trim()) {
     editError.value = 'Name is required'
     return
   }
-  editSubmitting.value = true
-  editError.value = null
-  try {
-    await apiClient.put(`/groups/${editTarget.value.id}`, {
+  await runEdit(async () => {
+    await apiClient.put(`/groups/${target.id}`, {
       name: editForm.value.name.trim(),
       description: editForm.value.description.trim() || null,
     })
     showEditModal.value = false
     await fetchGroups()
-  } catch (e: unknown) {
-    editError.value = extractError(e, 'Failed to update group')
-  } finally {
-    editSubmitting.value = false
-  }
+  })
 }
 
 function openDelete(group: Group): void {
@@ -162,18 +162,13 @@ function openDelete(group: Group): void {
 }
 
 async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleteSubmitting.value = true
-  deleteError.value = null
-  try {
-    await apiClient.delete(`/groups/${deleteTarget.value.id}`)
+  const target = deleteTarget.value
+  if (!target) return
+  await runDelete(async () => {
+    await apiClient.delete(`/groups/${target.id}`)
     showDeleteModal.value = false
     await fetchGroups()
-  } catch (e: unknown) {
-    deleteError.value = extractError(e, 'Failed to delete group')
-  } finally {
-    deleteSubmitting.value = false
-  }
+  })
 }
 
 async function openMembers(group: Group): Promise<void> {
@@ -326,52 +321,55 @@ onMounted(async () => {
       class="overlay"
       @click.self="showCreateModal = false"
     >
-      <div class="modal">
-        <h2>Create Group</h2>
-        <form
-          class="modal-form"
-          @submit.prevent="submitCreate"
-        >
-          <div class="form-group">
-            <label for="create-name">Name <span class="required">*</span></label>
-            <input
-              id="create-name"
-              v-model="createForm.name"
-              type="text"
-              required
-            />
-          </div>
-          <div class="form-group">
-            <label for="create-desc">Description</label>
-            <input
-              id="create-desc"
-              v-model="createForm.description"
-              type="text"
-              placeholder="Optional description"
-            />
-          </div>
-          <div
-            v-if="createError"
-            class="modal-error"
+      <div class="dialog">
+        <div class="dialog-header">
+          <h2 class="dialog-title">Create Group</h2>
+          <button
+            class="close-btn"
+            @click="showCreateModal = false"
           >
-            {{ createError }}
+            &times;
+          </button>
+        </div>
+        <form @submit.prevent="submitCreate">
+          <div class="dialog-body">
+            <div class="field">
+              <label
+                class="field-label"
+                for="create-name"
+                >Name <span class="required">*</span></label
+              >
+              <input
+                id="create-name"
+                v-model="createForm.name"
+                type="text"
+                class="input"
+                required
+              />
+            </div>
+            <div class="field">
+              <label
+                class="field-label"
+                for="create-desc"
+                >Description</label
+              >
+              <input
+                id="create-desc"
+                v-model="createForm.description"
+                type="text"
+                class="input"
+                placeholder="Optional description"
+              />
+            </div>
           </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showCreateModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="createSubmitting || !createForm.name.trim()"
-            >
-              {{ createSubmitting ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+          <ModalFormActions
+            :submitting="createSubmitting"
+            :disabled="!createForm.name.trim()"
+            :error="createError"
+            submit-label="Create"
+            submitting-label="Creating..."
+            @cancel="showCreateModal = false"
+          />
         </form>
       </div>
     </div>
@@ -382,91 +380,71 @@ onMounted(async () => {
       class="overlay"
       @click.self="showEditModal = false"
     >
-      <div class="modal">
-        <h2>Edit Group</h2>
-        <form
-          class="modal-form"
-          @submit.prevent="submitEdit"
-        >
-          <div class="form-group">
-            <label for="edit-name">Name <span class="required">*</span></label>
-            <input
-              id="edit-name"
-              v-model="editForm.name"
-              type="text"
-              required
-            />
-          </div>
-          <div class="form-group">
-            <label for="edit-desc">Description</label>
-            <input
-              id="edit-desc"
-              v-model="editForm.description"
-              type="text"
-              placeholder="Optional description"
-            />
-          </div>
-          <div
-            v-if="editError"
-            class="modal-error"
+      <div class="dialog">
+        <div class="dialog-header">
+          <h2 class="dialog-title">Edit Group</h2>
+          <button
+            class="close-btn"
+            @click="showEditModal = false"
           >
-            {{ editError }}
+            &times;
+          </button>
+        </div>
+        <form @submit.prevent="submitEdit">
+          <div class="dialog-body">
+            <div class="field">
+              <label
+                class="field-label"
+                for="edit-name"
+                >Name <span class="required">*</span></label
+              >
+              <input
+                id="edit-name"
+                v-model="editForm.name"
+                type="text"
+                class="input"
+                required
+              />
+            </div>
+            <div class="field">
+              <label
+                class="field-label"
+                for="edit-desc"
+                >Description</label
+              >
+              <input
+                id="edit-desc"
+                v-model="editForm.description"
+                type="text"
+                class="input"
+                placeholder="Optional description"
+              />
+            </div>
           </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showEditModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="editSubmitting || !editForm.name.trim()"
-            >
-              {{ editSubmitting ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
+          <ModalFormActions
+            :submitting="editSubmitting"
+            :disabled="!editForm.name.trim()"
+            :error="editError"
+            submit-label="Save"
+            submitting-label="Saving..."
+            @cancel="showEditModal = false"
+          />
         </form>
       </div>
     </div>
 
     <!-- Delete Group Modal -->
-    <div
-      v-if="showDeleteModal"
-      class="overlay"
-      @click.self="showDeleteModal = false"
+    <ConfirmDeleteDialog
+      :show="showDeleteModal"
+      title="Delete Group"
+      :submitting="deleteSubmitting"
+      :error="deleteError"
+      @cancel="showDeleteModal = false"
+      @confirm="confirmDelete"
     >
-      <div class="modal">
-        <h2>Delete Group</h2>
-        <p class="confirm-text">
-          Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong
-          >? Members will be removed from this group.
-        </p>
-        <div
-          v-if="deleteError"
-          class="modal-error"
-        >
-          {{ deleteError }}
-        </div>
-        <div class="modal-actions">
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-danger"
-            :disabled="deleteSubmitting"
-            @click="confirmDelete"
-          >
-            {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-          </button>
-        </div>
-      </div>
-    </div>
+      Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong
+      >? Members will be removed from this group.
+    </ConfirmDeleteDialog>
 
     <!-- Members Modal -->
     <div
@@ -474,60 +452,58 @@ onMounted(async () => {
       class="overlay"
       @click.self="showMembersModal = false"
     >
-      <div class="modal modal-wide">
-        <h2>Group Members</h2>
-        <p class="modal-subtitle">
-          Manage members of <strong>{{ membersTarget?.name }}</strong>
-        </p>
-        <BaseSpinner
-          v-if="membersLoading"
-          size="sm"
-        />
-        <div
-          v-else-if="allUsers.length === 0"
-          class="state-msg"
-        >
-          No users found.
-        </div>
-        <div
-          v-else
-          class="members-list"
-        >
-          <label
-            v-for="user in allUsers"
-            :key="user.id"
-            class="member-item"
-          >
-            <input
-              type="checkbox"
-              :checked="memberUserIds.includes(user.id)"
-              @change="toggleMember(user.id)"
-            />
-            <span class="member-name">{{ user.username }}</span>
-            <span class="member-role">{{ user.role }}</span>
-          </label>
-        </div>
-        <div
-          v-if="membersError"
-          class="modal-error"
-        >
-          {{ membersError }}
-        </div>
-        <div class="modal-actions">
+      <div class="dialog dialog-lg">
+        <div class="dialog-header">
+          <h2 class="dialog-title">Group Members</h2>
           <button
-            class="btn btn-ghost"
+            class="close-btn"
             @click="showMembersModal = false"
           >
-            Cancel
-          </button>
-          <button
-            class="btn btn-primary"
-            :disabled="membersSubmitting"
-            @click="saveMembers"
-          >
-            {{ membersSubmitting ? 'Saving...' : 'Save Members' }}
+            &times;
           </button>
         </div>
+        <div class="dialog-body">
+          <p class="modal-subtitle">
+            Manage members of <strong>{{ membersTarget?.name }}</strong>
+          </p>
+          <BaseSpinner
+            v-if="membersLoading"
+            size="sm"
+          />
+          <div
+            v-else-if="allUsers.length === 0"
+            class="state-msg"
+          >
+            No users found.
+          </div>
+          <div
+            v-else
+            class="members-list"
+          >
+            <label
+              v-for="user in allUsers"
+              :key="user.id"
+              class="member-item"
+            >
+              <input
+                type="checkbox"
+                :checked="memberUserIds.includes(user.id)"
+                @change="toggleMember(user.id)"
+              />
+              <span class="member-name">{{ user.username }}</span>
+              <span class="member-role">{{ user.role }}</span>
+            </label>
+          </div>
+        </div>
+        <ModalFormActions
+          type="button"
+          :submitting="membersSubmitting"
+          :error="membersError"
+          submit-label="Save Members"
+          submitting-label="Saving..."
+          @cancel="showMembersModal = false"
+          @confirm="saveMembers"
+        />
       </div>
     </div>
   </div>
@@ -538,68 +514,20 @@ onMounted(async () => {
   max-width: 900px;
 }
 
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
 @media (max-width: 768px) {
   .page-description {
     display: none;
   }
 }
 
-.header-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
+.dialog-lg {
+  width: 550px;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.search-input {
-  width: 260px;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.625rem 0.75rem;
-  font-weight: 600;
+.modal-subtitle {
+  font-size: 0.8125rem;
   color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
-.name-cell {
-  font-weight: 600;
+  margin: -0.25rem 0 1rem;
 }
 
 .desc-cell {
@@ -609,94 +537,6 @@ onMounted(async () => {
 
 .count-cell {
   font-weight: 500;
-}
-
-.actions-cell {
-  display: flex;
-  gap: 0.375rem;
-}
-
-.modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  width: 100%;
-  max-width: 400px;
-  box-shadow: var(--shadow-lg);
-}
-
-.modal-wide {
-  max-width: 500px;
-}
-
-.modal h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-}
-
-.modal-subtitle {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  margin: -0.5rem 0 1rem;
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input,
-.form-group select {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.modal-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.confirm-text {
-  color: var(--text-secondary);
-  line-height: 1.6;
-  font-size: 0.875rem;
-  margin-bottom: 0.5rem;
 }
 
 .members-list {

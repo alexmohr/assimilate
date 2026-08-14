@@ -37,7 +37,7 @@ vi.mock('../components/BaseSpinner.vue', () => ({
 
 vi.mock('../components/ArchiveFileBrowser.vue', () => ({
   default: {
-    props: ['repoId', 'archiveName'],
+    props: ['repoId', 'archive', 'isAdmin'],
     template: '<div class="archive-file-browser-stub" />',
   },
 }))
@@ -91,8 +91,8 @@ const mockSchedule = {
   keep_monthly: 6,
   keep_yearly: 1,
   compact_enabled: true,
-  pre_backup_commands: '["docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"]',
-  post_backup_commands: '[]',
+  pre_backup_commands: ['docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'],
+  post_backup_commands: [],
 }
 
 const mockCheckSchedule = {
@@ -104,8 +104,8 @@ const mockCheckSchedule = {
   keep_weekly: 0,
   keep_monthly: 0,
   keep_yearly: 0,
-  pre_backup_commands: '[]',
-  post_backup_commands: '[]',
+  pre_backup_commands: [],
+  post_backup_commands: [],
 }
 
 const mockAgents = [

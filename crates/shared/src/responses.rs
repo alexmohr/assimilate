@@ -8,8 +8,8 @@ use ts_rs::TS;
 use crate::{
     protocol::{RepoOpKind, TunnelStatus},
     types::{
-        BackupStatus, BorgEncryption, Compression, ExecutionMode, OnFailure, QuotaAction,
-        ScheduleType, SearchEntry,
+        BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
+        FindingStatus, IndexStatus, OnFailure, QuotaAction, ScheduleType, SearchEntry, Visibility,
     },
 };
 
@@ -185,9 +185,9 @@ pub struct AgentResponse {
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
     /// Default commands to run before backups.
-    pub default_pre_backup_commands: String,
+    pub default_pre_backup_commands: Vec<String>,
     /// Default commands to run after backups.
-    pub default_post_backup_commands: String,
+    pub default_post_backup_commands: Vec<String>,
     /// Default file change patterns.
     pub default_file_change_patterns_raw: String,
     /// Whether the agent is currently connected.
@@ -201,8 +201,9 @@ pub struct AgentResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Reason why restart is unavailable, if applicable.
     pub restart_unavailable_reason: Option<String>,
     /// SSH username last used to deploy/upgrade this agent.
@@ -291,8 +292,9 @@ pub struct RepoResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// sync schedule.
     pub sync_schedule: Option<String>,
 }
@@ -345,8 +347,9 @@ pub struct RepoWithStatsResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// sync schedule.
     pub sync_schedule: Option<String>,
     /// Timestamp of when the last synced occurred.
@@ -512,9 +515,9 @@ pub struct ScheduleResponse {
     /// Rate limit in kilobytes per second.
     pub rate_limit_kbps: Option<i32>,
     /// Commands to run before the backup.
-    pub pre_backup_commands: String,
+    pub pre_backup_commands: Vec<String>,
     /// Commands to run after the backup.
-    pub post_backup_commands: String,
+    pub post_backup_commands: Vec<String>,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
@@ -524,8 +527,9 @@ pub struct ScheduleResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Hostnames targeted by this schedule.
     pub target_hostnames: Vec<String>,
 }
@@ -595,9 +599,9 @@ pub struct PerAgentCommandsResponse {
     /// Identifier of the associated agent.
     pub agent_id: i64,
     /// Commands to run before the backup.
-    pub pre_backup_commands: String,
+    pub pre_backup_commands: Vec<String>,
     /// Commands to run after the backup.
-    pub post_backup_commands: String,
+    pub post_backup_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -746,8 +750,9 @@ pub struct ContentEntryResponse {
 #[ts(export)]
 /// Response containing contents.
 pub struct ContentsResponse {
+    #[ts(type = "string")]
     /// Status of the archive index.
-    pub index_status: String,
+    pub index_status: IndexStatus,
     /// List of entries.
     pub entries: Vec<ContentEntryResponse>,
 }
@@ -756,8 +761,9 @@ pub struct ContentsResponse {
 #[ts(export)]
 /// Response containing archive index status.
 pub struct ArchiveIndexStatusResponse {
+    #[ts(type = "string")]
     /// Current status.
-    pub status: String,
+    pub status: IndexStatus,
     #[ts(type = "number | null")]
     /// Number of files in the index.
     pub file_count: Option<i64>,
@@ -1046,6 +1052,9 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Number of days to retain system events.
     pub system_event_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain notification delivery-attempt history.
+    pub notification_delivery_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]
@@ -1485,24 +1494,6 @@ pub struct ActivityEntryResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// Response containing system event.
-pub struct SystemEventResponse {
-    #[ts(type = "number")]
-    /// Unique identifier.
-    pub id: i64,
-    /// Type of event that triggers this rule.
-    pub event_type: String,
-    #[ts(type = "number | null")]
-    /// Identifier of the associated agent.
-    pub agent_id: Option<i64>,
-    /// Response message.
-    pub message: String,
-    /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
 /// Response containing calendar day.
 pub struct CalendarDayResponse {
     /// Date string.
@@ -1677,12 +1668,15 @@ pub struct DashboardSummaryCountersResponse {
 pub struct DashboardFindingResponse {
     /// Unique identifier.
     pub id: String,
+    #[ts(type = "string")]
     /// Kind of the finding.
-    pub kind: String,
+    pub kind: FindingKind,
+    #[ts(type = "string")]
     /// Severity level.
-    pub severity: String,
+    pub severity: FindingSeverity,
+    #[ts(type = "string")]
     /// Current status.
-    pub status: String,
+    pub status: FindingStatus,
     /// Hostname of the machine.
     pub hostname: Option<String>,
     #[ts(type = "number | null")]
@@ -1780,8 +1774,9 @@ pub struct DashboardOperationResponse {
     #[ts(type = "number")]
     /// Identifier of the associated report.
     pub report_id: i64,
+    #[ts(type = "string")]
     /// Current status.
-    pub status: String,
+    pub status: FindingStatus,
     /// Hostname of the machine.
     pub hostname: String,
     #[ts(type = "number")]
@@ -1939,9 +1934,9 @@ pub struct HostExportResponse {
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
     /// Default commands to run before backups.
-    pub default_pre_backup_commands: String,
+    pub default_pre_backup_commands: Vec<String>,
     /// Default commands to run after backups.
-    pub default_post_backup_commands: String,
+    pub default_post_backup_commands: Vec<String>,
     /// Default file change detection patterns.
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
@@ -2205,14 +2200,6 @@ pub struct RepoPermissionListResponse {
 pub struct ActivityListResponse {
     /// List of items.
     pub items: Vec<ActivityEntryResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// Response containing system event list.
-pub struct SystemEventListResponse {
-    /// List of events for this day.
-    pub events: Vec<SystemEventResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

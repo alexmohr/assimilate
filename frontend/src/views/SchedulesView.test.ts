@@ -86,8 +86,8 @@ const mockSchedules = [
     keep_monthly: 6,
     keep_yearly: 1,
     compact_enabled: true,
-    pre_backup_commands: '',
-    post_backup_commands: '',
+    pre_backup_commands: [],
+    post_backup_commands: [],
 
     on_failure: 'continue',
     target_hostnames: ['web-server-01', 'db-server-01'],
@@ -109,8 +109,8 @@ const mockSchedules = [
     keep_monthly: 0,
     keep_yearly: 0,
     compact_enabled: false,
-    pre_backup_commands: '',
-    post_backup_commands: '',
+    pre_backup_commands: [],
+    post_backup_commands: [],
 
     on_failure: 'stop',
     target_hostnames: ['db-server-01'],
@@ -132,8 +132,8 @@ const mockSchedules = [
     keep_monthly: 12,
     keep_yearly: 5,
     compact_enabled: true,
-    pre_backup_commands: '',
-    post_backup_commands: '',
+    pre_backup_commands: [],
+    post_backup_commands: [],
 
     on_failure: 'continue',
     target_hostnames: ['media-store-01'],

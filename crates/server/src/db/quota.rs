@@ -71,6 +71,20 @@ pub fn evaluate_quota(quota: &RepoQuota, deduplicated_size: i64) -> QuotaStatus 
     )
 }
 
+/// Shared warn/critical action lookup used by both repo and server quotas.
+#[must_use]
+pub fn action_for_status(
+    status: QuotaStatus,
+    warn_action: &str,
+    critical_action: &str,
+) -> Option<QuotaAction> {
+    match status {
+        QuotaStatus::Ok => None,
+        QuotaStatus::Warning => Some(warn_action.parse().unwrap_or_default()),
+        QuotaStatus::Critical => Some(critical_action.parse().unwrap_or_default()),
+    }
+}
+
 impl RepoQuota {
     /// Current quota status for the given repository size.
     #[must_use]
@@ -81,11 +95,7 @@ impl RepoQuota {
     /// Action configured for the given breach status, or `None` when the quota is not breached.
     #[must_use]
     pub fn action_for(&self, status: QuotaStatus) -> Option<QuotaAction> {
-        match status {
-            QuotaStatus::Ok => None,
-            QuotaStatus::Warning => Some(self.warn_action.parse().unwrap_or_default()),
-            QuotaStatus::Critical => Some(self.critical_action.parse().unwrap_or_default()),
-        }
+        action_for_status(status, &self.warn_action, &self.critical_action)
     }
 }
 
@@ -148,9 +158,8 @@ pub async fn get_quota(pool: &PgPool, repo_id: i64) -> Result<Option<RepoQuota>,
 mod tests {
     use super::*;
 
-    #[test]
-    fn action_for_ok_is_none() {
-        let quota = RepoQuota {
+    fn sample_quota() -> RepoQuota {
+        RepoQuota {
             repo_id: 1,
             warn_bytes: Some(100),
             critical_bytes: Some(200),
@@ -158,21 +167,17 @@ mod tests {
             critical_action: "disable_schedule".to_owned(),
             enabled: true,
             updated_at: Utc::now(),
-        };
-        assert_eq!(quota.action_for(QuotaStatus::Ok), None);
+        }
+    }
+
+    #[test]
+    fn action_for_ok_is_none() {
+        assert_eq!(sample_quota().action_for(QuotaStatus::Ok), None);
     }
 
     #[test]
     fn action_for_warning_and_critical_parse_configured_action() {
-        let quota = RepoQuota {
-            repo_id: 1,
-            warn_bytes: Some(100),
-            critical_bytes: Some(200),
-            warn_action: "block_backups".to_owned(),
-            critical_action: "disable_schedule".to_owned(),
-            enabled: true,
-            updated_at: Utc::now(),
-        };
+        let quota = sample_quota();
         assert_eq!(
             quota.action_for(QuotaStatus::Warning),
             Some(QuotaAction::BlockBackups)

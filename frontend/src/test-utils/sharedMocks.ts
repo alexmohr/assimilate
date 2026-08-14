@@ -16,3 +16,17 @@ export function mockTimezone(): {
 export function mockApiClient(): { apiClient: { get: ReturnType<typeof vi.fn> } } {
   return { apiClient: { get: vi.fn() } }
 }
+
+export function mockFormatBytes(): { formatBytes: (bytes: number) => string } {
+  return { formatBytes: (bytes: number): string => `${bytes} B` }
+}
+
+export function mockErrorUtils(): {
+  extractError: (e: unknown) => string
+  extractBlobError: (e: unknown) => Promise<string>
+} {
+  return {
+    extractError: (_e: unknown): string => 'API error',
+    extractBlobError: async (_e: unknown): Promise<string> => 'API error',
+  }
+}

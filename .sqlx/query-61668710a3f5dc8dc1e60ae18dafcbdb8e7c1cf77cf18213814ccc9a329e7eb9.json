@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT br.repo_id FROM backup_reports br WHERE br.status = 'success' ), daily AS ( SELECT br.repo_id, br.started_at::date AS date, SUM(br.original_size) AS day_original, SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize ORDER BY br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.status = 'success' GROUP BY br.repo_id, br.started_at::date ), joined AS ( SELECT rl.repo_id, d.date, dl.day_original, dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (PARTITION BY rl.repo_id ORDER BY d.date) AS fill_grp FROM repos_list rl CROSS JOIN days d LEFT JOIN daily dl ON dl.repo_id = rl.repo_id AND dl.date = d.date ), per_repo AS ( SELECT repo_id, date, COALESCE(SUM(day_original) OVER (PARTITION BY repo_id ORDER BY date), 0) AS cum_original, COALESCE(SUM(day_compressed) OVER (PARTITION BY repo_id ORDER BY date), 0) AS cum_compressed, MAX(day_csize) OVER (PARTITION BY repo_id, fill_grp) AS cum_csize FROM joined ), fleet_by_date AS ( SELECT date, SUM(cum_original) AS original_size, SUM(cum_compressed) AS compressed_size, SUM(COALESCE(cum_csize, 0)) AS csize_sum FROM per_repo GROUP BY date ) SELECT d.date AS \"date!\", COALESCE(f.original_size, 0)::INT8 AS \"original_size!\", COALESCE(f.compressed_size, 0)::INT8 AS \"compressed_size!\", NULLIF(COALESCE(f.csize_sum, 0), 0)::INT8 AS \"deduplicated_size?\" FROM days d LEFT JOIN fleet_by_date f ON f.date = d.date ORDER BY d.date",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "original_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "deduplicated_size?",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "61668710a3f5dc8dc1e60ae18dafcbdb8e7c1cf77cf18213814ccc9a329e7eb9"
+}

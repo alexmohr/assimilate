@@ -24,6 +24,8 @@ import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
 import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
+import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
+import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -131,6 +133,22 @@ const scheduleArchives = computed<ReportRow[]>(() =>
     })
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
 )
+
+const selectedScheduleArchive = computed<ArchiveEntry | null>(() => {
+  const r = selectedBackupReport.value
+  if (!r || r.archive_name == null) return null
+  const hostname = agentMap.value.get(r.agent_id ?? 0)?.hostname ?? r.hostname ?? ''
+  return {
+    name: r.archive_name,
+    start: r.started_at,
+    hostname,
+    comment: '',
+    original_size: r.original_size,
+    deduplicated_size: r.deduplicated_size,
+    matched: true,
+    agent_hostname: hostname,
+  }
+})
 
 function selectScheduleArchive(report: ReportRow): void {
   selectedBackupReport.value = report
@@ -272,8 +290,8 @@ function populateForm(s: ScheduleRow): void {
     keep_yearly: s.keep_yearly,
     compact_enabled: s.compact_enabled,
     rate_limit_kbps: s.rate_limit_kbps ?? 0,
-    pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
-    post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
+    pre_backup_commands: s.pre_backup_commands.join('\n'),
+    post_backup_commands: s.post_backup_commands.join('\n'),
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
@@ -372,12 +390,8 @@ async function loadData(): Promise<void> {
         const preMap: Record<number, string> = {}
         const postMap: Record<number, string> = {}
         for (const entry of perAgentCmdEntries) {
-          preMap[Number(entry.agent_id)] = (
-            JSON.parse(entry.pre_backup_commands || '[]') as string[]
-          ).join('\n')
-          postMap[Number(entry.agent_id)] = (
-            JSON.parse(entry.post_backup_commands || '[]') as string[]
-          ).join('\n')
+          preMap[Number(entry.agent_id)] = entry.pre_backup_commands.join('\n')
+          postMap[Number(entry.agent_id)] = entry.post_backup_commands.join('\n')
         }
         perAgentPreCmds.value = preMap
         perAgentPostCmds.value = postMap
@@ -1580,61 +1594,58 @@ watch(activeTab, (tab) => {
         >
           No backup archives found for this schedule.
         </div>
-        <div
+        <ArchiveBrowserLayout
           v-else
-          class="backups-layout"
+          narrow-list
         >
-          <!-- Archive list -->
-          <div class="backups-list-panel">
-            <div class="panel-header">
-              <span class="panel-title">Archives</span>
+          <template #list>
+            <!-- Archive list -->
+            <div class="panel backups-list-panel">
+              <div class="panel-header">
+                <span class="panel-title">Archives</span>
+              </div>
+              <table class="archives-table">
+                <thead>
+                  <tr>
+                    <th>Archive</th>
+                    <th>Host</th>
+                    <th>Date</th>
+                    <th>Size</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="r in scheduleArchives"
+                    :key="r.id"
+                    class="archive-row"
+                    :class="{ selected: selectedBackupReport?.id === r.id }"
+                    @click="selectScheduleArchive(r)"
+                  >
+                    <td class="cell-archive-name">{{ r.archive_name }}</td>
+                    <td class="cell-host">
+                      {{
+                        agentMap.get(r.agent_id ?? 0)?.display_name ??
+                        agentMap.get(r.agent_id ?? 0)?.hostname ??
+                        `#${r.agent_id ?? 0}`
+                      }}
+                    </td>
+                    <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
+                    <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <table class="archives-table">
-              <thead>
-                <tr>
-                  <th>Archive</th>
-                  <th>Host</th>
-                  <th>Date</th>
-                  <th>Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="r in scheduleArchives"
-                  :key="r.id"
-                  class="archive-row"
-                  :class="{ selected: selectedBackupReport?.id === r.id }"
-                  @click="selectScheduleArchive(r)"
-                >
-                  <td class="cell-archive-name">{{ r.archive_name }}</td>
-                  <td class="cell-host">
-                    {{
-                      agentMap.get(r.agent_id ?? 0)?.display_name ??
-                      agentMap.get(r.agent_id ?? 0)?.hostname ??
-                      `#${r.agent_id ?? 0}`
-                    }}
-                  </td>
-                  <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
-                  <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <!-- File browser -->
-          <div class="backups-browser-panel">
-            <ArchiveFileBrowser
-              v-if="selectedBackupReport"
-              :repo-id="schedule?.repo_id ?? null"
-              :archive-name="selectedBackupReport.archive_name ?? null"
-            />
-            <div
-              v-else
-              class="empty-browser"
-            >
-              <span class="muted">Select an archive to browse its contents.</span>
+          </template>
+          <template #browser>
+            <!-- File browser -->
+            <div class="panel backups-browser-panel">
+              <ArchiveFileBrowser
+                :repo-id="schedule?.repo_id ?? null"
+                :archive="selectedScheduleArchive"
+              />
             </div>
-          </div>
-        </div>
+          </template>
+        </ArchiveBrowserLayout>
       </div>
 
       <!-- Save bar -->
@@ -2545,14 +2556,7 @@ watch(activeTab, (tab) => {
 
 /* Backups tab layout */
 
-.backups-layout {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 1rem;
-  align-items: start;
-}
-
-.backups-list-panel {
+.panel {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2637,21 +2641,6 @@ watch(activeTab, (tab) => {
 }
 
 .backups-browser-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
   min-height: 300px;
-}
-
-.empty-browser {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-
-.muted {
-  color: var(--text-muted);
 }
 </style>

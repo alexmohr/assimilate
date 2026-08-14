@@ -12,7 +12,7 @@
 //! Each test uses `#[sqlx::test]` which creates an isolated database per test
 //! and applies migrations automatically.
 
-use chrono::{Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use chrono_tz::Tz;
 use server::db::{self, patterns, *};
 use shared::types::QuotaAction;
@@ -174,8 +174,8 @@ async fn agent_update(pool: PgPool) {
             display_name: Some("New Name"),
             default_backup_paths: &[],
             default_exclude_patterns: &[],
-            default_pre_backup_commands: "[]",
-            default_post_backup_commands: "[]",
+            default_pre_backup_commands: &[],
+            default_post_backup_commands: &[],
             default_file_change_patterns_raw: "*/tmp/* ignore",
         },
     )
@@ -783,8 +783,8 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: Some(5000),
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -834,8 +834,8 @@ async fn schedule_update(pool: PgPool) {
             keep_yearly: 2,
             compact_enabled: false,
             rate_limit_kbps: None,
-            pre_backup_commands: "echo pre",
-            post_backup_commands: "echo post",
+            pre_backup_commands: &["echo pre".to_string()],
+            post_backup_commands: &["echo post".to_string()],
             on_failure: "continue",
         },
     )
@@ -850,8 +850,11 @@ async fn schedule_update(pool: PgPool) {
     assert_eq!(updated.keep_daily, 14);
     assert!(!updated.compact_enabled);
     assert_eq!(updated.rate_limit_kbps, None);
-    assert_eq!(updated.pre_backup_commands, "echo pre");
-    assert_eq!(updated.post_backup_commands, "echo post");
+    assert_eq!(updated.pre_backup_commands.0, vec!["echo pre".to_string()]);
+    assert_eq!(
+        updated.post_backup_commands.0,
+        vec!["echo post".to_string()]
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -959,8 +962,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             keep_yearly: 0,
             compact_enabled: false,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -991,8 +994,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             keep_yearly: 0,
             compact_enabled: false,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -1338,8 +1341,8 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
     )
@@ -1416,8 +1419,8 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
     )
@@ -1506,8 +1509,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
     )
@@ -1522,8 +1525,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             display_name: agent.display_name.as_deref(),
             default_backup_paths: &agent.default_backup_paths,
             default_exclude_patterns: &agent.default_exclude_patterns,
-            default_pre_backup_commands: &agent.default_pre_backup_commands,
-            default_post_backup_commands: &agent.default_post_backup_commands,
+            default_pre_backup_commands: &agent.default_pre_backup_commands.0,
+            default_post_backup_commands: &agent.default_post_backup_commands.0,
             default_file_change_patterns_raw: "*/agent-fallback* fatal",
         },
     )
@@ -1626,7 +1629,7 @@ async fn insert_test_report(pool: &PgPool, agent_id: i64, repo_id: i64) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -1652,7 +1655,7 @@ async fn insert_test_report_for_schedule(
     agent_id: i64,
     repo_id: i64,
     schedule_id: i64,
-    status: &str,
+    status: shared::types::BackupStatus,
 ) {
     let now = Utc::now();
     db::insert_backup_report(
@@ -1663,7 +1666,7 @@ async fn insert_test_report_for_schedule(
             schedule_id: Some(schedule_id),
             started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
-            status: status.to_string(),
+            status,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -1744,7 +1747,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
-            status: "warning".to_string(),
+            status: shared::types::BackupStatus::Warning,
             original_size: 100,
             compressed_size: 50,
             deduplicated_size: 25,
@@ -1849,7 +1852,14 @@ async fn activity_feed_days(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn health_summary(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
 
     let health = db::get_health_summary(&pool).await.unwrap();
     assert_eq!(health.len(), 1);
@@ -1886,8 +1896,8 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -1899,7 +1909,14 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
         .unwrap();
 
     // Only schedule_a has a backup run recorded.
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule_a.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule_a.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
 
     let health = db::get_health_summary(&pool).await.unwrap();
     let entry_a = health
@@ -1919,10 +1936,14 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn health_summary_with_invalid_status_silently_returns_none(pool: PgPool) {
+async fn backup_reports_status_check_constraint_rejects_invalid_status(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
 
-    sqlx::query!(
+    // backup_reports.status is now guarded by a CHECK constraint (see
+    // 20260813120000_enum_check_constraints.sql), mirroring
+    // shared::types::BackupStatus. An arbitrary status must be rejected at
+    // the DB layer instead of being silently accepted.
+    let result = sqlx::query!(
         r#"INSERT INTO backup_reports
            (agent_id, repo_id, schedule_id, started_at, finished_at, status, matched)
            VALUES ($1, $2, $3, NOW() - INTERVAL '5 minutes', NOW(), $4, true)"#,
@@ -1932,17 +1953,25 @@ async fn health_summary_with_invalid_status_silently_returns_none(pool: PgPool) 
         "completely_invalid_status_value",
     )
     .execute(&pool)
-    .await
-    .unwrap();
+    .await;
+
+    let err = result.expect_err("invalid status must be rejected by the CHECK constraint");
+    let db_err = err.as_database_error().expect("expected a database error");
+    assert_eq!(
+        db_err.constraint(),
+        Some("backup_reports_status_check"),
+        "insert must fail specifically on the status CHECK constraint"
+    );
 
     let health = db::get_health_summary(&pool).await.unwrap();
-    assert_eq!(health.len(), 1);
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
     assert_eq!(
-        health.first().unwrap().last_status.as_deref(),
-        Some("completely_invalid_status_value"),
-        "raw invalid status is returned as-is from the db layer"
+        entry.last_status, None,
+        "rejected insert must not leave a report behind"
     );
-    assert_eq!(health.first().unwrap().schedule_id, schedule.id);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1967,8 +1996,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -2001,8 +2030,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -2026,7 +2055,14 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         .await
         .unwrap();
 
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule_a.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule_a.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
     sqlx::query("UPDATE schedules SET next_run_at = NOW() + INTERVAL '1 hour' WHERE id = $1")
         .bind(schedule_a.id)
         .execute(&pool)
@@ -2386,6 +2422,91 @@ async fn dashboard_summary_empty(pool: PgPool) {
     assert_eq!(summary.total_agents, 0);
     assert_eq!(summary.total_repos, 0);
     assert_eq!(summary.total_storage_bytes, 0);
+}
+
+/// Regression test for `get_dashboard_summary`'s CTE rewrite: the "latest failure" fields
+/// (`last_failure_at`/`last_failure_message`/`last_failure_repo_*`) must reflect the single
+/// most recent failed report regardless of whether it has a schedule, while
+/// `last_failure_schedule_id`/`last_failure_schedule_name` must reflect the most recent
+/// failed report that *does* have a resolvable schedule -- which can be a different (older)
+/// row. The dashboard summary query builds the same split for warnings, via an identical CTE
+/// shape.
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+
+    // Older failure, with a schedule.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: Some(schedule.id),
+            started_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
+            status: shared::types::BackupStatus::Failed,
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("older scheduled failure".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Newer failure, no schedule (e.g. an ad-hoc/manual run).
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            finished_at: now,
+            status: shared::types::BackupStatus::Failed,
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("newer unscheduled failure".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let summary = db::get_dashboard_summary(&pool).await.unwrap();
+
+    // The general "latest failure" fields must pick the newer, schedule-less row.
+    assert_eq!(
+        summary.last_failure_message.as_deref(),
+        Some("newer unscheduled failure")
+    );
+    assert_eq!(summary.last_failure_repo_id, Some(repo.id));
+
+    // The schedule-scoped fields must instead pick the older row that has a schedule.
+    assert_eq!(summary.last_failure_schedule_id, Some(schedule.id));
+    assert_eq!(
+        summary.last_failure_schedule_name.as_deref(),
+        Some(schedule.cron_expression.as_str())
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3344,12 +3465,22 @@ async fn repo_permissions_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn system_events_crud(pool: PgPool) {
-    db::insert_system_event(&pool, "backup_complete", Some("host-1"), "Backup finished")
-        .await
-        .unwrap();
-    db::insert_system_event(&pool, "error", None, "Something failed")
-        .await
-        .unwrap();
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSync,
+        Some("host-1"),
+        "Backup finished",
+    )
+    .await
+    .unwrap();
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSyncFailed,
+        None,
+        "Something failed",
+    )
+    .await
+    .unwrap();
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
     assert_eq!(events.len(), 2);
@@ -3362,6 +3493,54 @@ async fn system_events_crud(pool: PgPool) {
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
     assert_eq!(events.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_system_events_skips_rows_with_unrecognized_event_type(pool: PgPool) {
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSync,
+        Some("host-1"),
+        "Backup finished",
+    )
+    .await
+    .unwrap();
+
+    // Historical/legacy event_type values predate both the SystemEventType enum and the
+    // system_events_event_type_check CHECK constraint, so a row like this can still exist in
+    // a real database that was migrated after such data was written; the query must skip it
+    // rather than fail the whole batch. Drop the constraint to simulate that pre-existing
+    // row in this test's isolated database.
+    sqlx::query!("ALTER TABLE system_events DROP CONSTRAINT system_events_event_type_check")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query!(
+        "INSERT INTO system_events (event_type, hostname, message) VALUES ($1, $2, $3)",
+        "agent_connected",
+        Some("host-2"),
+        "legacy event",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSyncFailed,
+        None,
+        "Something failed",
+    )
+    .await
+    .unwrap();
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(
+        events
+            .iter()
+            .all(|e| e.hostname.as_deref() != Some("host-2"))
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4041,9 +4220,10 @@ async fn server_quota_aggregates_usage_across_repos_sharing_host(pool: PgPool) {
     set_test_repo_info_stats(&pool, repo_b.id, 1).await;
     set_test_repo_info_stats(&pool, repo_c.id, 1).await;
 
-    let total = db::server_quota::total_deduplicated_size_for_ssh_host(&pool, "shared.example.com")
-        .await
-        .unwrap();
+    let total =
+        db::server_quota::total_deduplicated_size_for_ssh_host(&pool, "shared.example.com", None)
+            .await
+            .unwrap();
     assert_eq!(total, 500_000);
 
     let repo_count = db::server_quota::repo_count_for_ssh_host(&pool, "shared.example.com")
@@ -4114,19 +4294,19 @@ async fn server_quota_total_deduplicated_size_excludes_given_repo(pool: PgPool) 
     .await
     .unwrap();
 
-    let total_excluding_a = db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+    let total_excluding_a = db::server_quota::total_deduplicated_size_for_ssh_host(
         &pool,
         "shared.example.com",
-        repo_a.id,
+        Some(repo_a.id),
     )
     .await
     .unwrap();
     assert_eq!(total_excluding_a, 70_000);
 
-    let total_excluding_b = db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+    let total_excluding_b = db::server_quota::total_deduplicated_size_for_ssh_host(
         &pool,
         "shared.example.com",
-        repo_b.id,
+        Some(repo_b.id),
     )
     .await
     .unwrap();
@@ -4541,7 +4721,7 @@ async fn test_mark_agent_reports_matched(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -4631,7 +4811,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -4657,7 +4837,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
             deduplicated_size: 500_000,
@@ -4684,7 +4864,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 3_000_000,
             compressed_size: 1_500_000,
             deduplicated_size: 750_000,
@@ -4711,7 +4891,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(40)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(35)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 100_000,
             compressed_size: 50_000,
             deduplicated_size: 25_000,
@@ -4775,7 +4955,7 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -4802,7 +4982,7 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
             deduplicated_size: 500_000,
@@ -4838,7 +5018,7 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 3_000_000,
             compressed_size: 1_500_000,
             deduplicated_size: 750_000,
@@ -4936,7 +5116,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -4962,7 +5142,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 5_000_000,
             compressed_size: 2_500_000,
             deduplicated_size: 1_250_000,
@@ -4998,7 +5178,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_500_000,
             compressed_size: 750_000,
             deduplicated_size: 375_000,
@@ -5034,7 +5214,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(40)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(35)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 4_000_000,
             compressed_size: 2_000_000,
             deduplicated_size: 1_000_000,
@@ -5070,7 +5250,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(50)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(45)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -5285,7 +5465,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
             deduplicated_size: 500_000,
@@ -5306,7 +5486,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -5349,7 +5529,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         schedule_id: None,
         started_at: started,
         finished_at: now,
-        status: "success".to_string(),
+        status: shared::types::BackupStatus::Success,
         original_size: 1_000,
         compressed_size: 800,
         deduplicated_size: 600,
@@ -5399,7 +5579,7 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
         schedule_id: None,
         started_at: started,
         finished_at: finished,
-        status: "success".to_string(),
+        status: shared::types::BackupStatus::Success,
         original_size: 0,
         compressed_size: 0,
         deduplicated_size: 0,
@@ -5746,8 +5926,8 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             keep_yearly: 1,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -5909,7 +6089,14 @@ async fn schedule_timezone_set(pool: PgPool) {
 async fn reports_for_schedule_test(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
 
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
 
     let reports = db::list_reports_for_schedule(&pool, schedule.id, 10)
         .await
@@ -5954,8 +6141,8 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             keep_yearly: 0,
             compact_enabled: true,
             rate_limit_kbps: None,
-            pre_backup_commands: "",
-            post_backup_commands: "",
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
             on_failure: "stop",
         },
         None,
@@ -5963,7 +6150,14 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
     .await
     .unwrap();
 
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule.id, "failed").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Failed,
+    )
+    .await;
 
     let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
@@ -6080,6 +6274,7 @@ async fn activity_feed_days_test(pool: PgPool) {
 
 #[test]
 fn compression_round_trip() {
+    use shared::types::Compression;
     let cases = &[
         ("none", "none"),
         ("lz4", "lz4"),
@@ -6087,12 +6282,12 @@ fn compression_round_trip() {
         ("zlib,6", "zlib,6"),
     ];
     for (input, expected) in cases {
-        let c = db::compression_from_str(input).unwrap();
-        assert_eq!(db::compression_to_str(&c), *expected);
+        let c: Compression = input.parse().unwrap();
+        assert_eq!(c.to_string(), *expected);
     }
-    assert!(db::compression_from_str("unknown").is_err());
-    assert!(db::compression_from_str("zstd,bad").is_err());
-    assert!(db::compression_from_str("zlib,bad").is_err());
+    assert!("unknown".parse::<Compression>().is_err());
+    assert!("zstd,bad".parse::<Compression>().is_err());
+    assert!("zlib,bad".parse::<Compression>().is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6177,7 +6372,7 @@ async fn storage_trends_dedup_never_exceeds_original(pool: PgPool) {
                 finished_at: now
                     .checked_sub_signed(Duration::days(6i64.saturating_sub(day)))
                     .unwrap(),
-                status: "success".to_string(),
+                status: shared::types::BackupStatus::Success,
                 original_size: 1_000,
                 compressed_size: 800,
                 deduplicated_size: 100,
@@ -6265,7 +6460,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -6292,7 +6487,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
             deduplicated_size: 500_000,
@@ -6350,7 +6545,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
         schedule_id: None,
         started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
         finished_at: now,
-        status: "success".to_string(),
+        status: shared::types::BackupStatus::Success,
         original_size: 0,
         compressed_size: 0,
         deduplicated_size: 0,
@@ -6453,7 +6648,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -6501,7 +6696,7 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
         schedule_id: None,
         started_at: old,
         finished_at: old,
-        status: "success".to_string(),
+        status: shared::types::BackupStatus::Success,
         original_size: 0,
         compressed_size: 0,
         deduplicated_size: 0,
@@ -6524,7 +6719,7 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
         &InsertReportParams {
             started_at: old.checked_add_signed(Duration::seconds(1)).unwrap(),
             finished_at: old.checked_add_signed(Duration::seconds(1)).unwrap(),
-            status: "failed".to_string(),
+            status: shared::types::BackupStatus::Failed,
             archive_name: None,
             ..base.clone()
         },
@@ -6563,7 +6758,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
             schedule_id: None,
             started_at: old,
             finished_at: old,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 100,
             compressed_size: 50,
             deduplicated_size: 25,
@@ -6591,7 +6786,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
             schedule_id: None,
             started_at: now,
             finished_at: now,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 200,
             compressed_size: 100,
             deduplicated_size: 50,
@@ -6642,7 +6837,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
             schedule_id: None,
             started_at: old,
             finished_at: old,
-            status: "failed".to_string(),
+            status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -6670,7 +6865,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
             schedule_id: None,
             started_at: old,
             finished_at: old,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 100,
             compressed_size: 50,
             deduplicated_size: 25,
@@ -6720,7 +6915,7 @@ async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) 
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 100,
             compressed_size: 50,
             deduplicated_size: 25,
@@ -6773,7 +6968,7 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
                 .checked_sub_signed(Duration::days(30))
                 .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
                 .unwrap(),
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 100,
             compressed_size: 50,
             deduplicated_size: 25,
@@ -6823,7 +7018,7 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
             finished_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
-            status: "failed".to_string(),
+            status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -6879,7 +7074,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
                 .checked_sub_signed(Duration::days(7))
                 .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
                 .unwrap(),
-            status: "failed".to_string(),
+            status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -6916,9 +7111,14 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_system_events_before_keeps_recent(pool: PgPool) {
     let before_insert = Utc::now();
-    db::insert_system_event(&pool, "test_event", None, "recent event")
-        .await
-        .unwrap();
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSync,
+        None,
+        "recent event",
+    )
+    .await
+    .unwrap();
 
     // Use a cutoff just before the insert -- guaranteed to be before created_at
     let cutoff = before_insert
@@ -6934,6 +7134,80 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
     assert_eq!(events.len(), 1);
+}
+
+#[cfg(test)]
+async fn insert_test_notification_delivery(pool: &PgPool, attempted_at: DateTime<Utc>) {
+    let channel_id: i64 = sqlx::query_scalar!(
+        "INSERT INTO notification_channels (name, channel_type) VALUES ('test-channel', \
+         'webhook') RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    sqlx::query!(
+        "INSERT INTO notification_deliveries (channel_id, event_type, status, attempted_at) \
+         VALUES ($1, 'backup_success', 'sent', $2)",
+        channel_id,
+        attempted_at,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_notification_deliveries_before_deletes_old(pool: PgPool) {
+    let old = Utc::now().checked_sub_signed(Duration::days(60)).unwrap();
+    insert_test_notification_delivery(&pool, old).await;
+
+    let cutoff = Utc::now().checked_sub_signed(Duration::days(30)).unwrap();
+    let deleted = db::delete_notification_deliveries_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1, "delivery older than cutoff must be deleted");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_notification_deliveries_before_keeps_recent(pool: PgPool) {
+    let before_insert = Utc::now();
+    insert_test_notification_delivery(&pool, before_insert).await;
+
+    let cutoff = before_insert
+        .checked_sub_signed(Duration::seconds(1))
+        .unwrap();
+    let deleted = db::delete_notification_deliveries_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 0,
+        "delivery created after cutoff must not be deleted"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_system_events_before_deletes_old(pool: PgPool) {
+    db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSync,
+        None,
+        "old event to prune",
+    )
+    .await
+    .unwrap();
+
+    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_system_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "system event must be deleted with future cutoff"
+    );
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert!(events.is_empty());
 }
 
 /// Applies the same fallback logic as `get_settings` in `api/system.rs`.
@@ -7099,25 +7373,6 @@ async fn retention_fallback_new_settings_without_legacy(pool: PgPool) {
     assert_eq!(report, 100);
     assert_eq!(failed, 200);
     assert_eq!(events, 300);
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn delete_system_events_before_deletes_old(pool: PgPool) {
-    db::insert_system_event(&pool, "old_event", None, "old event to prune")
-        .await
-        .unwrap();
-
-    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
-    let deleted = db::delete_system_events_before(&pool, cutoff)
-        .await
-        .unwrap();
-    assert_eq!(
-        deleted, 1,
-        "system event must be deleted with future cutoff"
-    );
-
-    let events = db::get_system_events(&pool, 10).await.unwrap();
-    assert_eq!(events.len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -7313,7 +7568,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
             schedule_id: None,
             started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -7355,8 +7610,8 @@ async fn agent_insert_with_paths(pool: PgPool) {
             display_name: Some("Paths Host"),
             default_backup_paths: &paths,
             default_exclude_patterns: &excludes,
-            default_pre_backup_commands: "[]",
-            default_post_backup_commands: "[]",
+            default_pre_backup_commands: &[],
+            default_post_backup_commands: &[],
             default_file_change_patterns_raw: "*/etc/config* fatal",
         },
     )
@@ -7413,7 +7668,7 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
             schedule_id: None,
             started_at: now,
             finished_at: now.checked_add_signed(Duration::minutes(10)).unwrap(),
-            status: "failed".to_string(),
+            status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -7758,7 +8013,7 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
     // Simulate what validate_agent_repo does on rejection: log a security_violation event
     db::insert_system_event(
         &pool,
-        "security_violation",
+        shared::types::SystemEventType::SecurityViolation,
         Some("rogue-agent"),
         "Agent 'rogue-agent' tried to report on repo 999 without assignment (msg=BackupCompleted)",
     )
@@ -7768,7 +8023,7 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
     let events = db::get_system_events(&pool, 10).await.unwrap();
     let security_events: Vec<_> = events
         .iter()
-        .filter(|e| e.event_type == "security_violation")
+        .filter(|e| e.event_type == shared::types::SystemEventType::SecurityViolation)
         .collect();
     assert_eq!(security_events.len(), 1);
     assert!(

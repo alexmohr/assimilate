@@ -328,6 +328,8 @@ pub async fn create_schedule(
 
     let on_failure = req.on_failure.unwrap_or_default();
     let on_failure_str = on_failure.to_string();
+    let pre_backup_commands = req.pre_backup_commands.unwrap_or_default();
+    let post_backup_commands = req.post_backup_commands.unwrap_or_default();
 
     let params = ScheduleParams {
         name: req.name.as_deref().unwrap_or(""),
@@ -345,10 +347,8 @@ pub async fn create_schedule(
         compact_enabled: req.compact_enabled.unwrap_or(true),
         rate_limit_kbps: convert_rate_limit(req.rate_limit_kbps)?,
         file_change_patterns_raw: req.file_change_patterns_raw.as_deref().unwrap_or(""),
-        pre_backup_commands: &serde_json::to_string(&req.pre_backup_commands.unwrap_or_default())
-            .unwrap_or_else(|_| "[]".to_owned()),
-        post_backup_commands: &serde_json::to_string(&req.post_backup_commands.unwrap_or_default())
-            .unwrap_or_else(|_| "[]".to_owned()),
+        pre_backup_commands: &pre_backup_commands,
+        post_backup_commands: &post_backup_commands,
         on_failure: &on_failure_str,
     };
 
@@ -480,14 +480,14 @@ pub async fn update_schedule(
         check_ssh_reachability(&state.pool, eff_rid).await?;
     }
 
-    let pre_cmds_json = req.pre_backup_commands.clone().map_or_else(
-        || existing.pre_backup_commands.clone(),
-        |cmds| serde_json::to_string(&cmds).unwrap_or_else(|_| "[]".to_owned()),
-    );
-    let post_cmds_json = req.post_backup_commands.clone().map_or_else(
-        || existing.post_backup_commands.clone(),
-        |cmds| serde_json::to_string(&cmds).unwrap_or_else(|_| "[]".to_owned()),
-    );
+    let pre_backup_commands = req
+        .pre_backup_commands
+        .clone()
+        .unwrap_or_else(|| existing.pre_backup_commands.0.clone());
+    let post_backup_commands = req
+        .post_backup_commands
+        .clone()
+        .unwrap_or_else(|| existing.post_backup_commands.0.clone());
 
     let on_failure = req
         .on_failure
@@ -514,8 +514,8 @@ pub async fn update_schedule(
             None => existing.rate_limit_kbps,
         },
         file_change_patterns_raw: req.file_change_patterns_raw.as_deref().unwrap_or(""),
-        pre_backup_commands: &pre_cmds_json,
-        post_backup_commands: &post_cmds_json,
+        pre_backup_commands: &pre_backup_commands,
+        post_backup_commands: &post_backup_commands,
         on_failure: &on_failure,
     };
 
@@ -730,11 +730,14 @@ async fn insert_per_agent_commands(
     per_agent: &[AgentCommands],
 ) -> Result<(), ApiError> {
     for entry in per_agent {
-        let pre =
-            serde_json::to_string(&entry.pre_backup_commands).unwrap_or_else(|_| "[]".to_owned());
-        let post =
-            serde_json::to_string(&entry.post_backup_commands).unwrap_or_else(|_| "[]".to_owned());
-        db::upsert_per_agent_commands(pool, schedule_id, entry.agent_id, &pre, &post).await?;
+        db::upsert_per_agent_commands(
+            pool,
+            schedule_id,
+            entry.agent_id,
+            &entry.pre_backup_commands,
+            &entry.post_backup_commands,
+        )
+        .await?;
     }
     Ok(())
 }

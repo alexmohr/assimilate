@@ -130,4 +130,31 @@ test.describe('Repositories management journey', () => {
     await page.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.locator('.dialog-title')).not.toBeVisible()
   })
+
+  test('grouping by host shows a shared storage pool with per-repo quota slices', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos')
+    await page.waitForLoadState('networkidle')
+
+    // The quota filter chips are always visible: All, At risk, No quota.
+    await expect(page.locator('.quota-fchip')).toHaveCount(3)
+    await expect(page.locator('.quota-fchip', { hasText: 'All' })).toBeVisible()
+
+    // The demo's server-daily/database-hourly/media-weekly repos share the "localhost"
+    // ssh_host and a configured server quota (see .devcontainer/demo/seed-demo.sh).
+    await page.getByRole('button', { name: 'Group by host' }).click()
+    await page.waitForLoadState('networkidle')
+
+    const poolHeader = page.locator('.pool-header', { hasText: 'localhost' })
+    await expect(poolHeader).toBeVisible()
+    await expect(poolHeader.locator('.pool-track')).toBeVisible()
+
+    // media-weekly's demo quota (warn_bytes: 1) is always in a breached state, so it
+    // should still be visible as an at-risk repo once the filter narrows the view.
+    await page.locator('.quota-fchip', { hasText: 'At risk' }).click()
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('.repo-card', { hasText: 'media-weekly' })).toBeVisible()
+  })
 })

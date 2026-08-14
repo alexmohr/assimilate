@@ -37,6 +37,35 @@ fn percentage_of(part: i64, total: i64) -> f64 {
     f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
 }
 
+/// Upper bound, in characters, for a finding reason sourced from an
+/// agent-supplied message.
+///
+/// Borg failure output can run to kilobytes of stderr, and a finding renders as
+/// a single dashboard row, so an uncapped message lets one finding stretch the
+/// Needs Attention panel without limit. The untruncated text stays available on
+/// the activity record the finding links to.
+const MAX_FINDING_REASON_CHARS: usize = 200;
+
+/// Normalizes an agent- or import-supplied message into a bounded, single-line
+/// finding reason, falling back to `fallback` when no usable message exists.
+fn finding_reason(message: Option<&str>, fallback: &str) -> String {
+    let message = message
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if message.is_empty() {
+        return fallback.to_owned();
+    }
+    let mut chars = message.chars();
+    let short: String = chars.by_ref().take(MAX_FINDING_REASON_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{short}...")
+    } else {
+        short
+    }
+}
+
 /// Query parameters for filtering the activity feed.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ActivityQuery {
@@ -228,9 +257,7 @@ fn dashboard_findings(
                 FindingKind::RepositoryImportFailed,
                 FindingSeverity::Critical,
                 FindingStatus::Failed,
-                repo.import_error
-                    .as_deref()
-                    .unwrap_or("Repository import failed"),
+                &finding_reason(repo.import_error.as_deref(), "Repository import failed"),
             ));
         }
     }
@@ -371,10 +398,7 @@ fn target_finding(
                 FindingKind::BackupFailed,
                 FindingSeverity::Critical,
                 FindingStatus::Failed,
-                target
-                    .latest_message
-                    .clone()
-                    .unwrap_or_else(|| "Latest backup failed".to_owned()),
+                finding_reason(target.latest_message.as_deref(), "Latest backup failed"),
                 target.latest_finished_at,
                 None,
                 DashboardDestinationResponse::Activity {
@@ -398,10 +422,10 @@ fn target_finding(
                 FindingKind::BackupWarning,
                 FindingSeverity::Warning,
                 FindingStatus::Warning,
-                target
-                    .latest_message
-                    .clone()
-                    .unwrap_or_else(|| "Latest backup completed with warnings".to_owned()),
+                finding_reason(
+                    target.latest_message.as_deref(),
+                    "Latest backup completed with warnings",
+                ),
                 target.latest_finished_at,
                 None,
                 DashboardDestinationResponse::Activity {
@@ -1529,6 +1553,79 @@ mod tests {
         assert_eq!(finding.kind, FindingKind::BackupWarning);
         assert_eq!(finding.severity, FindingSeverity::Warning);
         assert_eq!(finding.reason, "low disk space");
+    }
+
+    #[test]
+    fn finding_reason_keeps_short_messages_verbatim() {
+        assert_eq!(super::finding_reason(Some("boom"), "fallback"), "boom");
+    }
+
+    #[test]
+    fn finding_reason_falls_back_for_missing_or_blank_messages() {
+        assert_eq!(super::finding_reason(None, "fallback"), "fallback");
+        assert_eq!(
+            super::finding_reason(Some("   \n\t"), "fallback"),
+            "fallback"
+        );
+    }
+
+    #[test]
+    fn finding_reason_collapses_whitespace_into_a_single_line() {
+        assert_eq!(
+            super::finding_reason(Some("borg failed:\n  lock timeout\n"), "fallback"),
+            "borg failed: lock timeout"
+        );
+    }
+
+    #[test]
+    fn finding_reason_truncates_messages_beyond_the_character_cap() {
+        let reason = super::finding_reason(Some(&"a".repeat(5_000)), "fallback");
+
+        assert_eq!(reason.chars().count(), super::MAX_FINDING_REASON_CHARS + 3);
+        assert!(reason.ends_with("..."));
+    }
+
+    #[test]
+    fn finding_reason_truncates_on_character_boundaries() {
+        let reason = super::finding_reason(Some(&"\u{e4}".repeat(5_000)), "fallback");
+
+        assert_eq!(
+            reason,
+            format!("{}...", "\u{e4}".repeat(super::MAX_FINDING_REASON_CHARS))
+        );
+    }
+
+    #[test]
+    fn finding_reason_keeps_a_message_exactly_at_the_cap_untruncated() {
+        let message = "a".repeat(super::MAX_FINDING_REASON_CHARS);
+        let reason = super::finding_reason(Some(&message), "fallback");
+
+        assert_eq!(reason, message);
+        assert!(!reason.ends_with("..."));
+    }
+
+    #[test]
+    fn target_finding_truncates_an_unbounded_failure_message() {
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_message = Some("borg stderr ".repeat(1_000));
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a backup_failed finding");
+
+        assert_eq!(
+            finding.reason.chars().count(),
+            super::MAX_FINDING_REASON_CHARS + 3
+        );
+        assert!(finding.reason.starts_with("borg stderr"));
+        assert!(finding.reason.ends_with("..."));
     }
 
     #[test]

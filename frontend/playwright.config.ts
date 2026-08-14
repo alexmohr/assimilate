@@ -17,11 +17,11 @@ export default defineConfig({
   use: {
     baseURL,
     // 'on-first-retry' deliberately skips the *initial* attempt of a test,
-    // which is exactly the attempt that intermittently stalls in
-    // archive-browsing.spec.ts's delete test (see its own comment) -
+    // which made an earlier intermittent failure in archive-browsing.spec.ts's
+    // delete test undiagnosable (only the recovering retry was ever traced) -
     // 'retain-on-failure' traces every attempt but only keeps the ones that
-    // actually failed, so the next reproduction is diagnosable instead of
-    // leaving the one attempt that matters untraced.
+    // actually failed, so any future reproduction is diagnosable instead of
+    // leaving the attempt that matters untraced.
     trace: 'retain-on-failure',
     navigationTimeout: process.env.CI ? 120_000 : 30_000,
   },

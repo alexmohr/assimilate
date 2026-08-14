@@ -174,22 +174,8 @@ test.describe('Archive browsing & diff journey', () => {
     page,
   }) => {
     // borg delete + the automatic compact that follows it can take a while
-    // even on the demo's small repos. This test's *first* attempt has
-    // intermittently burned through its full timeout budget - always
-    // exactly the ceiling, never a partial value - with the archive still
-    // present in the DOM the whole time; a fresh Playwright retry always
-    // recovers immediately after. That pattern (not variably slow, always
-    // pinned to the ceiling) looks more like an unbounded wait than genuine
-    // slowness - a plausible culprit is RepoLock::acquire (crates/server/
-    // src/lib.rs) having no timeout, so this delete could be queued behind
-    // an unrelated, still-running borg operation on the same repo (e.g.
-    // archive content indexing, which shares the same per-repo lock) for
-    // however long that happens to take. Unconfirmed: `trace` is now
-    // 'retain-on-failure' specifically so the next reproduction captures
-    // the stalling attempt instead of only ever tracing the retry that
-    // recovers. 180s (matching import.spec.ts's allowance for the same
-    // class of slow borg operation) at least gives a genuinely slow
-    // compact room to finish; it won't help if this is actually unbounded.
+    // even on the demo's small repos, so give it plenty of room (matching
+    // import.spec.ts's allowance for the same class of slow borg operation).
     test.setTimeout(180_000)
 
     await loginAsAdmin(page)
@@ -204,26 +190,35 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
+    // RepoDetailView marks the row as deleting synchronously, before the
+    // DELETE request even goes out - but the DataChanged notification that
+    // follows the server-side delete+compact triggers a refetch of the
+    // archive list, which prunes this row (button included) from the DOM.
+    // On a fast backend that whole round trip can complete faster than a
+    // single assertion-polling tick, so CI has intermittently - and on one
+    // run, on every retry - missed the pending state entirely (see PR #408
+    // discussion). Delaying just that one refetch guarantees the pending
+    // state a real window to be observed without weakening what's actually
+    // asserted below: the button must still become visible and disabled,
+    // unconditionally.
+    let delayedRefetch = false
+    await page.route('**/api/repos/*/archives', async (route) => {
+      if (route.request().method() === 'GET' && !delayedRefetch) {
+        delayedRefetch = true
+        await new Promise((resolve) => setTimeout(resolve, 2_000))
+      }
+      await route.continue()
+    })
+
     await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
 
-    // The row's own button must reflect the in-flight delete immediately -
-    // disabled, spinner, and re-titled - not just clickable-again once the
-    // confirmation dialog closes. Kept as an unconditional, strict assertion
-    // per explicit maintainer decision (see PR #408 discussion): a tolerant
-    // version that fell back to "the archive eventually disappeared" when
-    // this button was never observed was tried and is better-justified by
-    // CI trace evidence, but can't distinguish a too-fast-to-observe success
-    // from a real regression of confirmArchiveDeletion's synchronous
-    // "mark before the request goes out" fix - and this repo's Test Change
-    // Policy requires that tradeoff be a human's call, not the agent's. The
-    // accepted cost is that this test can fail intermittently in CI on a
-    // backend fast enough to complete the whole delete+compact+notify+DOM-
-    // removal cycle inside the assertion's own polling window.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
     await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
     await expect(pendingBtn).toBeDisabled()
+
+    await page.unroute('**/api/repos/*/archives')
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

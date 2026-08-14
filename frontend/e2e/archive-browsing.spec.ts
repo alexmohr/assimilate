@@ -208,38 +208,22 @@ test.describe('Archive browsing & diff journey', () => {
 
     // The row's own button must reflect the in-flight delete immediately -
     // disabled, spinner, and re-titled - not just clickable-again once the
-    // confirmation dialog closes. confirmArchiveDeletion marks the row as
-    // deleting synchronously, before the delete request even goes out - but
-    // that only guarantees the DOM node is *correct* the instant after
-    // click, not that Playwright's own assertion polling *observes* it: CI
-    // traces of this exact test (fetched from a failing run's
-    // playwright-report artifact) show the full round trip - delete,
-    // automatic compact, WS DataChanged notification, and DOM removal -
-    // completing well inside 5s on this backend, sometimes faster than a
-    // single polling tick. That's a real limit of black-box e2e polling
-    // against a fast real backend, not evidence the app-level fix is
-    // broken; that fix has its own deterministic unit test
-    // (RepoDetailView.test.ts, "marks the row as deleting immediately...")
-    // that holds the delete request open and asserts the synchronous
-    // marking directly, without racing real timing. So here: the button
-    // appearing at all is best-effort, and only its *disabled* state, read
-    // in the same breath as confirming visibility rather than a second,
-    // separately-polling expect(), is asserted when it is observed.
+    // confirmation dialog closes. Kept as an unconditional, strict assertion
+    // per explicit maintainer decision (see PR #408 discussion): a tolerant
+    // version that fell back to "the archive eventually disappeared" when
+    // this button was never observed was tried and is better-justified by
+    // CI trace evidence, but can't distinguish a too-fast-to-observe success
+    // from a real regression of confirmArchiveDeletion's synchronous
+    // "mark before the request goes out" fix - and this repo's Test Change
+    // Policy requires that tradeoff be a human's call, not the agent's. The
+    // accepted cost is that this test can fail intermittently in CI on a
+    // backend fast enough to complete the whole delete+compact+notify+DOM-
+    // removal cycle inside the assertion's own polling window.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
-    const appeared = await pendingBtn
-      .waitFor({ state: 'visible', timeout: 5_000 })
-      .then(() => true)
-      .catch(() => false)
-    const disabled = appeared
-      ? await pendingBtn.evaluate((el) => (el as HTMLButtonElement).disabled).catch(() => null)
-      : null
-    if (disabled === null) {
-      await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible()
-    } else {
-      expect(disabled).toBe(true)
-    }
+    await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
+    await expect(pendingBtn).toBeDisabled()
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

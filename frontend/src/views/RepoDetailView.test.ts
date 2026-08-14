@@ -974,6 +974,29 @@ describe('RepoDetailView', () => {
       await flushPromises()
     })
 
+    it('rolls back the in-progress marker when the delete request itself fails', async () => {
+      mockDeleteArchiveByName.mockRejectedValue(new Error('Connection refused'))
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      // The failed request must not leave the row stuck disabled forever -
+      // the optimistic "deleting" marker set before the request went out
+      // has to be rolled back once it's clear the delete never happened.
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+
+      // A failed delete leaves the confirmation modal open (its own,
+      // pre-existing behavior, unchanged here) - its teleported content
+      // otherwise lingers in document.body and breaks other tests' modal
+      // lookups, so tear it down explicitly.
+      wrapper.unmount()
+    })
+
     it('clears the in-progress state once the archive disappears from a DataChanged refresh', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)

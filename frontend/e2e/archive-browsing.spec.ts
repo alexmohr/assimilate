@@ -193,25 +193,32 @@ test.describe('Archive browsing & diff journey', () => {
 
     // The row's own button must reflect the in-flight delete immediately -
     // disabled, spinner, and re-titled - not just clickable-again once the
-    // confirmation dialog closes. Only the *first* check (the button ever
-    // appearing at all) is best-effort: on a very fast demo repo, borg can
-    // finish the delete (and the compact that follows it) before this
-    // check gets a look in, in which case the whole row - button included
-    // - is already gone, which is a stronger proof of the same guarantee,
-    // not a failure. Once the button IS observed, though, it being
-    // disabled is a hard, unforgiving assertion - a regression there must
-    // still fail the test, even if the archive disappears moments later.
+    // confirmation dialog closes. On this fast demo repo, borg can finish
+    // the delete (and the compact that follows it) at any point, including
+    // between two separately-polling assertions - so the disabled check is
+    // read in the same breath as confirming visibility (one DOM read, not
+    // a second independently-retrying expect()) rather than reopening a
+    // window for the row to vanish in between. Whatever that read sees
+    // while the button still exists is ground truth and must be disabled -
+    // a real regression there still fails the test. Only the button never
+    // being observed at all (neither in the wait below nor in that same
+    // read) is tolerated, as a stronger proof of the same guarantee.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
-    const pendingBtnAppeared = await pendingBtn
+    const appeared = await pendingBtn
       .waitFor({ state: 'visible', timeout: 5_000 })
       .then(() => true)
       .catch(() => false)
-    if (pendingBtnAppeared) {
-      await expect(pendingBtn).toBeDisabled()
-    } else {
+    const disabled = appeared
+      ? await pendingBtn
+          .evaluate((el) => (el as HTMLButtonElement).disabled)
+          .catch(() => null)
+      : null
+    if (disabled === null) {
       await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible()
+    } else {
+      expect(disabled).toBe(true)
     }
 
     // While the delete (and the compact that automatically follows it) is

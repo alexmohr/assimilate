@@ -12,17 +12,13 @@ interface ArchiveProgressData {
   currentPath: string
 }
 
-withDefaults(
-  defineProps<{
-    badge: string | null
-    archiveName: string | null
-    elapsedSecs: number
-    estimatedRemainingSecs: number | null
-    progress: ArchiveProgressData | null
-    logLines?: string[]
-  }>(),
-  { logLines: () => [] },
-)
+defineProps<{
+  badge: string | null
+  archiveName: string | null
+  elapsedSecs: number
+  estimatedRemainingSecs: number | null
+  progress: ArchiveProgressData | null
+}>()
 </script>
 
 <template>
@@ -78,18 +74,6 @@ withDefaults(
           <span class="progress-value progress-path">{{ progress.currentPath }}</span>
         </div>
       </template>
-    </div>
-    <div
-      v-if="logLines.length > 0"
-      class="live-log-output"
-    >
-      <div
-        v-for="(line, i) in logLines"
-        :key="i"
-        class="live-log-line"
-      >
-        {{ line }}
-      </div>
     </div>
   </div>
 </template>
@@ -189,23 +173,5 @@ withDefaults(
 .progress-mono {
   font-family: var(--mono);
   font-size: 0.78rem;
-}
-
-.live-log-output {
-  border-top: 1px solid var(--border);
-  background: var(--bg-base);
-  max-height: 200px;
-  overflow-y: auto;
-  padding: 0.5rem 1rem;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-}
-
-.live-log-line {
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.5;
-  padding: 0.05rem 0;
 }
 </style>

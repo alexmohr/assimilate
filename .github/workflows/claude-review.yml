@@ -246,6 +246,19 @@ jobs:
       # verify the approval's provenance before merging; an LLM turn trusting
       # its own "is this clean?" read and self-authorizing a squash merge
       # was never as robust as a deterministic re-check of the same facts.
+      #
+      # `mcp__github_inline_comment__create_inline_comment` is required too,
+      # even though the prompt below tells Claude to use that exact tool:
+      # claude-code-action only installs its `github_inline_comment` MCP
+      # server (src/mcp/install-mcp-server.ts) when allowedTools already
+      # contains an `mcp__github_inline_comment__*` or `mcp__github__*`
+      # entry - with only the Bash patterns above, the server was never
+      # started, so every `create_inline_comment` call Claude made had
+      # nothing to connect to and was denied. That's what was actually
+      # behind the runs that burned dozens of turns and permission denials
+      # with no verdict ever submitted (e.g. PR #399: 41 turns, 23 denials,
+      # `is_error: false` but no review posted) - Claude kept retrying the
+      # one tool its own prompt told it to use for every finding.
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
@@ -258,7 +271,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*)"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),mcp__github_inline_comment__create_inline_comment"
           prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.

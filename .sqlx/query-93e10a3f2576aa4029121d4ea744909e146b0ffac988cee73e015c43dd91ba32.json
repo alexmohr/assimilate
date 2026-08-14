@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET totp_secret_encrypted = $2, totp_recovery_codes = $3 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "93e10a3f2576aa4029121d4ea744909e146b0ffac988cee73e015c43dd91ba32"
+}

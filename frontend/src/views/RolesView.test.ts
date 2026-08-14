@@ -1,34 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { type VueWrapper, describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { clickButtonWithText, renderWithPlugins } from '../test-utils'
 import RolesView from './RolesView.vue'
-
-async function openDeleteModalForCustomRole(wrapper: VueWrapper): Promise<void> {
-  const allRows = wrapper.findAll('tr')
-  const customRoleRow = allRows.find((r) => r.text().includes('custom-role'))
-  expect(customRoleRow).toBeDefined()
-
-  const deleteBtn = customRoleRow!.find('.btn-danger-text')
-  expect(deleteBtn!.exists()).toBe(true)
-  await deleteBtn!.trigger('click')
-
-  await flushPromises()
-
-  expect(wrapper.find('.overlay').exists()).toBe(true)
-}
-
-async function cancelModal(wrapper: VueWrapper): Promise<void> {
-  expect(wrapper.find('.overlay').exists()).toBe(true)
-
-  const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
-  expect(cancelBtn).toBeDefined()
-  await cancelBtn!.trigger('click')
-
-  expect(wrapper.find('.overlay').exists()).toBe(false)
-}
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -172,46 +148,6 @@ describe('RolesView', () => {
     expect(perms.length).toBe(13)
   })
 
-  it('closes the create modal when Cancel is clicked', async () => {
-    const wrapper = renderWithPlugins(RolesView)
-
-    await flushPromises()
-
-    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
-    expect(newButton).toBeDefined()
-    await newButton!.trigger('click')
-
-    await cancelModal(wrapper)
-  })
-
-  it('submits the create form', async () => {
-    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
-    mockApiPost.mockResolvedValue({ data: {} })
-    const wrapper = renderWithPlugins(RolesView)
-
-    await flushPromises()
-
-    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
-    expect(newButton).toBeDefined()
-    await newButton!.trigger('click')
-
-    const nameInput = wrapper.find('input#create-role-name')
-    await nameInput.setValue('custom-role')
-
-    await flushPromises()
-
-    const form = wrapper.find('form')
-    await form.trigger('submit.prevent')
-
-    await flushPromises()
-
-    expect(mockApiPost).toHaveBeenCalledWith(
-      '/roles',
-      expect.objectContaining({ name: 'custom-role' }),
-    )
-    expect(wrapper.find('.overlay').exists()).toBe(false)
-  })
-
   it('opens the edit modal and populates the form', async () => {
     const wrapper = renderWithPlugins(RolesView)
 
@@ -226,64 +162,117 @@ describe('RolesView', () => {
     expect(wrapper.text()).toContain('admin')
   })
 
-  it('submits the edit form', async () => {
+  it('rejects an empty name, then creates a role once the name field is filled in', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    await clickButtonWithText(wrapper, 'New')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Name is required')
+    expect(mockApiPost).not.toHaveBeenCalled()
+
+    await wrapper.find('#create-role-name').setValue('editor')
+    const permCheckboxes = wrapper.findAll('.permissions-grid input[type="checkbox"]')
+    await permCheckboxes[0]!.setValue(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/roles',
+      expect.objectContaining({ name: 'editor', can_create_agent: true }),
+    )
+  })
+
+  it('edits a role via the edit modal, flipping a permission on', async () => {
     const mockApiPut = apiClient.put as ReturnType<typeof vi.fn>
     mockApiPut.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(RolesView)
-
     await flushPromises()
 
+    // operator (id 2) starts with every permission false, so checking the box is a real 0->1 flip.
     const editButtons = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
-    await editButtons[0].trigger('click')
+    await editButtons[1]!.trigger('click')
 
-    const form = wrapper.find('form')
-    await form.trigger('submit.prevent')
-
+    const permCheckboxes = wrapper.findAll('.permissions-grid input[type="checkbox"]')
+    await permCheckboxes[0]!.setValue(true)
+    await wrapper.find('form').trigger('submit')
     await flushPromises()
 
-    expect(mockApiPut).toHaveBeenCalled()
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    expect(mockApiPut).toHaveBeenCalledWith(
+      '/roles/2',
+      expect.objectContaining({ can_create_agent: true }),
+    )
   })
 
-  it('opens the delete modal and cancels', async () => {
+  it('closes the create modal via the close button and the Cancel button', async () => {
     const wrapper = renderWithPlugins(RolesView)
-
     await flushPromises()
 
-    await openDeleteModalForCustomRole(wrapper)
-    expect(wrapper.text()).toContain('Delete Role')
+    await clickButtonWithText(wrapper, 'New')
+    await wrapper.find('button.close-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#create-role-name').exists()).toBe(false)
 
-    await cancelModal(wrapper)
+    await clickButtonWithText(wrapper, 'New')
+    await clickButtonWithText(wrapper, 'Cancel')
+    await flushPromises()
+    expect(wrapper.find('#create-role-name').exists()).toBe(false)
+
+    expect(apiClient.post).not.toHaveBeenCalled()
   })
 
-  it('confirms the delete and removes the role', async () => {
+  it('closes the edit modal via the close button and the Cancel button', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+    const editButton = wrapper.findAll('button').find((b) => b.text() === 'Edit')
+
+    await editButton!.trigger('click')
+    await wrapper.find('button.close-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.permissions-grid').exists()).toBe(false)
+
+    await editButton!.trigger('click')
+    await clickButtonWithText(wrapper, 'Cancel')
+    await flushPromises()
+    expect(wrapper.find('.permissions-grid').exists()).toBe(false)
+
+    expect(apiClient.put).not.toHaveBeenCalled()
+  })
+
+  it('deletes a non-seeded role via the confirm dialog', async () => {
     const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
-    mockApiDelete.mockResolvedValue({})
+    mockApiDelete.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(RolesView)
-
     await flushPromises()
 
-    await openDeleteModalForCustomRole(wrapper)
+    const deleteButtons = wrapper.findAll('button.btn-danger-text')
+    const enabledDelete = deleteButtons.find((b) => b.attributes('disabled') === undefined)
+    expect(enabledDelete).toBeDefined()
+    await enabledDelete!.trigger('click')
+    expect(wrapper.text()).toContain('custom-role')
 
-    const confirmBtn = wrapper.findAll('button').find((b) => b.text() === 'Delete')
-    expect(confirmBtn).toBeDefined()
-    expect(confirmBtn!.element.getAttribute('disabled')).toBeNull()
-    await confirmBtn!.trigger('click')
-
+    await wrapper.find('button.btn-danger').trigger('click')
     await flushPromises()
 
     expect(mockApiDelete).toHaveBeenCalledWith('/roles/4')
-    expect(wrapper.find('.overlay').exists()).toBe(false)
   })
 
-  it('opens the edit modal and cancels', async () => {
+  it('cancels the delete confirm dialog without deleting', async () => {
     const wrapper = renderWithPlugins(RolesView)
-
     await flushPromises()
 
-    const editButtons = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
-    await editButtons[0].trigger('click')
+    const deleteButtons = wrapper.findAll('button.btn-danger-text')
+    const enabledDelete = deleteButtons.find((b) => b.attributes('disabled') === undefined)
+    await enabledDelete!.trigger('click')
 
-    await cancelModal(wrapper)
+    await wrapper.find('button.close-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+    expect(apiClient.delete).not.toHaveBeenCalled()
   })
 })

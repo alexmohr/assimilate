@@ -10,6 +10,8 @@ import { Plus, Key } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import ModalFormActions from '../components/ModalFormActions.vue'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 const {
   tokens,
@@ -24,6 +26,7 @@ const {
   showDeleteModal,
   deleteTarget,
   deleteSubmitting,
+  deleteError,
   fetchTokens,
   openCreate,
   submitCreate,
@@ -75,62 +78,64 @@ onMounted(fetchTokens)
       class="overlay"
       @click.self="closeCreateModal"
     >
-      <div class="modal">
+      <div class="dialog">
         <template v-if="!newTokenPlaintext">
-          <h2>Create API Token</h2>
-          <form
-            class="modal-form"
-            @submit.prevent="submitCreate"
-          >
-            <div class="form-group">
-              <label for="token-name">Token Name</label>
-              <input
-                id="token-name"
-                v-model="createName"
-                type="text"
-                required
-                placeholder="e.g. CI pipeline"
-              />
-            </div>
-            <div
-              v-if="createError"
-              class="modal-error"
+          <div class="dialog-header">
+            <h2 class="dialog-title">Create API Token</h2>
+            <button
+              class="close-btn"
+              @click="closeCreateModal"
             >
-              {{ createError }}
+              &times;
+            </button>
+          </div>
+          <form @submit.prevent="submitCreate">
+            <div class="dialog-body">
+              <div class="field">
+                <label
+                  class="field-label"
+                  for="token-name"
+                  >Token Name</label
+                >
+                <input
+                  id="token-name"
+                  v-model="createName"
+                  type="text"
+                  class="input"
+                  required
+                  placeholder="e.g. CI pipeline"
+                />
+              </div>
             </div>
-            <div class="modal-actions">
-              <button
-                type="button"
-                class="btn btn-ghost"
-                @click="closeCreateModal"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                class="btn btn-primary"
-                :disabled="createSubmitting || !createName.trim()"
-              >
-                Create
-              </button>
-            </div>
+            <ModalFormActions
+              :submitting="createSubmitting"
+              :disabled="!createName.trim()"
+              :error="createError"
+              submit-label="Create"
+              submitting-label="Create"
+              @cancel="closeCreateModal"
+            />
           </form>
         </template>
         <template v-else>
-          <h2>Token Created</h2>
-          <div class="token-notice">
-            <p class="token-warning">Copy this token now. It will not be shown again.</p>
-            <div class="token-box">
-              <code class="token-text">{{ newTokenPlaintext }}</code>
-              <button
-                class="btn btn-sm"
-                @click="copyToClipboard(newTokenPlaintext)"
-              >
-                {{ tokenCopied ? 'Copied!' : 'Copy' }}
-              </button>
+          <div class="dialog-header">
+            <h2 class="dialog-title">Token Created</h2>
+          </div>
+          <div class="dialog-body">
+            <div class="token-notice">
+              <p class="token-warning">Copy this token now. It will not be shown again.</p>
+              <div class="token-box">
+                <code class="token-text">{{ newTokenPlaintext }}</code>
+                <button
+                  class="btn btn-sm"
+                  @click="copyToClipboard(newTokenPlaintext)"
+                >
+                  {{ tokenCopied ? 'Copied!' : 'Copy' }}
+                </button>
+              </div>
             </div>
           </div>
-          <div class="modal-actions">
+          <div class="dialog-footer">
             <button
               class="btn btn-primary"
               @click="closeCreateModal"
@@ -142,51 +147,23 @@ onMounted(fetchTokens)
       </div>
     </div>
 
-    <div
-      v-if="showDeleteModal"
-      class="overlay"
-      @click.self="showDeleteModal = false"
+    <ConfirmDeleteDialog
+      :show="showDeleteModal"
+      title="Delete Token"
+      :submitting="deleteSubmitting"
+      :error="deleteError"
+      @cancel="showDeleteModal = false"
+      @confirm="confirmDelete"
     >
-      <div class="modal">
-        <h2>Delete Token</h2>
-        <p>
-          Are you sure you want to delete token <strong>{{ deleteTarget?.name }}</strong
-          >? This action cannot be undone.
-        </p>
-        <div class="modal-actions">
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-danger"
-            :disabled="deleteSubmitting"
-            @click="confirmDelete"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
+      Are you sure you want to delete token <strong>{{ deleteTarget?.name }}</strong
+      >? This action cannot be undone.
+    </ConfirmDeleteDialog>
   </div>
 </template>
 
 <style scoped>
 .tokens-page {
   max-width: 900px;
-}
-
-.loading {
-  color: var(--text-muted);
-  padding: 2rem 0;
-}
-
-.empty-state {
-  color: var(--text-muted);
-  padding: 2rem 0;
-  font-size: 0.875rem;
 }
 
 .token-notice {
@@ -216,9 +193,5 @@ onMounted(fetchTokens)
   font-family: monospace;
   word-break: break-all;
   color: var(--text-primary);
-}
-
-.modal {
-  max-width: 480px;
 }
 </style>

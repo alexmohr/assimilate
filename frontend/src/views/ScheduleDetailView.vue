@@ -13,18 +13,24 @@ import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
+import { useElapsedClock } from '../composables/useElapsedTimer'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { isAgentOffline, lastSeenText } from '../utils/agent'
+import { AlertTriangle } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
 import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
+import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
+import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ScheduleBackupSourcesResponse } from '../types/generated'
+import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { Repo } from '../types/repo'
 
 interface ScheduleTarget {
@@ -47,6 +53,7 @@ const agents = ref<AgentRow[]>([])
 const repos = ref<Repo[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
+const health = ref<HealthSummaryResponse[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedule')
 const saving = ref(false)
 const saveError = ref<string | null>(null)
@@ -55,6 +62,7 @@ const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 const refOpen = ref(false)
 const runNowLoading = ref(false)
+const retryingAgentId = ref<number | null>(null)
 const cancelLoading = ref(false)
 const backupRunning = ref(false)
 const reports = ref<ReportRow[]>([])
@@ -90,10 +98,12 @@ const archiveProgress = ref<ArchiveProgressData | null>(null)
 const backupHostname = ref<string | null>(null)
 const backupArchiveName = ref<string | null>(null)
 const backupStartedAt = ref<number | null>(null)
-const backupElapsedSecs = ref(0)
-const liveLogLines = ref<string[]>([])
-const MAX_LIVE_LOG_LINES = 200
-let elapsedTimer: ReturnType<typeof setInterval> | null = null
+const { now } = useElapsedClock(backupRunning)
+const backupElapsedSecs = computed(() =>
+  backupStartedAt.value === null
+    ? 0
+    : Math.max(0, Math.floor((now.value - backupStartedAt.value) / 1000)),
+)
 
 const lastSuccessfulReport = computed<ReportRow | null>(
   () =>
@@ -123,6 +133,22 @@ const scheduleArchives = computed<ReportRow[]>(() =>
     })
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
 )
+
+const selectedScheduleArchive = computed<ArchiveEntry | null>(() => {
+  const r = selectedBackupReport.value
+  if (!r || r.archive_name == null) return null
+  const hostname = agentMap.value.get(r.agent_id ?? 0)?.hostname ?? r.hostname ?? ''
+  return {
+    name: r.archive_name,
+    start: r.started_at,
+    hostname,
+    comment: '',
+    original_size: r.original_size,
+    deduplicated_size: r.deduplicated_size,
+    matched: true,
+    agent_hostname: hostname,
+  }
+})
 
 function selectScheduleArchive(report: ReportRow): void {
   selectedBackupReport.value = report
@@ -183,6 +209,24 @@ function agentLabel(id: number): string {
   return c ? (c.display_name ?? c.hostname) : `#${id}`
 }
 
+const scheduleHealth = computed<HealthSummaryResponse[]>(() => {
+  const scheduleId = schedule.value?.id
+  if (scheduleId == null) return []
+  return health.value.filter((h) => h.schedule_id === scheduleId)
+})
+
+function healthForAgent(agentId: number): HealthSummaryResponse | null {
+  const hostname = agentMap.value.get(agentId)?.hostname
+  if (!hostname) return null
+  return scheduleHealth.value.find((h) => h.hostname === hostname) ?? null
+}
+
+function connectivityNote(agentId: number): string {
+  const agent = agentMap.value.get(agentId)
+  if (!agent || !isAgentOffline(agent)) return ''
+  return `Agent offline (${lastSeenText(agent)})`
+}
+
 function multiSelectLabel(): string {
   if (selectedAgentIds.value.length === 0) return 'Select agents...'
   if (selectedAgentIds.value.length === 1) return agentLabel(selectedAgentIds.value[0])
@@ -228,9 +272,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
-  if (elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-  }
 })
 
 function populateForm(s: ScheduleRow): void {
@@ -249,8 +290,8 @@ function populateForm(s: ScheduleRow): void {
     keep_yearly: s.keep_yearly,
     compact_enabled: s.compact_enabled,
     rate_limit_kbps: s.rate_limit_kbps ?? 0,
-    pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
-    post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
+    pre_backup_commands: s.pre_backup_commands.join('\n'),
+    post_backup_commands: s.post_backup_commands.join('\n'),
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
@@ -268,10 +309,6 @@ function scheduleTypeLabel(t: ScheduleType): string {
   }
 }
 
-function targetHostnames(): string {
-  return selectedAgentIds.value.map(agentLabel).join(', ')
-}
-
 async function loadData(): Promise<void> {
   await run(async () => {
     if (isCreate.value) {
@@ -287,7 +324,7 @@ async function loadData(): Promise<void> {
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, agentsRes, reposRes, targetsRes, sourcesRes, recentReportsRes] =
+      const [schedRes, agentsRes, reposRes, targetsRes, sourcesRes, recentReportsRes, healthRes] =
         await Promise.all([
           apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
           apiClient.get<AgentRow[]>('/agents'),
@@ -295,6 +332,7 @@ async function loadData(): Promise<void> {
           apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
           apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
           apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, { params: { limit: 20 } }),
+          apiClient.get<HealthSummaryResponse[]>('/stats/health'),
         ])
       schedule.value = schedRes.data
       agents.value = agentsRes.data
@@ -302,6 +340,7 @@ async function loadData(): Promise<void> {
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
       reports.value = recentReportsRes.data
+      health.value = healthRes.data
       const runningReport = recentReportsRes.data.find((r) => {
         const status = normalizeBackupStatus(r.status)
         return status === 'pending' || status === 'started'
@@ -311,13 +350,6 @@ async function loadData(): Promise<void> {
         const agent = agentMap.value.get(runningReport.agent_id ?? 0)
         backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
         backupStartedAt.value = new Date(runningReport.started_at).getTime()
-        backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-        if (elapsedTimer !== null) clearInterval(elapsedTimer)
-        elapsedTimer = setInterval(() => {
-          if (backupStartedAt.value !== null) {
-            backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-          }
-        }, 1000)
       }
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
       selectedAgentIds.value = sorted.map((t) => t.agent_id)
@@ -358,12 +390,8 @@ async function loadData(): Promise<void> {
         const preMap: Record<number, string> = {}
         const postMap: Record<number, string> = {}
         for (const entry of perAgentCmdEntries) {
-          preMap[Number(entry.agent_id)] = (
-            JSON.parse(entry.pre_backup_commands || '[]') as string[]
-          ).join('\n')
-          postMap[Number(entry.agent_id)] = (
-            JSON.parse(entry.post_backup_commands || '[]') as string[]
-          ).join('\n')
+          preMap[Number(entry.agent_id)] = entry.pre_backup_commands.join('\n')
+          postMap[Number(entry.agent_id)] = entry.post_backup_commands.join('\n')
         }
         perAgentPreCmds.value = preMap
         perAgentPostCmds.value = postMap
@@ -499,15 +527,30 @@ async function confirmDeleteSchedule(): Promise<void> {
   }
 }
 
-async function runNow(): Promise<void> {
-  runNowLoading.value = true
+async function runNow(agentId?: number): Promise<void> {
+  if (agentId != null) {
+    retryingAgentId.value = agentId
+  } else {
+    runNowLoading.value = true
+  }
   try {
-    await apiClient.post(`/schedules/${props.id}/run`)
-    toastSuccess(`${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`)
+    await apiClient.post(
+      `/schedules/${props.id}/run`,
+      agentId != null ? { agent_ids: [agentId] } : {},
+    )
+    toastSuccess(
+      agentId != null
+        ? `Retry started for ${agentLabel(agentId)}.`
+        : `${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`,
+    )
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
-    runNowLoading.value = false
+    if (agentId != null) {
+      retryingAgentId.value = null
+    } else {
+      runNowLoading.value = false
+    }
   }
 }
 
@@ -570,15 +613,7 @@ onMessage('BackupStarted', (payload) => {
   backupHostname.value = payload.hostname
   backupArchiveName.value = payload.archive_name ?? null
   archiveProgress.value = null
-  liveLogLines.value = []
   backupStartedAt.value = Date.now()
-  backupElapsedSecs.value = 0
-  if (elapsedTimer !== null) clearInterval(elapsedTimer)
-  elapsedTimer = setInterval(() => {
-    if (backupStartedAt.value !== null) {
-      backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-    }
-  }, 1000)
 })
 
 onMessage('BackupCompleted', (payload) => {
@@ -586,11 +621,6 @@ onMessage('BackupCompleted', (payload) => {
     backupRunning.value = false
     backupHostname.value = null
     backupArchiveName.value = null
-    liveLogLines.value = []
-    if (elapsedTimer !== null) {
-      clearInterval(elapsedTimer)
-      elapsedTimer = null
-    }
   }
 })
 
@@ -610,8 +640,6 @@ onMessage('BackupLog', (payload) => {
       originalSize: progress.original_size,
       currentPath: progress.path ?? '',
     }
-  } else {
-    liveLogLines.value = [...liveLogLines.value.slice(-(MAX_LIVE_LOG_LINES - 1)), payload.line]
   }
 })
 
@@ -695,7 +723,7 @@ watch(activeTab, (tab) => {
           v-else
           class="btn btn-sm btn-primary"
           :disabled="runNowLoading"
-          @click="runNow"
+          @click="runNow()"
         >
           {{ runNowLoading ? '...' : 'Run Now' }}
         </button>
@@ -708,16 +736,6 @@ watch(activeTab, (tab) => {
     >
       {{ error }}
     </div>
-
-    <BackupProgressCard
-      v-if="!isCreate && backupRunning"
-      :badge="backupHostname"
-      :archive-name="backupArchiveName"
-      :elapsed-secs="backupElapsedSecs"
-      :estimated-remaining-secs="estimatedRemainingSecs"
-      :progress="archiveProgress"
-      :log-lines="liveLogLines"
-    />
 
     <BaseSpinner
       v-if="loading && !schedule && !isCreate"
@@ -921,9 +939,44 @@ watch(activeTab, (tab) => {
             class="info-card"
           >
             <h3 class="info-title">Schedule Info</h3>
-            <div class="info-row">
+            <div class="info-row info-row-targets">
               <span class="info-label">Targets</span>
-              <span class="info-value">{{ targetHostnames() || '—' }}</span>
+              <span
+                v-if="selectedAgentIds.length === 0"
+                class="info-value"
+                >—</span
+              >
+              <div
+                v-else
+                class="target-health-list"
+              >
+                <div
+                  v-for="agentId in selectedAgentIds"
+                  :key="agentId"
+                  class="target-health-row"
+                >
+                  <span class="target-health-name">{{ agentLabel(agentId) }}</span>
+                  <template v-if="healthForAgent(agentId)?.is_overdue">
+                    <span class="target-health-badge">
+                      <AlertTriangle :size="12" />
+                      Overdue
+                    </span>
+                    <span
+                      v-if="connectivityNote(agentId)"
+                      class="target-health-note"
+                    >
+                      {{ connectivityNote(agentId) }}
+                    </span>
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      :disabled="retryingAgentId === agentId"
+                      @click="runNow(agentId)"
+                    >
+                      {{ retryingAgentId === agentId ? '...' : 'Retry' }}
+                    </button>
+                  </template>
+                </div>
+              </div>
             </div>
             <div class="info-row">
               <span class="info-label">On Failure</span>
@@ -956,6 +1009,14 @@ watch(activeTab, (tab) => {
                 cronToHuman(form.cron_expression) ?? form.cron_expression
               }}</span>
             </div>
+            <BackupProgressCard
+              v-if="backupRunning"
+              :badge="backupHostname"
+              :archive-name="backupArchiveName"
+              :elapsed-secs="backupElapsedSecs"
+              :estimated-remaining-secs="estimatedRemainingSecs"
+              :progress="archiveProgress"
+            />
           </div>
 
           <!-- Edit-only: target settings card -->
@@ -1533,61 +1594,58 @@ watch(activeTab, (tab) => {
         >
           No backup archives found for this schedule.
         </div>
-        <div
+        <ArchiveBrowserLayout
           v-else
-          class="backups-layout"
+          narrow-list
         >
-          <!-- Archive list -->
-          <div class="backups-list-panel">
-            <div class="panel-header">
-              <span class="panel-title">Archives</span>
+          <template #list>
+            <!-- Archive list -->
+            <div class="panel backups-list-panel">
+              <div class="panel-header">
+                <span class="panel-title">Archives</span>
+              </div>
+              <table class="archives-table">
+                <thead>
+                  <tr>
+                    <th>Archive</th>
+                    <th>Host</th>
+                    <th>Date</th>
+                    <th>Size</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="r in scheduleArchives"
+                    :key="r.id"
+                    class="archive-row"
+                    :class="{ selected: selectedBackupReport?.id === r.id }"
+                    @click="selectScheduleArchive(r)"
+                  >
+                    <td class="cell-archive-name">{{ r.archive_name }}</td>
+                    <td class="cell-host">
+                      {{
+                        agentMap.get(r.agent_id ?? 0)?.display_name ??
+                        agentMap.get(r.agent_id ?? 0)?.hostname ??
+                        `#${r.agent_id ?? 0}`
+                      }}
+                    </td>
+                    <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
+                    <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <table class="archives-table">
-              <thead>
-                <tr>
-                  <th>Archive</th>
-                  <th>Host</th>
-                  <th>Date</th>
-                  <th>Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="r in scheduleArchives"
-                  :key="r.id"
-                  class="archive-row"
-                  :class="{ selected: selectedBackupReport?.id === r.id }"
-                  @click="selectScheduleArchive(r)"
-                >
-                  <td class="cell-archive-name">{{ r.archive_name }}</td>
-                  <td class="cell-host">
-                    {{
-                      agentMap.get(r.agent_id ?? 0)?.display_name ??
-                      agentMap.get(r.agent_id ?? 0)?.hostname ??
-                      `#${r.agent_id ?? 0}`
-                    }}
-                  </td>
-                  <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
-                  <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <!-- File browser -->
-          <div class="backups-browser-panel">
-            <ArchiveFileBrowser
-              v-if="selectedBackupReport"
-              :repo-id="schedule?.repo_id ?? null"
-              :archive-name="selectedBackupReport.archive_name ?? null"
-            />
-            <div
-              v-else
-              class="empty-browser"
-            >
-              <span class="muted">Select an archive to browse its contents.</span>
+          </template>
+          <template #browser>
+            <!-- File browser -->
+            <div class="panel backups-browser-panel">
+              <ArchiveFileBrowser
+                :repo-id="schedule?.repo_id ?? null"
+                :archive="selectedScheduleArchive"
+              />
             </div>
-          </div>
-        </div>
+          </template>
+        </ArchiveBrowserLayout>
       </div>
 
       <!-- Save bar -->
@@ -1816,6 +1874,48 @@ watch(activeTab, (tab) => {
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.info-row-targets {
+  align-items: flex-start;
+}
+
+.target-health-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-end;
+}
+
+.target-health-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.target-health-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.target-health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-subtle);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-sm);
+}
+
+.target-health-note {
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
 .form-group {
@@ -2456,14 +2556,7 @@ watch(activeTab, (tab) => {
 
 /* Backups tab layout */
 
-.backups-layout {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 1rem;
-  align-items: start;
-}
-
-.backups-list-panel {
+.panel {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2548,21 +2641,6 @@ watch(activeTab, (tab) => {
 }
 
 .backups-browser-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
   min-height: 300px;
-}
-
-.empty-browser {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-
-.muted {
-  color: var(--text-muted);
 }
 </style>

@@ -27,6 +27,7 @@ interface UseApiTokensReturn {
   showDeleteModal: Ref<boolean>
   deleteTarget: Ref<ApiToken | null>
   deleteSubmitting: Ref<boolean>
+  deleteError: Ref<string>
   fetchTokens: () => Promise<void>
   openCreate: () => void
   submitCreate: () => Promise<void>
@@ -47,6 +48,7 @@ export function useApiTokens(): UseApiTokensReturn {
   const showDeleteModal = ref(false)
   const deleteTarget = ref<ApiToken | null>(null)
   const deleteSubmitting = ref(false)
+  const deleteError = ref('')
 
   async function fetchTokens(): Promise<void> {
     loading.value = true
@@ -89,17 +91,21 @@ export function useApiTokens(): UseApiTokensReturn {
 
   function openDelete(token: ApiToken): void {
     deleteTarget.value = token
+    deleteError.value = ''
     showDeleteModal.value = true
   }
 
   async function confirmDelete(): Promise<void> {
     if (!deleteTarget.value) return
+    deleteError.value = ''
     deleteSubmitting.value = true
     try {
       await apiClient.delete(`/tokens/${deleteTarget.value.id}`)
       showDeleteModal.value = false
       deleteTarget.value = null
       await fetchTokens()
+    } catch (e: unknown) {
+      deleteError.value = extractError(e, 'Failed to delete token')
     } finally {
       deleteSubmitting.value = false
     }
@@ -118,6 +124,7 @@ export function useApiTokens(): UseApiTokensReturn {
     showDeleteModal,
     deleteTarget,
     deleteSubmitting,
+    deleteError,
     fetchTokens,
     openCreate,
     submitCreate,

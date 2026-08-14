@@ -8,8 +8,8 @@ use ts_rs::TS;
 use crate::{
     protocol::{RepoOpKind, TunnelStatus},
     types::{
-        BackupStatus, BorgEncryption, Compression, ExecutionMode, OnFailure, QuotaAction,
-        ScheduleType, SearchEntry,
+        BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
+        FindingStatus, IndexStatus, OnFailure, QuotaAction, ScheduleType, SearchEntry, Visibility,
     },
 };
 
@@ -36,10 +36,22 @@ pub struct LoginResponse {
     pub session_expires_at: DateTime<Utc>,
     /// Whether the session should be remembered beyond the current browser session.
     pub remember_me: bool,
+    #[serde(default)]
+    /// Whether TOTP verification is required to complete login.
+    pub totp_required: bool,
+    #[serde(default)]
+    /// Temporary session token used during two-step login.
+    pub temp_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states; \
+              splitting into enums or sub-structs would break the frontend TS bindings and RBAC \
+              field names for no correctness benefit"
+)]
 /// Response containing me.
 pub struct MeResponse {
     #[ts(type = "number")]
@@ -57,6 +69,8 @@ pub struct MeResponse {
     pub remember_me: bool,
     /// Whether the user has permission to upgrade agents.
     pub can_upgrade_agent: bool,
+    /// Whether TOTP is enabled for the user.
+    pub totp_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -65,6 +79,57 @@ pub struct MeResponse {
 pub struct RefreshSessionResponse {
     /// Timestamp of when the session expires occurred.
     pub session_expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing TOTP setup information.
+pub struct TotpSetupResponse {
+    /// TOTP secret for the authenticator app.
+    pub secret: String,
+    /// QR code URI for scanning with an authenticator app.
+    pub qr_uri: String,
+    /// Recovery codes for account access if TOTP device is lost.
+    pub recovery_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing TOTP verification result.
+pub struct TotpVerifyResponse {
+    /// Whether the TOTP verification was successful.
+    pub success: bool,
+    /// Number of remaining backup codes.
+    pub backup_codes_remaining: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing session information.
+pub struct SessionResponse {
+    /// Session identifier.
+    pub id: String,
+    #[ts(type = "number")]
+    /// User identifier associated with this session.
+    pub user_id: i64,
+    /// Timestamp of when the session was created.
+    pub created_at: DateTime<Utc>,
+    /// Timestamp of when the session expires.
+    pub expires_at: DateTime<Utc>,
+    /// Timestamp of the last activity on this session.
+    pub last_seen_at: DateTime<Utc>,
+    /// Whether the session should persist beyond the browser session.
+    pub remember_me: bool,
+    /// Whether this is the current active session.
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing list of user sessions.
+pub struct SessionListResponse {
+    /// List of sessions.
+    pub sessions: Vec<SessionResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -128,9 +193,9 @@ pub struct AgentResponse {
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
     /// Default commands to run before backups.
-    pub default_pre_backup_commands: String,
+    pub default_pre_backup_commands: Vec<String>,
     /// Default commands to run after backups.
-    pub default_post_backup_commands: String,
+    pub default_post_backup_commands: Vec<String>,
     /// Default file change patterns.
     pub default_file_change_patterns_raw: String,
     /// Whether the agent is currently connected.
@@ -144,8 +209,9 @@ pub struct AgentResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Reason why restart is unavailable, if applicable.
     pub restart_unavailable_reason: Option<String>,
     /// SSH username last used to deploy/upgrade this agent.
@@ -234,8 +300,9 @@ pub struct RepoResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// sync schedule.
     pub sync_schedule: Option<String>,
 }
@@ -288,8 +355,9 @@ pub struct RepoWithStatsResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// sync schedule.
     pub sync_schedule: Option<String>,
     /// Timestamp of when the last synced occurred.
@@ -455,9 +523,9 @@ pub struct ScheduleResponse {
     /// Rate limit in kilobytes per second.
     pub rate_limit_kbps: Option<i32>,
     /// Commands to run before the backup.
-    pub pre_backup_commands: String,
+    pub pre_backup_commands: Vec<String>,
     /// Commands to run after the backup.
-    pub post_backup_commands: String,
+    pub post_backup_commands: Vec<String>,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
@@ -467,8 +535,9 @@ pub struct ScheduleResponse {
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,
+    #[ts(type = "string")]
     /// Visibility scope of this entity.
-    pub visibility: String,
+    pub visibility: Visibility,
     /// Hostnames targeted by this schedule.
     pub target_hostnames: Vec<String>,
 }
@@ -538,9 +607,9 @@ pub struct PerAgentCommandsResponse {
     /// Identifier of the associated agent.
     pub agent_id: i64,
     /// Commands to run before the backup.
-    pub pre_backup_commands: String,
+    pub pre_backup_commands: Vec<String>,
     /// Commands to run after the backup.
-    pub post_backup_commands: String,
+    pub post_backup_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -689,8 +758,9 @@ pub struct ContentEntryResponse {
 #[ts(export)]
 /// Response containing contents.
 pub struct ContentsResponse {
+    #[ts(type = "string")]
     /// Status of the archive index.
-    pub index_status: String,
+    pub index_status: IndexStatus,
     /// List of entries.
     pub entries: Vec<ContentEntryResponse>,
 }
@@ -699,8 +769,9 @@ pub struct ContentsResponse {
 #[ts(export)]
 /// Response containing archive index status.
 pub struct ArchiveIndexStatusResponse {
+    #[ts(type = "string")]
     /// Current status.
-    pub status: String,
+    pub status: IndexStatus,
     #[ts(type = "number | null")]
     /// Number of files in the index.
     pub file_count: Option<i64>,
@@ -991,11 +1062,17 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Number of days to retain system events.
     pub system_event_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain notification delivery-attempt history.
+    pub notification_delivery_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]
     /// Timeout for borg queries in seconds.
     pub borg_query_timeout_secs: u64,
+    #[ts(type = "number | null")]
+    /// Session idle timeout duration in minutes.
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1427,24 +1504,6 @@ pub struct ActivityEntryResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// Response containing system event.
-pub struct SystemEventResponse {
-    #[ts(type = "number")]
-    /// Unique identifier.
-    pub id: i64,
-    /// Type of event that triggers this rule.
-    pub event_type: String,
-    #[ts(type = "number | null")]
-    /// Identifier of the associated agent.
-    pub agent_id: Option<i64>,
-    /// Response message.
-    pub message: String,
-    /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
 /// Response containing calendar day.
 pub struct CalendarDayResponse {
     /// Date string.
@@ -1619,12 +1678,15 @@ pub struct DashboardSummaryCountersResponse {
 pub struct DashboardFindingResponse {
     /// Unique identifier.
     pub id: String,
+    #[ts(type = "string")]
     /// Kind of the finding.
-    pub kind: String,
+    pub kind: FindingKind,
+    #[ts(type = "string")]
     /// Severity level.
-    pub severity: String,
+    pub severity: FindingSeverity,
+    #[ts(type = "string")]
     /// Current status.
-    pub status: String,
+    pub status: FindingStatus,
     /// Hostname of the machine.
     pub hostname: Option<String>,
     #[ts(type = "number | null")]
@@ -1722,8 +1784,9 @@ pub struct DashboardOperationResponse {
     #[ts(type = "number")]
     /// Identifier of the associated report.
     pub report_id: i64,
+    #[ts(type = "string")]
     /// Current status.
-    pub status: String,
+    pub status: FindingStatus,
     /// Hostname of the machine.
     pub hostname: String,
     #[ts(type = "number")]
@@ -1881,9 +1944,9 @@ pub struct HostExportResponse {
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
     /// Default commands to run before backups.
-    pub default_pre_backup_commands: String,
+    pub default_pre_backup_commands: Vec<String>,
     /// Default commands to run after backups.
-    pub default_post_backup_commands: String,
+    pub default_post_backup_commands: Vec<String>,
     /// Default file change detection patterns.
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
@@ -2147,14 +2210,6 @@ pub struct RepoPermissionListResponse {
 pub struct ActivityListResponse {
     /// List of items.
     pub items: Vec<ActivityEntryResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
-#[ts(export)]
-/// Response containing system event list.
-pub struct SystemEventListResponse {
-    /// List of events for this day.
-    pub events: Vec<SystemEventResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

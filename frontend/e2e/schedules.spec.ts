@@ -1,12 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, mockScheduleOneHealth, test } from './fixtures'
+import type { Locator, Page } from '@playwright/test'
 
 interface ScheduleListEntry {
   id: number
   name: string
   target_hostnames: string[]
+}
+
+// Navigates to the schedules list with schedule 1 ("server-daily") forced
+// overdue, and returns its card and Overdue chip locators.
+async function openOverdueScheduleCard(
+  page: Page,
+): Promise<{ card: Locator; overdueChip: Locator }> {
+  await loginAsAdmin(page)
+  await mockScheduleOneHealth(page, { is_overdue: true })
+
+  await page.goto('/schedules')
+  await page.waitForLoadState('networkidle')
+
+  const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+  const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+  return { card, overdueChip }
 }
 
 test.describe('Schedules management', () => {
@@ -19,9 +36,95 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('server-daily').first()).toBeVisible()
     await expect(page.getByText('database-hourly').first()).toBeVisible()
     await expect(page.getByText('media-weekly').first()).toBeVisible()
-    await expect(page.getByText('web-server-01').first()).toBeVisible()
-    await expect(page.getByText('db-server-01').first()).toBeVisible()
-    await expect(page.getByText('media-store-01').first()).toBeVisible()
+  })
+
+  test('overdue schedule card shows an Overdue chip with a per-host detail tooltip', async ({
+    page,
+  }) => {
+    // The demo's seeded health data has no overdue hosts, so this reproduces
+    // a host whose own last report is stale even though the schedule itself
+    // looks on track, which is exactly what the Overdue chip's tooltip
+    // exists to surface.
+    const { overdueChip } = await openOverdueScheduleCard(page)
+    await expect(overdueChip).toBeVisible()
+    await expect(overdueChip).toContainText('Overdue')
+
+    await expect(overdueChip).toHaveAttribute(
+      'title',
+      /Production Web Server \(web-server-01\) — last backup:/,
+    )
+  })
+
+  test('running schedule card shows a Running pill', async ({ page }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, { last_status: 'started' })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const runningPill = card.locator('.entity-running-pill')
+    await expect(runningPill).toBeVisible()
+    await expect(runningPill).toContainText('Running')
+
+    const otherCard = page.locator('.schedule-card', { hasText: 'database-hourly' })
+    await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
+  })
+
+  test("clicking a schedule card's Overdue chip navigates to the schedule detail page", async ({
+    page,
+  }) => {
+    const { overdueChip } = await openOverdueScheduleCard(page)
+    await expect(overdueChip).toBeVisible()
+
+    await overdueChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/schedules\/1$/)
+  })
+
+  test("clicking a schedule card's Failed chip navigates to the filtered activity log", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      last_status: 'failed',
+      last_error_message: 'Simulated failure',
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const failedChip = card.locator('.entity-issue-chip.sev-danger')
+    await expect(failedChip).toBeVisible()
+
+    await failedChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed/)
+  })
+
+  test("clicking a schedule card's Warning chip navigates to the filtered activity log", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      last_status: 'warning',
+      last_error_message: 'Simulated warning',
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const warningChip = card.locator('.entity-issue-chip', { hasText: 'Warning' })
+    await expect(warningChip).toBeVisible()
+
+    await warningChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=warning/)
   })
 
   test('clicking a schedule navigates to detail page', async ({ page }) => {
@@ -102,6 +205,41 @@ test.describe('Schedules management', () => {
     await expect(
       page.locator('.per-host-paths').or(page.locator('.per-host-entry')).first(),
     ).toBeVisible()
+  })
+
+  test('schedule detail shows a Retry button for an overdue target and re-runs just that host', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+
+    // stale-report-01 is seeded with a backdated backup report, so its
+    // schedule always shows this target as overdue - see seed-demo.sh.
+    const listResp = await page.request.get('/api/schedules')
+    expect(listResp.ok()).toBe(true)
+    const schedules = (await listResp.json()) as ScheduleListEntry[]
+    const staleSchedule = schedules.find((s) => s.name === 'Stale nightly report')
+    expect(staleSchedule).toBeDefined()
+
+    await page.goto(`/schedules/${staleSchedule!.id}`)
+    await page.waitForLoadState('networkidle')
+
+    const targetsRow = page.locator('.info-row-targets')
+    await expect(targetsRow).toBeVisible({ timeout: 15_000 })
+    await expect(targetsRow.getByText('Overdue')).toBeVisible({ timeout: 10_000 })
+    const retryButton = targetsRow.getByRole('button', { name: 'Retry' })
+    await expect(retryButton).toBeVisible()
+
+    const [runResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          /\/api\/schedules\/\d+\/run$/.test(resp.url()) && resp.request().method() === 'POST',
+      ),
+      retryButton.click(),
+    ])
+    expect(runResponse.ok()).toBe(true)
+    expect(runResponse.request().postDataJSON()).toEqual({
+      agent_ids: [expect.any(Number)],
+    })
   })
 
   test('creating a new schedule succeeds (regression: agent_ids/_per_agent field naming)', async ({

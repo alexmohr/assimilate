@@ -26,6 +26,10 @@ Priority order, checked every poll cycle:
    skills/frontend checklists) before committing and pushing. Never touch
    the repo's own status labels - .github/workflows/pr-status-labels.yml
    owns those end to end and re-evaluates them automatically on every push.
+   No review pass runs here - this repo's own claude-review.yml already
+   reviews every PR once its checks settle (see pre-review-checks.js), so a
+   second automated review pass over the same commit would just be spending
+   twice for one job.
 2. If a PR keeps hitting the same problem after several push attempts, stop
    touching it (`opencode-harness-stuck` label + a comment) rather than
    burning cycles or pushing something worse.
@@ -43,6 +47,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import re
 import sys
 import time
 from enum import Enum
@@ -83,6 +88,72 @@ def _sanitize_subject(text: str, max_len: int = 60) -> str:
     return text or "automated change"
 
 
+# Substrings of gh.py's own get_failing_check_logs placeholders - emitted
+# when the `gh` log fetch for a failing check came back empty or errored,
+# not when CI itself produced no output. Kept here (not in gh.py) since
+# only this file's fingerprinting/circuit-breaker logic cares about telling
+# the two apart.
+_LOG_PLACEHOLDER_MARKERS = (
+    "no failed-step log content returned for this check",
+    "could not fetch log for run",
+    "no failed check logs could be retrieved",
+)
+
+# GitHub Actions timestamps every log line, and get_failing_check_logs'
+# own "=== name (run <id>) ===" header embeds the run ID - both are
+# per-run noise, not signal, when deciding whether two cycles saw "the same
+# problem" (see _normalize_ci_logs_for_fingerprint below).
+_ISO_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z")
+_RUN_HEADER_ID_RE = re.compile(r"\(run \d+\)")
+
+
+def _ci_logs_are_placeholder_only(ci_logs: str | None) -> bool:
+    """True if gh's own log-fetch pipeline (get_failing_check_logs) came
+    back with nothing but its own "couldn't retrieve this" placeholder text
+    for every failing check - i.e. CI is genuinely red, but there is zero
+    real diagnostic content behind it for opencode (or a human reading the
+    stuck-PR comment) to act on. See _LOG_PLACEHOLDER_MARKERS.
+    """
+    if not ci_logs or not ci_logs.strip():
+        return True
+    lines = [
+        line.strip()
+        for line in ci_logs.splitlines()
+        if line.strip() and not line.strip().startswith("===")
+    ]
+    if not lines:
+        return True
+    return all(any(marker in line for marker in _LOG_PLACEHOLDER_MARKERS) for line in lines)
+
+
+def _normalize_ci_logs_for_fingerprint(ci_logs: str | None) -> str:
+    """Strips per-run noise from `ci_logs` before it's hashed into
+    `_fingerprint`, so two cycles that saw the exact same underlying
+    failure fingerprint identically instead of looking like "a new
+    problem" purely because a timestamp or run ID changed - without this,
+    a genuinely recurring CI failure could dodge the circuit breaker
+    forever, retrying indefinitely instead of ever tripping
+    `max_stuck_cycles`.
+
+    Placeholder-only content (see _ci_logs_are_placeholder_only) collapses
+    to a fixed marker instead of being normalized: its only per-run-varying
+    part is the run ID in the header, and once that's stripped it would
+    otherwise fingerprint identically to any other run of *any* check that
+    also failed to yield a log - a false "same problem" signal in the
+    other direction. handle_pr_fix separately avoids counting a cycle
+    toward the circuit breaker at all when this marker is the only content
+    driving the fingerprint (see its own _ci_logs_are_placeholder_only
+    check) - this just keeps the fingerprint itself honest either way.
+    """
+    if not ci_logs:
+        return ""
+    if _ci_logs_are_placeholder_only(ci_logs):
+        return "<no-ci-diagnostic>"
+    text = _ISO_TIMESTAMP_RE.sub("<ts>", ci_logs)
+    text = _RUN_HEADER_ID_RE.sub("(run <id>)", text)
+    return text
+
+
 def _fingerprint(
     pr: PrDetail, ci_logs: str | None, review_comments: str | None, precheck_notes: str | None
 ) -> str:
@@ -92,7 +163,7 @@ def _fingerprint(
         str(pr.coverage_failed),
         str(pr.duplicate_code),
         str(pr.changes_requested),
-        ci_logs or "",
+        _normalize_ci_logs_for_fingerprint(ci_logs),
         review_comments or "",
         precheck_notes or "",
     ]
@@ -344,14 +415,30 @@ def _resolve_conflicts(cfg: Config, model: str) -> RebaseOutcome:
 
 
 def _commit_message_for(pr: PrDetail, cfg: Config) -> str:
+    """Describes whichever problem this attempt was actually spent fixing.
+
+    `pr` is the state `handle_pr_fix` fetched before this attempt, so this
+    reflects what was outstanding going in, not what's left afterward.
+    `merge_conflict` stays first - it's handled by its own dedicated rebase
+    step (_resolve_conflicts) earlier in handle_pr_fix, structurally
+    separate from everything else here. Below that, `ci_failing` and the
+    precheck stages now come *before* `changes_requested` - a PR can carry
+    `changes requested` and a broken CI run at the same time (an open
+    review thread doesn't stop CI from also failing), and checking
+    changes_requested first unconditionally mislabeled every commit "fix:
+    address review feedback" even when the push never touched the review
+    thread at all and was purely a CI/duplicate-code fix - confirmed on PR
+    #334, where 5+ CI/precheck-only pushes all carried that message while
+    the actual review thread sat untouched for days.
+    """
     if pr.merge_conflict:
         return f"fix: rebase onto {cfg.base_branch}"
-    if pr.changes_requested:
-        return "fix: address review feedback"
     if pr.ci_failing:
         return "fix: resolve CI failures"
     if pr.coverage_failed or pr.duplicate_code:
         return "fix: address pre-flight check findings"
+    if pr.changes_requested:
+        return "fix: address review feedback"
     return "fix: address outstanding PR feedback"
 
 
@@ -508,92 +595,6 @@ def _pr_task_context(
     )
 
 
-def _commit_with_self_review(
-    cfg: Config, prompt: str, model: str, commit_message: str, task_label: str
-) -> bool:
-    """Commits whatever opencode's fix-and-validate loop just produced, then
-    runs exactly one review pass over that commit - using the model this
-    harness's own routing table recommends for "Code review" - before this
-    harness ever pushes it. Returns False only if there was nothing to
-    commit at all (mirrors git_ops.commit's own contract); otherwise the repo
-    is left at a commit ready to push, having had its one review pass.
-
-    The diff is committed *first*, then reviewed - not reviewed as an
-    uncommitted working-tree diff - specifically so the reviewer's own
-    opencode session (told not to edit anything, but nothing enforces that)
-    can never lose the actual fix: whatever it leaves behind in the working
-    tree afterward is unconditionally discarded via discard_uncommitted_changes,
-    which is only safe here because the fix itself is already sitting in a
-    real commit rather than only in the working tree.
-
-    Exactly one review pass, never a loop: if it reports a blocking finding,
-    one more opencode attempt (through the same run_fix_and_validate retry
-    machinery every other fix uses) gets to address it and, if that
-    converges, is committed as a second commit - but the result is pushed
-    either way. A follow-up attempt that fails to even validate is discarded
-    back to the original, already-validated commit rather than losing it -
-    a test/lint failure is a harder signal than one reviewer's opinion, and
-    this gate exists to catch problems tests miss, not to block a working fix
-    over an unresolved advisory finding.
-    """
-    if not git_ops.commit(cfg.repo_dir, commit_message):
-        return False
-    reviewed_sha = git_ops.head_sha(cfg.repo_dir)
-
-    diff_text = git_ops.diff_between(cfg.repo_dir, f"{reviewed_sha}^", reviewed_sha)
-    review_model = model_router.model_for_task_type(cfg, "code_review")
-    result = opencode_runner.run_opencode(
-        prompts.build_self_review_prompt(diff_text),
-        cfg.repo_dir,
-        review_model,
-        cfg.review_timeout_seconds,
-    )
-    # Safe precisely because reviewed_sha already holds the actual fix as a
-    # real commit - this can never lose it, only undo stray edits the
-    # reviewer's own session made on top.
-    git_ops.discard_uncommitted_changes(cfg.repo_dir)
-
-    if not result.ok:
-        log.warning(
-            "self-review: run failed for %s, proceeding without it: %s",
-            task_label,
-            result.output[:300],
-        )
-        return True
-
-    verdict = model_router.parse_json_response(result.output)
-    if verdict is None or not isinstance(verdict.get("blocking"), bool):
-        log.warning(
-            "self-review: could not parse a verdict for %s, proceeding without it", task_label
-        )
-        return True
-
-    if not verdict["blocking"]:
-        log.info("self-review: %s looks clean", task_label)
-        return True
-
-    findings = str(verdict.get("findings") or "")
-    log.info(
-        "self-review: %s found a blocking issue, giving opencode one more attempt: %s",
-        task_label,
-        findings[:300],
-    )
-    retry_prompt = prompts.build_retry_prompt(prompt, "self-review", findings)
-    ok, message = run_fix_and_validate(cfg, retry_prompt, model)
-    if not ok:
-        log.warning(
-            "self-review: follow-up fix for %s did not converge (%s); pushing the original, "
-            "already-validated commit instead",
-            task_label,
-            message,
-        )
-        git_ops.discard_uncommitted_changes(cfg.repo_dir)
-        return True
-
-    git_ops.commit(cfg.repo_dir, f"fix: address self-review findings ({task_label})")
-    return True
-
-
 def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     """Attempts to fix `pr`. Returns True only if a fix was actually pushed -
     this is what "solved problems" counts for --max-solved."""
@@ -619,7 +620,33 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
 
     fingerprint = _fingerprint(pr, ci_logs, review_comments, precheck_notes)
     head_sha = gh.get_pr_head_sha(cfg.repo, pr.number)
-    attempts = state.record_attempt(pr.number, fingerprint, head_sha)
+    if (
+        pr.ci_failing
+        and _ci_logs_are_placeholder_only(ci_logs)
+        and not (review_comments or precheck_notes)
+    ):
+        # CI is red, but gh's own log fetch (get_failing_check_logs) came
+        # back with nothing but its own "couldn't retrieve this" text for
+        # every failing check, and there's no other real content (review
+        # comments, precheck notes) to fall back on either - opencode is
+        # about to be given zero real diagnostic content to act on. Peeking
+        # the existing count instead of recording a new one means a run of
+        # these blind cycles can't trip the circuit breaker on its own -
+        # confirmed on PR #334, where 3 cycles of nothing but this
+        # placeholder text produced 3 identical fingerprints and the
+        # harness confidently gave up ("the same problem has persisted
+        # across 3 attempts") having never actually shown opencode what was
+        # failing. A cycle that *does* have real content of any kind still
+        # counts normally, below.
+        log.warning(
+            "PR #%d: CI is failing but no real diagnostic log content could be retrieved for "
+            "any failing check (gh log fetch returned only placeholder text) - not counting "
+            "this cycle toward the stuck circuit breaker",
+            pr.number,
+        )
+        attempts = state.peek_attempts(pr.number)
+    else:
+        attempts = state.record_attempt(pr.number, fingerprint, head_sha)
     if attempts > cfg.max_stuck_cycles:
         details = _problem_summary(pr, ci_logs, review_comments, precheck_notes)
         # Only review feedback recurring, with CI/merge/pre-flight all clean,
@@ -770,10 +797,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
-    committed = _commit_with_self_review(
-        cfg, prompt, model, _commit_message_for(pr, cfg), f"PR #{pr.number}"
-    )
-    if not committed:
+    if not git_ops.commit(cfg.repo_dir, _commit_message_for(pr, cfg)):
         log.warning("PR #%d: opencode made no net changes; nothing to push", pr.number)
         return False
     # force_with_lease unconditionally, not just pr.merge_conflict: the
@@ -829,11 +853,21 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         or detail.coverage_failed
         or detail.duplicate_code
     ):
-        # `needs human review` is the repo's own sticky sign-off gate (see
-        # HUMAN_LABEL/humanSignOffStillStands in sync-pr-labels.js) - only a
-        # human removing the *label* counts as clearing it; dismissing the
-        # review that triggered it does not touch this label at all, and
-        # neither does a fresh approval that leaves the label in place.
+        # `needs human review` is the repo's own sign-off gate (see
+        # HUMAN_LABEL/humanSignOffStillStands in sync-pr-labels.js). Only a
+        # human removing the *label* counts as genuine sign-off; dismissing
+        # the review that triggered it does not touch this label at all,
+        # and neither does a fresh approval that leaves the label in place.
+        # sync-pr-labels.js *does* also strip this label itself while
+        # CI/merge conflict/a precheck stage is failing - it's the repo's
+        # last gate, not a parallel one, so a PR that isn't even buildable
+        # yet doesn't need a human's judgment call - but that's provenance-
+        # checked there (see claudeApprovedIsGenuine's pattern applied to
+        # HUMAN_LABEL) precisely so it's never confused with a real human
+        # sign-off; this branch's own `not (ci_failing or merge_conflict or
+        # coverage_failed or duplicate_code)` guard means we only ever get
+        # here once those are already clear, so that distinction doesn't
+        # change anything about this branch itself.
         # Deliberately keyed on needs_human_review alone, not also
         # detail.changes_requested: if this required both, changes_requested
         # flipping back to False on its own (e.g. that same or another
@@ -850,22 +884,48 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         # without this it would look "stuck" again a few attempts later,
         # chasing the exact same already-addressed review content.
         if cfg.stuck_label not in detail.labels:
-            _mark_stuck(
-                cfg,
-                state,
-                detail,
-                "this PR carries the repo's own `needs human review` label with no other "
-                "fixable problem outstanding",
-                "The `needs human review` label only ever clears when a human removes it "
-                "themselves - pushing more commits, or even a fresh approval, can't do that. "
-                "If a reviewer's changes-requested verdict is also still in effect, only that "
-                "reviewer's own new review or dismissal refreshes it. Please resolve the "
-                "outstanding review situation and remove `needs human review` yourself to have "
-                "the harness retry.",
-                question=True,
-            )
-            if not cfg.dry_run:
-                state.set_stuck_reason(number, "needs_human_review")
+            head_sha = gh.get_pr_head_sha(cfg.repo, number)
+            # `needs human review` toggling off and back on with no new
+            # commit - e.g. CI flickers red for a cycle (which now strips
+            # this label - see sync-pr-labels.js) and then goes green again
+            # with the same content re-deriving it - used to make this
+            # branch re-post the identical "pausing... needs a decision"
+            # comment every single time it happened: 5 near-duplicate
+            # copies over 5 days on PR #334, none of them carrying anything
+            # new for a human to act on. Only post a fresh comment when the
+            # commit has actually changed since the last one; still
+            # re-apply the bookkeeping labels either way (cheap, idempotent,
+            # and the un-stick block below depends on stuck_reason being
+            # set) so a human landing on the PR still sees why it's parked.
+            if state.needs_human_review_notified_sha(number) == head_sha:
+                log.info(
+                    "PR #%d: still blocked on `needs human review` at the same commit already "
+                    "announced - re-applying labels without re-posting the comment",
+                    number,
+                )
+                if not cfg.dry_run:
+                    gh.add_label(cfg.repo, number, cfg.stuck_label)
+                    gh.add_label(cfg.repo, number, cfg.question_label)
+                    state.set_stuck_reason(number, "needs_human_review")
+            else:
+                _mark_stuck(
+                    cfg,
+                    state,
+                    detail,
+                    "this PR carries the repo's own `needs human review` label with no other "
+                    "fixable problem outstanding",
+                    "The `needs human review` label only ever clears when a human removes it "
+                    "themselves (or CI/merge/a precheck stage starts failing again) - pushing "
+                    "more commits, or even a fresh approval, can't do that on its own. If a "
+                    "reviewer's changes-requested verdict is also still in effect, only that "
+                    "reviewer's own new review or dismissal refreshes it. Please resolve the "
+                    "outstanding review situation and remove `needs human review` yourself to "
+                    "have the harness retry.",
+                    question=True,
+                )
+                if not cfg.dry_run:
+                    state.set_stuck_reason(number, "needs_human_review")
+                    state.set_needs_human_review_notified_sha(number, head_sha)
         else:
             log.info("PR #%d: still needs human review, skipping", number)
         return None
@@ -1052,10 +1112,7 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
-    committed = _commit_with_self_review(
-        cfg, prompt, model, f"fix: {_sanitize_subject(issue['title'])}", f"issue #{number}"
-    )
-    if not committed:
+    if not git_ops.commit(cfg.repo_dir, f"fix: {_sanitize_subject(issue['title'])}"):
         log.warning("issue #%d: opencode made no changes", number)
         return False
     git_ops.push(cfg.repo_dir, branch, force_with_lease=True)

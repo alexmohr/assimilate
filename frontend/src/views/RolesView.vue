@@ -7,9 +7,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, onMounted, ref } from 'vue'
 import { Plus, Trash2 } from '@lucide/vue'
 import { apiClient } from '../api/client'
-import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import ModalFormActions from '../components/ModalFormActions.vue'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 interface Role {
   id: number
@@ -90,14 +91,20 @@ const createForm = ref<{ name: string } & Record<PermissionKey, boolean>>({
   name: '',
   ...emptyPerms(),
 })
-const createError = ref<string | null>(null)
+const {
+  loading: createSubmitting,
+  error: createError,
+  run: runCreate,
+} = useAsyncAction('Failed to create role')
+
 const showEditModal = ref(false)
 const editTarget = ref<Role | null>(null)
-const createSubmitting = ref(false)
-
 const editForm = ref<Record<PermissionKey, boolean>>(emptyPerms())
-const editError = ref<string | null>(null)
-const editSubmitting = ref(false)
+const {
+  loading: editSubmitting,
+  error: editError,
+  run: runEdit,
+} = useAsyncAction('Failed to update role')
 
 const showDeleteModal = ref(false)
 const deleteTarget = ref<Role | null>(null)
@@ -141,17 +148,26 @@ async function submitCreate(): Promise<void> {
     createError.value = 'Name is required'
     return
   }
-  createSubmitting.value = true
-  createError.value = null
-  try {
-    await apiClient.post('/roles', createForm.value)
+  await runCreate(async () => {
+    await apiClient.post('/roles', {
+      name: createForm.value.name.trim(),
+      can_create_agent: createForm.value.can_create_agent,
+      can_delete_agent: createForm.value.can_delete_agent,
+      can_delete_own_agent: createForm.value.can_delete_own_agent,
+      can_create_repo: createForm.value.can_create_repo,
+      can_delete_repo: createForm.value.can_delete_repo,
+      can_delete_own_repo: createForm.value.can_delete_own_repo,
+      can_create_schedule: createForm.value.can_create_schedule,
+      can_delete_schedule: createForm.value.can_delete_schedule,
+      can_delete_own_schedule: createForm.value.can_delete_own_schedule,
+      can_manage_tags: createForm.value.can_manage_tags,
+      can_view_all_repos: createForm.value.can_view_all_repos,
+      can_manage_tunnels: createForm.value.can_manage_tunnels,
+      can_upgrade_agent: createForm.value.can_upgrade_agent,
+    })
     showCreateModal.value = false
     await fetchRoles()
-  } catch (e: unknown) {
-    createError.value = extractError(e, 'Failed to create role')
-  } finally {
-    createSubmitting.value = false
-  }
+  })
 }
 
 function openEdit(role: Role): void {
@@ -166,18 +182,13 @@ function openEdit(role: Role): void {
 }
 
 async function submitEdit(): Promise<void> {
-  if (!editTarget.value) return
-  editSubmitting.value = true
-  editError.value = null
-  try {
-    await apiClient.put(`/roles/${editTarget.value.id}`, { ...editForm.value })
+  const target = editTarget.value
+  if (!target) return
+  await runEdit(async () => {
+    await apiClient.put(`/roles/${target.id}`, editForm.value)
     showEditModal.value = false
     await fetchRoles()
-  } catch (e: unknown) {
-    editError.value = extractError(e, 'Failed to update role')
-  } finally {
-    editSubmitting.value = false
-  }
+  })
 }
 
 function openDelete(role: Role): void {
@@ -322,56 +333,54 @@ onMounted((): void => {
       class="overlay"
       @click.self="showCreateModal = false"
     >
-      <div class="modal modal-wide">
-        <h2>Create Role</h2>
-        <form
-          class="modal-form"
-          @submit.prevent="submitCreate"
-        >
-          <div class="form-group">
-            <label for="create-role-name">Name <span class="required">*</span></label>
-            <input
-              id="create-role-name"
-              v-model="createForm.name"
-              type="text"
-              required
-            />
-          </div>
-          <div class="permissions-grid">
-            <label
-              v-for="perm in PERMISSION_LABELS"
-              :key="perm.key"
-              class="perm-checkbox"
-            >
-              <input
-                v-model="createForm[perm.key]"
-                type="checkbox"
-              />
-              <span>{{ perm.label }}</span>
-            </label>
-          </div>
-          <div
-            v-if="createError"
-            class="modal-error"
+      <div class="dialog dialog-lg">
+        <div class="dialog-header">
+          <h2 class="dialog-title">Create Role</h2>
+          <button
+            class="close-btn"
+            @click="showCreateModal = false"
           >
-            {{ createError }}
+            &times;
+          </button>
+        </div>
+        <form @submit.prevent="submitCreate">
+          <div class="dialog-body">
+            <div class="field">
+              <label
+                class="field-label"
+                for="create-role-name"
+                >Name <span class="required">*</span></label
+              >
+              <input
+                id="create-role-name"
+                v-model="createForm.name"
+                type="text"
+                class="input"
+                required
+              />
+            </div>
+            <div class="permissions-grid">
+              <label
+                v-for="perm in PERMISSION_LABELS"
+                :key="perm.key"
+                class="perm-checkbox"
+              >
+                <input
+                  v-model="createForm[perm.key]"
+                  type="checkbox"
+                />
+                <span>{{ perm.label }}</span>
+              </label>
+            </div>
           </div>
-          <div class="modal-actions">
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="createSubmitting || !createForm.name.trim()"
-            >
-              {{ createSubmitting ? 'Creating...' : 'Create' }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showCreateModal = false"
-            >
-              Cancel
-            </button>
-          </div>
+          <ModalFormActions
+            :submitting="createSubmitting"
+            :disabled="!createForm.name.trim()"
+            :error="createError"
+            submit-label="Create"
+            submitting-label="Creating..."
+            @cancel="showCreateModal = false"
+          />
         </form>
       </div>
     </div>
@@ -382,92 +391,71 @@ onMounted((): void => {
       class="overlay"
       @click.self="showEditModal = false"
     >
-      <div class="modal modal-wide">
-        <h2>Edit Role &mdash; {{ editTarget?.name }}</h2>
-        <form
-          class="modal-form"
-          @submit.prevent="submitEdit"
-        >
-          <div class="permissions-grid">
-            <label
-              v-for="perm in PERMISSION_LABELS"
-              :key="perm.key"
-              class="perm-checkbox"
-            >
-              <input
-                v-model="editForm[perm.key]"
-                type="checkbox"
-              />
-              <span>{{ perm.label }}</span>
-            </label>
-          </div>
-          <div class="modal-actions">
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="editSubmitting"
-            >
-              {{ editSubmitting ? 'Saving...' : 'Save' }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showEditModal = false"
-            >
-              Cancel
-            </button>
-          </div>
-          <div
-            v-if="editError"
-            class="modal-error"
+      <div class="dialog dialog-lg">
+        <div class="dialog-header">
+          <h2 class="dialog-title">Edit Role &mdash; {{ editTarget?.name }}</h2>
+          <button
+            class="close-btn"
+            @click="showEditModal = false"
           >
-            {{ editError }}
+            &times;
+          </button>
+        </div>
+        <form @submit.prevent="submitEdit">
+          <div class="dialog-body">
+            <div class="permissions-grid">
+              <label
+                v-for="perm in PERMISSION_LABELS"
+                :key="perm.key"
+                class="perm-checkbox"
+              >
+                <input
+                  v-model="editForm[perm.key]"
+                  type="checkbox"
+                />
+                <span>{{ perm.label }}</span>
+              </label>
+            </div>
           </div>
+          <ModalFormActions
+            :submitting="editSubmitting"
+            :error="editError"
+            submit-label="Save"
+            submitting-label="Saving..."
+            @cancel="showEditModal = false"
+          />
         </form>
       </div>
     </div>
 
     <!-- Delete Role Modal -->
-    <div
-      v-if="showDeleteModal"
-      class="overlay"
-      @click.self="showDeleteModal = false"
+    <ConfirmDeleteDialog
+      :show="showDeleteModal"
+      title="Delete Role"
+      :submitting="deleteSubmitting"
+      :error="deleteError"
+      @cancel="showDeleteModal = false"
+      @confirm="confirmDelete"
     >
-      <div class="modal">
-        <h2>Delete Role</h2>
-        <p class="confirm-text">
-          Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
-          >? Users assigned this role will lose its permissions.
-        </p>
-        <div class="modal-actions">
-          <button
-            class="btn btn-danger"
-            :disabled="deleteSubmitting"
-            @click="confirmDelete"
-          >
-            {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-          </button>
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-        </div>
-        <div
-          v-if="deleteError"
-          class="modal-error"
-        >
-          {{ deleteError }}
-        </div>
-      </div>
-    </div>
+      Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
+      >? Users assigned this role will lose its permissions.
+    </ConfirmDeleteDialog>
   </div>
 </template>
 
 <style scoped>
 .roles-page {
   max-width: 1200px;
+}
+
+@media (max-width: 768px) {
+  .page-description {
+    display: none;
+  }
+}
+
+.dialog-lg {
+  width: 550px;
 }
 
 .matrix-wrap {
@@ -571,13 +559,7 @@ onMounted((): void => {
 }
 
 .actions-cell {
-  display: flex;
-  gap: 0.375rem;
   justify-content: flex-end;
-}
-
-.modal-wide {
-  max-width: 550px;
 }
 
 .permissions-grid {

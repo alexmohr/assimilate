@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET lockout_escalation_level = lockout_escalation_level + 1 WHERE username = $1 AND (locked_until IS NULL OR locked_until <= NOW()) RETURNING lockout_escalation_level",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "lockout_escalation_level",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "44ee0bcd3ae37f241e27e081f6126d661544f09a6a964bae4cc2277a4ad819af"
+}

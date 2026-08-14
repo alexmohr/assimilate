@@ -8,11 +8,14 @@ import { ref, reactive, onMounted } from 'vue'
 import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
+import { logger } from '../utils/logger'
 import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useMobile } from '../composables/useMobile'
+import { useWebSocket } from '../composables/useWebSocket'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import ModalFormActions from '../components/ModalFormActions.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
 
 const { isMobile } = useMobile()
@@ -45,8 +48,7 @@ const quotas = ref<ServerQuotaResponse[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load server quotas')
 
 const editingHost = ref<string | null>(null)
-const editError = ref<string | null>(null)
-const editLoading = ref(false)
+const { loading: editLoading, error: editError, run: runEdit } = useAsyncAction()
 const editForm = reactive({
   warn_gb: 0,
   critical_gb: 0,
@@ -79,11 +81,10 @@ function cancelEdit(): void {
 }
 
 async function saveEdit(): Promise<void> {
-  if (!editingHost.value) return
-  editLoading.value = true
-  editError.value = null
-  try {
-    const updated = await upsertServerQuota(editingHost.value, {
+  const host = editingHost.value
+  if (!host) return
+  await runEdit(async () => {
+    const updated = await upsertServerQuota(host, {
       warn_bytes: gbToBytes(editForm.warn_gb),
       critical_bytes: gbToBytes(editForm.critical_gb),
       warn_action: editForm.warn_action,
@@ -93,11 +94,7 @@ async function saveEdit(): Promise<void> {
     const index = quotas.value.findIndex((q) => q.ssh_host === updated.ssh_host)
     if (index !== -1) quotas.value[index] = updated
     editingHost.value = null
-  } catch (e: unknown) {
-    editError.value = extractError(e)
-  } finally {
-    editLoading.value = false
-  }
+  })
 }
 
 async function removeQuota(quota: ServerQuotaResponse): Promise<void> {
@@ -113,6 +110,10 @@ async function removeQuota(quota: ServerQuotaResponse): Promise<void> {
 }
 
 onMounted(loadQuotas)
+
+const { onMessage } = useWebSocket()
+
+onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 </script>
 
 <template>
@@ -298,80 +299,92 @@ onMounted(loadQuotas)
       class="overlay"
       @click.self="cancelEdit"
     >
-      <div class="modal">
-        <h2>Quota for {{ editingHost }}</h2>
-        <form
-          class="modal-form"
-          @submit.prevent="saveEdit"
-        >
-          <div class="form-group">
-            <label for="warn-gb">Warning threshold (GB)</label>
-            <input
-              id="warn-gb"
-              v-model.number="editForm.warn_gb"
-              type="number"
-              min="0"
-              step="0.1"
-            />
-          </div>
-          <div class="form-group">
-            <label for="warn-action">Warning action</label>
-            <select
-              id="warn-action"
-              v-model="editForm.warn_action"
-            >
-              <option value="notify_only">Notify only</option>
-              <option value="block_backups">Block backups</option>
-              <option value="disable_schedule">Disable schedule</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="critical-gb">Critical threshold (GB)</label>
-            <input
-              id="critical-gb"
-              v-model.number="editForm.critical_gb"
-              type="number"
-              min="0"
-              step="0.1"
-            />
-          </div>
-          <div class="form-group">
-            <label for="critical-action">Critical action</label>
-            <select
-              id="critical-action"
-              v-model="editForm.critical_action"
-            >
-              <option value="notify_only">Notify only</option>
-              <option value="block_backups">Block backups</option>
-              <option value="disable_schedule">Disable schedule</option>
-            </select>
-          </div>
-          <div class="form-group toggle-row">
-            <span>Enabled</span>
-            <ToggleSwitch v-model="editForm.enabled" />
-          </div>
-          <div
-            v-if="editError"
-            class="modal-error"
+      <div class="dialog">
+        <div class="dialog-header">
+          <h2 class="dialog-title">Quota for {{ editingHost }}</h2>
+          <button
+            class="close-btn"
+            @click="cancelEdit"
           >
-            {{ editError }}
+            &times;
+          </button>
+        </div>
+        <form @submit.prevent="saveEdit">
+          <div class="dialog-body">
+            <div class="field">
+              <label
+                class="field-label"
+                for="warn-gb"
+                >Warning threshold (GB)</label
+              >
+              <input
+                id="warn-gb"
+                v-model.number="editForm.warn_gb"
+                type="number"
+                class="input"
+                min="0"
+                step="0.1"
+              />
+            </div>
+            <div class="field">
+              <label
+                class="field-label"
+                for="warn-action"
+                >Warning action</label
+              >
+              <select
+                id="warn-action"
+                v-model="editForm.warn_action"
+                class="input"
+              >
+                <option value="notify_only">Notify only</option>
+                <option value="block_backups">Block backups</option>
+                <option value="disable_schedule">Disable schedule</option>
+              </select>
+            </div>
+            <div class="field">
+              <label
+                class="field-label"
+                for="critical-gb"
+                >Critical threshold (GB)</label
+              >
+              <input
+                id="critical-gb"
+                v-model.number="editForm.critical_gb"
+                type="number"
+                class="input"
+                min="0"
+                step="0.1"
+              />
+            </div>
+            <div class="field">
+              <label
+                class="field-label"
+                for="critical-action"
+                >Critical action</label
+              >
+              <select
+                id="critical-action"
+                v-model="editForm.critical_action"
+                class="input"
+              >
+                <option value="notify_only">Notify only</option>
+                <option value="block_backups">Block backups</option>
+                <option value="disable_schedule">Disable schedule</option>
+              </select>
+            </div>
+            <div class="field toggle-row">
+              <span class="field-label">Enabled</span>
+              <ToggleSwitch v-model="editForm.enabled" />
+            </div>
           </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="cancelEdit"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="editLoading"
-            >
-              {{ editLoading ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
+          <ModalFormActions
+            :submitting="editLoading"
+            :error="editError"
+            submit-label="Save"
+            submitting-label="Saving..."
+            @cancel="cancelEdit"
+          />
         </form>
       </div>
     </div>
@@ -381,23 +394,6 @@ onMounted(loadQuotas)
 <style scoped>
 .server-quotas-page {
   max-width: 1000px;
-}
-
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1.5rem;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-error {
-  color: var(--danger);
 }
 
 .table-wrap {
@@ -490,13 +486,12 @@ onMounted(loadQuotas)
   gap: 0.375rem;
 }
 
-.muted {
-  color: var(--text-muted);
+.data-table {
+  min-width: 640px;
 }
 
-.actions-cell {
-  display: flex;
-  gap: 0.375rem;
+.muted {
+  color: var(--text-muted);
 }
 
 .status-badge {
@@ -520,14 +515,6 @@ onMounted(loadQuotas)
 .badge-critical {
   background: var(--danger-subtle);
   color: var(--danger);
-}
-
-.data-table {
-  min-width: 640px;
-}
-
-.modal {
-  max-width: 420px;
 }
 
 .toggle-row {

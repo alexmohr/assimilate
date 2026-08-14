@@ -16,10 +16,13 @@ pub mod tags;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::{Compression, ScheduleType};
+use shared::types::{BackupStatus, ScheduleType, SystemEventType};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
+
+/// Exponential backoff durations for account lockout (indexed by escalation level).
+pub const LOCKOUT_DURATIONS: &[i64] = &[1, 5, 15, 60, 1440];
 
 /// Sentinel `agent_token_hash` value for imported placeholder agents that have
 /// no real authentication token.
@@ -47,8 +50,10 @@ pub async fn resolve_agent_for_hostname(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE hostname = $1 AND agent_token_hash != \
          'imported:no-auth'",
         hostname,
@@ -81,8 +86,10 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE id = $1",
         source_id,
     )
@@ -175,7 +182,7 @@ pub struct AgentRow {
     pub last_seen_at: Option<DateTime<Utc>>,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
-    /// Visibility scope (e.g. "public", "private").
+    /// Visibility scope.
     pub visibility: String,
     /// Default backup paths for schedules targeting this agent.
     #[serde(default)]
@@ -184,9 +191,11 @@ pub struct AgentRow {
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
     /// Default pre-backup commands.
-    pub default_pre_backup_commands: String,
+    #[schema(value_type = Vec<String>)]
+    pub default_pre_backup_commands: sqlx::types::Json<Vec<String>>,
     /// Default post-backup commands.
-    pub default_post_backup_commands: String,
+    #[schema(value_type = Vec<String>)]
+    pub default_post_backup_commands: sqlx::types::Json<Vec<String>>,
     /// Default file-change detection patterns (raw text).
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
@@ -351,10 +360,12 @@ pub struct ScheduleRow {
     pub compact_enabled: bool,
     /// Rate limit in KB/s, if any.
     pub rate_limit_kbps: Option<i32>,
-    /// Pre-backup commands (raw text).
-    pub pre_backup_commands: String,
-    /// Post-backup commands (raw text).
-    pub post_backup_commands: String,
+    /// Pre-backup commands.
+    #[schema(value_type = Vec<String>)]
+    pub pre_backup_commands: sqlx::types::Json<Vec<String>>,
+    /// Post-backup commands.
+    #[schema(value_type = Vec<String>)]
+    pub post_backup_commands: sqlx::types::Json<Vec<String>>,
     /// Execution mode (e.g. "sequential").
     pub execution_mode: String,
     /// On-failure behaviour (e.g. "continue", "abort").
@@ -413,8 +424,10 @@ pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<Agen
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE hostname = $1",
         hostname,
     )
@@ -436,8 +449,10 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE id = $1",
         agent_id,
     )
@@ -561,9 +576,11 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
             AgentRow,
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
              agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-             default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-             default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
-             is_hidden, last_ssh_user FROM agents ORDER BY hostname",
+             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+             \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+             default_post_backup_commands AS \"default_post_backup_commands: \
+             sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
+             agent_token_hash, is_hidden, last_ssh_user FROM agents ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -573,9 +590,12 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
             AgentRow,
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
              agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-             default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-             default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
-             is_hidden, last_ssh_user FROM agents WHERE is_hidden = false ORDER BY hostname",
+             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+             \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+             default_post_backup_commands AS \"default_post_backup_commands: \
+             sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
+             agent_token_hash, is_hidden, last_ssh_user FROM agents WHERE is_hidden = false ORDER \
+             BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -598,7 +618,9 @@ pub async fn set_agent_hidden(
         "UPDATE agents SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
+         \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
         hostname,
         hidden,
@@ -625,8 +647,10 @@ pub async fn get_or_create_agent_by_hostname(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user FROM agents WHERE hostname = $1",
         hostname,
     )
@@ -643,8 +667,10 @@ pub async fn get_or_create_agent_by_hostname(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         Some(format!("{hostname} (imported)")),
@@ -670,8 +696,10 @@ pub async fn insert_agent(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         display_name,
@@ -692,9 +720,9 @@ pub struct AgentDefaults<'a> {
     /// Default exclude patterns.
     pub default_exclude_patterns: &'a [String],
     /// Default pre-backup commands.
-    pub default_pre_backup_commands: &'a str,
+    pub default_pre_backup_commands: &'a [String],
     /// Default post-backup commands.
-    pub default_post_backup_commands: &'a str,
+    pub default_post_backup_commands: &'a [String],
     /// Default file-change detection patterns (raw text).
     pub default_file_change_patterns_raw: &'a str,
 }
@@ -715,16 +743,18 @@ pub async fn insert_agent_with_paths(
          default_file_change_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, \
          hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         defaults.display_name,
         token_hash,
         defaults.default_backup_paths,
         defaults.default_exclude_patterns,
-        defaults.default_pre_backup_commands,
-        defaults.default_post_backup_commands,
+        sqlx::types::Json(defaults.default_pre_backup_commands) as _,
+        sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
     )
     .fetch_one(pool)
@@ -750,16 +780,18 @@ pub async fn update_agent(
          default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname \
          = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
          is_hidden, last_ssh_user",
         hostname,
         new_hostname,
         defaults.display_name,
         defaults.default_backup_paths,
         defaults.default_exclude_patterns,
-        defaults.default_pre_backup_commands,
-        defaults.default_post_backup_commands,
+        sqlx::types::Json(defaults.default_pre_backup_commands) as _,
+        sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
     )
     .fetch_one(pool)
@@ -785,7 +817,9 @@ pub async fn regenerate_agent_token(
         "UPDATE agents SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
+         \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
         hostname,
         token_hash,
@@ -1039,6 +1073,86 @@ pub async fn set_repo_importing(
     .await
     .map_err(ApiError::Database)?;
     Ok(())
+}
+
+/// Guards `repo_import_state.importing` for the duration of a sync/import
+/// operation, clearing it back to `false` on drop - including during a panic
+/// unwind - so a panic partway through the sync work can't leave a repo stuck
+/// showing "syncing" forever. Unlike [`crate::repo_op_tracker::RepoOpTracker`]'s
+/// in-memory active-op tracking (which already has a panic-safe
+/// `RepoOpGuard`), this DB-persisted flag had no such net: a scheduled repo
+/// sync skips any repo already marked `importing`, so a stuck flag also
+/// permanently blocks that repo's own periodic sync, not just the UI's
+/// "syncing" indicator.
+///
+/// `Drop` can't await, so cleanup runs as a spawned task (mirroring
+/// `RepoOpGuard`); call [`Self::clear_now`] on the normal-completion path so
+/// the flag is cleared before you return, instead of racing the spawned task.
+/// Calling `clear_now` disarms the `Drop` cleanup, so a concurrent operation
+/// that legitimately re-sets `importing = true` for this `repo_id` right
+/// after can't be clobbered by a stale deferred clear.
+pub struct ImportingGuard {
+    pool: PgPool,
+    repo_id: i64,
+    task_registry: shared::task_registry::TaskRegistry,
+    cleared: bool,
+}
+
+impl ImportingGuard {
+    /// Sets `importing = true` for `repo_id` and returns a guard that clears
+    /// it back to `false` on drop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApiError::Database`] if the database query fails.
+    pub async fn acquire(
+        pool: &PgPool,
+        repo_id: i64,
+        task_registry: shared::task_registry::TaskRegistry,
+    ) -> Result<Self, ApiError> {
+        set_repo_importing(pool, repo_id, true).await?;
+        Ok(Self {
+            pool: pool.clone(),
+            repo_id,
+            task_registry,
+            cleared: false,
+        })
+    }
+
+    /// Clears the importing flag immediately, awaiting the write instead of
+    /// leaving it to the guard's deferred `Drop` cleanup.
+    pub async fn clear_now(mut self) {
+        match set_repo_importing(&self.pool, self.repo_id, false).await {
+            Ok(()) => self.cleared = true,
+            Err(e) => {
+                tracing::error!(
+                    repo_id = self.repo_id,
+                    error = %e,
+                    "failed to clear importing flag"
+                );
+            }
+        }
+    }
+}
+
+impl Drop for ImportingGuard {
+    fn drop(&mut self) {
+        if self.cleared {
+            return;
+        }
+        let pool = self.pool.clone();
+        let repo_id = self.repo_id;
+        let handle = tokio::spawn(async move {
+            if let Err(e) = set_repo_importing(&pool, repo_id, false).await {
+                tracing::error!(
+                    repo_id,
+                    error = %e,
+                    "failed to clear importing flag on guard drop"
+                );
+            }
+        });
+        self.task_registry.register(handle);
+    }
 }
 
 /// # Errors
@@ -1848,10 +1962,12 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a \
-         ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
-         a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER BY s.id",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM \
+         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
+         ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER \
+         BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -1894,9 +2010,9 @@ pub struct ScheduleParams<'a> {
     /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<i32>,
     /// Pre-backup commands.
-    pub pre_backup_commands: &'a str,
+    pub pre_backup_commands: &'a [String],
     /// Post-backup commands.
-    pub post_backup_commands: &'a str,
+    pub post_backup_commands: &'a [String],
     /// On-failure behaviour.
     pub on_failure: &'a str,
     /// Raw file-change detection pattern text.
@@ -1923,8 +2039,10 @@ pub async fn insert_schedule(
          cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
          exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
          keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+         pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -1941,8 +2059,8 @@ pub async fn insert_schedule(
         params.keep_yearly,
         params.compact_enabled,
         params.rate_limit_kbps,
-        params.pre_backup_commands,
-        params.post_backup_commands,
+        sqlx::types::Json(params.pre_backup_commands) as _,
+        sqlx::types::Json(params.post_backup_commands) as _,
         params.on_failure,
         owner_id,
     )
@@ -1971,9 +2089,10 @@ pub async fn update_schedule(
          $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\"",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         id,
         params.name,
         params.cron_expression,
@@ -1989,8 +2108,8 @@ pub async fn update_schedule(
         params.keep_yearly,
         params.compact_enabled,
         params.rate_limit_kbps,
-        params.pre_backup_commands,
-        params.post_backup_commands,
+        sqlx::types::Json(params.pre_backup_commands) as _,
+        sqlx::types::Json(params.post_backup_commands) as _,
         params.on_failure,
     )
     .fetch_one(pool)
@@ -2020,20 +2139,6 @@ pub async fn update_schedule_repo(pool: &PgPool, id: i64, repo_id: i64) -> Resul
         return Err(ApiError::NotFound(format!("schedule {id} not found")));
     }
     Ok(())
-}
-
-/// Converts a [`Compression`] enum to its string representation.
-#[must_use]
-pub fn compression_to_str(c: &Compression) -> String {
-    c.to_string()
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::Internal`] if an internal error occurs.
-pub fn compression_from_str(s: &str) -> Result<Compression, ApiError> {
-    s.parse::<Compression>()
-        .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))
 }
 
 /// A row from the `repos` table including the encrypted passphrase.
@@ -2471,9 +2576,9 @@ pub struct PerAgentCommands {
     /// Agent ID.
     pub agent_id: i64,
     /// Pre-backup commands for this agent.
-    pub pre_backup_commands: String,
+    pub pre_backup_commands: Vec<String>,
     /// Post-backup commands for this agent.
-    pub post_backup_commands: String,
+    pub post_backup_commands: Vec<String>,
 }
 
 /// # Errors
@@ -2483,17 +2588,18 @@ pub async fn list_all_per_agent_commands_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
 ) -> Result<Vec<PerAgentCommands>, ApiError> {
-    #[derive(sqlx::FromRow)]
     struct Row {
         agent_id: i64,
-        pre_backup_commands: String,
-        post_backup_commands: String,
+        pre_backup_commands: sqlx::types::Json<Vec<String>>,
+        post_backup_commands: sqlx::types::Json<Vec<String>>,
     }
 
     let rows = sqlx::query_as!(
         Row,
-        "SELECT agent_id, pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
-         schedule_id = $1 ORDER BY agent_id",
+        "SELECT agent_id, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\" FROM per_agent_commands WHERE schedule_id = $1 ORDER BY \
+         agent_id",
         schedule_id,
     )
     .fetch_all(pool)
@@ -2504,8 +2610,8 @@ pub async fn list_all_per_agent_commands_for_schedule(
         .into_iter()
         .map(|r| PerAgentCommands {
             agent_id: r.agent_id,
-            pre_backup_commands: r.pre_backup_commands,
-            post_backup_commands: r.post_backup_commands,
+            pre_backup_commands: r.pre_backup_commands.0,
+            post_backup_commands: r.post_backup_commands.0,
         })
         .collect())
 }
@@ -2518,16 +2624,16 @@ pub async fn get_per_agent_commands(
     schedule_id: i64,
     agent_id: i64,
 ) -> Result<Option<PerAgentCommands>, ApiError> {
-    #[derive(sqlx::FromRow)]
     struct Row {
-        pre_backup_commands: String,
-        post_backup_commands: String,
+        pre_backup_commands: sqlx::types::Json<Vec<String>>,
+        post_backup_commands: sqlx::types::Json<Vec<String>>,
     }
 
     let row = sqlx::query_as!(
         Row,
-        "SELECT pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
-         schedule_id = $1 AND agent_id = $2",
+        "SELECT pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\" FROM \
+         per_agent_commands WHERE schedule_id = $1 AND agent_id = $2",
         schedule_id,
         agent_id,
     )
@@ -2537,8 +2643,8 @@ pub async fn get_per_agent_commands(
 
     Ok(row.map(|r| PerAgentCommands {
         agent_id,
-        pre_backup_commands: r.pre_backup_commands,
-        post_backup_commands: r.post_backup_commands,
+        pre_backup_commands: r.pre_backup_commands.0,
+        post_backup_commands: r.post_backup_commands.0,
     }))
 }
 
@@ -2549,8 +2655,8 @@ pub async fn upsert_per_agent_commands(
     pool: &PgPool,
     schedule_id: i64,
     agent_id: i64,
-    pre_backup_commands: &str,
-    post_backup_commands: &str,
+    pre_backup_commands: &[String],
+    post_backup_commands: &[String],
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO per_agent_commands (schedule_id, agent_id, pre_backup_commands, \
@@ -2559,8 +2665,8 @@ pub async fn upsert_per_agent_commands(
          EXCLUDED.post_backup_commands",
         schedule_id,
         agent_id,
-        pre_backup_commands,
-        post_backup_commands,
+        sqlx::types::Json(pre_backup_commands) as _,
+        sqlx::types::Json(post_backup_commands) as _,
     )
     .execute(pool)
     .await
@@ -2696,9 +2802,10 @@ pub async fn get_schedule_for_repo(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -2727,10 +2834,12 @@ pub async fn get_schedule_for_hostname_repo(
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN \
-         schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE \
-         m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
+         JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
+         s.schedule_type = $3 LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -2753,11 +2862,12 @@ pub async fn list_schedules_for_repo(
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN \
-         agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
-         a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id \
-         = $1 ORDER BY s.id",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, COALESCE(ARRAY(SELECT \
+         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
+         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \
+         \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -2795,9 +2905,11 @@ pub async fn list_schedules_for_agent(
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN \
-         schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
+         s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
+         WHERE st.agent_id = $1 ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -2945,9 +3057,10 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE id = $1",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -2981,6 +3094,44 @@ pub async fn get_schedule_target_hostnames(
     .map_err(ApiError::Database)?;
 
     Ok(rows.into_iter().map(|r| r.hostname).collect())
+}
+
+/// Batched form of [`get_schedule_target_hostnames`] for callers that need target hostnames
+/// for many schedules at once (e.g. projecting calendar events for every schedule in a
+/// fleet) -- one round trip instead of one query per schedule.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_schedule_target_hostnames_by_schedule(
+    pool: &PgPool,
+    schedule_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<String>>, ApiError> {
+    struct Row {
+        schedule_id: i64,
+        hostname: String,
+    }
+
+    let rows = sqlx::query_as!(
+        Row,
+        "SELECT st.schedule_id, a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id \
+         = a.id WHERE st.schedule_id = ANY($1) AND a.is_hidden = false ORDER BY st.schedule_id, \
+         st.execution_order",
+        schedule_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut by_schedule: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        by_schedule
+            .entry(row.schedule_id)
+            .or_default()
+            .push(row.hostname);
+    }
+    Ok(by_schedule)
 }
 
 /// A target agent for a schedule run.
@@ -3360,7 +3511,7 @@ pub struct InsertReportParams {
     /// When the backup finished.
     pub finished_at: DateTime<Utc>,
     /// Backup status.
-    pub status: String,
+    pub status: BackupStatus,
     /// Total original size in bytes.
     pub original_size: i64,
     /// Total compressed size in bytes.
@@ -3538,6 +3689,37 @@ pub async fn fail_other_started_backups(
     Ok(result.rows_affected())
 }
 
+/// Marks every in-flight (`pending`/`started`) backup report for an agent as
+/// abandoned, across all repos - called when the agent's connection is
+/// replaced by a new one (see [`crate::ws::registry::AgentRegistry::register`]),
+/// since a reconnect means the previous session, and anything it was in the
+/// middle of, is gone for good regardless of which repo it targeted. Returns
+/// the distinct repo IDs that had a row updated, so the caller can wake up
+/// anything still waiting on those operations via the completion bus instead
+/// of leaving it blocked on a session that will never report back.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn fail_started_backups_for_agent_reconnect(
+    pool: &PgPool,
+    agent_id: i64,
+    hostname: &str,
+) -> Result<Vec<i64>, ApiError> {
+    let mut repo_ids: Vec<i64> = sqlx::query_scalar!(
+        "UPDATE backup_reports SET status = 'failed', finished_at = NOW(), error_message = $1 \
+         WHERE agent_id = $2 AND status IN ('pending', 'started') RETURNING repo_id",
+        format!("Agent '{hostname}' reconnected; previous backup abandoned"),
+        agent_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    repo_ids.sort_unstable();
+    repo_ids.dedup();
+    Ok(repo_ids)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -3568,7 +3750,7 @@ async fn update_backup_report_by_run_id(
          status IN ('pending', 'started')",
         params.schedule_id,
         params.finished_at,
-        &params.status,
+        &params.status.to_string(),
         params.original_size,
         params.compressed_size,
         params.deduplicated_size,
@@ -3595,6 +3777,7 @@ async fn upsert_backup_report_with_archive_name(
     pool: &PgPool,
     params: &InsertReportParams,
 ) -> Result<(), ApiError> {
+    let status_str = params.status.to_string();
     sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
          status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
@@ -3615,7 +3798,7 @@ async fn upsert_backup_report_with_archive_name(
         params.schedule_id,
         params.started_at,
         params.finished_at,
-        &params.status,
+        &status_str,
         params.original_size,
         params.compressed_size,
         params.deduplicated_size,
@@ -3639,6 +3822,7 @@ async fn upsert_backup_report_without_archive_name(
     pool: &PgPool,
     params: &InsertReportParams,
 ) -> Result<(), ApiError> {
+    let status_str = params.status.to_string();
     sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
          status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
@@ -3659,7 +3843,7 @@ async fn upsert_backup_report_without_archive_name(
         params.schedule_id,
         params.started_at,
         params.finished_at,
-        &params.status,
+        &status_str,
         params.original_size,
         params.compressed_size,
         params.deduplicated_size,
@@ -3694,7 +3878,7 @@ pub async fn bulk_insert_backup_reports(
     let mut repo_ids = Vec::with_capacity(params.len());
     let mut started_ats = Vec::with_capacity(params.len());
     let mut finished_ats = Vec::with_capacity(params.len());
-    let mut statuses: Vec<&str> = Vec::with_capacity(params.len());
+    let mut statuses: Vec<String> = Vec::with_capacity(params.len());
     let mut original_sizes = Vec::with_capacity(params.len());
     let mut compressed_sizes = Vec::with_capacity(params.len());
     let mut deduplicated_sizes = Vec::with_capacity(params.len());
@@ -3712,7 +3896,7 @@ pub async fn bulk_insert_backup_reports(
         repo_ids.push(p.repo_id);
         started_ats.push(p.started_at);
         finished_ats.push(p.finished_at);
-        statuses.push(p.status.as_str());
+        statuses.push(p.status.to_string());
         original_sizes.push(p.original_size);
         compressed_sizes.push(p.compressed_size);
         deduplicated_sizes.push(p.deduplicated_size);
@@ -3725,6 +3909,8 @@ pub async fn bulk_insert_backup_reports(
         archive_names.push(p.archive_name.as_deref());
         borg_commands.push(p.borg_command.as_deref());
     }
+
+    let status_strs: Vec<&str> = statuses.iter().map(String::as_str).collect();
 
     let result = sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
@@ -3745,7 +3931,7 @@ pub async fn bulk_insert_backup_reports(
         &repo_ids,
         &started_ats,
         &finished_ats,
-        &statuses as &[&str],
+        &status_strs as &[&str],
         &original_sizes,
         &compressed_sizes,
         &deduplicated_sizes,
@@ -3948,18 +4134,19 @@ pub async fn get_activity_feed(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
+    // Single LATERAL join per (schedule, agent) row instead of three separate correlated
+    // subqueries that each re-sorted the same filtered backup_reports rows -- matches the
+    // pattern already used by dashboard::targets() for the equivalent "latest report" lookup.
     sqlx::query_as!(
         HealthRow,
-        "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, (SELECT \
-         br.status FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id \
-         ORDER BY br.started_at DESC LIMIT 1) AS last_status, (SELECT br.finished_at FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY \
-         br.started_at DESC LIMIT 1) AS last_backup_at, (SELECT br.error_message FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY \
-         br.started_at DESC LIMIT 1) AS last_error_message, s.cron_expression, s.enabled AS \
+        "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
+         latest.status AS \"last_status?\", latest.finished_at AS \"last_backup_at?\", \
+         latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS \
          schedule_enabled FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
-         agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id WHERE a.is_hidden = \
-         false ORDER BY a.hostname, r.name",
+         agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( \
+         SELECT br.status, br.finished_at, br.error_message FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) \
+         latest ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -3979,6 +4166,8 @@ pub struct UserRow {
     pub created_at: DateTime<Utc>,
     /// When the user last logged in.
     pub last_login_at: Option<DateTime<Utc>>,
+    /// When the account is locked until (if applicable).
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 /// A row from the `sessions` table.
@@ -3994,6 +4183,27 @@ pub struct SessionRow {
     pub expires_at: DateTime<Utc>,
     /// Whether the "remember me" flag was set.
     pub remember_me: bool,
+    /// When the session was last used.
+    pub last_seen_at: DateTime<Utc>,
+    /// Whether this session is pending TOTP verification (pre-login temp session).
+    pub pending_totp: bool,
+}
+
+/// A session row returned for user-facing session listing.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SessionForUser {
+    /// Hashed session ID.
+    pub id: String,
+    /// User ID the session belongs to.
+    pub user_id: i64,
+    /// When the session was created.
+    pub created_at: DateTime<Utc>,
+    /// When the session expires.
+    pub expires_at: DateTime<Utc>,
+    /// When the session was last used.
+    pub last_seen_at: DateTime<Utc>,
+    /// Whether the "remember me" flag was set.
+    pub remember_me: bool,
 }
 
 /// # Errors
@@ -4007,7 +4217,7 @@ pub async fn insert_user(
     sqlx::query_as!(
         UserRow,
         "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, \
-         must_change_password, created_at, last_login_at",
+         must_change_password, created_at, last_login_at, locked_until",
         username,
         password_hash,
     )
@@ -4024,8 +4234,8 @@ pub async fn insert_user(
 pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE \
-         username = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users WHERE username = $1",
         username,
     )
     .fetch_one(pool)
@@ -4053,12 +4263,13 @@ pub async fn get_user_password_hash(
         must_change_password: bool,
         created_at: DateTime<Utc>,
         last_login_at: Option<DateTime<Utc>>,
+        locked_until: Option<DateTime<Utc>>,
     }
 
     let row = sqlx::query_as!(
         FullRow,
-        "SELECT id, username, password_hash, must_change_password, created_at, last_login_at FROM \
-         users WHERE username = $1",
+        "SELECT id, username, password_hash, must_change_password, created_at, last_login_at, \
+         locked_until FROM users WHERE username = $1",
         username,
     )
     .fetch_one(pool)
@@ -4074,6 +4285,7 @@ pub async fn get_user_password_hash(
         must_change_password: row.must_change_password,
         created_at: row.created_at,
         last_login_at: row.last_login_at,
+        locked_until: row.locked_until,
     };
     Ok((user, row.password_hash))
 }
@@ -4086,8 +4298,8 @@ pub async fn get_user_password_hash(
 pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE id \
-         = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users WHERE id = $1",
         user_id,
     )
     .fetch_one(pool)
@@ -4104,8 +4316,8 @@ pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiE
 pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users ORDER BY \
-         id",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -4171,19 +4383,284 @@ pub async fn update_last_login(pool: &PgPool, user_id: i64) -> Result<(), ApiErr
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_user_totp_fields(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Option<UserTotpFields>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        secret_encrypted: Option<Vec<u8>>,
+        enabled: bool,
+        recovery_codes: Option<Vec<String>>,
+        last_verified_step: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT totp_secret_encrypted AS secret_encrypted, totp_enabled AS enabled, \
+         totp_recovery_codes AS recovery_codes, totp_last_verified_step AS last_verified_step \
+         FROM users WHERE id = $1",
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(match row {
+        Some(r) => {
+            if r.secret_encrypted.is_some() {
+                Some(UserTotpFields {
+                    secret_encrypted: r.secret_encrypted,
+                    enabled: r.enabled,
+                    recovery_codes: r.recovery_codes.unwrap_or_default(),
+                    last_verified_step: r.last_verified_step,
+                })
+            } else {
+                None
+            }
+        }
+        None => None,
+    })
+}
+
+/// TOTP configuration fields for a user.
+pub struct UserTotpFields {
+    /// Encrypted TOTP secret (AES-256-GCM).
+    pub secret_encrypted: Option<Vec<u8>>,
+    /// Whether TOTP is enabled for this user.
+    pub enabled: bool,
+    /// Hashed recovery codes.
+    pub recovery_codes: Vec<String>,
+    /// The most recent TOTP time-step (`unix_time / step`) successfully
+    /// consumed during login, used for replay protection.
+    pub last_verified_step: Option<i64>,
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn set_user_totp_secret(
+    pool: &PgPool,
+    user_id: i64,
+    encrypted_secret: &[u8],
+    recovery_codes: &[String],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_secret_encrypted = $2, totp_recovery_codes = $3 WHERE id = $1",
+        user_id,
+        encrypted_secret,
+        recovery_codes,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn enable_user_totp(
+    pool: &PgPool,
+    user_id: i64,
+    verified_step: i64,
+) -> Result<(), ApiError> {
+    // Record the step consumed by the enrollment code itself, so it can't be
+    // replayed against the login endpoint for the rest of its validity window.
+    sqlx::query!(
+        "UPDATE users SET totp_enabled = true, totp_last_verified_step = $2 WHERE id = $1",
+        user_id,
+        verified_step,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn disable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_enabled = false, totp_secret_encrypted = NULL, totp_recovery_codes \
+         = NULL, totp_last_verified_step = NULL WHERE id = $1",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn replace_totp_recovery_codes(
+    pool: &PgPool,
+    user_id: i64,
+    recovery_codes: &[String],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_recovery_codes = $2 WHERE id = $1",
+        user_id,
+        recovery_codes,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Atomically removes exactly one recovery code (matched by its stored
+/// hash) from a user's recovery-code list, in a single statement rather
+/// than a read-modify-write of the whole array, so two requests racing the
+/// same code can't both observe it as still present before either write
+/// commits. Returns `true` if the hash was found and removed, `false` if it
+/// was already gone (e.g. consumed by a concurrent request).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn try_consume_totp_recovery_code(
+    pool: &PgPool,
+    user_id: i64,
+    code_hash: &str,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE users SET totp_recovery_codes = array_remove(totp_recovery_codes, $2) WHERE id = \
+         $1 AND $2 = ANY(totp_recovery_codes)",
+        user_id,
+        code_hash,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Atomically checks and records the TOTP step consumed by a login, in a
+/// single statement rather than a separate read-then-write, so two
+/// concurrent requests racing the same code can't both pass the replay
+/// check before either write commits. Returns `true` if `step` was newer
+/// than whatever was previously recorded (and is now recorded), `false` if
+/// it was a replay (at or before the recorded step) and the row was left
+/// unchanged.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn try_consume_totp_step(
+    pool: &PgPool,
+    user_id: i64,
+    step: i64,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "UPDATE users SET totp_last_verified_step = $2 WHERE id = $1 AND (totp_last_verified_step \
+         IS NULL OR totp_last_verified_step < $2)",
+        user_id,
+        step,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn update_session_last_seen(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1",
+        session_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_sessions_for_user(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Vec<SessionForUser>, ApiError> {
+    sqlx::query_as!(
+        SessionForUser,
+        "SELECT id, user_id, created_at, expires_at, last_seen_at, remember_me FROM sessions \
+         WHERE user_id = $1 AND expires_at > NOW() AND pending_totp = false ORDER BY created_at \
+         DESC",
+        user_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_session_by_id(
+    pool: &PgPool,
+    session_id: &str,
+    user_id: i64,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_user_password_hash_by_id(pool: &PgPool, user_id: i64) -> Result<String, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        password_hash: String,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT password_hash FROM users WHERE id = $1",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("user {user_id} not found")),
+        other => ApiError::Database(other),
+    })?;
+    Ok(row.password_hash)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_session(
     pool: &PgPool,
     session_id: &str,
     user_id: i64,
     expires_at: DateTime<Utc>,
     remember_me: bool,
+    pending_totp: bool,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "INSERT INTO sessions (id, user_id, expires_at, remember_me) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO sessions (id, user_id, expires_at, remember_me, last_seen_at, pending_totp) \
+         VALUES ($1, $2, $3, $4, NOW(), $5)",
         session_id,
         user_id,
         expires_at,
         remember_me,
+        pending_totp,
     )
     .execute(pool)
     .await
@@ -4199,8 +4676,8 @@ pub async fn insert_session(
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as!(
         SessionRow,
-        "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND \
-         expires_at > NOW()",
+        "SELECT id, user_id, created_at, expires_at, remember_me, last_seen_at, pending_totp FROM \
+         sessions WHERE id = $1 AND expires_at > NOW()",
         session_id,
     )
     .fetch_one(pool)
@@ -4310,6 +4787,328 @@ pub async fn insert_login_attempt(
     sqlx::query!(
         "INSERT INTO login_attempts (username, ip, success) VALUES ($1, $2, $3)",
         username,
+        ip,
+        success,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_failed_totp_attempts(
+    pool: &PgPool,
+    user_id: i64,
+    window_minutes: i32,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM totp_attempts WHERE user_id = $1 AND success = false AND \
+         attempted_at > NOW() - ($2 || ' minutes')::INTERVAL",
+        user_id,
+        window_minutes.to_string(),
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Clear the lockout for an account and reset its lockout-escalation
+/// counter. Called after a successful login so a future lockout starts
+/// back at the shortest tier.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn clear_account_lockout<'e, E>(executor: E, username: &str) -> Result<(), ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query!(
+        "UPDATE users SET locked_until = NULL, lockout_escalation_level = 0 WHERE username = $1",
+        username,
+    )
+    .execute(executor)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Records a fully-completed successful login: clears any account lockout
+/// and resets the escalation counter, and inserts a `success = true`
+/// `login_attempts` row. Wraps both writes in one transaction (matching
+/// [`record_failed_login_and_check_lockout`]'s treatment of the failure
+/// path) so a mid-write DB error can't wipe the lockout state without also
+/// recording the successful login that justified clearing it.
+///
+/// Callers must only invoke this once authentication has *fully* completed
+/// -- i.e. after any required TOTP step, not merely after the password
+/// check -- since this both resets the password-lockout escalation tier and
+/// records the attempt as successful in the audit trail.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn record_successful_login(
+    pool: &PgPool,
+    username: &str,
+    ip: &str,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    clear_account_lockout(&mut *tx, username).await?;
+
+    sqlx::query!(
+        "INSERT INTO login_attempts (username, ip, success) VALUES ($1, $2, true)",
+        username,
+        ip,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Count failed login attempts since the last successful login for the given
+/// username. If there has never been a successful login, counts all failures.
+/// Generic over the executor so callers running inside a transaction (e.g.
+/// [`record_failed_login_and_check_lockout`]) can reuse this instead of
+/// re-embedding the same query against a `&mut Transaction`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn count_failed_attempts_since_last_success<'e, E>(
+    executor: E,
+    username: &str,
+) -> Result<i64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > COALESCE((SELECT MAX(attempted_at) FROM login_attempts WHERE username = \
+         $1 AND success = true), '-infinity'::TIMESTAMPTZ)",
+        username,
+    )
+    .fetch_one(executor)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Counts failed attempts that belong to the *current* lockout cycle --
+/// i.e. failures recorded after the later of the last successful login or
+/// `locked_until` (the account's most recent lock, whether still active or
+/// already expired).
+///
+/// This is deliberately narrower than
+/// [`count_failed_attempts_since_last_success`]: `login()`'s locked-account
+/// branch calls [`record_failed_login_and_check_lockout`] on every attempt
+/// against a locked account (for timing-uniformity reasons), so those
+/// attempts get recorded as failures too. If the escalation gate counted
+/// *all* failures since the last success, that count would never reset on
+/// its own -- once an account first crosses `max_account_failures`, the
+/// count is already inflated past the threshold forever, so the very next
+/// failed attempt after any future lockout expires (not a fresh batch of
+/// `max_account_failures`) would immediately re-trigger escalation. That
+/// both lets an attacker keep an account locked at the maximum tier
+/// indefinitely with roughly one low-frequency attempt per cycle, and lets
+/// a locked-out legitimate user ratchet their own account up through
+/// repeated retries. Excluding everything up to and including
+/// `locked_until` means each lock's window (which is always at least
+/// `LOCKOUT_DURATIONS[0]` long) guarantees every attempt from the prior
+/// cycle -- including ones made while locked -- falls at or before the
+/// cutoff, so a genuinely fresh `max_account_failures` is required to
+/// escalate again after each lock expires.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+async fn count_failed_attempts_in_current_cycle<'e, E>(
+    executor: E,
+    username: &str,
+    locked_until: Option<DateTime<Utc>>,
+) -> Result<i64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > GREATEST(COALESCE((SELECT MAX(attempted_at) FROM login_attempts WHERE \
+         username = $1 AND success = true), '-infinity'::TIMESTAMPTZ), COALESCE($2::TIMESTAMPTZ, \
+         '-infinity'::TIMESTAMPTZ))",
+        username,
+        locked_until,
+    )
+    .fetch_one(executor)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Record a failed login attempt and check if the account should be locked.
+///
+/// Escalates the lockout duration by lockout *cycle*, not by raw failure
+/// count: `users.lockout_escalation_level` only advances when this call
+/// actually establishes a new lockout (the account isn't already locked),
+/// and the threshold check itself only counts failures from the current
+/// cycle (see [`count_failed_attempts_in_current_cycle`]) so a fresh
+/// `max_account_failures` is required every cycle, not just once ever.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a database query fails.
+pub async fn record_failed_login_and_check_lockout(
+    pool: &PgPool,
+    username: &str,
+    ip: &str,
+    max_account_failures: i64,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    sqlx::query!(
+        "INSERT INTO login_attempts (username, ip, success) VALUES ($1, $2, false)",
+        username,
+        ip,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    // Lock the user row (a no-op if the username doesn't exist -- the
+    // dummy-hash path) so concurrent failed attempts for the same account
+    // serialize here: without this, two concurrent transactions could each
+    // count the failures committed so far, both land just under
+    // `max_account_failures`, and both skip escalation even though their
+    // combined total already crossed the threshold. Also read back
+    // `locked_until` while holding the lock, needed to scope the count
+    // below to the current cycle.
+    let locked_until_before: Option<DateTime<Utc>> = sqlx::query_scalar!(
+        "SELECT locked_until FROM users WHERE username = $1 FOR UPDATE",
+        username
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?
+    .flatten();
+
+    // Count failures in the current cycle only -- see
+    // count_failed_attempts_in_current_cycle's doc comment for why this
+    // must exclude attempts made before/during the most recent lock rather
+    // than counting everything since the last successful login.
+    let count =
+        count_failed_attempts_in_current_cycle(&mut *tx, username, locked_until_before).await?;
+
+    if count >= max_account_failures {
+        // Advance the per-cycle escalation counter only if the account isn't
+        // already locked. `login`'s locked-account branch calls this
+        // function on every attempt (to keep DB work -- and therefore
+        // response timing -- identical to the wrong-password branch), so
+        // this guard is load-bearing: without it, continued brute-forcing
+        // against an already-locked account would keep extending
+        // `locked_until` and advancing the escalation tier further on every
+        // single attempt, rather than only once per lockout cycle.
+        let escalated: Option<i32> = sqlx::query_scalar!(
+            "UPDATE users SET lockout_escalation_level = lockout_escalation_level + 1 WHERE \
+             username = $1 AND (locked_until IS NULL OR locked_until <= NOW()) RETURNING \
+             lockout_escalation_level",
+            username,
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+        // `None` means either the user doesn't exist (the bcrypt dummy-hash
+        // path) or the account is already locked -- nothing further to do.
+        let Some(escalated) = escalated else {
+            tx.commit().await.map_err(ApiError::Database)?;
+            return Ok(());
+        };
+
+        // The counter was just incremented, so this lockout's tier is one
+        // less than the new value -- the first lockout uses index 0, the
+        // shortest duration.
+        let escalation_level = i64::from(escalated).saturating_sub(1);
+        let duration_minutes = LOCKOUT_DURATIONS
+            .get(usize::try_from(escalation_level).unwrap_or(0))
+            .copied()
+            .unwrap_or(*LOCKOUT_DURATIONS.last().unwrap_or(&1));
+        let locked_until = Utc::now()
+            .checked_add_signed(chrono::Duration::try_minutes(duration_minutes).unwrap_or_default())
+            .unwrap_or(Utc::now());
+
+        sqlx::query!(
+            "UPDATE users SET locked_until = $1 WHERE username = $2",
+            locked_until,
+            username,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+        tx.commit().await.map_err(ApiError::Database)?;
+
+        // Spawned rather than awaited: this insert is pure audit logging,
+        // not part of the login response's correctness, and awaiting it
+        // here would make the threshold-crossing attempt measurably slower
+        // than every attempt before it -- a narrow timing signal an
+        // attacker could use to detect exactly which attempt locked the
+        // account, in the same spirit as the timing-uniformity work
+        // elsewhere in this function.
+        let pool = pool.clone();
+        let message = format!(
+            "Account '{username}' locked until {locked_until} after {count} failed attempts"
+        );
+        tokio::spawn(async move {
+            let _ =
+                insert_system_event(&pool, SystemEventType::AccountLocked, None, &message).await;
+        });
+
+        return Ok(());
+    }
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn insert_totp_attempt(
+    pool: &PgPool,
+    user_id: i64,
+    ip: &str,
+    success: bool,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "INSERT INTO totp_attempts (user_id, ip, success) VALUES ($1, $2, $3)",
+        user_id,
         ip,
         success,
     )
@@ -4605,14 +5404,14 @@ pub async fn list_repo_permissions_for_repo(
 }
 
 /// A row from the `system_events` table.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct SystemEventRow {
     /// Unique identifier.
     pub id: i64,
     /// When the event occurred.
     pub created_at: DateTime<Utc>,
-    /// Event type (e.g. ``agent_connected``, ``backup_failed``).
-    pub event_type: String,
+    /// Event type.
+    pub event_type: SystemEventType,
     /// Hostname the event relates to, if any.
     pub hostname: Option<String>,
     /// Human-readable event message.
@@ -4624,13 +5423,14 @@ pub struct SystemEventRow {
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_system_event(
     pool: &PgPool,
-    event_type: &str,
+    event_type: SystemEventType,
     hostname: Option<&str>,
     message: &str,
 ) -> Result<(), ApiError> {
+    let event_type_str = event_type.to_string();
     sqlx::query!(
         "INSERT INTO system_events (event_type, hostname, message) VALUES ($1, $2, $3)",
-        event_type,
+        event_type_str,
         hostname,
         message,
     )
@@ -4644,15 +5444,36 @@ pub async fn insert_system_event(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEventRow>, ApiError> {
-    sqlx::query_as!(
-        SystemEventRow,
+    let rows = sqlx::query!(
         "SELECT id, created_at, event_type, hostname, message FROM system_events ORDER BY \
          created_at DESC LIMIT $1",
         limit,
     )
     .fetch_all(pool)
     .await
-    .map_err(ApiError::Database)
+    .map_err(ApiError::Database)?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| match r.event_type.parse() {
+            Ok(event_type) => Some(SystemEventRow {
+                id: r.id,
+                created_at: r.created_at,
+                event_type,
+                hostname: r.hostname,
+                message: r.message,
+            }),
+            Err(e) => {
+                tracing::warn!(
+                    row_id = r.id,
+                    event_type = %r.event_type,
+                    error = %e,
+                    "skipping system event row with unrecognized event_type"
+                );
+                None
+            }
+        })
+        .collect())
 }
 
 /// # Errors
@@ -4737,6 +5558,27 @@ pub async fn get_schedule_timezone(pool: &PgPool) -> Result<chrono_tz::Tz, ApiEr
         .map_err(|e| ApiError::Internal(format!("invalid timezone setting: {e}")))
 }
 
+/// Prunes old login-attempt history by age. `record_failed_login_and_check_lockout`
+/// now also records attempts against nonexistent usernames (needed for the
+/// constant-time dummy-hash login path), so this table grows without bound
+/// otherwise. A 90-day cutoff is far longer than the longest lockout tier
+/// (24h), so this cannot interfere with an in-progress lockout escalation in
+/// practice.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_login_attempts_before(
+    pool: &PgPool,
+    before: DateTime<Utc>,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!("DELETE FROM login_attempts WHERE attempted_at < $1", before)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -4748,6 +5590,27 @@ pub async fn delete_system_events_before(
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
+/// Prunes old notification delivery-attempt history by age. The table is
+/// kept "for debugging and retry" (see `0002_notifications.sql`), not as a
+/// permanent audit log, so it grows without bound otherwise.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_notification_deliveries_before(
+    pool: &PgPool,
+    before: DateTime<Utc>,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM notification_deliveries WHERE attempted_at < $1",
+        before
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(result.rows_affected())
 }
 
@@ -4798,7 +5661,7 @@ pub async fn delete_backup_reports_with_archive_before(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the database query fails.
+/// Returns [`ApiError::Database`] if the query fails.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,
@@ -5239,56 +6102,65 @@ pub struct DashboardSummaryRow {
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
+    // Rewritten from ~18 independent correlated "last matching row" subqueries (each a
+    // full sort of the filtered backup_reports rows, run on every dashboard load) into a
+    // handful of CTEs that each scan/sort once. Every CTE's WHERE clause is copied verbatim
+    // from the subquery(s) it replaces -- including the couple of intentional asymmetries
+    // in the original (e.g. last_backup_at applies the epoch-sentinel guard but
+    // last_backup_repo_id/last_backup_archive_name don't; the *_schedule_id/*_schedule_name
+    // fields require a resolvable schedule_id while the sibling *_at/*_message/*_repo_*
+    // fields don't) -- so the result set is identical, just computed more cheaply now that
+    // `idx_backup_reports_status_finished_at` covers the ORDER BY.
     sqlx::query_as!(
         DashboardSummaryRow,
-        "SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS \"total_agents!\", \
-         (SELECT COUNT(*) FROM repos) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE \
-         enabled = true) AS \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \
-         \"total_schedules!\", COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 \
-         AS \"total_storage_bytes!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = \
-         'success' AND finished_at > '1970-01-01T00:00:00Z') AS last_backup_at, (SELECT \
-         MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = \
-         true AND r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW()) AS \
-         next_backup_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS \
-         NOT NULL ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT \
-         br.repo_id FROM backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at \
-         DESC LIMIT 1) AS last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br \
-         WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_backup_archive_name, (SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id \
-         WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
-         s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS next_backup_schedule_id, \
-         (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' AND started_at > NOW() - \
-         INTERVAL '30 days') AS \"success_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE \
-         status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \"failed_30d!\", \
-         (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 days') AS \
-         \"total_30d!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'failed' AND \
-         finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT MAX(finished_at) FROM \
-         backup_reports WHERE status = 'warning' AND finished_at > '1970-01-01T00:00:00Z') AS \
-         last_warning_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS \
-         NOT NULL AND br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_failure_schedule_id, (SELECT br.schedule_id FROM \
-         backup_reports br WHERE br.schedule_id IS NOT NULL AND br.status = 'warning' AND \
-         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_warning_schedule_id, (SELECT br.error_message FROM backup_reports br WHERE \
-         br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at \
-         DESC LIMIT 1) AS last_failure_message, (SELECT br.warnings[1] FROM backup_reports br \
+        "WITH last_success_at AS ( SELECT MAX(finished_at) AS finished_at FROM backup_reports \
+         WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z' ), last_success_row AS \
+         ( SELECT br.repo_id, br.archive_name FROM backup_reports br WHERE br.status = 'success' \
+         ORDER BY br.finished_at DESC LIMIT 1 ), last_backup_row AS ( SELECT br.schedule_id FROM \
+         backup_reports br WHERE br.schedule_id IS NOT NULL ORDER BY br.finished_at DESC LIMIT 1 \
+         ), next_backup_row AS ( SELECT s.id, s.next_run_at FROM schedules s JOIN repos r ON r.id \
+         = s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL \
+         AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1 ), last_failure_general AS ( \
+         SELECT br.finished_at, br.error_message, br.repo_id, r.name AS repo_name FROM \
+         backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = 'failed' AND \
+         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1 ), \
+         last_failure_scheduled AS ( SELECT br.schedule_id, s.cron_expression AS schedule_name \
+         FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE br.status = \
+         'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT \
+         1 ), last_warning_general AS ( SELECT br.finished_at, br.warnings[1] AS warning_message, \
+         br.repo_id, r.name AS repo_name FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
          WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_warning_message, (SELECT br.repo_id FROM \
-         backup_reports br WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
-         ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_repo_id, (SELECT br.repo_id FROM \
-         backup_reports br WHERE br.status = 'warning' AND br.finished_at > \
-         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_id, \
-         (SELECT r.name FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status \
-         = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC \
-         LIMIT 1) AS last_failure_repo_name, (SELECT r.name FROM backup_reports br JOIN repos r \
-         ON r.id = br.repo_id WHERE br.status = 'warning' AND br.finished_at > \
-         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_name, \
-         (SELECT s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
-         ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_schedule_name, (SELECT \
-         s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE \
-         br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_warning_schedule_name",
+         br.finished_at DESC LIMIT 1 ), last_warning_scheduled AS ( SELECT br.schedule_id, \
+         s.cron_expression AS schedule_name FROM backup_reports br JOIN schedules s ON s.id = \
+         br.schedule_id WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' \
+         ORDER BY br.finished_at DESC LIMIT 1 ) SELECT (SELECT COUNT(*) FROM agents WHERE \
+         is_hidden = false) AS \"total_agents!\", (SELECT COUNT(*) FROM repos) AS \
+         \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE enabled = true) AS \
+         \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \"total_schedules!\", \
+         COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 AS \
+         \"total_storage_bytes!\", last_success_at.finished_at AS last_backup_at, \
+         next_backup_row.next_run_at AS next_backup_at, last_backup_row.schedule_id AS \
+         last_backup_schedule_id, last_success_row.repo_id AS last_backup_repo_id, \
+         last_success_row.archive_name AS last_backup_archive_name, next_backup_row.id AS \
+         next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' \
+         AND started_at > NOW() - INTERVAL '30 days') AS \"success_30d!\", (SELECT COUNT(*) FROM \
+         backup_reports WHERE status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \
+         \"failed_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - \
+         INTERVAL '30 days') AS \"total_30d!\", last_failure_general.finished_at AS \
+         last_failure_at, last_warning_general.finished_at AS last_warning_at, \
+         last_failure_scheduled.schedule_id AS last_failure_schedule_id, \
+         last_warning_scheduled.schedule_id AS last_warning_schedule_id, \
+         last_failure_general.error_message AS last_failure_message, \
+         last_warning_general.warning_message AS last_warning_message, \
+         last_failure_general.repo_id AS last_failure_repo_id, last_warning_general.repo_id AS \
+         last_warning_repo_id, last_failure_general.repo_name AS last_failure_repo_name, \
+         last_warning_general.repo_name AS last_warning_repo_name, \
+         last_failure_scheduled.schedule_name AS last_failure_schedule_name, \
+         last_warning_scheduled.schedule_name AS last_warning_schedule_name FROM (SELECT 1) AS \
+         one LEFT JOIN last_success_at ON true LEFT JOIN last_success_row ON true LEFT JOIN \
+         last_backup_row ON true LEFT JOIN next_backup_row ON true LEFT JOIN last_failure_general \
+         ON true LEFT JOIN last_failure_scheduled ON true LEFT JOIN last_warning_general ON true \
+         LEFT JOIN last_warning_scheduled ON true",
     )
     .fetch_one(pool)
     .await
@@ -6078,19 +6950,24 @@ pub async fn get_storage_trends(
 ) -> Result<Vec<StorageTrendRow>, ApiError> {
     let days = i32::try_from(days).unwrap_or(30);
     if let Some(rid) = repo_id {
+        // Single-pass rewrite: aggregate each day's reports once (`daily`), then derive the
+        // cumulative original/compressed totals and the forward-filled latest dedup snapshot
+        // via window functions over just the (bounded) `days` series, instead of re-scanning
+        // the entire report history with a correlated subquery per displayed day.
         sqlx::query_as!(
             StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
-             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
-             \"date!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
-             COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
-             NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" \
-             FROM days d LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS original_size, \
-             SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE br.repo_id = \
-             $2 AND br.started_at::date <= d.date AND br.status = 'success' ) totals ON true LEFT \
-             JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = \
-             $2 AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY \
-             br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date",
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), daily AS ( SELECT \
+             br.started_at::date AS date, SUM(br.original_size) AS day_original, \
+             SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize ORDER BY \
+             br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.repo_id = $2 \
+             AND br.status = 'success' GROUP BY br.started_at::date ), joined AS ( SELECT d.date, \
+             dl.day_original, dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (ORDER BY \
+             d.date) AS fill_grp FROM days d LEFT JOIN daily dl ON dl.date = d.date ) SELECT date \
+             AS \"date!\", COALESCE(SUM(day_original) OVER (ORDER BY date), 0)::INT8 AS \
+             \"original_size!\", COALESCE(SUM(day_compressed) OVER (ORDER BY date), 0)::INT8 AS \
+             \"compressed_size!\", NULLIF(MAX(day_csize) OVER (PARTITION BY fill_grp), 0)::INT8 \
+             AS \"deduplicated_size?\" FROM joined ORDER BY date",
             days,
             rid,
         )
@@ -6098,20 +6975,34 @@ pub async fn get_storage_trends(
         .await
         .map_err(ApiError::Database)
     } else {
+        // Same single-pass approach, but the daily rollup and cumulative window are computed
+        // per repo first (`per_repo`) -- matching the original per-repo "latest known dedup
+        // size" semantics -- then summed across repos per day. `days LEFT JOIN fleet_by_date`
+        // (rather than driving from `days CROSS JOIN repos_list`) keeps the "always emit one
+        // row per requested day" behaviour even when no repos have any reports yet.
         sqlx::query_as!(
             StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
-             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
-             \"date!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
-             COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
-             NULLIF(COALESCE(dedup.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" FROM \
-             days d LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS original_size, \
-             SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE \
-             br.started_at::date <= d.date AND br.status = 'success' ) totals ON true LEFT JOIN \
-             LATERAL ( SELECT SUM(latest.repo_unique_csize) AS repo_unique_csize FROM ( SELECT \
-             DISTINCT ON (br.repo_id) br.repo_unique_csize FROM backup_reports br WHERE \
-             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
-             br.started_at DESC ) latest ) dedup ON true ORDER BY d.date",
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( \
+             SELECT DISTINCT br.repo_id FROM backup_reports br WHERE br.status = 'success' ), \
+             daily AS ( SELECT br.repo_id, br.started_at::date AS date, SUM(br.original_size) AS \
+             day_original, SUM(br.compressed_size) AS day_compressed, \
+             (ARRAY_AGG(br.repo_unique_csize ORDER BY br.started_at DESC))[1] AS day_csize FROM \
+             backup_reports br WHERE br.status = 'success' GROUP BY br.repo_id, \
+             br.started_at::date ), joined AS ( SELECT rl.repo_id, d.date, dl.day_original, \
+             dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (PARTITION BY rl.repo_id ORDER \
+             BY d.date) AS fill_grp FROM repos_list rl CROSS JOIN days d LEFT JOIN daily dl ON \
+             dl.repo_id = rl.repo_id AND dl.date = d.date ), per_repo AS ( SELECT repo_id, date, \
+             COALESCE(SUM(day_original) OVER (PARTITION BY repo_id ORDER BY date), 0) AS \
+             cum_original, COALESCE(SUM(day_compressed) OVER (PARTITION BY repo_id ORDER BY \
+             date), 0) AS cum_compressed, MAX(day_csize) OVER (PARTITION BY repo_id, fill_grp) AS \
+             cum_csize FROM joined ), fleet_by_date AS ( SELECT date, SUM(cum_original) AS \
+             original_size, SUM(cum_compressed) AS compressed_size, SUM(COALESCE(cum_csize, 0)) \
+             AS csize_sum FROM per_repo GROUP BY date ) SELECT d.date AS \"date!\", \
+             COALESCE(f.original_size, 0)::INT8 AS \"original_size!\", \
+             COALESCE(f.compressed_size, 0)::INT8 AS \"compressed_size!\", \
+             NULLIF(COALESCE(f.csize_sum, 0), 0)::INT8 AS \"deduplicated_size?\" FROM days d LEFT \
+             JOIN fleet_by_date f ON f.date = d.date ORDER BY d.date",
             days,
         )
         .fetch_all(pool)
@@ -6328,22 +7219,28 @@ pub async fn get_storage_trends_by_repo(
     days: i64,
 ) -> Result<Vec<StorageTrendByRepoRow>, ApiError> {
     let days_i32 = i32::try_from(days).unwrap_or(30);
+    // Same single-pass rewrite as `get_storage_trends`: aggregate each repo's reports per day
+    // once (`daily`), then derive per-(repo, day) cumulative totals and the forward-filled
+    // latest dedup snapshot via window functions, instead of a correlated subquery per
+    // (day, repo) pair that re-scans that repo's entire history each time.
     sqlx::query_as!(
         StorageTrendByRepoRow,
         "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, \
          CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id \
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
-         ) SELECT d.date AS \"date!\", rl.repo_id AS \"repo_id!\", rl.repo_name AS \
-         \"repo_name!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
-         COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
-         NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" FROM \
-         days d CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS \
-         original_size, SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE \
-         br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ) \
-         totals ON true LEFT JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br \
-         WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = \
-         'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, \
-         rl.repo_name",
+         ), daily AS ( SELECT br.repo_id, br.started_at::date AS date, SUM(br.original_size) AS \
+         day_original, SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize \
+         ORDER BY br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.status = \
+         'success' GROUP BY br.repo_id, br.started_at::date ), joined AS ( SELECT rl.repo_id, \
+         rl.repo_name, d.date, dl.day_original, dl.day_compressed, dl.day_csize, COUNT(dl.date) \
+         OVER (PARTITION BY rl.repo_id ORDER BY d.date) AS fill_grp FROM repos_list rl CROSS JOIN \
+         days d LEFT JOIN daily dl ON dl.repo_id = rl.repo_id AND dl.date = d.date ) SELECT date \
+         AS \"date!\", repo_id AS \"repo_id!\", repo_name AS \"repo_name!\", \
+         COALESCE(SUM(day_original) OVER (PARTITION BY repo_id ORDER BY date), 0)::INT8 AS \
+         \"original_size!\", COALESCE(SUM(day_compressed) OVER (PARTITION BY repo_id ORDER BY \
+         date), 0)::INT8 AS \"compressed_size!\", NULLIF(MAX(day_csize) OVER (PARTITION BY \
+         repo_id, fill_grp), 0)::INT8 AS \"deduplicated_size?\" FROM joined ORDER BY date, \
+         repo_name",
         days_i32,
     )
     .fetch_all(pool)
@@ -6362,9 +7259,10 @@ pub async fn get_enabled_schedules_for_calendar(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE enabled = true",
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

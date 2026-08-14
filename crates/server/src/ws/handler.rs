@@ -16,7 +16,7 @@ use futures_util::{
 };
 use shared::{
     protocol::{AgentToServer, ServerToAgent, ServerToUi},
-    types::ScheduleType,
+    types::{BackupStatus, ScheduleType, SystemEventType},
 };
 use sqlx::PgPool;
 use tokio::sync::mpsc;
@@ -126,7 +126,7 @@ async fn authenticate_agent(
             tracing::warn!(hostname = %hostname, error = %e, "unknown agent attempted connection");
             if let Err(e) = db::insert_system_event(
                 pool,
-                "auth_failed",
+                SystemEventType::AuthFailed,
                 Some(hostname),
                 &format!("Unknown agent '{hostname}' attempted connection"),
             )
@@ -162,7 +162,7 @@ async fn authenticate_agent(
         tracing::warn!(hostname = %hostname, "invalid agent token");
         if let Err(e) = db::insert_system_event(
             pool,
-            "auth_failed",
+            SystemEventType::AuthFailed,
             Some(hostname),
             &format!("Invalid token for agent '{hostname}'"),
         )
@@ -221,7 +221,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<ServerToAgent>(CHANNEL_BUFFER);
     let ping_tx = outbound_tx.clone();
-    state
+    let replaced_connection = state
         .registry
         .register(
             hostname.clone(),
@@ -232,6 +232,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         .await;
 
     tracing::info!(hostname = %hostname, "agent connected");
+
+    if replaced_connection {
+        abandon_stale_operations_on_reconnect(&state, agent_id, &hostname).await;
+    }
 
     state.ui_broadcast.send(ServerToUi::AgentConnected {
         hostname: hostname.clone(),
@@ -282,6 +286,50 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         hostname: hostname.clone(),
     });
     tracing::info!(hostname = %hostname, "agent disconnected");
+}
+
+/// Called right after [`AgentRegistry::register`] reports that this
+/// connection replaced an already-registered one for the same hostname. The
+/// previous session is gone for good, so any backup it had in flight (on any
+/// repo, not just whatever this new connection does next) is abandoned:
+///
+/// - Marks the stale `backup_reports` rows `failed` (already visible on the
+///   dashboard's Needs Attention panel via the existing `backup_failed`
+///   finding, and in the activity log - no separate alerting needed).
+/// - Publishes a failure to the completion bus for each affected repo, so a
+///   scheduler task still parked in `wait_for_completion` for the old
+///   session wakes up immediately instead of waiting forever. Without this,
+///   `AgentRegistry::is_connected` can't tell the new session apart from the
+///   old one (same hostname key), so the connectivity poll in
+///   `wait_for_completion` never notices anything is wrong - the task keeps
+///   holding its `RepoLock` guard indefinitely, which can wedge the entire
+///   scheduler (`tick()` awaits each due schedule's dispatch in turn) even
+///   for repos this agent has nothing to do with.
+async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, hostname: &str) {
+    match db::fail_started_backups_for_agent_reconnect(&state.pool, agent_id, hostname).await {
+        Ok(repo_ids) => {
+            for repo_id in repo_ids {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id,
+                    "agent reconnected while a backup for this repo was still in flight; \
+                     abandoning it"
+                );
+                state.completion_bus.publish(OperationOutcome {
+                    hostname: hostname.to_owned(),
+                    repo_id,
+                    success: false,
+                });
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to abandon stale in-flight backups on agent reconnect"
+            );
+        }
+    }
 }
 
 async fn send_ws_message(ws_sink: &mut SplitSink<WebSocket, Message>, msg: &ServerToAgent) -> bool {
@@ -434,7 +482,7 @@ pub(crate) async fn validate_agent_repo(
     );
     if let Err(e) = db::insert_system_event(
         pool,
-        "security_violation",
+        SystemEventType::SecurityViolation,
         Some(hostname),
         &format!(
             "Agent '{hostname}' (id={agent_id}) tried to report on repo {repo_id} without \
@@ -1008,27 +1056,27 @@ async fn check_repo_quota_after_backup(
     agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
-    deduplicated_size: i64,
+    repo_unique_csize: i64,
     repo_name: &str,
 ) {
     let Ok(Some(quota)) = db::quota::get_quota(&state.pool, repo_id).await else {
         return;
     };
-    let quota_status = db::quota::evaluate_quota(&quota, deduplicated_size);
+    let quota_status = db::quota::evaluate_quota(&quota, repo_unique_csize);
     if matches!(quota_status, db::quota::QuotaStatus::Ok) {
         return;
     }
     tracing::warn!(
         hostname = %hostname,
         repo_id,
-        deduplicated_size,
+        repo_unique_csize,
         quota_status = quota_status_label(quota_status),
         "repository quota exceeded"
     );
 
     let message = format!(
-        "Repository quota {} for repo {repo_name}: deduplicated size {deduplicated_size} bytes \
-         exceeds configured limits",
+        "Repository quota {} for repo {repo_name}: current size {repo_unique_csize} bytes exceeds \
+         configured limits",
         quota_status_label(quota_status),
     );
     dispatch_quota_breach_notification(
@@ -1056,7 +1104,7 @@ async fn check_server_quota_after_backup(
     agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
-    deduplicated_size: i64,
+    repo_unique_csize: i64,
     repo_name: &str,
 ) {
     let Ok(ssh_host) = db::get_repo_ssh_host(&state.pool, repo_id).await else {
@@ -1066,22 +1114,22 @@ async fn check_server_quota_after_backup(
     else {
         return;
     };
-    let Ok(siblings_deduplicated_size) =
-        db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
-            &state.pool,
-            &ssh_host,
-            repo_id,
-        )
-        .await
+    let Ok(siblings_deduplicated_size) = db::server_quota::total_deduplicated_size_for_ssh_host(
+        &state.pool,
+        &ssh_host,
+        Some(repo_id),
+    )
+    .await
     else {
         return;
     };
 
-    // Combine the just-completed backup's fresh `deduplicated_size` with the
-    // (possibly stale, since `repo_stats` is only refreshed by a sync/rescan) snapshot
-    // for sibling repos on the host, so a breach on an otherwise idle host is caught
-    // immediately rather than only after an unrelated rescan.
-    let total_deduplicated_size = siblings_deduplicated_size.saturating_add(deduplicated_size);
+    // Combine the just-completed backup's fresh `repo_unique_csize` (this repo's
+    // current repo-wide deduplicated size) with the (possibly stale, since
+    // `repo_stats` is only refreshed by a sync/rescan) snapshot for sibling repos
+    // on the host, so a breach on an otherwise idle host is caught immediately
+    // rather than only after an unrelated rescan.
+    let total_deduplicated_size = siblings_deduplicated_size.saturating_add(repo_unique_csize);
     let quota_status = server_quota.status(total_deduplicated_size);
     if matches!(quota_status, db::quota::QuotaStatus::Ok) {
         return;
@@ -1171,10 +1219,19 @@ async fn run_post_backup_sync(
     task_registry: shared::task_registry::TaskRegistry,
 ) {
     let _task_guard = background_task_tracker.begin();
-    if let Err(e) = db::set_repo_importing(&pool, repo_id, true).await {
-        tracing::error!(repo_id, error = %e, "post-backup sync: failed to set importing flag");
-        return;
-    }
+    // Held for the rest of this function so a panic inside sync_new_archives
+    // still clears repo_import_state.importing (via spawned cleanup, since
+    // Drop can't await) instead of leaving it permanently "importing" - see
+    // db::ImportingGuard.
+    let importing_guard = match db::ImportingGuard::acquire(&pool, repo_id, task_registry.clone())
+        .await
+    {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::error!(repo_id, error = %e, "post-backup sync: failed to set importing flag");
+            return;
+        }
+    };
     match sync_new_archives(
         &pool,
         &encryption_key,
@@ -1194,13 +1251,7 @@ async fn run_post_backup_sync(
                     "post-backup sync: failed to update last_synced_at"
                 );
             }
-            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e,
-                    "post-backup sync: failed to clear importing flag"
-                );
-            }
+            importing_guard.clear_now().await;
             if let Err(e) = db::set_repo_import_error(&pool, repo_id, None).await {
                 tracing::error!(
                     repo_id,
@@ -1222,13 +1273,7 @@ async fn run_post_backup_sync(
         }
         Err(e) => {
             tracing::error!(repo_id, error = %e, "post-backup sync failed");
-            if let Err(e2) = db::set_repo_importing(&pool, repo_id, false).await {
-                tracing::error!(
-                    repo_id,
-                    error = %e2,
-                    "post-backup sync: failed to clear importing flag"
-                );
-            }
+            importing_guard.clear_now().await;
             if let Err(e2) = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await
             {
                 tracing::error!(
@@ -1289,7 +1334,7 @@ async fn persist_backup_completed_report(
     state: &AppState,
     hostname: &str,
     agent_id: i64,
-    status: &str,
+    status: BackupStatus,
     report: shared::types::BackupReport,
 ) -> bool {
     let params = db::InsertReportParams {
@@ -1298,7 +1343,7 @@ async fn persist_backup_completed_report(
         schedule_id: report.schedule_id,
         started_at: report.started_at,
         finished_at: report.finished_at,
-        status: status.to_string(),
+        status,
         original_size: report.original_size,
         compressed_size: report.compressed_size,
         deduplicated_size: report.deduplicated_size,
@@ -1378,15 +1423,10 @@ async fn handle_backup_completed(
 
     let repo_id = report.repo_id.0;
     let schedule_id = report.schedule_id;
-    let deduplicated_size = report.deduplicated_size;
+    let repo_unique_csize = report.repo_unique_csize;
     let report_status = report.status;
 
     let outcome_success = !matches!(report_status, shared::types::BackupStatus::Failed);
-    let status = match report_status {
-        shared::types::BackupStatus::Success => "success",
-        shared::types::BackupStatus::Warning => "warning",
-        shared::types::BackupStatus::Failed => "failed",
-    };
     state.completion_bus.publish(OperationOutcome {
         hostname: hostname.to_owned(),
         repo_id,
@@ -1402,7 +1442,9 @@ async fn handle_backup_completed(
     );
 
     let report_persisted =
-        persist_backup_completed_report(state, hostname, agent_id, status, report).await;
+        persist_backup_completed_report(state, hostname, agent_id, report_status, report).await;
+
+    let status_str = &report_status.to_string();
 
     handle_post_backup_report_side_effects(
         state,
@@ -1425,7 +1467,7 @@ async fn handle_backup_completed(
         agent_id,
         repo_id,
         schedule_id,
-        deduplicated_size,
+        repo_unique_csize,
         &repo_name,
     )
     .await;
@@ -1435,7 +1477,7 @@ async fn handle_backup_completed(
         agent_id,
         repo_id,
         schedule_id,
-        deduplicated_size,
+        repo_unique_csize,
         &repo_name,
     )
     .await;
@@ -1445,7 +1487,7 @@ async fn handle_backup_completed(
         report_status,
         hostname,
         repo_name,
-        status,
+        status_str,
         notification_error_message,
         repo_id,
         agent_id,
@@ -1845,9 +1887,17 @@ mod tests {
             pending_restores: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
+            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+                480,
+            )),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),
+
+            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
+                60,
+                std::time::Duration::from_mins(1),
+            ),
         }
     }
 
@@ -2006,8 +2056,8 @@ exit 0
                 keep_yearly: 1,
                 compact_enabled: true,
                 rate_limit_kbps: None,
-                pre_backup_commands: "",
-                post_backup_commands: "",
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
                 on_failure: "stop",
             },
             None,
@@ -2060,7 +2110,7 @@ exit 0
                 let archive_2 = crate::archive_index::get_index_status(&pool, repo.id, "archive-2")
                     .await
                     .expect("archive-2 status query");
-                if matches!(archive_2, Some(crate::archive_index::IndexStatus::Done)) {
+                if matches!(archive_2, Some(shared::types::IndexStatus::Done)) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2128,8 +2178,8 @@ exit 0
                 keep_yearly: 1,
                 compact_enabled: true,
                 rate_limit_kbps: None,
-                pre_backup_commands: "",
-                post_backup_commands: "",
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
                 on_failure: "stop",
             },
             None,
@@ -2180,7 +2230,7 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
         assert!(
@@ -2249,7 +2299,7 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
     }
@@ -2276,7 +2326,7 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
     }
@@ -2304,12 +2354,30 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
     }
 
     fn backup_completed_message(agent_id: i64, repo_id: i64, deduplicated_size: i64) -> String {
+        backup_completed_message_with_repo_size(
+            agent_id,
+            repo_id,
+            deduplicated_size,
+            deduplicated_size,
+        )
+    }
+
+    /// Like [`backup_completed_message`], but lets the archive-level `deduplicated_size`
+    /// (this backup's own new unique data) and the repo-wide `repo_unique_csize` (the
+    /// repo's total current usage) diverge, matching what a real backup with prior
+    /// archives reports.
+    fn backup_completed_message_with_repo_size(
+        agent_id: i64,
+        repo_id: i64,
+        deduplicated_size: i64,
+        repo_unique_csize: i64,
+    ) -> String {
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
             .single()
@@ -2327,7 +2395,7 @@ exit 0
             original_size: deduplicated_size,
             compressed_size: deduplicated_size,
             deduplicated_size,
-            repo_unique_csize: deduplicated_size,
+            repo_unique_csize,
             files_processed: 3,
             duration_secs: 300,
             error_message: None,
@@ -2388,8 +2456,8 @@ exit 0
                 keep_yearly: 1,
                 compact_enabled: true,
                 rate_limit_kbps: None,
-                pre_backup_commands: "",
-                post_backup_commands: "",
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
                 on_failure: "stop",
             },
             None,
@@ -2413,6 +2481,100 @@ exit 0
 
         let state = build_test_state(pool.clone());
         let msg = backup_completed_message(agent.id, repo.id, 200);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let updated = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .expect("get schedule");
+        assert!(!updated.enabled);
+
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+    }
+
+    /// Regression test for the archive-level-vs-repo-wide size mixup: a backup that adds
+    /// almost no new unique data (`deduplicated_size`) to an already-large repo must still
+    /// breach the repo's quota, because enforcement is decided by `repo_unique_csize` (the
+    /// repo's actual current total), not by how much this one archive contributed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_uses_repo_unique_csize_not_archive_delta_for_repo_quota(
+        pool: PgPool,
+    ) {
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "quota-repo",
+                repo_path: "/backups/quota",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "quota-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        db::quota::upsert_quota(
+            &pool,
+            repo.id,
+            Some(50),
+            Some(100),
+            QuotaAction::NotifyOnly,
+            QuotaAction::BlockBackups,
+            true,
+        )
+        .await
+        .expect("upsert quota");
+
+        let state = build_test_state(pool.clone());
+        // This archive itself only added 5 bytes of new unique data (well under the
+        // warn/critical thresholds), but the repo's actual current total is 150 bytes,
+        // over the critical threshold of 100.
+        let msg = backup_completed_message_with_repo_size(agent.id, repo.id, 5, 150);
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         let updated = crate::db::get_schedule_by_id(&pool, schedule.id)
@@ -2490,8 +2652,8 @@ exit 0
                 keep_yearly: 1,
                 compact_enabled: true,
                 rate_limit_kbps: None,
-                pre_backup_commands: "",
-                post_backup_commands: "",
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
                 on_failure: "stop",
             },
             None,
@@ -2520,8 +2682,8 @@ exit 0
                 keep_yearly: 1,
                 compact_enabled: true,
                 rate_limit_kbps: None,
-                pre_backup_commands: "",
-                post_backup_commands: "",
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
                 on_failure: "stop",
             },
             None,
@@ -2548,6 +2710,131 @@ exit 0
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         let updated = crate::db::get_schedule_by_id(&pool, schedule_b.id)
+            .await
+            .expect("get schedule");
+        assert!(!updated.enabled);
+
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+    }
+
+    /// Regression test for the archive-level-vs-repo-wide size mixup in the *server* quota
+    /// path: repo A's own backup only added 5 bytes of new unique data (its archive-level
+    /// `deduplicated_size`), well under what's needed to breach the shared host quota when
+    /// combined with sibling repo B's 60-byte snapshot. But repo A's actual current total
+    /// (`repo_unique_csize`) is 45 bytes, which combined with B's 60 bytes breaches the
+    /// critical threshold of 100. Enforcement must use `repo_unique_csize`, not
+    /// `deduplicated_size`, for the just-completed repo's contribution.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_uses_repo_unique_csize_not_archive_delta_for_server_quota(
+        pool: PgPool,
+    ) {
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo_a = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "shared-repo-a",
+                repo_path: "/backups/shared-a",
+                ssh_user: "backup",
+                ssh_host: "shared.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo a");
+        let repo_b = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "shared-repo-b",
+                repo_path: "/backups/shared-b",
+                ssh_user: "backup",
+                ssh_host: "shared.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo b");
+        // Repo B's sibling snapshot, as if left over from an earlier sync/rescan.
+        crate::db::update_repo_info_stats(
+            &pool,
+            repo_b.id,
+            &crate::db::RepoInfoStats {
+                deduplicated_size: 60,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("seed repo b stats");
+        let schedule_a = crate::db::insert_schedule(
+            &pool,
+            repo_a.id,
+            &crate::db::ScheduleParams {
+                name: "shared-schedule-a",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule a");
+        crate::db::insert_schedule_targets(&pool, schedule_a.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        db::server_quota::upsert_server_quota(
+            &pool,
+            "shared.local",
+            Some(50),
+            Some(100),
+            QuotaAction::NotifyOnly,
+            QuotaAction::BlockBackups,
+            true,
+        )
+        .await
+        .expect("upsert server quota");
+
+        let state = build_test_state(pool.clone());
+        // Archive-level delta (5) + sibling snapshot (60) = 65, under the critical
+        // threshold of 100. Only the repo-wide total (45) + sibling snapshot (60) = 105
+        // breaches it.
+        let msg = backup_completed_message_with_repo_size(agent.id, repo_a.id, 5, 45);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let updated = crate::db::get_schedule_by_id(&pool, schedule_a.id)
             .await
             .expect("get schedule");
         assert!(!updated.enabled);

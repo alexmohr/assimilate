@@ -1786,7 +1786,7 @@ mod tests {
     fn parse_dry_run_empty_input() {
         let (files, total_size) = parse_dry_run_output("");
 
-        assert!(files.is_empty());
+        assert_eq!(files.len(), 0);
         assert_eq!(total_size, 0);
     }
 
@@ -1942,7 +1942,7 @@ mod tests {
 
         let msg = rx.try_recv().unwrap();
         assert!(matches!(msg, AgentToServer::BackupCancelled { repo_id: r } if r == repo.repo_id));
-        assert!(executor.active_backup_tasks.lock().await.is_empty());
+        assert_eq!(executor.active_backup_tasks.lock().await.len(), 0);
         drop(permit);
     }
 

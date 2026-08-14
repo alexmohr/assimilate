@@ -106,6 +106,7 @@ async function mountWithAgent(
             never_succeeded_agents: [],
             disabled_only_agents: [],
           },
+          running_operations: [],
         },
       })
     return Promise.resolve({ data: [] })
@@ -143,6 +144,7 @@ describe('HostsView', () => {
               never_succeeded_agents: [{ agent_id: 2, hostname: 'never-succeeded-host' }],
               disabled_only_agents: [],
             },
+            running_operations: [],
           },
         })
       }
@@ -151,6 +153,55 @@ describe('HostsView', () => {
       }
       return Promise.resolve({ data: [] })
     })
+  })
+
+  it('shows a running pill on the agent card when a backup is in progress after reload', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: agents })
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [
+              {
+                report_id: 1,
+                status: 'started',
+                hostname: 'protected-host',
+                schedule_id: 1,
+                schedule_name: 'nightly',
+                repo_id: 1,
+                repo_name: 'server-daily',
+                started_at: '2026-06-01T10:00:00Z',
+                destination: { kind: 'schedule', schedule_id: 1 },
+              },
+            ],
+          },
+        })
+      }
+      if (url === '/system/version') {
+        return Promise.resolve({ data: { agent_version: null } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const cards = wrapper.findAll('.host-card')
+    const protectedCard = cards.find((c) => c.text().includes('protected-host'))
+    expect(protectedCard?.find('.entity-running-pill').exists()).toBe(true)
+    expect(protectedCard?.text()).toContain('Backing up: server-daily')
+
+    const otherCard = cards.find((c) => c.text().includes('never-succeeded-host'))
+    expect(otherCard?.find('.entity-running-pill').exists()).toBe(false)
   })
 
   it('applies the coverage filter from the route query', async () => {
@@ -202,6 +253,7 @@ describe('HostsView', () => {
               never_succeeded_agents: [],
               disabled_only_agents: [],
             },
+            running_operations: [],
           },
         })
       }
@@ -231,6 +283,139 @@ describe('HostsView', () => {
     expect(text).toContain('versioned-host')
     expect(text).toContain('v1.2.3')
     expect(text).toContain('h ago')
+  })
+})
+
+describe('HostsView issue rows', () => {
+  const issueAgent = {
+    id: 42,
+    hostname: 'flaky-host',
+    display_name: null,
+    agent_version: null,
+    agent_git_sha: null,
+    agent_build_time: null,
+    agent_commit_count: null,
+    created_at: '2026-06-01T00:00:00Z',
+    last_seen_at: null,
+    is_connected: true,
+    is_imported: false,
+    is_hidden: false,
+    default_backup_paths: [],
+  }
+
+  const emptyOverviewData = {
+    protection: {
+      protected_agent_links: [],
+      unassigned_agents: [],
+      never_succeeded_agents: [],
+      disabled_only_agents: [],
+    },
+    running_operations: [],
+  }
+
+  async function mountAgentsList(
+    agentsData: unknown[],
+    healthData: unknown[] = [],
+  ): Promise<{
+    wrapper: ReturnType<typeof mount>
+    router: ReturnType<typeof createRouter>
+  }> {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: agentsData })
+      if (url === '/stats/health') return Promise.resolve({ data: healthData })
+      if (url === '/stats/dashboard-overview') return Promise.resolve({ data: emptyOverviewData })
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    return { wrapper, router }
+  }
+
+  async function mountWithHealth(): Promise<{
+    wrapper: ReturnType<typeof mount>
+    router: ReturnType<typeof createRouter>
+  }> {
+    return mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          last_status: 'failed',
+          last_backup_at: '2026-01-01T00:00:00Z',
+          is_overdue: false,
+          last_error_message: 'Network is unreachable',
+        },
+        {
+          hostname: 'flaky-host',
+          target_name: 'onsite',
+          last_status: 'success',
+          last_backup_at: '2026-01-01T00:00:00Z',
+          is_overdue: true,
+          last_error_message: null,
+        },
+      ],
+    )
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders separate failed and overdue issue chips instead of a combined label', async () => {
+    const { wrapper } = await mountWithHealth()
+
+    const failedChip = wrapper.find('.entity-issue-chip.sev-danger')
+    const overdueChip = wrapper.find('.entity-issue-chip.sev-warning')
+    expect(failedChip.exists()).toBe(true)
+    expect(overdueChip.exists()).toBe(true)
+    expect(failedChip.text()).toContain('1 failed')
+    expect(overdueChip.text()).toContain('1 overdue')
+  })
+
+  it('navigates to the backups tab filtered to failed when the failed chip is clicked', async () => {
+    const { wrapper, router } = await mountWithHealth()
+
+    await wrapper.find('.entity-issue-chip.sev-danger').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'backups', status: 'failed' })
+  })
+
+  it('navigates to the schedules tab filtered to overdue when the overdue chip is clicked', async () => {
+    const { wrapper, router } = await mountWithHealth()
+
+    await wrapper.find('.entity-issue-chip.sev-warning').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'schedules', health: 'overdue' })
+  })
+
+  async function mountSingleAgent(
+    overrides: Record<string, unknown>,
+  ): Promise<ReturnType<typeof mount>> {
+    const { wrapper } = await mountAgentsList([{ ...issueAgent, ...overrides }])
+    return wrapper
+  }
+
+  it('shows an Offline pill and tints the card when the agent is disconnected', async () => {
+    const wrapper = await mountSingleAgent({ is_connected: false })
+
+    expect(wrapper.find('.host-card').classes()).toContain('host-card-notable')
+    expect(wrapper.find('.entity-status-pill').text()).toBe('Offline')
+  })
+
+  it('shows nothing in the badge row for a healthy online agent with no issues', async () => {
+    const wrapper = await mountSingleAgent({ is_connected: true })
+
+    expect(wrapper.find('.host-card').classes()).not.toContain('host-card-notable')
+    expect(wrapper.find('.entity-badge-row').exists()).toBe(false)
   })
 })
 

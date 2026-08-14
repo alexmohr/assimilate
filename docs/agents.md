@@ -30,7 +30,7 @@ The Agents list page provides:
 - **Tag filter** — filter by one or more tags
 - **Sort buttons** — sort by Name, Status, Last Seen, or Agent Version
 
-Each agent card shows the hostname, display name, online/offline status, schedule count, last seen time, agent version, and overdue indicators. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
+Each agent card shows the hostname, display name, schedule count, last seen time, and agent version. An offline agent tints the card and adds an **Offline** pill; a **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
 
 ## Agent Deployment
 
@@ -154,6 +154,8 @@ Each agent card and detail page shows a live connection indicator:
 The server tracks liveness via WebSocket pings. If the agent stops responding to pings, the connection is closed and the agent transitions to **Offline**. `last_seen` is updated whenever the agent disconnects cleanly or times out.
 
 "Disconnected" does not mean the agent is deleted or its data is lost — it simply means the agent is not currently reachable. Scheduled backups for that agent will fail until the agent reconnects.
+
+While a backup is running for an agent, its card on the Agents list shows a **Running** pill naming the target repository. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
 
 ## Agent Detail View
 

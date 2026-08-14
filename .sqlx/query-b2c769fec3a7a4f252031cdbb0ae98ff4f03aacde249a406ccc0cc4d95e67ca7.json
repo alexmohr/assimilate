@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND attempted_at > GREATEST(COALESCE((SELECT MAX(attempted_at) FROM login_attempts WHERE username = $1 AND success = true), '-infinity'::TIMESTAMPTZ), COALESCE($2::TIMESTAMPTZ, '-infinity'::TIMESTAMPTZ))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b2c769fec3a7a4f252031cdbb0ae98ff4f03aacde249a406ccc0cc4d95e67ca7"
+}

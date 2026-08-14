@@ -15,13 +15,13 @@ import { useMobile } from '../composables/useMobile'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { Plus, SlidersHorizontal, Server, AlertCircle } from '@lucide/vue'
+import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
-import CardError from '../components/CardError.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
@@ -227,19 +227,35 @@ function agentHealthStatus(agent: AgentRow): AgentHealth | null {
   return healthByHost.value[agent.hostname] ?? null
 }
 
-function agentHasIssues(agent: AgentRow): boolean {
+function agentIssues(agent: AgentRow): EntityIssue[] {
   const h = agentHealthStatus(agent)
-  if (!h) return false
-  return h.failed > 0 || h.overdue > 0
+  if (!h) return []
+  const issues: EntityIssue[] = []
+  if (h.failed > 0) {
+    issues.push({
+      key: 'failed',
+      label: `${h.failed} failed`,
+      severity: 'danger',
+      onClick: () => navigateToAgentIssue(agent, 'failed'),
+    })
+  }
+  if (h.overdue > 0) {
+    issues.push({
+      key: 'overdue',
+      label: `${h.overdue} overdue`,
+      severity: 'warning',
+      onClick: () => navigateToAgentIssue(agent, 'overdue'),
+    })
+  }
+  return issues
 }
 
-function agentIssueLabel(agent: AgentRow): string {
-  const h = agentHealthStatus(agent)
-  if (!h) return ''
-  const parts: string[] = []
-  if (h.failed > 0) parts.push(`${h.failed} failed`)
-  if (h.overdue > 0) parts.push(`${h.overdue} overdue`)
-  return parts.join(', ')
+function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue'): void {
+  const query =
+    kind === 'failed'
+      ? { tab: 'backups', status: 'failed' }
+      : { tab: 'schedules', health: 'overdue' }
+  router.push({ path: `/agents/${agent.hostname}`, query })
 }
 
 function toggleTagFilter(tagId: number): void {
@@ -340,6 +356,15 @@ async function loadAgents(): Promise<void> {
       if (entry.is_overdue) hMap[entry.hostname].overdue++
     })
     healthByHost.value = hMap
+
+    const activeMap: Record<string, string[]> = {}
+    overviewRes.data.running_operations.forEach((op) => {
+      const list = activeMap[op.hostname] ?? []
+      if (!list.includes(op.repo_name)) list.push(op.repo_name)
+      activeMap[op.hostname] = list
+    })
+    activeBackupsByHost.value = activeMap
+
     coverageHostIds.value = {
       protected: new Set(
         overviewRes.data.protection.protected_agent_links.map((host) => host.agent_id),
@@ -502,6 +527,11 @@ onMessage('BackupCompleted', (payload) => {
 
 function hostActiveBackups(agent: AgentRow): string[] {
   return activeBackupsByHost.value[agent.hostname] ?? []
+}
+
+function hostRunningLabel(agent: AgentRow): string {
+  const targets = hostActiveBackups(agent)
+  return targets.length > 0 ? `Backing up: ${targets.join(', ')}` : 'Running'
 }
 
 function deployButtonLabel(agent: AgentRow): string | null {
@@ -697,7 +727,7 @@ watch(
         v-for="agent in filteredAgents"
         :key="agent.id"
         class="host-card"
-        :class="{ 'host-card-hidden': agent.is_hidden }"
+        :class="{ 'host-card-hidden': agent.is_hidden, 'host-card-notable': !isOnline(agent) }"
         @click="navigateToAgent(agent)"
       >
         <div class="card-top">
@@ -722,12 +752,6 @@ watch(
             >
               Imported
             </span>
-            <span
-              class="status-badge"
-              :class="isOnline(agent) ? 'status-online' : 'status-offline'"
-            >
-              {{ isOnline(agent) ? 'Online' : 'Offline' }}
-            </span>
           </div>
         </div>
         <div class="card-stats">
@@ -744,36 +768,13 @@ watch(
             <span class="stat-label">Agent</span>
           </div>
         </div>
-        <CardError
-          v-if="agentHasIssues(agent) && agentHealthStatus(agent)!.last_error_message"
-          :label="agentIssueLabel(agent)"
-          :message="agentHealthStatus(agent)!.last_error_message!"
+        <EntityStatusBadges
+          :notable="!isOnline(agent)"
+          notable-label="Offline"
+          :running="hostActiveBackups(agent).length > 0"
+          :running-label="hostRunningLabel(agent)"
+          :issues="agentIssues(agent)"
         />
-        <div
-          v-else-if="agentHasIssues(agent)"
-          class="card-health-issues"
-        >
-          <AlertCircle :size="12" />
-          <span
-            v-if="agentHealthStatus(agent)!.failed > 0"
-            class="issue-text issue-failed"
-          >
-            {{ agentHealthStatus(agent)!.failed }} failed
-          </span>
-          <span
-            v-if="agentHealthStatus(agent)!.overdue > 0"
-            class="issue-text issue-overdue"
-          >
-            {{ agentHealthStatus(agent)!.overdue }} overdue
-          </span>
-        </div>
-        <div
-          v-if="hostActiveBackups(agent).length > 0"
-          class="card-active-backup"
-        >
-          <span class="active-pulse" />
-          <span class="active-text"> Backing up: {{ hostActiveBackups(agent).join(', ') }} </span>
-        </div>
         <div
           v-if="agentTags(agent).length > 0"
           class="card-tags"
@@ -1118,6 +1119,10 @@ watch(
   box-shadow: var(--shadow);
 }
 
+.host-card-notable {
+  background: var(--bg-hover);
+}
+
 .card-top {
   display: flex;
   align-items: flex-start;
@@ -1183,60 +1188,6 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-}
-
-.card-health-issues {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--danger);
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-
-.issue-text {
-  font-size: 0.72rem;
-}
-
-.issue-failed {
-  color: var(--danger);
-}
-
-.issue-overdue {
-  color: var(--warning);
-}
-
-.card-active-backup {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.72rem;
-  color: var(--accent);
-}
-
-.active-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-.active-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tag-pill {

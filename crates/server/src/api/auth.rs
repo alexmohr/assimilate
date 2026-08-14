@@ -93,13 +93,19 @@ impl FromRequestParts<AppState> for AuthUser {
         let session = db::get_session(&state.pool, &hashed_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
 
-        // Idle timeout check using the cached value from AppState
+        // Idle timeout check using the cached value from AppState. Remember-me
+        // sessions are exempt: the user explicitly opted into staying signed
+        // in for the full `remember_me` duration (see `create_session_response`),
+        // so cutting that short after a few hours of inactivity would defeat
+        // the point of the checkbox. Those sessions are still bounded by their
+        // absolute `expires_at` (checked in `db::get_session`) and by the
+        // client-side refresh mechanism that extends it before it lapses.
         let idle_timeout_minutes = state
             .session_idle_timeout_minutes
             .load(std::sync::atomic::Ordering::Relaxed);
 
         let idle_duration = Utc::now().signed_duration_since(session.last_seen_at);
-        if idle_duration.num_minutes() > idle_timeout_minutes {
+        if !session.remember_me && idle_duration.num_minutes() > idle_timeout_minutes {
             db::delete_session(&state.pool, &hashed_id).await?;
             return Err(ApiError::Unauthorized(
                 "session expired due to inactivity".to_string(),

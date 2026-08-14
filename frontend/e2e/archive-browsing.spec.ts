@@ -174,8 +174,12 @@ test.describe('Archive browsing & diff journey', () => {
     page,
   }) => {
     // borg delete + the automatic compact that follows it can take a while
-    // even on the demo's small repos.
-    test.setTimeout(120_000)
+    // even on the demo's small repos. A CI run that hit this test's full
+    // 120s budget showed the archive still present the entire time (not a
+    // fast-path race) - a genuinely slow compact, not a hang - so match
+    // import.spec.ts's more generous allowance for the same class of slow
+    // borg operation rather than tightening a real assertion.
+    test.setTimeout(180_000)
 
     await loginAsAdmin(page)
     await navigateToMediaWeeklyArchives(page)

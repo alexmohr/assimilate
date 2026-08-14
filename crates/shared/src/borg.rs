@@ -483,10 +483,6 @@ pub async fn run_command<A: AsRef<OsStr>>(
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "tests use std::path::Path::exists for simple synchronous assertions"
-)]
 mod tests {
     use super::*;
 
@@ -790,8 +786,16 @@ mod tests {
 
         clear_stale_cache_lock(dir.path()).await.unwrap();
 
-        assert!(!dir.path().join("lock.exclusive").exists());
-        assert!(!dir.path().join("lock.roster").exists());
+        assert!(
+            !tokio::fs::try_exists(dir.path().join("lock.exclusive"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !tokio::fs::try_exists(dir.path().join("lock.roster"))
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

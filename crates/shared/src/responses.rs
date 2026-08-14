@@ -393,6 +393,26 @@ pub struct RepoWithStatsResponse {
     pub last_op_by: Option<String>,
     /// Currently active operation, if any.
     pub current_op: Option<crate::protocol::ActiveRepoOp>,
+    /// This repository's own storage quota, if one is configured.
+    pub quota: Option<RepoQuotaSummaryResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Repo-level storage quota, as embedded in a repository list entry.
+pub struct RepoQuotaSummaryResponse {
+    #[ts(type = "number | null")]
+    /// Threshold for warning in bytes.
+    pub warn_bytes: Option<i64>,
+    #[ts(type = "number | null")]
+    /// Threshold for critical in bytes.
+    pub critical_bytes: Option<i64>,
+    /// Action to take when warning threshold is exceeded.
+    pub warn_action: QuotaAction,
+    /// Action to take when critical threshold is exceeded.
+    pub critical_action: QuotaAction,
+    /// Whether this quota is enforced.
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

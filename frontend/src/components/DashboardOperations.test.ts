@@ -68,6 +68,16 @@ describe('dashboard operational components', () => {
     expect(wrapper.find('.finding-row .finding-action').attributes('href')).toBe('/schedules/1')
   })
 
+  it('exposes the full reason as a tooltip on the clamped reason element', () => {
+    const reason = `borg: ${'stderr '.repeat(60)}`
+    const f: DashboardFinding = { ...finding('backup_failed', 0), reason }
+    const wrapper = renderWithPlugins(NeedsAttention, { props: { findings: [f] } })
+
+    const reasonEl = wrapper.find('.finding-reason')
+    expect(reasonEl.attributes('title')).toBe(reason)
+    expect(reasonEl.text()).toBe(reason.trim())
+  })
+
   it('renders the no-problems empty state', () => {
     const wrapper = renderWithPlugins(NeedsAttention, { props: { findings: [] } })
     // The empty state is now handled by the parent (DashboardView) via v-if,

@@ -79,7 +79,11 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
             <template v-if="finding.schedule_name && finding.repo_name"> · </template>
             <template v-if="finding.repo_name">{{ finding.repo_name }}</template>
           </span>
-          <span class="finding-reason">{{ finding.reason }}</span>
+          <span
+            class="finding-reason"
+            :title="finding.reason"
+            >{{ finding.reason }}</span
+          >
         </span>
         <span class="finding-time">
           <template v-if="finding.deadline">Due {{ relativeTime(finding.deadline) }}</template>
@@ -182,10 +186,19 @@ p {
   font-size: 0.75rem;
 }
 
+/* A finding reason carries agent-supplied text (borg stderr, import errors).
+   The server caps its length, but a narrow column can still turn that into a
+   tall block, so the row keeps a hard two-line ceiling and hands the full text
+   to the tooltip and the linked activity record. */
 .finding-reason {
   flex-basis: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .finding-actions {

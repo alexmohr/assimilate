@@ -2174,6 +2174,65 @@ async fn repos_with_stats_empty(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn repos_with_stats_carries_own_quota_when_configured(pool: PgPool) {
+    let with_quota = create_test_repo(&pool).await;
+    let without_quota = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "no-quota-repo",
+            repo_path: "/backups/no-quota",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::quota::upsert_quota(
+        &pool,
+        with_quota.id,
+        Some(500),
+        Some(1_000),
+        QuotaAction::NotifyOnly,
+        QuotaAction::BlockBackups,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let repos = db::list_repos_with_stats(&pool).await.unwrap();
+    let with_quota_row = repos.iter().find(|r| r.id == with_quota.id).unwrap();
+    let without_quota_row = repos.iter().find(|r| r.id == without_quota.id).unwrap();
+
+    assert_eq!(with_quota_row.quota_warn_bytes, Some(500));
+    assert_eq!(with_quota_row.quota_critical_bytes, Some(1_000));
+    assert_eq!(
+        with_quota_row.quota_warn_action.as_deref(),
+        Some("notify_only")
+    );
+    assert_eq!(
+        with_quota_row.quota_critical_action.as_deref(),
+        Some("block_backups")
+    );
+    assert_eq!(with_quota_row.quota_enabled, Some(true));
+
+    assert_eq!(without_quota_row.quota_warn_bytes, None);
+    assert_eq!(without_quota_row.quota_critical_bytes, None);
+    assert_eq!(without_quota_row.quota_warn_action, None);
+    assert_eq!(without_quota_row.quota_critical_action, None);
+    assert_eq!(without_quota_row.quota_enabled, None);
+
+    let fetched_single = db::get_repo_with_stats(&pool, with_quota.id).await.unwrap();
+    assert_eq!(fetched_single.quota_critical_bytes, Some(1_000));
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repo_with_stats_single(pool: PgPool) {
     let agent = db::insert_agent(&pool, "single-host", None, "hash", None)
         .await

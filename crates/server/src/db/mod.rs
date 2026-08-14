@@ -5756,6 +5756,17 @@ pub struct RepoWithStatsRow {
     pub last_op_at: Option<DateTime<Utc>>,
     /// Who performed the last operation.
     pub last_op_by: Option<String>,
+    /// Own quota warn threshold in bytes, if a quota row exists.
+    pub quota_warn_bytes: Option<i64>,
+    /// Own quota critical threshold in bytes, if a quota row exists.
+    pub quota_critical_bytes: Option<i64>,
+    /// Own quota warn action, if a quota row exists.
+    pub quota_warn_action: Option<String>,
+    /// Own quota critical action, if a quota row exists.
+    pub quota_critical_action: Option<String>,
+    /// Whether a quota row exists for this repo, and if so, whether it's enabled.
+    /// `NULL` means no quota is configured at all.
+    pub quota_enabled: Option<bool>,
 }
 
 /// # Errors
@@ -5775,8 +5786,11 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          \"import_total!\", ris.status_message AS import_status_message, rlo.kind AS \
          last_op_kind, rlo.at AS last_op_at, rlo.by_text AS last_op_by, agg.last_backup_at, \
          COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
-         \"unmatched_count!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN \
-         repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = \
+         \"unmatched_count!\", q.warn_bytes AS quota_warn_bytes, q.critical_bytes AS \
+         quota_critical_bytes, q.warn_action AS \"quota_warn_action?\", q.critical_action AS \
+         \"quota_critical_action?\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN \
+         repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id \
+         LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = \
          r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
          THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
@@ -5810,8 +5824,11 @@ pub async fn get_repo_with_stats(
          \"import_total!\", ris.status_message AS import_status_message, rlo.kind AS \
          last_op_kind, rlo.at AS last_op_at, rlo.by_text AS last_op_by, agg.last_backup_at, \
          COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
-         \"unmatched_count!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN \
-         repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = \
+         \"unmatched_count!\", q.warn_bytes AS quota_warn_bytes, q.critical_bytes AS \
+         quota_critical_bytes, q.warn_action AS \"quota_warn_action?\", q.critical_action AS \
+         \"quota_critical_action?\", q.enabled AS \"quota_enabled?\" FROM repos r LEFT JOIN \
+         repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id \
+         LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = \
          r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
          THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \

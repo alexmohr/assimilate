@@ -1746,8 +1746,13 @@ async fn run_borg_break_lock(
     if exit_code != 0 {
         error!(exit_code, stderr = %stderr, "borg break-lock failed");
         let summary = extract_borg_error(&stderr);
+        // The cache-lock probe above already ran (and, if it found something, already
+        // mutated the filesystem) regardless of whether break-lock itself goes on to
+        // succeed or fail here - surface that in the error too, so a failure doesn't
+        // read as a clean no-op when a stale cache lock was in fact found or cleared.
+        let note_prefix = pre_note.map_or_else(String::new, |note| format!("{note}\n"));
         return Err(ApiError::BadGateway(format!(
-            "borg break-lock failed (exit {exit_code}): {summary}"
+            "{note_prefix}borg break-lock failed (exit {exit_code}): {summary}"
         )));
     }
 
@@ -4427,6 +4432,49 @@ mod tests {
         assert!(result.contains("cleared stale local cache lock"));
         assert!(result.contains(&lock_dir.display().to_string()));
         assert!(result.contains("successfully broke lock"));
+        assert!(
+            !tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_break_lock_preserves_the_cache_lock_note_when_break_lock_itself_fails() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("e".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        tokio::fs::write(lock_dir.join("lock.exclusive"), b"")
+            .await
+            .unwrap();
+
+        // The pre-probe finds and clears a stale cache lock, but the repository lock itself
+        // is held by a genuinely active backup, so `break-lock` fails. That filesystem
+        // mutation already happened by the time the error is built - the note must not be
+        // silently dropped just because the overall operation goes on to fail.
+        let script = format!(
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the \
+             lock {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
+             'lock held by another process' >&2\n    exit 1\n    ;;\n  *)\n    exit 1\n    \
+             ;;\nesac\n",
+            lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        let err = run_borg_break_lock(
+            "ssh://user@host/repo",
+            "hunter2",
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+        .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("cleared stale local cache lock"));
+        assert!(message.contains(&lock_dir.display().to_string()));
+        assert!(message.contains("borg break-lock failed"));
         assert!(
             !tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
                 .await

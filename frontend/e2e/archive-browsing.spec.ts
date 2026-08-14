@@ -193,26 +193,25 @@ test.describe('Archive browsing & diff journey', () => {
 
     // The row's own button must reflect the in-flight delete immediately -
     // disabled, spinner, and re-titled - not just clickable-again once the
-    // confirmation dialog closes. On this fast demo repo, borg can finish
-    // the delete (and the compact that follows it) at any point, including
-    // between two separately-polling assertions - so the disabled check is
-    // read in the same breath as confirming visibility (one DOM read, not
-    // a second independently-retrying expect()) rather than reopening a
-    // window for the row to vanish in between. Whatever that read sees
-    // while the button still exists is ground truth and must be disabled -
-    // a real regression there still fails the test. Only the button never
-    // being observed at all (neither in the wait below nor in that same
-    // read) is tolerated, as a stronger proof of the same guarantee.
+    // confirmation dialog closes. confirmArchiveDeletion marks the row as
+    // deleting synchronously, before the delete request even goes out, so
+    // the button appearing at all is a hard requirement here: if that
+    // synchronous marking ever regressed, a fast demo repo could prune the
+    // archive before the button ever rendered, and the row simply
+    // disappearing on its own proves nothing about whether the in-flight
+    // state was ever shown. Only the *disabled* read is best-effort - on
+    // this fast demo repo, borg can finish the delete (and the compact
+    // that follows it) between confirming the button is visible and
+    // reading its disabled state, so that read happens in the same DOM
+    // read as the visibility confirmation (not a second, separately-
+    // polling expect()) and tolerates the button vanishing in that instant.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
-    const appeared = await pendingBtn
-      .waitFor({ state: 'visible', timeout: 5_000 })
-      .then(() => true)
-      .catch(() => false)
-    const disabled = appeared
-      ? await pendingBtn.evaluate((el) => (el as HTMLButtonElement).disabled).catch(() => null)
-      : null
+    await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
+    const disabled = await pendingBtn
+      .evaluate((el) => (el as HTMLButtonElement).disabled)
+      .catch(() => null)
     if (disabled === null) {
       await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible()
     } else {

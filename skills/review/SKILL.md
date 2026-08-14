@@ -66,18 +66,23 @@ set the verdict labels per the Workflow section to move them.
 | `precheck failed` | A deterministic pre-review stage failed | **Purely derived** — `sync-pr-labels.js` computes it fresh every run from `coverage failed` and/or `duplicate code`, never set directly by anything. This is the one label to look at if you just want "did any pre-flight stage fail" without caring which. See "Automated pre-flight checks" below |
 | `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` via the standalone `.github/workflows/coverage-diff-check.yml`. See "Automated pre-flight checks" below |
 | `duplicate code` | The duplicate-code-scan pre-review stage failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml`. See "Automated pre-flight checks" below |
-| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** no human sign-off is pending **and** neither `coverage failed` nor `duplicate code` is set **and** the review decision is not `CHANGES_REQUESTED`. An approving review is *not* required — see note below the table |
+| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** no human sign-off is pending **and** neither `coverage failed` nor `duplicate code` is set **and** the review decision is not `CHANGES_REQUESTED` **and** a genuine approval is on record — see note below the table |
 | `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" — **but only once `ci failing`, `merge conflict`, `coverage failed`, and `duplicate code` are all clear; see the note below the table** |
 
-`ready to merge` does not require an approving review. Waiting on an
-approval when CI hasn't even confirmed the commit builds/passes is a
-contradiction — nobody should approve a red build — so the deterministic
-gates (CI, merge conflicts, coverage/duplication, an active
-`CHANGES_REQUESTED` verdict, sensitive-path sign-off) are what actually
-matter; the absence of an approval by itself is not a blocker. A review is
-still worth doing and still worth requesting via the normal flow (Workflow
-section above) — an explicit `changes requested` verdict still blocks the
-gate the same as any other failing precheck.
+`ready to merge` requires a **genuine approval**, on top of every
+deterministic gate (CI, merge conflicts, coverage/duplication, an active
+`CHANGES_REQUESTED` verdict, sensitive-path sign-off): either GitHub's
+native `reviewDecision` is `APPROVED` (a different-account review — GitHub
+itself guarantees this is a real, distinct reviewer and never a
+self-approval), or the same-account `claude-approved` label is set **and**
+the most recent event that added it was actually authored by this repo's
+own automation (`github-actions[bot]`) — see "Label forgery protection"
+below. A `claude-approved`/`reviewDecision: APPROVED` added by any other
+account, or not present at all, leaves the PR at `needs review` even once
+CI and every other check is green — a green build alone is not enough. A
+review is requested via the normal flow (Workflow section above); an
+explicit `changes requested` verdict still blocks the gate the same as any
+other failing precheck.
 
 `ready to merge` also requires `coverage-diff-check.yml` and
 `duplicate-code-check.yml` to have each actually **completed** a check run
@@ -329,21 +334,14 @@ be true before flipping it.
 
 The same `sync-pr-labels.js` run that computes `ready to merge` also
 squash-merges the PR itself (`--delete-branch` for same-repo branches) the
-moment **all** of the following hold, every time it re-syncs (every push,
+moment `status === ready to merge`, every time it re-syncs (every push,
 review, label change, or CI completion — not just the instant a review is
-submitted):
-
-* `status === ready to merge` — CI green, no merge conflict, no
-  `coverage failed`/`duplicate code`, no active `changes requested` verdict,
-  and no pending `needs human review` sign-off (all the same gates the label
-  itself already requires — see the table above).
-* **A genuine approval** — either GitHub's native `reviewDecision` is
-  `APPROVED` (a different-account review; GitHub itself guarantees this is a
-  real, distinct reviewer and never a self-approval), or the same-account
-  `claude-approved` label is set. `ready to merge` on its own does **not**
-  require an approval (see the note under the table), so this is checked
-  independently — merging still needs one even though the status label
-  doesn't.
+submitted). `ready to merge` already folds in a genuine approval as one of
+its own gates (see the note under the table and "Label forgery protection"
+below), so nothing further is checked independently before merging — CI
+green, no merge conflict, no `coverage failed`/`duplicate code`, no active
+`changes requested` verdict, no pending `needs human review` sign-off, and
+a genuine approval are all required for the status itself.
 
 This is deliberately **not** something the reviewing agent does itself
 anymore — `claude-review.yml`'s prompt explicitly tells Claude never to run
@@ -357,14 +355,16 @@ that could be skipped, time out, or simply never run again.
 **Label forgery protection:** unlike a native review, `claude-approved` is
 an ordinary label — anyone with triage-level (or higher) repo access can add
 any label to any PR by hand via the UI or their own token, with no review
-ever having happened. Merging on the label's mere presence would let that
-forge a clean verdict. Before trusting it for merging, `sync-pr-labels.js`
-checks the PR's timeline for the most recent event that added
-`claude-approved` and requires its actor to be `github-actions[bot]` — the
-identity both `claude-review.yml`'s `gh pr edit --add-label` call and this
-workflow's own label mutations run under. A label added by any other
-account is left in place (still advisory for the status labels above) but
-is never trusted to trigger a merge.
+ever having happened. Treating the label's mere presence as a genuine
+approval would let that forge a clean verdict and reach both `ready to
+merge` and auto-merge with no review ever having happened. Before trusting
+it for either, `sync-pr-labels.js` checks the PR's timeline for the most
+recent event that added `claude-approved` and requires its actor to be
+`github-actions[bot]` — the identity both `claude-review.yml`'s `gh pr edit
+--add-label` call and this workflow's own label mutations run under. A
+label added by any other account is left in place on the PR (so a human can
+still see it was set) but is never trusted as a genuine approval — the PR
+stays at `needs review` and is never auto-merged on its basis.
 
 `coverage-diff-check.yml` and `duplicate-code-check.yml` each publish their
 own check run too ("Coverage Diff Check", "Duplicate Code Check") — these

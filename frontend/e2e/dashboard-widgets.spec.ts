@@ -61,6 +61,57 @@ test.describe('Dashboard widgets', () => {
     }
   })
 
+  test('bounds a Needs Attention row no matter how long the reason is', async ({ page }) => {
+    await loginAsAdmin(page)
+
+    const resp = await page.request.get('/api/stats/dashboard-overview')
+    expect(resp.ok()).toBe(true)
+    const overview = (await resp.json()) as Record<string, unknown> & {
+      findings: Array<{ reason: string }>
+    }
+    expect(overview.findings.length).toBeGreaterThan(0)
+
+    // The server caps an agent-supplied message (borg stderr, import errors) at
+    // 200 characters plus the ellipsis, so the payload itself stays bounded.
+    for (const finding of overview.findings) {
+      expect([...finding.reason].length).toBeLessThanOrEqual(203)
+    }
+
+    // Which finding kind the demo currently surfaces depends on its live backup
+    // state, and only some kinds carry an agent message at all - so serve the
+    // panel an oversized reason directly to prove the row clamps it regardless.
+    const longReason = `borg: ${'stderr overflow '.repeat(200)}`
+    overview.findings[0].reason = longReason
+    await page.route('**/api/stats/dashboard-overview', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(overview),
+      }),
+    )
+
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    const reasons = page.locator('#needs-attention .finding-reason')
+    await expect(reasons.first()).toBeVisible()
+    await expect(reasons.first()).toHaveAttribute('title', longReason)
+
+    // Every rendered reason stays within a two-line ceiling.
+    const count = await reasons.count()
+    for (let i = 0; i < count; i++) {
+      const metrics = await reasons.nth(i).evaluate((el) => {
+        const style = getComputedStyle(el)
+        const lineHeight = parseFloat(style.lineHeight)
+        return {
+          height: el.getBoundingClientRect().height,
+          lineHeight: Number.isNaN(lineHeight) ? parseFloat(style.fontSize) * 1.5 : lineHeight,
+        }
+      })
+      expect(metrics.height).toBeLessThanOrEqual(metrics.lineHeight * 2 + 2)
+    }
+  })
+
   test('dashboard shows recent activity section', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/')

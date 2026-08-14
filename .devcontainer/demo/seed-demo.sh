@@ -593,16 +593,20 @@ SQL
 
 echo "==> Adding warnings to the most recent web-server-01 backup report..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
+-- The first warning is deliberately long-winded, since borg emits
+-- multi-sentence diagnostics: the activity log shows it in full, while a
+-- dashboard Needs Attention finding built from it gets capped and clamped
+-- rather than growing a row as tall as the message happens to be.
 UPDATE backup_reports
 SET warnings = ARRAY[
-        'file changed while we backed it up: /var/www/config.php',
+        'file changed while we backed it up: /var/www/config.php - the size or inode changed between stat() and read(), so the archived copy may not match the file on disk; borg archived the version it read first and continued with the remaining backup sources',
         'slow read on /var/log/nginx/access.log'
     ],
     -- The agent populates error_message for warning-only runs too (the
     -- backup_warning notification path reads it); the UI hides the
     -- redundant Error box for warning-status reports instead of the agent
     -- dropping the message, so this mirrors real agent behavior.
-    error_message = 'file changed while we backed it up: /var/www/config.php; slow read on /var/log/nginx/access.log',
+    error_message = 'file changed while we backed it up: /var/www/config.php - the size or inode changed between stat() and read(), so the archived copy may not match the file on disk; borg archived the version it read first and continued with the remaining backup sources; slow read on /var/log/nginx/access.log',
     status = 'warning'
 WHERE id = (
     SELECT id FROM backup_reports

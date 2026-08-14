@@ -15,8 +15,9 @@ use shared::{
     crypto::encrypt_passphrase,
     responses::{
         BreakLockResponse, ConfirmRelocationResponse, ExecBorgResponse, InitRepoResponse,
-        MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse, RepoResponse,
-        RepoWithStatsResponse, RescanResponse, SyncResponse,
+        MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse,
+        RepoQuotaSummaryResponse, RepoResponse, RepoWithStatsResponse, RescanResponse,
+        SyncResponse,
     },
     types::{BORG_REPO_ENV_KEY, BorgEncryption, SystemEventType, build_repo_url},
 };
@@ -93,6 +94,19 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             last_op_at: row.last_op_at,
             last_op_by: row.last_op_by,
             current_op: None,
+            quota: row.quota_enabled.map(|enabled| RepoQuotaSummaryResponse {
+                warn_bytes: row.quota_warn_bytes,
+                critical_bytes: row.quota_critical_bytes,
+                warn_action: row
+                    .quota_warn_action
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                critical_action: row
+                    .quota_critical_action
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                enabled,
+            }),
         }
     }
 }
@@ -824,6 +838,10 @@ pub async fn list_repos_with_stats(
     let repos = db::list_repos_with_stats(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
+    // Quota configuration is otherwise gated to operators/admins (see
+    // `require_operator_or_admin` in api/quota.rs) - strip it here too, so embedding it on the
+    // list response doesn't leak it to a viewer who can see the repo but not its quota.
+    let can_view_quota = effective.can_delete_repo || effective.can_view_all_repos;
     let mut visible = Vec::with_capacity(repos.len());
     for repo in repos {
         if is_visible_to_user(
@@ -835,7 +853,10 @@ pub async fn list_repos_with_stats(
         )
         .await?
         {
-            let response = RepoWithStatsResponse::from(repo);
+            let mut response = RepoWithStatsResponse::from(repo);
+            if !can_view_quota {
+                response.quota = None;
+            }
             visible.push(response);
         }
     }
@@ -863,12 +884,19 @@ pub async fn list_repos_with_stats(
 /// Returns an error if the underlying operation fails.
 pub async fn get_repo(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(repo_id): Path<i64>,
 ) -> Result<Json<RepoWithStatsResponse>, ApiError> {
     let mut res: RepoWithStatsResponse =
         db::get_repo_with_stats(&state.pool, repo_id).await?.into();
     res.current_op = state.repo_op_tracker.get(repo_id).await;
+    // Quota configuration is otherwise gated to operators/admins (see
+    // `require_operator_or_admin` in api/quota.rs) - strip it here too, so embedding it on this
+    // response doesn't leak it to a viewer who can see the repo but not its quota.
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !(effective.can_delete_repo || effective.can_view_all_repos) {
+        res.quota = None;
+    }
     Ok(Json(res))
 }
 
@@ -4092,6 +4120,11 @@ mod tests {
             relocation_pending: false,
             last_op_at: None,
             last_op_by: None,
+            quota_warn_bytes: None,
+            quota_critical_bytes: None,
+            quota_warn_action: None,
+            quota_critical_action: None,
+            quota_enabled: None,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(resp.last_op_kind, None);
@@ -4130,11 +4163,110 @@ mod tests {
             relocation_pending: false,
             last_op_at: None,
             last_op_by: None,
+            quota_warn_bytes: None,
+            quota_critical_bytes: None,
+            quota_warn_action: None,
+            quota_critical_action: None,
+            quota_enabled: None,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(
             resp.last_op_kind,
             Some(shared::protocol::RepoOpKind::AgentBackup)
         );
+    }
+
+    #[test]
+    fn repo_with_stats_row_from_no_quota_row_yields_none() {
+        let row = db::RepoWithStatsRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            ssh_host_key: None,
+            compression: "lz4".into(),
+            encryption: "repokey".into(),
+            enabled: true,
+            importing: false,
+            import_error: None,
+            import_progress: 0,
+            import_total: 0,
+            import_status_message: None,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+            archive_count: 0,
+            last_backup_at: None,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            agent_count: 0,
+            unmatched_count: 0,
+            last_op_kind: None,
+            relocation_pending: false,
+            last_op_at: None,
+            last_op_by: None,
+            quota_warn_bytes: None,
+            quota_critical_bytes: None,
+            quota_warn_action: None,
+            quota_critical_action: None,
+            quota_enabled: None,
+        };
+        let resp = RepoWithStatsResponse::from(row);
+        assert!(resp.quota.is_none());
+    }
+
+    #[test]
+    fn repo_with_stats_row_from_quota_row_maps_fields_and_falls_back_invalid_actions() {
+        let row = db::RepoWithStatsRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            ssh_host_key: None,
+            compression: "lz4".into(),
+            encryption: "repokey".into(),
+            enabled: true,
+            importing: false,
+            import_error: None,
+            import_progress: 0,
+            import_total: 0,
+            import_status_message: None,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+            archive_count: 0,
+            last_backup_at: None,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            agent_count: 0,
+            unmatched_count: 0,
+            last_op_kind: None,
+            relocation_pending: false,
+            last_op_at: None,
+            last_op_by: None,
+            quota_warn_bytes: Some(500),
+            quota_critical_bytes: Some(600),
+            quota_warn_action: Some("bogus_action".into()),
+            quota_critical_action: Some("block_backups".into()),
+            quota_enabled: Some(true),
+        };
+        let resp = RepoWithStatsResponse::from(row);
+        let quota = resp.quota.expect("quota should be present");
+        assert_eq!(quota.warn_bytes, Some(500));
+        assert_eq!(quota.critical_bytes, Some(600));
+        assert_eq!(quota.warn_action, shared::types::QuotaAction::default());
+        assert_eq!(
+            quota.critical_action,
+            shared::types::QuotaAction::BlockBackups
+        );
+        assert!(quota.enabled);
     }
 }

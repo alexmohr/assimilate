@@ -4293,7 +4293,11 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let lock_dir = tempdir.path().join("borg").join("a".repeat(64));
         tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-        tokio::fs::write(lock_dir.join("lock.exclusive"), b"")
+        // lock.exclusive is a directory - borg's ExclusiveLock.acquire() creates it via
+        // os.mkdir(), with a per-holder marker file inside it.
+        let lock_exclusive = lock_dir.join("lock.exclusive");
+        tokio::fs::create_dir(&lock_exclusive).await.unwrap();
+        tokio::fs::write(lock_exclusive.join("host-1234-1"), b"")
             .await
             .unwrap();
         tokio::fs::write(lock_dir.join("lock.roster"), b"{}")
@@ -4369,7 +4373,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let lock_dir = tempdir.path().join("borg").join("b".repeat(64));
         tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-        tokio::fs::write(lock_dir.join("lock.exclusive"), b"")
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
             .await
             .unwrap();
 
@@ -4405,9 +4409,10 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let lock_dir = tempdir.path().join("borg").join("c".repeat(64));
         tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-        // `lock.exclusive` is a directory rather than a file, so `remove_file` hits a real
-        // I/O error (EISDIR) instead of "not found" - mirroring e.g. a permission error.
-        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
+        // `lock.exclusive` should always be a directory; a plain file there is a real,
+        // if unusual, on-disk anomaly that makes `remove_dir_all` hit a genuine I/O error
+        // (ENOTDIR) instead of "not found" - mirroring e.g. a permission error.
+        tokio::fs::write(lock_dir.join("lock.exclusive"), b"not a directory")
             .await
             .unwrap();
 
@@ -4437,7 +4442,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let lock_dir = tempdir.path().join("borg").join("d".repeat(64));
         tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-        tokio::fs::write(lock_dir.join("lock.exclusive"), b"")
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
             .await
             .unwrap();
 
@@ -4484,7 +4489,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let lock_dir = tempdir.path().join("borg").join("e".repeat(64));
         tokio::fs::create_dir_all(&lock_dir).await.unwrap();
-        tokio::fs::write(lock_dir.join("lock.exclusive"), b"")
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
             .await
             .unwrap();
 

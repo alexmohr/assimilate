@@ -297,6 +297,10 @@
     border-radius: var(--radius-sm);
     color: var(--danger);
     font-size: 0.85rem;
+    /* Some errors (e.g. Break Lock's cache-lock note prefixed onto a failure
+       message) are newline-joined - preserve those breaks instead of
+       collapsing them into one run-on line, same as .break-lock-success. */
+    white-space: pre-line;
   }
 
   .status-badge {

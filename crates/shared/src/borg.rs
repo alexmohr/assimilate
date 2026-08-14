@@ -419,6 +419,11 @@ pub fn cache_lock_dir_from_timeout_error(stderr: &str) -> Option<PathBuf> {
 /// Removes borg's local cache-lock files (`lock.exclusive`, `lock.roster`) from `dir`.
 /// Idempotent: a file that is already missing is not an error.
 ///
+/// `lock.exclusive` is a *directory* - borg's `ExclusiveLock.acquire()` creates it via
+/// `os.mkdir()`, with a per-holder marker file inside it - not a plain file, so it needs
+/// `remove_dir_all` rather than `remove_file`. `lock.roster` is the separate JSON file
+/// (a sibling, not nested inside `lock.exclusive`) tracking all shared/exclusive lock holders.
+///
 /// This is deliberately as unsafe as `borg break-lock` itself, which does not verify staleness
 /// either - it is documented as a manual-recovery tool for a repository the caller is already
 /// sure is not in concurrent use. Callers must only pass a `dir` that
@@ -427,14 +432,17 @@ pub fn cache_lock_dir_from_timeout_error(stderr: &str) -> Option<PathBuf> {
 ///
 /// # Errors
 ///
-/// Returns the first I/O error hit removing an existing lock file.
+/// Returns the first I/O error hit removing an existing lock file/directory.
 pub async fn clear_stale_cache_lock(dir: &Path) -> std::io::Result<()> {
-    for name in ["lock.exclusive", "lock.roster"] {
-        match tokio::fs::remove_file(dir.join(name)).await {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
+    match tokio::fs::remove_dir_all(dir.join("lock.exclusive")).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    match tokio::fs::remove_file(dir.join("lock.roster")).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
     }
     Ok(())
 }
@@ -796,7 +804,11 @@ mod tests {
     #[tokio::test]
     async fn clear_stale_cache_lock_removes_existing_lock_files() {
         let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("lock.exclusive"), b"")
+        // lock.exclusive is a directory - borg's ExclusiveLock.acquire() creates it via
+        // os.mkdir(), with a per-holder marker file inside it.
+        let lock_exclusive = dir.path().join("lock.exclusive");
+        tokio::fs::create_dir(&lock_exclusive).await.unwrap();
+        tokio::fs::write(lock_exclusive.join("host-1234-1"), b"")
             .await
             .unwrap();
         tokio::fs::write(dir.path().join("lock.roster"), b"{}")

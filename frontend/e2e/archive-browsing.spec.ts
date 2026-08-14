@@ -174,11 +174,22 @@ test.describe('Archive browsing & diff journey', () => {
     page,
   }) => {
     // borg delete + the automatic compact that follows it can take a while
-    // even on the demo's small repos. A CI run that hit this test's full
-    // 120s budget showed the archive still present the entire time (not a
-    // fast-path race) - a genuinely slow compact, not a hang - so match
-    // import.spec.ts's more generous allowance for the same class of slow
-    // borg operation rather than tightening a real assertion.
+    // even on the demo's small repos. This test's *first* attempt has
+    // intermittently burned through its full timeout budget - always
+    // exactly the ceiling, never a partial value - with the archive still
+    // present in the DOM the whole time; a fresh Playwright retry always
+    // recovers immediately after. That pattern (not variably slow, always
+    // pinned to the ceiling) looks more like an unbounded wait than genuine
+    // slowness - a plausible culprit is RepoLock::acquire (crates/server/
+    // src/lib.rs) having no timeout, so this delete could be queued behind
+    // an unrelated, still-running borg operation on the same repo (e.g.
+    // archive content indexing, which shares the same per-repo lock) for
+    // however long that happens to take. Unconfirmed: `trace` is now
+    // 'retain-on-failure' specifically so the next reproduction captures
+    // the stalling attempt instead of only ever tracing the retry that
+    // recovers. 180s (matching import.spec.ts's allowance for the same
+    // class of slow borg operation) at least gives a genuinely slow
+    // compact room to finish; it won't help if this is actually unbounded.
     test.setTimeout(180_000)
 
     await loginAsAdmin(page)

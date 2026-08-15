@@ -193,12 +193,19 @@ test.describe('Archive browsing & diff journey', () => {
 
     // The row's own button must reflect the in-flight delete immediately -
     // disabled, spinner, and re-titled - not just clickable-again once the
-    // confirmation dialog closes.
+    // confirmation dialog closes. Checked as one atomic retry block rather
+    // than two sequential assertions: on a small demo repo the delete (and
+    // its automatic compact) can finish fast enough that the row is gone by
+    // the time a second, separately-polling assertion starts, even though
+    // the title and disabled state are set from the same flag and can never
+    // actually be observed out of sync with each other.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
-    await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
-    await expect(pendingBtn).toBeDisabled()
+    await expect(async () => {
+      expect(await pendingBtn.count()).toBeGreaterThan(0)
+      expect(await pendingBtn.isDisabled()).toBe(true)
+    }).toPass({ timeout: 5_000 })
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

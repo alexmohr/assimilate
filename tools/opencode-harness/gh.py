@@ -331,7 +331,7 @@ def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> st
     verbose failing job (e.g. cargo-deny dumping its entire resolved
     dependency tree before the actual advisory line) can otherwise consume
     the whole budget and silently push every other failing check's log out
-    of what opencode ever sees, even though that other check might be the
+    of what the agent ever sees, even though that other check might be the
     one with the actually actionable content.
     """
     seen_jobs: set[str] = set()
@@ -397,7 +397,7 @@ def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
     computation - see sync-pr-labels.js's changesRequestedIsCurrent) only
     applies to which review *bodies* get surfaced: without it, a review body
     from days ago whose findings were already fixed in later rounds keeps
-    getting concatenated in here forever, wasting opencode's attention
+    getting concatenated in here forever, wasting the agent's attention
     re-litigating solved problems. "Latest" here means the most recent
     APPROVED or CHANGES_REQUESTED review specifically, not the most recent
     review of any state - a COMMENTED review (a follow-up clarification, or
@@ -415,7 +415,7 @@ def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
     PrDetail.changes_requested). Restricting inline comments to only
     decision-bearing reviews' ids would drop every inline comment on any such
     PR, since its one real review is COMMENTED - exactly the same review that
-    carries the findings opencode needs to act on.
+    carries the findings the agent needs to act on.
     """
     reviews = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/reviews"])
     inline = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/comments"])

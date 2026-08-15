@@ -4,7 +4,7 @@
 """Deterministic validation gate run before every push.
 
 This is the harness's actual answer to "the cheap model keeps forgetting to
-run pre-commit": it does not ask opencode to remember anything. It runs
+run pre-commit": it does not ask the agent to remember anything. It runs
 AGENTS.md workflow step 4 (pre-commit) and the exact validation-checklist
 commands from skills/rust/SKILL.md and skills/frontend/SKILL.md itself, in
 Python, every single time, regardless of what the model did or didn't do.
@@ -17,7 +17,7 @@ The DB-backed test suite (crates/server/tests/db_queries.rs and
 integration.rs, plus the server lib's own DB-dependent tests) is different:
 it's run here too, opportunistically, whenever a Postgres is reachable at
 DATABASE_URL (see _db_reachable). Skipping it unconditionally used to mean
-opencode's local retry loop could never actually see a regression there - it
+the agent's local retry loop could never actually see a regression there - it
 would validate clean (since `cargo test --workspace --lib --bins` never
 touches those files), push, and only find out several minutes later via a
 full CI round-trip that its "fix" broke an integration test, burning through
@@ -120,7 +120,7 @@ def _ensure_docker_postgres_running() -> bool:
     """Starts (or reuses, across cycles) a local Postgres container matching
     this repo's own CI service exactly - image, credentials, port - so a
     reachable DB doesn't have to be something the operator set up by hand
-    for opencode's local DB-backed test runs to work at all.
+    for the agent's local DB-backed test runs to work at all.
 
     Best-effort and silent on failure: if Docker isn't installed, or
     something else entirely already owns port 5432, this just returns False
@@ -223,7 +223,7 @@ def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
         # integration.rs and the ignored ones in the server lib is marked
         # #[ignore = "requires DATABASE_URL"], which plain `cargo test`
         # skips entirely without --ignored. Without the two runs below,
-        # this gate silently never executes any of them, so opencode never
+        # this gate silently never executes any of them, so the agent never
         # finds out locally that its fix broke one - exactly the round-trip
         # this feature exists to avoid - and only CI catches it, several
         # minutes later.
@@ -327,7 +327,7 @@ def run_all(cwd: Path, changed_paths: list[str]) -> ValidationResult:
     """Runs pre-commit, then whichever of the rust/frontend checklists apply.
 
     Stops at the first failing step and returns it directly so the caller can
-    feed exactly that failure back to opencode.
+    feed exactly that failure back to the agent.
     """
     precommit = run_precommit(cwd)
     if not precommit.ok:

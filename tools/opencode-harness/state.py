@@ -125,7 +125,7 @@ class HarnessState:
         """Returns the currently recorded attempt count for `pr_number`
         without advancing it - used when this cycle's diagnostic content
         wasn't actually informative (see harness.py's
-        _ci_logs_are_placeholder_only), so a cycle that told opencode
+        _ci_logs_are_placeholder_only), so a cycle that told the agent
         nothing new doesn't get counted as evidence the same problem is
         recurring. 0 if no attempt has ever been recorded.
         """

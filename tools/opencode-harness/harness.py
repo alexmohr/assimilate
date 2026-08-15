@@ -2,7 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-"""opencode-harness: a deterministic supervisor around opencode's full-auto mode.
+"""opencode-harness: a deterministic supervisor around a coding-agent CLI's
+full-auto mode. The agent CLI itself is pluggable - `opencode` (the original,
+default backend) or `claude` (the Claude Code CLI), selected via
+`Config.agent_cli`/`HARNESS_AGENT_CLI` - see agent_runner.py and README.md's
+"Agent CLI" section. Everything below refers to "the agent" generically; it
+applies identically to either backend.
 
 Priority order, checked every poll cycle:
 
@@ -12,16 +17,16 @@ Priority order, checked every poll cycle:
    `merge conflict` is set - a PR can be plainly behind base with no
    conflict yet still be carrying a problem base has already fixed (e.g. a
    since-patched dependency), which only an actual rebase picks up; asks
-   opencode to resolve real conflicts if the rebase doesn't apply cleanly
+   the agent to resolve real conflicts if the rebase doesn't apply cleanly
    (see `_resolve_conflicts`). CI results are always discovered and reacted
-   to by this harness's own Python, never by opencode - opencode only ever
+   to by this harness's own Python, never by the agent - the agent only ever
    sees already-gathered log text handed to it in a prompt, it never queries
    CI itself. If CI is failing on nothing but the deterministic `pre-commit`
    check, fix it directly (re-run pre-commit locally, which autofixes, then
-   commit/push) without spending an opencode call at all - see
+   commit/push) without spending an agent call at all - see
    `_try_mechanical_ci_fix`. Otherwise fetch the concrete failure content (CI
    logs, review comments, coverage/duplicate-code bot comments) in plain
-   Python, hand it to opencode as a fix prompt, then run this repo's own
+   Python, hand it to the agent as a fix prompt, then run this repo's own
    validation commands (pre-commit, and the exact skills/rust and
    skills/frontend checklists) before committing and pushing. Never touch
    the repo's own status labels - .github/workflows/pr-status-labels.yml
@@ -39,7 +44,7 @@ Priority order, checked every poll cycle:
    then open a PR - which flows back into step 1 on the next cycle.
 
 See README.md for setup, required env vars, and the safety notes around
-opencode's `--auto` flag.
+opencode's `--auto`/Claude Code's `--dangerously-skip-permissions` flags.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import os
 import re
 import sys
 import time
@@ -55,13 +61,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import agent_runner
 import gh
 import git_ops
 import model_router
-import opencode_runner
 import prompts
 import validate
-from config import Config
+from config import Config, default_router_model
 from gh import PrDetail, PrSummary
 from state import HarnessState
 
@@ -207,26 +213,27 @@ def run_fix_and_validate(cfg: Config, prompt: str, model: str) -> tuple[bool, st
     hard_cap = cfg.max_local_validation_attempts * _MAX_LOCAL_ATTEMPTS_HARD_CAP_MULTIPLIER
     while True:
         attempt += 1
-        result = opencode_runner.run_opencode(
-            current_prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds
+        result = agent_runner.run_agent(
+            current_prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds, cfg.agent_cli
         )
         if not result.ok:
             no_progress_streak += 1
             log.info(
-                "opencode run failed (attempt %d, %d/%d with no progress): %s",
+                "%s run failed (attempt %d, %d/%d with no progress): %s",
+                cfg.agent_cli,
                 attempt,
                 no_progress_streak,
                 cfg.max_local_validation_attempts,
                 result.output[:500],
             )
             if no_progress_streak >= cfg.max_local_validation_attempts or attempt >= hard_cap:
-                return False, f"opencode run failing, no progress after {attempt} attempts"
+                return False, f"{cfg.agent_cli} run failing, no progress after {attempt} attempts"
             current_prompt = prompts.build_retry_prompt(
-                current_prompt, "opencode run", result.output
+                current_prompt, f"{cfg.agent_cli} run", result.output
             )
             continue
         if not git_ops.has_uncommitted_changes(cfg.repo_dir):
-            return False, "opencode made no changes"
+            return False, f"{cfg.agent_cli} made no changes"
         changed = git_ops.changed_files(cfg.repo_dir)
         validation = validate.run_all(cfg.repo_dir, changed)
         if not validation.ok:
@@ -312,25 +319,25 @@ def _try_mechanical_ci_fix(cfg: Config, pr: PrDetail) -> bool:
     # would be rejected as non-fast-forward in that case. Harmless when the
     # branch was already current, since nothing was rewritten.
     git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)
-    log.info("PR #%d: pushed a pre-commit autofix without invoking opencode", pr.number)
+    log.info("PR #%d: pushed a pre-commit autofix without invoking %s", pr.number, cfg.agent_cli)
     return True
 
 
 class RebaseOutcome(Enum):
     """_resolve_conflicts' three possible outcomes.
 
-    CLEAN and RESOLVED_BY_OPENCODE are deliberately distinct, not just two
+    CLEAN and RESOLVED_BY_AGENT are deliberately distinct, not just two
     flavors of "succeeded": a clean rebase replays already-CI-tested
     commits onto a new base with no new content at all, safe to push
-    immediately - but opencode resolving a real conflict produces new,
+    immediately - but the agent CLI resolving a real conflict produces new,
     unvalidated file edits that need the same local validation gate any
-    other opencode-authored change in this file goes through before ever
+    other agent-authored change in this file goes through before ever
     reaching origin. Conflating the two let a conflict resolution get
     force-pushed with zero validation - see handle_pr_fix.
     """
 
     CLEAN = "clean"
-    RESOLVED_BY_OPENCODE = "resolved_by_opencode"
+    RESOLVED_BY_AGENT = "resolved_by_agent"
     FAILED = "failed"
 
 
@@ -373,13 +380,14 @@ def _resolve_conflicts(cfg: Config, model: str) -> RebaseOutcome:
     attempt = 0
     while True:
         attempt += 1
-        result = opencode_runner.run_opencode(
-            prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds
+        result = agent_runner.run_agent(
+            prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds, cfg.agent_cli
         )
         if not result.ok:
             if attempt >= cfg.max_local_validation_attempts:
                 log.warning(
-                    "conflict resolution: opencode run failed (attempt %d/%d), giving up: %s",
+                    "conflict resolution: %s run failed (attempt %d/%d), giving up: %s",
+                    cfg.agent_cli,
                     attempt,
                     cfg.max_local_validation_attempts,
                     result.output[:500],
@@ -387,18 +395,19 @@ def _resolve_conflicts(cfg: Config, model: str) -> RebaseOutcome:
                 git_ops.abort_rebase(cfg.repo_dir)
                 return RebaseOutcome.FAILED
             log.info(
-                "conflict resolution: opencode run failed (attempt %d/%d), retrying",
+                "conflict resolution: %s run failed (attempt %d/%d), retrying",
+                cfg.agent_cli,
                 attempt,
                 cfg.max_local_validation_attempts,
             )
             prompt = prompts.build_retry_prompt(
-                prompt, "opencode conflict resolution", result.output
+                prompt, f"{cfg.agent_cli} conflict resolution", result.output
             )
             continue
 
         ok, continue_status = git_ops.continue_rebase(cfg.repo_dir, cfg.base_branch)
         if ok:
-            return RebaseOutcome.RESOLVED_BY_OPENCODE
+            return RebaseOutcome.RESOLVED_BY_AGENT
         if attempt >= cfg.max_local_validation_attempts:
             log.warning(
                 "conflict resolution: rebase --continue still failing after %d attempts, giving up",
@@ -700,16 +709,16 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         cfg.repo_dir
     ) != git_ops.remote_head_sha(cfg.repo_dir, pr.head_ref_name):
         # rebase-onto-base (always run - see _resolve_conflicts' own
-        # docstring) actually moved HEAD with no opencode involvement: base
+        # docstring) actually moved HEAD with no agent involvement: base
         # had commits this branch didn't, and rebasing onto them picked up
         # a real fix (e.g. PR #323's cargo-deny failure on a since-patched
         # dependency). `git rebase` already committed that result locally -
         # nothing further needs to happen for the fix to exist, and no new
         # content means no new validation risk either. Push it now rather
-        # than waiting on opencode/the mechanical shortcut to separately
+        # than waiting on the agent CLI/the mechanical shortcut to separately
         # produce a change: if the rebase alone was enough, a capable
-        # opencode run correctly finds nothing left to fix and makes no
-        # edits, run_fix_and_validate below reports "opencode made no
+        # agent run correctly finds nothing left to fix and makes no
+        # edits, run_fix_and_validate below reports "<agent> made no
         # changes", and the rebase would otherwise be discarded via
         # discard_uncommitted_changes and never reach origin at all - reset
         # away again by the very next cycle's checkout_branch_at_remote.
@@ -717,11 +726,11 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         log.info("PR #%d: pushed a rebase-onto-base fix on its own", pr.number)
         return True
 
-    if rebase_outcome is RebaseOutcome.RESOLVED_BY_OPENCODE:
-        # Unlike a clean rebase, opencode edited files to resolve a real
+    if rebase_outcome is RebaseOutcome.RESOLVED_BY_AGENT:
+        # Unlike a clean rebase, the agent CLI edited files to resolve a real
         # conflict here - already committed via continue_rebase, but never
         # validated. That's new, unvetted content, so it needs the same
-        # local gate any other opencode-authored change in this function
+        # local gate any other agent-authored change in this function
         # goes through before it can reach origin - a force-push straight
         # from conflict resolution with zero validation is exactly how a
         # bad resolution (formatting, a broken test) would reach origin
@@ -753,8 +762,9 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
             ok, _ = run_fix_and_validate(cfg, retry_prompt, model)
             if not ok:
                 log.warning(
-                    "PR #%d: opencode's conflict resolution failed local validation (%s)",
+                    "PR #%d: %s's conflict resolution failed local validation (%s)",
                     pr.number,
+                    cfg.agent_cli,
                     validation.step,
                 )
                 details = (
@@ -764,7 +774,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
                     cfg,
                     state,
                     pr,
-                    "opencode's merge-conflict resolution failed local validation",
+                    f"{cfg.agent_cli}'s merge-conflict resolution failed local validation",
                     details,
                 )
                 git_ops.discard_uncommitted_changes(cfg.repo_dir)
@@ -772,22 +782,23 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         if git_ops.has_uncommitted_changes(cfg.repo_dir):
             git_ops.commit(cfg.repo_dir, "fix: apply pre-commit auto-fixes")
         git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)
-        log.info("PR #%d: pushed opencode's validated conflict resolution", pr.number)
+        log.info("PR #%d: pushed %s's validated conflict resolution", pr.number, cfg.agent_cli)
         return True
 
     # Only take the mechanical shortcut when CI is the *only* outstanding
     # problem - if review feedback or a coverage/duplicate-code precheck is
     # also unresolved, a trivial "fix: apply pre-commit auto-fixes" push
     # would get counted as "solved" (see handle_pr_fix's return contract)
-    # while the actual review feedback never reaches opencode this cycle.
+    # while the actual review feedback never reaches the agent this cycle.
     only_ci_outstanding = not (pr.changes_requested or pr.coverage_failed or pr.duplicate_code)
     if only_ci_outstanding and failing_checks and set(failing_checks) <= _MECHANICAL_CI_CHECKS:
         if _try_mechanical_ci_fix(cfg, pr):
             return True
         log.info(
-            "PR #%d: mechanical fix for %s didn't resolve it, falling back to opencode",
+            "PR #%d: mechanical fix for %s didn't resolve it, falling back to %s",
             pr.number,
             failing_checks,
+            cfg.agent_cli,
         )
 
     prompt = prompts.build_pr_fix_prompt(pr, ci_logs, review_comments, precheck_notes)
@@ -798,7 +809,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         return False
 
     if not git_ops.commit(cfg.repo_dir, _commit_message_for(pr, cfg)):
-        log.warning("PR #%d: opencode made no net changes; nothing to push", pr.number)
+        log.warning("PR #%d: %s made no net changes; nothing to push", pr.number, cfg.agent_cli)
         return False
     # force_with_lease unconditionally, not just pr.merge_conflict: the
     # rebase-onto-base above now always runs, so history may have been
@@ -1113,7 +1124,7 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
         return False
 
     if not git_ops.commit(cfg.repo_dir, f"fix: {_sanitize_subject(issue['title'])}"):
-        log.warning("issue #%d: opencode made no changes", number)
+        log.warning("issue #%d: %s made no changes", number, cfg.agent_cli)
         return False
     git_ops.push(cfg.repo_dir, branch, force_with_lease=True)
     pr_url = gh.create_pr(
@@ -1271,16 +1282,28 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="log what would happen without invoking opencode or pushing",
+        help="log what would happen without invoking the agent CLI or pushing",
+    )
+    parser.add_argument(
+        "--agent-cli",
+        default=None,
+        choices=agent_runner.SUPPORTED_CLIS,
+        help=(
+            "coding-agent CLI backend to drive - 'opencode' (default) or 'claude' "
+            "(the Claude Code CLI). Also settable via HARNESS_AGENT_CLI. Changes both "
+            "how the agent is invoked (agent_runner.py) and which model routing table "
+            "is used (model_router.py's ROUTING_TABLE vs CLAUDE_ROUTING_TABLE)"
+        ),
     )
     parser.add_argument(
         "--model",
         default=None,
         help=(
-            "pin every task to this one opencode model instead of the default "
-            "per-task routing (see model_router.py/README.md's routing table) - "
-            "e.g. deepseek/deepseek-v4-flash. Also skips the router classifier call "
-            "entirely, since there's nothing left for it to decide"
+            "pin every task to this one model instead of the default per-task "
+            "routing (see model_router.py/README.md's routing table) - e.g. "
+            "opencode-go/kimi-k2.7-code for --agent-cli opencode, or claude-sonnet-5 "
+            "for --agent-cli claude. Also skips the router classifier call entirely, "
+            "since there's nothing left for it to decide"
         ),
     )
     parser.add_argument(
@@ -1333,8 +1356,18 @@ def main() -> int:
         overrides["once"] = True
     if args.dry_run:
         overrides["dry_run"] = True
+    if args.agent_cli and args.agent_cli != cfg.agent_cli:
+        overrides["agent_cli"] = args.agent_cli
+        # Config.from_env() already resolved router_model's default from
+        # whatever HARNESS_AGENT_CLI was in the environment (or "opencode" if
+        # unset) - if the operator didn't also pin HARNESS_ROUTER_MODEL
+        # explicitly, re-derive the default for the CLI-chosen backend
+        # instead of silently routing the classifier through a model id the
+        # new backend's provider doesn't recognize.
+        if "HARNESS_ROUTER_MODEL" not in os.environ:
+            overrides["router_model"] = default_router_model(args.agent_cli)
     if args.model:
-        overrides["opencode_model"] = args.model
+        overrides["agent_model"] = args.model
     if args.max_solved is not None:
         overrides["max_solved"] = args.max_solved
     if args.pr is not None:

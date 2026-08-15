@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-"""git plumbing. The harness owns every commit and push - opencode is only
-ever asked to edit files, never to run `git commit`/`git push` itself. That
-is deliberate: a cheap model forgetting to run pre-commit, or writing a
-non-conventional-commit message, is exactly the failure mode this harness
-exists to remove, and the only reliable fix is to not let it hold the
-commit/push button at all.
+"""git plumbing. The harness owns every commit and push - the agent CLI
+(opencode or claude, see agent_runner.py) is only ever asked to edit files,
+never to run `git commit`/`git push` itself. That is deliberate: a cheap
+model forgetting to run pre-commit, or writing a non-conventional-commit
+message, is exactly the failure mode this harness exists to remove, and the
+only reliable fix is to not let it hold the commit/push button at all.
 """
 
 from __future__ import annotations

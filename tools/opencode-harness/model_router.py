@@ -9,21 +9,29 @@ strong enough for those is wasteful for a one-line boilerplate fix.
 
 Instead, before doing any real work, the harness hands a short description of
 the task to a cheap, fast classifier model (see `Config.router_model`) and
-asks it to name the `task_type` from `ROUTING_TABLE` below that best matches,
-plus a `complexity` rating - never a model id directly, so there's nothing
-for it to hallucinate that could surface as an opaque `UnknownError` from
-opencode itself several minutes into a run (see
+asks it to name the `task_type` from the routing table below that best
+matches, plus a `complexity` rating - never a model id directly, so there's
+nothing for it to hallucinate that could surface as an opaque error from the
+agent CLI itself several minutes into a run (see
 tools/opencode-harness/README.md's provider-prefix note). The model itself is
 then picked deterministically from that `task_type`/`complexity` pair: a
 "low" complexity rating always downgrades to the cheap background model
 regardless of task_type (a simple instance of an otherwise expensive task
 type doesn't need the expensive model); otherwise `ModelRoute.primary`,
 *except* when a route's alternative is specifically the cheap background
-model (`deepseek-v4-flash`), in which case that alternative is used instead -
-`_resolve_model` below is the single place this decision is made.
+model, in which case that alternative is used instead - `_resolve_model`
+below is the single place this decision is made.
 
-`Config.opencode_model` (the CLI-only `--model` flag) is still an escape
-hatch: passing it pins every task to that one model and skips classification
+There are two separate routing tables, one per `Config.agent_cli`
+(`ROUTING_TABLE` for `opencode`, `CLAUDE_ROUTING_TABLE` for `claude` - see
+config.py's `HARNESS_AGENT_CLI`) since the two backends' providers don't
+recognize each other's model ids at all. Both tables share the same
+`task_type` keys and `label`s (only the underlying models differ), so the
+classifier prompt/response format is identical regardless of which backend is
+active.
+
+`Config.agent_model` (the CLI-only `--model` flag) is still an escape hatch:
+passing it pins every task to that one model and skips classification
 entirely, the same as before this module existed - useful for testing a
 specific model or working around a routing table that doesn't fit your setup.
 """
@@ -35,8 +43,8 @@ import logging
 import re
 from dataclasses import dataclass
 
+import agent_runner
 import git_ops
-import opencode_runner
 from config import Config
 
 log = logging.getLogger("harness.router")
@@ -45,15 +53,29 @@ log = logging.getLogger("harness.router")
 # (the classifier run itself failed, timed out, or its output couldn't be
 # parsed into a model this table actually recognizes) - "Fix failing PRs /
 # CI failures" and "Mass automated PR repair bot" both land here anyway,
-# and that's what this harness spends most of its time doing.
+# and that's what this harness spends most of its time doing. Keyed by
+# agent_cli via DEFAULT_FALLBACK_MODEL_BY_CLI below.
 #
-# Every model id here is provider-prefixed (`opencode-go/...`) since that's
-# what `opencode --model` actually needs to accept it - a bare model name
-# alone fails with an opaque `UnknownError: Unexpected server error` (see
-# README.md's provider-prefix note). Change the prefix here (and in
+# Every opencode model id here is provider-prefixed (`opencode-go/...`) since
+# that's what `opencode --model` actually needs to accept it - a bare model
+# name alone fails with an opaque `UnknownError: Unexpected server error`
+# (see README.md's provider-prefix note). Change the prefix here (and in
 # config.py's HARNESS_ROUTER_MODEL default, and opencode.json) together if
 # you're not routing through opencode's own hosted gateway.
 DEFAULT_FALLBACK_MODEL = "opencode-go/kimi-k2.7-code"
+
+# The Claude Code CLI's equivalent fallback - see DEFAULT_FALLBACK_MODEL above.
+DEFAULT_FALLBACK_MODEL_CLAUDE = "claude-sonnet-5"
+
+DEFAULT_FALLBACK_MODEL_BY_CLI = {
+    "opencode": DEFAULT_FALLBACK_MODEL,
+    "claude": DEFAULT_FALLBACK_MODEL_CLAUDE,
+}
+
+
+def default_fallback_model(cli: str) -> str:
+    return DEFAULT_FALLBACK_MODEL_BY_CLI.get(cli, DEFAULT_FALLBACK_MODEL)
+
 
 _ROUTER_TIMEOUT_INSTRUCTION = (
     "\n\nDo not edit, create, or delete any files - only read what you need to "
@@ -186,6 +208,131 @@ ROUTING_TABLE: dict[str, ModelRoute] = {
 # route's primary and its (non-deepseek) alternative.
 _CHEAP_BACKGROUND_MODEL = "opencode-go/deepseek-v4-flash"
 
+# The Claude Code CLI's own routing table - same task_type keys and labels as
+# ROUTING_TABLE above (see this module's docstring), only the underlying
+# models differ: Opus 5 stands in for opencode-go/glm-5.2's "deeper
+# reasoning" role, Sonnet 5 for opencode-go/kimi-k2.7-code's "good default
+# for most coding" role, and Haiku 4.5 for opencode-go/deepseek-v4-flash's
+# "cheap/fast" role. There is no third, even-cheaper tier the way opencode's
+# table sometimes uses qwen3.7-plus as a mid-tier alternative - Claude's
+# alternatives below collapse to whichever of {haiku, sonnet, opus} is next
+# closest.
+CLAUDE_ROUTING_TABLE: dict[str, ModelRoute] = {
+    "bug_fix": ModelRoute(
+        "Fix failing PRs / CI failures",
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "Sonnet 5 is a good default for code repair. Use Opus 5 when the failure "
+        "requires deeper architecture reasoning.",
+    ),
+    "feature": ModelRoute(
+        "Implement new features",
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "Sonnet 5 for most coding; Opus 5 for large cross-module features.",
+    ),
+    "refactor": ModelRoute(
+        "Large refactors",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "Better when many files and dependencies are involved.",
+    ),
+    "code_review": ModelRoute(
+        "Code review",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "Opus 5 as reviewer, Sonnet 5 as implementer.",
+    ),
+    "debug": ModelRoute(
+        "Debug mysterious bugs",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "Use the stronger reasoning model first.",
+    ),
+    "write_tests": ModelRoute(
+        "Write tests",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "Good balance of speed and correctness.",
+    ),
+    "unit_test_fix": ModelRoute(
+        "Unit test fixes",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "Usually straightforward.",
+    ),
+    "documentation": ModelRoute(
+        "Documentation generation",
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-5",
+        "Saves your stronger models for harder tasks.",
+    ),
+    "boilerplate": ModelRoute(
+        "Simple boilerplate code",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "High quota, lower importance.",
+    ),
+    "dependency_upgrade": ModelRoute(
+        "Dependency upgrades",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "Needs awareness of ecosystem changes.",
+    ),
+    "security_review": ModelRoute(
+        "Security review",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "Prefer deeper reasoning.",
+    ),
+    "architecture": ModelRoute(
+        "Architecture design",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "Planning favors Opus 5's deeper reasoning over raw coding speed.",
+    ),
+    "repo_exploration": ModelRoute(
+        "Repo exploration / onboarding",
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-5",
+        "Read-only search/orientation work. Cheap and fast is the right default; "
+        "escalate by hand for a question that genuinely needs deep cross-file "
+        "reasoning, not just wide reading.",
+    ),
+    "small_bug_fix": ModelRoute(
+        "Small bug fixes",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "Fast turnaround.",
+    ),
+    "mass_pr_repair": ModelRoute(
+        "Mass automated PR repair bot",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "Best quota/capability ratio.",
+    ),
+    "cheap_background": ModelRoute(
+        "Cheap background agent tasks",
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-5",
+        "Use only for low-risk work.",
+    ),
+}
+
+# Same idea as _CHEAP_BACKGROUND_MODEL above, for the claude backend.
+_CHEAP_BACKGROUND_MODEL_CLAUDE = "claude-haiku-4-5-20251001"
+
+# Which routing table and cheap-background model apply for a given
+# Config.agent_cli - the single place _resolve_model looks this up.
+_ROUTING_TABLE_BY_CLI = {
+    "opencode": ROUTING_TABLE,
+    "claude": CLAUDE_ROUTING_TABLE,
+}
+_CHEAP_BACKGROUND_MODEL_BY_CLI = {
+    "opencode": _CHEAP_BACKGROUND_MODEL,
+    "claude": _CHEAP_BACKGROUND_MODEL_CLAUDE,
+}
+
 
 @dataclass(frozen=True)
 class ModelDecision:
@@ -222,15 +369,17 @@ def _build_classifier_prompt(task_context: str) -> str:
 
 
 def extract_assistant_text(raw_output: str) -> str:
-    """Pulls the model's own text out of `opencode run --format json`'s
-    newline-delimited event stream - see opencode_runner._format_event for the
-    same event shapes handled there for logging. Falls back to the raw output
-    untouched if nothing parses (e.g. a completely different output shape),
-    so `find_json_object` still gets a chance to find something.
+    """Pulls the model's own text out of an agent CLI's newline-delimited JSON
+    event stream - either backend's shape (see agent_runner._format_opencode_event
+    and agent_runner._format_claude_event for the same event shapes handled
+    there for logging), detected per-line so this doesn't need to know which
+    backend produced `raw_output`. Falls back to the raw output untouched if
+    nothing parses (e.g. a completely different output shape), so
+    `find_json_object` still gets a chance to find something.
 
-    Public - shared by anything that needs a JSON verdict out of a raw
-    `opencode run --format json` result, not just this module's own
-    classification call (see harness.py's self-review gate).
+    Public - shared by anything that needs a JSON verdict out of a raw agent
+    CLI result, not just this module's own classification call (see
+    harness.py's self-review gate).
     """
     parts = []
     for line in raw_output.splitlines():
@@ -241,10 +390,22 @@ def extract_assistant_text(raw_output: str) -> str:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(event, dict) and event.get("type") == "text":
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind == "text":
+            # opencode run --format json event shape.
             text = (event.get("part") or {}).get("text") or ""
             if text:
                 parts.append(text)
+        elif kind == "assistant":
+            # claude -p --output-format stream-json event shape.
+            message = event.get("message") or {}
+            for block in message.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text") or ""
+                    if text:
+                        parts.append(text)
     return "\n".join(parts) if parts else raw_output
 
 
@@ -275,42 +436,47 @@ def _normalize_task_type(raw: str) -> str:
     return _TASK_TYPE_NORMALIZE_RE.sub("_", raw.strip().lower())
 
 
-def _resolve_model(classification: dict) -> str:
-    """Deterministically resolves a `task_type` to a model.
+def _resolve_model(classification: dict, cli: str) -> str:
+    """Deterministically resolves a `task_type` to a model, from whichever
+    routing table matches `cli` (`Config.agent_cli` - see
+    _ROUTING_TABLE_BY_CLI/_CHEAP_BACKGROUND_MODEL_BY_CLI above).
 
     The classifier also rates `complexity` (low/medium/high) on every call -
     a "low complexity" verdict means this instance of the task is simple
     regardless of which task_type it landed in (a one-file `debug` task and a
-    ten-file one aren't the same job), so it always downgrades to
-    `_CHEAP_BACKGROUND_MODEL` rather than paying for that row's primary.
-    Otherwise: always `ModelRoute.primary`, except when the route's
-    alternative is specifically `_CHEAP_BACKGROUND_MODEL`, in which case that
-    alternative is used instead (a row like "Simple boilerplate code" is
+    ten-file one aren't the same job), so it always downgrades to that
+    backend's cheap background model rather than paying for that row's
+    primary. Otherwise: always `ModelRoute.primary`, except when the route's
+    alternative is specifically the cheap background model, in which case
+    that alternative is used instead (a row like "Simple boilerplate code" is
     cheap-model material at any complexity rating).
 
     The classifier itself never names a model (see the prompt) - only a
     `task_type` and a `complexity` - so there's nothing here to trust or
     validate beyond that string actually matching a known key; an
-    unrecognized or missing `task_type` falls back to DEFAULT_FALLBACK_MODEL.
+    unrecognized or missing `task_type` falls back to
+    default_fallback_model(cli).
     """
+    table = _ROUTING_TABLE_BY_CLI.get(cli, ROUTING_TABLE)
+    cheap_model = _CHEAP_BACKGROUND_MODEL_BY_CLI.get(cli, _CHEAP_BACKGROUND_MODEL)
     task_type = classification.get("task_type")
     if isinstance(task_type, str):
-        route = ROUTING_TABLE.get(_normalize_task_type(task_type))
+        route = table.get(_normalize_task_type(task_type))
         if route is not None:
             if classification.get("complexity") == "low":
-                return _CHEAP_BACKGROUND_MODEL
-            if route.alternative == _CHEAP_BACKGROUND_MODEL:
+                return cheap_model
+            if route.alternative == cheap_model:
                 return route.alternative
             return route.primary
 
-    return DEFAULT_FALLBACK_MODEL
+    return default_fallback_model(cli)
 
 
 def parse_json_response(raw_output: str) -> dict | None:
     """Extracts and parses the single JSON object a model was asked to answer
-    with, out of a raw `opencode run --format json` result. Returns None if
-    nothing in the output parses as a JSON object - a failed/timed-out run,
-    or a model that ignored the "respond with ONLY JSON" instruction entirely.
+    with, out of a raw agent CLI result. Returns None if nothing in the
+    output parses as a JSON object - a failed/timed-out run, or a model that
+    ignored the "respond with ONLY JSON" instruction entirely.
     """
     text = extract_assistant_text(raw_output)
     blob = find_json_object(text)
@@ -324,26 +490,29 @@ def parse_json_response(raw_output: str) -> dict | None:
 
 
 def route(cfg: Config, task_context: str, task_label: str) -> ModelDecision:
-    """Classifies `task_context` with `cfg.router_model` and returns the model
-    to actually use for it. `task_label` is only for logging (e.g. "PR #123").
+    """Classifies `task_context` with `cfg.router_model` (run through
+    `cfg.agent_cli`) and returns the model to actually use for it.
+    `task_label` is only for logging (e.g. "PR #123").
 
-    Skips classification entirely - returning `cfg.opencode_model` unchanged -
+    Skips classification entirely - returning `cfg.agent_model` unchanged -
     when a human pinned a single model via `--model`. Never raises: any
-    failure in the classifier run itself (opencode error, timeout, unparsable
-    output) is logged and falls back to DEFAULT_FALLBACK_MODEL rather than
-    blocking the actual fix over a routing decision.
+    failure in the classifier run itself (agent CLI error, timeout,
+    unparsable output) is logged and falls back to
+    default_fallback_model(cfg.agent_cli) rather than blocking the actual fix
+    over a routing decision.
     """
-    if cfg.opencode_model:
-        return ModelDecision(model=cfg.opencode_model, classification=None)
+    if cfg.agent_model:
+        return ModelDecision(model=cfg.agent_model, classification=None)
 
+    fallback = default_fallback_model(cfg.agent_cli)
     prompt = _build_classifier_prompt(task_context)
-    result = opencode_runner.run_opencode(
-        prompt, cfg.repo_dir, cfg.router_model, cfg.router_timeout_seconds
+    result = agent_runner.run_agent(
+        prompt, cfg.repo_dir, cfg.router_model, cfg.router_timeout_seconds, cfg.agent_cli
     )
     # Best-effort safety net: the classifier is told not to touch files, but
     # nothing stops a cheap/small model from ignoring that - discard whatever
     # it may have left behind so the actual fix that follows starts clean,
-    # the same way a failed opencode run is cleaned up elsewhere in this
+    # the same way a failed agent run is cleaned up elsewhere in this
     # codebase (see handle_pr_fix's own discard_uncommitted_changes calls).
     git_ops.discard_uncommitted_changes(cfg.repo_dir)
 
@@ -351,21 +520,21 @@ def route(cfg: Config, task_context: str, task_label: str) -> ModelDecision:
         log.warning(
             "model router: classifier run failed for %s, falling back to %s: %s",
             task_label,
-            DEFAULT_FALLBACK_MODEL,
+            fallback,
             result.output[:300],
         )
-        return ModelDecision(model=DEFAULT_FALLBACK_MODEL, classification=None)
+        return ModelDecision(model=fallback, classification=None)
 
     classification = parse_json_response(result.output)
     if classification is None:
         log.warning(
             "model router: could not parse a classification for %s, falling back to %s",
             task_label,
-            DEFAULT_FALLBACK_MODEL,
+            fallback,
         )
-        return ModelDecision(model=DEFAULT_FALLBACK_MODEL, classification=None)
+        return ModelDecision(model=fallback, classification=None)
 
-    model = _resolve_model(classification)
+    model = _resolve_model(classification, cfg.agent_cli)
     log.info(
         "model router: %s -> %s (task_type=%s complexity=%s files_affected=%s reason=%s)",
         task_label,

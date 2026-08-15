@@ -528,7 +528,8 @@ async function resetSystem(): Promise<void> {
                 class="form-input retention-input"
               />
               <span class="field-hint"
-                >Minutes of inactivity before a session expires. Default: 480 (8 hours).</span
+                >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
+                apply to "Remember Me" sessions.</span
               >
             </div>
           </div>

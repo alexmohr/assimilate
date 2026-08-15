@@ -102,6 +102,7 @@ An idle timeout can be configured under **System Settings**. Sessions that have 
 - When idle timeout is exceeded, the session is deleted from the database and the user receives a `401 Unauthorized` response with the message "session expired due to inactivity".
 - The idle window slides forward on real activity, not just `/api/auth/me` and `/api/auth/refresh`: `AuthUser::from_request_parts` (which runs before every protected handler) writes `last_seen_at` on any authenticated request, throttled to at most once per 60 seconds per session to avoid a DB write on every single API call.
 - This is enforced in `AuthUser::from_request_parts`, which runs before every protected handler, so there is no gap between the timeout elapsing and access being denied.
+- **"Remember Me" sessions are exempt.** A session created by checking "Remember Me" at login is not subject to the idle timeout — it stays valid until its absolute 7-day expiry, which the frontend transparently extends by another 7 days as long as the session keeps being used before it lapses. Applying the (much shorter) idle timeout on top of `remember_me` would defeat the purpose of the checkbox.
 
 ## Two-Factor Authentication (TOTP)
 

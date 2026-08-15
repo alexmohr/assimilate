@@ -2417,6 +2417,79 @@ async fn test_session_idle_timeout_revokes_inactive_session(pool: sqlx::PgPool) 
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn test_session_idle_timeout_exempts_remember_me_session(pool: sqlx::PgPool) {
+    let mut app = build_test_app_with_idle_timeout(pool.clone(), 1).0;
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, must_change_password)
+         VALUES ('remember-me-idle-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', false)
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let admin_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(admin_role_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Idle far beyond the configured 1-minute idle timeout, but still well
+    // within the session's own (remember-me) absolute expiry.
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(7))
+        .unwrap();
+    let idle_since = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::hours(9))
+        .unwrap();
+    let session_id = "remember-me-idle-session-id-000000000";
+    let hashed_id = hash_token(session_id);
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at, last_seen_at, remember_me) VALUES ($1, \
+         $2, $3, $4, true)",
+    )
+    .bind(&hashed_id)
+    .bind(user_id)
+    .bind(expires)
+    .bind(idle_since)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = Request::builder()
+        .uri("/api/auth/me")
+        .method("GET")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a remember-me session must not be revoked by the idle timeout"
+    );
+
+    let still_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)")
+            .bind(&hashed_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        still_exists,
+        "remember-me session must survive despite being idle"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn test_session_idle_timeout_resets_on_activity(pool: sqlx::PgPool) {
     let mut app = build_test_app_with_idle_timeout(pool.clone(), 10).0;
 

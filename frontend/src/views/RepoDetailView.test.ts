@@ -56,6 +56,7 @@ vi.mock('../composables/useWebSocket', () => ({
 }))
 
 const mockDeleteArchiveByName = vi.fn()
+const mockLoadArchives = vi.fn()
 
 vi.mock('../composables/useArchiveBrowser', () => ({
   useArchiveBrowser: () => ({
@@ -72,7 +73,7 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     breadcrumbs: ref([]),
     dirs: ref([]),
     files: ref([]),
-    loadArchives: vi.fn().mockResolvedValue(undefined),
+    loadArchives: mockLoadArchives,
     selectArchive: vi.fn(),
     loadContents: vi.fn(),
     navigateTo: vi.fn(),
@@ -244,6 +245,7 @@ describe('RepoDetailView', () => {
     mockBrowserArchives.value = []
     mockSortedArchives.value = []
     mockDeleteArchiveByName.mockResolvedValue(true)
+    mockLoadArchives.mockResolvedValue(undefined)
   })
 
   it('renders repo name in breadcrumb and info grid', async () => {
@@ -1034,6 +1036,37 @@ describe('RepoDetailView', () => {
       await flushPromises()
 
       expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('refetches before clearing on RepoOpChanged, not racing a DataChanged refresh already in flight', async () => {
+      let resolveLoadArchives: () => void = () => {}
+      mockLoadArchives.mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveLoadArchives = resolve
+        }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // RepoOpChanged reports the queue idle while its own refetch is still
+      // outstanding - the marker must survive until that refetch resolves,
+      // not clear immediately against whatever the list held before it.
+      wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
+      await flushPromises()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      resolveLoadArchives()
+      await flushPromises()
+
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
     })
 

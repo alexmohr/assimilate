@@ -335,7 +335,7 @@ onMessage('DataChanged', () => {
       // An archive that's gone from the freshly-loaded list was actually
       // deleted - stop tracking it as in-flight. One still present just
       // hasn't finished yet (or failed and stayed); the RepoOpChanged
-      // handler above sweeps those once the repo's delete queue drains.
+      // handler below sweeps those once the repo's delete queue drains.
       const stillPresent = new Set(sortedArchives.value.map((a) => a.name))
       const next = new Set([...deletingArchiveNames.value].filter((name) => stillPresent.has(name)))
       if (next.size !== deletingArchiveNames.value.size) {
@@ -368,10 +368,23 @@ onMessage('RepoOpChanged', (payload) => {
     // for it has finished - success or failure - since repo operations run
     // strictly one at a time. Any name still marked "deleting" at that
     // point is stale (a failed delete that the DataChanged-driven prune
-    // below never saw disappear from the list), so sweep it clear rather
-    // than leaving its row disabled forever.
+    // above never saw disappear from the list), so it needs sweeping
+    // rather than leaving its row disabled forever - but clearing
+    // immediately, against whatever `sortedArchives` happens to hold right
+    // now, raced that same DataChanged-driven refresh for a delete that in
+    // fact just succeeded: this event and DataChanged can arrive in either
+    // order, so "not yet in the refreshed list" and "genuinely still there"
+    // were indistinguishable without a fetch of our own. Refetching first
+    // resolves that: by the time it returns, the delete has already
+    // concluded (the op queue was already idle), so the list is
+    // authoritative either way - present means genuinely stale/failed,
+    // absent means already gone - and it's always correct to clear.
     if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
-      deletingArchiveNames.value = new Set()
+      loadArchives(true)
+        .then(() => {
+          deletingArchiveNames.value = new Set()
+        })
+        .catch(logger.error)
     }
   }
 })

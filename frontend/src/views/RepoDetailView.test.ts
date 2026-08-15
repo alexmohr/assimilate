@@ -1127,6 +1127,64 @@ describe('RepoDetailView', () => {
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
     })
 
+    it('does not sweep a different archive whose delete starts while the RepoOpChanged refetch is in flight', async () => {
+      const otherArchive = {
+        ...deletingArchive,
+        name: 'web-server-01-backup-2026-06-05T02:00:00',
+      }
+      mockBrowserArchives.value = [deletingArchive, otherArchive]
+      mockSortedArchives.value = [deletingArchive, otherArchive]
+
+      let resolveLoadArchives: () => void = () => {}
+      mockLoadArchives.mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveLoadArchives = resolve
+        }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      const rowFor = (name: string) =>
+        wrapper.findAll('.archive-row').find((r) => r.text().includes(name))!
+
+      await rowFor(deletingArchive.name).find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(
+        rowFor(deletingArchive.name).find('button[title="Deletion in progress"]').exists(),
+      ).toBe(true)
+
+      // The queue drains for deletingArchive's completed delete - the
+      // handler snapshots it as the name to sweep and starts its own
+      // (silent) refetch.
+      wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
+      await flushPromises()
+
+      // While that refetch is still outstanding, the user starts deleting a
+      // wholly unrelated archive. This must be marked immediately and must
+      // not be touched by the sweep once it resolves below.
+      wrapper.vm.requestArchiveDeletion(otherArchive)
+      await wrapper.vm.confirmArchiveDeletion()
+
+      expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
+        true,
+      )
+
+      resolveLoadArchives()
+      await flushPromises()
+
+      // Only the snapshotted (already-resolved) delete is swept...
+      expect(
+        rowFor(deletingArchive.name).find('button[title="Deletion in progress"]').exists(),
+      ).toBe(false)
+      // ...the unrelated, still-in-flight delete must survive the sweep.
+      expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
+        true,
+      )
+    })
+
     it('keeps the in-progress state while the automatic post-delete compact is running', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
@@ -1188,6 +1246,12 @@ describe('RepoDetailView', () => {
       // marker must not stick around and leave the row permanently disabled.
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
       expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+
+      // A failed delete leaves the confirmation modal open (its own,
+      // pre-existing behavior, unchanged here) - its teleported content
+      // otherwise lingers in document.body and breaks other tests' modal
+      // lookups, so tear it down explicitly.
+      wrapper.unmount()
     })
   })
 

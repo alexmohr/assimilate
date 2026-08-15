@@ -402,11 +402,24 @@ onMessage('RepoOpChanged', (payload) => {
     // absent means already gone - and it's always correct to clear. Still
     // clears even if the reload fails, so a marker can never get stuck
     // forever.
+    //
+    // Only the names marked deleting *at the moment this event arrived* are
+    // swept, not whatever the set happens to hold once the refetch above
+    // resolves: a delete for a different, unrelated archive can be started
+    // by the user while that refetch is still in flight, and clearing
+    // unconditionally would wipe its just-set marker too, even though it
+    // has nothing to do with the op queue draining that triggered this
+    // event.
     if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
+      const toSweep = new Set(deletingArchiveNames.value)
       loadArchives(true)
         .catch(logger.error)
         .finally(() => {
-          deletingArchiveNames.value = new Set()
+          if (toSweep.size === 0) return
+          const next = new Set([...deletingArchiveNames.value].filter((name) => !toSweep.has(name)))
+          if (next.size !== deletingArchiveNames.value.size) {
+            deletingArchiveNames.value = next
+          }
         })
     }
   }

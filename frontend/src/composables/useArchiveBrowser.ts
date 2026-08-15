@@ -261,10 +261,23 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
   // fresher state with a stale snapshot - only the response matching the
   // most recently issued call is ever applied.
   let loadArchivesSeq = 0
+  // archivesLoading tracks outstanding *non-silent* calls independently of
+  // loadArchivesSeq: a non-silent call that's superseded by a later silent
+  // one (e.g. mount's own fetch still in flight when a background
+  // DataChanged refresh starts) would otherwise never clear the flag - it's
+  // no longer the latest call, so the seq guard would skip it, and the
+  // silent call that "won" never touches archivesLoading by design. Tracking
+  // how many non-silent calls are still outstanding instead means the flag
+  // clears once every real (non-silent) load has finished, regardless of
+  // which one happened to be latest.
+  let pendingNonSilentLoads = 0
 
   async function loadArchives(silent = false): Promise<void> {
     const seq = ++loadArchivesSeq
-    if (!silent) archivesLoading.value = true
+    if (!silent) {
+      pendingNonSilentLoads++
+      archivesLoading.value = true
+    }
     archivesError.value = null
     try {
       const res = await apiClient.get<ArchiveEntry[]>(`/repos/${repoId.value}/archives`)
@@ -274,7 +287,10 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       if (seq !== loadArchivesSeq) return
       archivesError.value = extractError(e)
     } finally {
-      if (seq === loadArchivesSeq && !silent) archivesLoading.value = false
+      if (!silent) {
+        pendingNonSilentLoads--
+        if (pendingNonSilentLoads === 0) archivesLoading.value = false
+      }
     }
   }
 

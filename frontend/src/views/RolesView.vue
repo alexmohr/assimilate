@@ -465,7 +465,7 @@ onMounted((): void => {
 .matrix-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
 }
 
 .matrix-table th {
@@ -474,7 +474,7 @@ onMounted((): void => {
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
 }
 
 .role-name-col {
@@ -521,11 +521,11 @@ onMounted((): void => {
 
 .role-name {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .seeded-badge {
-  font-size: 0.6rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   background: var(--bg-input);
   padding: 0.1rem 0.35rem;
@@ -535,7 +535,7 @@ onMounted((): void => {
 }
 
 .perm-count {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -545,7 +545,7 @@ onMounted((): void => {
 }
 
 .perm-indicator {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -576,7 +576,7 @@ onMounted((): void => {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   cursor: pointer;
   color: var(--text-primary);
 }

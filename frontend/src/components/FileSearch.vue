@@ -263,7 +263,7 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .search-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -290,12 +290,12 @@ function handleKeydown(event: KeyboardEvent): void {
   background: var(--bg-base);
   border: none;
   padding: 0.4rem 0.85rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   cursor: pointer;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
 }
 
 .mode-btn:not(:last-child) {
@@ -316,7 +316,7 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .field-label {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -329,7 +329,7 @@ function handleKeydown(event: KeyboardEvent): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.45rem 0.65rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   min-width: 220px;
 }
 
@@ -352,7 +352,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .state-msg {
   padding: 1rem 0;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
 }
 
@@ -362,17 +362,17 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .cell-mono {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .cell-muted {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .results-summary {
   margin-top: 0.75rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 </style>

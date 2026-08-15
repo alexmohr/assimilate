@@ -339,13 +339,13 @@ async function submitDeploy(): Promise<void> {
 
 <style scoped>
 .deploy-info {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   margin-bottom: 0.5rem;
 }
 
 .deploy-note {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -355,10 +355,10 @@ async function submitDeploy(): Promise<void> {
 }
 
 .deploy-note code {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   background: var(--bg-card);
   padding: 0.1rem 0.3rem;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .deploy-row-fields {
@@ -391,7 +391,7 @@ async function submitDeploy(): Promise<void> {
 }
 
 .service-textarea {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   resize: vertical;
   min-height: 180px;
@@ -411,7 +411,7 @@ async function submitDeploy(): Promise<void> {
 }
 
 .deploy-version-info {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   font-family: var(--mono);
 }
@@ -424,7 +424,7 @@ async function submitDeploy(): Promise<void> {
 
 .token-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
 }
 
@@ -441,7 +441,7 @@ async function submitDeploy(): Promise<void> {
 .token-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--success);
   word-break: break-all;
   background: transparent;

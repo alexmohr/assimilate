@@ -153,7 +153,7 @@ async function confirmMerge(): Promise<void> {
 }
 
 .toggle-row-label {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 

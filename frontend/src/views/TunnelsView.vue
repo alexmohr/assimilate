@@ -679,13 +679,13 @@ onMounted(() => {
 .tunnels-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .tunnels-table th {
   padding: 0.75rem 1rem;
   text-align: left;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -751,7 +751,7 @@ onMounted(() => {
 }
 
 .status-text {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -765,7 +765,7 @@ onMounted(() => {
 
 .error-pre {
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
   background: var(--danger-subtle);
   border: 1px solid var(--danger);
@@ -820,7 +820,7 @@ onMounted(() => {
   align-items: center;
   gap: 0.5rem;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 

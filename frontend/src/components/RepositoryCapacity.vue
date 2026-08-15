@@ -55,7 +55,7 @@ defineProps<{ repositories: DashboardRepositoryCapacity[] }>()
 
 <style scoped>
 .panel-title {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 0.75rem;
@@ -83,7 +83,7 @@ small,
 .history-value,
 .empty-state {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
 }
 
 .quota-dot {

@@ -1754,7 +1754,7 @@ watch(activeTab, (tab) => {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 1.5rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .crumb-link {
@@ -1778,7 +1778,7 @@ watch(activeTab, (tab) => {
 }
 
 .page-title {
-  font-size: 1.3rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   margin: 0 0 0.4rem;
 }
@@ -1790,7 +1790,7 @@ watch(activeTab, (tab) => {
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
   margin-bottom: 1rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .tab-bar {
@@ -1806,14 +1806,14 @@ watch(activeTab, (tab) => {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .tab-btn:hover {
@@ -1845,7 +1845,7 @@ watch(activeTab, (tab) => {
 }
 
 .info-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1866,12 +1866,12 @@ watch(activeTab, (tab) => {
 }
 
 .info-label {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .info-value {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1896,7 +1896,7 @@ watch(activeTab, (tab) => {
 }
 
 .target-health-name {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1905,7 +1905,7 @@ watch(activeTab, (tab) => {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--warning);
   background: var(--warning-subtle);
@@ -1914,7 +1914,7 @@ watch(activeTab, (tab) => {
 }
 
 .target-health-note {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -1935,7 +1935,7 @@ watch(activeTab, (tab) => {
 
 .form-label {
   display: block;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 0.35rem;
@@ -1953,7 +1953,7 @@ watch(activeTab, (tab) => {
 
 .field-hint {
   display: block;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-top: 0.25rem;
 }
@@ -1966,9 +1966,9 @@ watch(activeTab, (tab) => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
 }
 
@@ -1981,7 +1981,7 @@ watch(activeTab, (tab) => {
   min-height: 80px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
@@ -2005,12 +2005,12 @@ watch(activeTab, (tab) => {
   min-height: 60px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
 .form-sublabel {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2042,12 +2042,12 @@ watch(activeTab, (tab) => {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 500;
   cursor: pointer;
   transition:
-    color 0.15s,
-    background 0.15s;
+    color var(--duration-base),
+    background var(--duration-base);
 }
 
 .ref-toggle:hover {
@@ -2067,7 +2067,7 @@ watch(activeTab, (tab) => {
 }
 
 .ref-title {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -2083,7 +2083,7 @@ watch(activeTab, (tab) => {
 }
 
 .ref-section-title {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2107,7 +2107,7 @@ watch(activeTab, (tab) => {
 
 .ref-entry code {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-primary);
   background: var(--bg-card);
   padding: 0.1rem 0.35rem;
@@ -2115,7 +2115,7 @@ watch(activeTab, (tab) => {
 }
 
 .ref-entry span {
-  font-size: 0.68rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
@@ -2130,19 +2130,19 @@ watch(activeTab, (tab) => {
 }
 
 .error-inline {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
 }
 
 .save-success {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--success);
   font-weight: 600;
 }
 
 .empty-state {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 1rem 0;
 }
 
@@ -2158,14 +2158,14 @@ watch(activeTab, (tab) => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
   text-align: left;
 }
@@ -2183,7 +2183,7 @@ watch(activeTab, (tab) => {
 }
 
 .multi-select-arrow {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -2193,10 +2193,10 @@ watch(activeTab, (tab) => {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: var(--bg-elevated, var(--bg-card));
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg, var(--shadow));
+  box-shadow: var(--shadow-lg);
   padding: 0.4rem;
   z-index: 100;
   max-height: 220px;
@@ -2213,9 +2213,9 @@ watch(activeTab, (tab) => {
   padding: 0.35rem 0.5rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .multi-select-item:hover {
@@ -2249,12 +2249,12 @@ watch(activeTab, (tab) => {
   border: none;
   background: var(--bg-input);
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   cursor: pointer;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
 }
 
 .seg-btn + .seg-btn {
@@ -2290,7 +2290,7 @@ watch(activeTab, (tab) => {
 }
 
 .order-index {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   color: var(--text-muted);
   min-width: 1.2rem;
@@ -2299,7 +2299,7 @@ watch(activeTab, (tab) => {
 
 .order-name {
   flex: 1;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2318,11 +2318,11 @@ watch(activeTab, (tab) => {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
   cursor: pointer;
   transition:
-    background 0.1s,
-    color 0.1s;
+    background var(--duration-fast),
+    color var(--duration-fast);
   line-height: 1;
 }
 
@@ -2360,13 +2360,13 @@ watch(activeTab, (tab) => {
 }
 
 .danger-heading {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .danger-desc {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -2386,7 +2386,7 @@ watch(activeTab, (tab) => {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   width: min(480px, 90vw);
-  box-shadow: var(--shadow-lg, var(--shadow));
+  box-shadow: var(--shadow-lg);
 }
 
 .dialog-header {
@@ -2398,7 +2398,7 @@ watch(activeTab, (tab) => {
 }
 
 .dialog-title {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   margin: 0;
 }
@@ -2406,7 +2406,7 @@ watch(activeTab, (tab) => {
 .close-btn {
   background: none;
   border: none;
-  font-size: 1.5rem;
+  font-size: var(--fs-xl);
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
@@ -2418,7 +2418,7 @@ watch(activeTab, (tab) => {
 
 .dialog-body {
   padding: 1.25rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   line-height: 1.6;
 }
@@ -2452,13 +2452,13 @@ watch(activeTab, (tab) => {
 .reports-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .reports-table th {
   text-align: left;
   padding: 0.5rem 0.75rem;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -2501,7 +2501,7 @@ watch(activeTab, (tab) => {
 
 .error-snippet {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--danger);
   word-break: break-all;
 }
@@ -2513,8 +2513,8 @@ watch(activeTab, (tab) => {
 .badge {
   display: inline-block;
   padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: capitalize;
 }
@@ -2540,8 +2540,8 @@ watch(activeTab, (tab) => {
 }
 
 .badge-cancelled {
-  background: var(--muted-subtle, #f0f0f0);
-  color: var(--muted, #6b7280);
+  background: var(--bg-hover);
+  color: var(--text-muted);
 }
 
 .btn-danger {
@@ -2551,7 +2551,7 @@ watch(activeTab, (tab) => {
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: var(--danger-hover, color-mix(in srgb, var(--danger) 85%, #000));
+  background: var(--danger-hover);
 }
 
 /* Backups tab layout */
@@ -2569,7 +2569,7 @@ watch(activeTab, (tab) => {
 }
 
 .backups-list-panel .panel-title {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -2579,13 +2579,13 @@ watch(activeTab, (tab) => {
 .archives-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .archives-table th {
   text-align: left;
   padding: 0.45rem 0.75rem;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -2607,7 +2607,7 @@ watch(activeTab, (tab) => {
 
 .archives-table tr {
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .archives-table tr:hover {
@@ -2621,7 +2621,7 @@ watch(activeTab, (tab) => {
 
 .cell-archive-name {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2636,7 +2636,7 @@ watch(activeTab, (tab) => {
 
 .cell-date {
   white-space: nowrap;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 

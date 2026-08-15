@@ -897,27 +897,27 @@ async function resetSystem(): Promise<void> {
 }
 
 .info-title {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .info-description {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-bottom: 1rem;
 }
 
 .info-description code {
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   background: var(--bg-hover);
   padding: 0.125rem 0.375rem;
   border-radius: var(--radius-sm);
 }
 
 .state-msg {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
 }
 
@@ -938,7 +938,7 @@ async function resetSystem(): Promise<void> {
 .key-text {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-primary);
   white-space: pre-wrap;
@@ -947,7 +947,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .warning-text {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-bottom: 0.75rem;
 }
@@ -976,7 +976,7 @@ async function resetSystem(): Promise<void> {
 .setting-label {
   flex-shrink: 0;
   width: 120px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-primary);
   padding-top: 0.5rem;
@@ -999,7 +999,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .field-hint {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -1011,7 +1011,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .save-success {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--success);
   font-weight: 500;
 }
@@ -1023,12 +1023,12 @@ async function resetSystem(): Promise<void> {
   gap: 1rem;
   margin-bottom: 1rem;
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .database-total strong {
   color: var(--text-primary);
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
 }
 
 .storage-table-wrap {
@@ -1038,7 +1038,7 @@ async function resetSystem(): Promise<void> {
 .storage-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -1085,12 +1085,12 @@ async function resetSystem(): Promise<void> {
   height: 4px;
   overflow: hidden;
   background: var(--bg-hover);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .storage-bar-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--accent);
   border-radius: inherit;
 }
 
@@ -1113,13 +1113,13 @@ async function resetSystem(): Promise<void> {
 .version-label {
   flex-shrink: 0;
   width: 80px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-secondary);
 }
 
 .version-value {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
 }
 
@@ -1138,7 +1138,7 @@ async function resetSystem(): Promise<void> {
 .config-io-label {
   flex-shrink: 0;
   width: 60px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-primary);
   padding-top: 0.375rem;
@@ -1152,7 +1152,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .config-io-error {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--danger);
 }
 
@@ -1168,7 +1168,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .file-name {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -1182,7 +1182,7 @@ async function resetSystem(): Promise<void> {
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .import-stats {
@@ -1195,16 +1195,16 @@ async function resetSystem(): Promise<void> {
 .import-warnings {
   margin: 0.5rem 0 0;
   padding-left: 1.25rem;
-  color: var(--warning, #e6a817);
-  font-size: 0.8125rem;
+  color: var(--warning);
+  font-size: var(--fs-sm);
 }
 
 .danger-zone-card {
-  border-color: var(--danger, #dc2626);
+  border-color: var(--danger);
 }
 
 .danger-title {
-  color: var(--danger, #dc2626);
+  color: var(--danger);
 }
 
 .danger-action {
@@ -1221,13 +1221,13 @@ async function resetSystem(): Promise<void> {
 }
 
 .danger-action-name {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-primary);
 }
 
 .danger-action-desc {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -1239,7 +1239,7 @@ async function resetSystem(): Promise<void> {
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   flex-wrap: wrap;
 }
@@ -1247,7 +1247,7 @@ async function resetSystem(): Promise<void> {
 .reset-list {
   margin: 0.5rem 0;
   padding-left: 1.25rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
 
   & li {

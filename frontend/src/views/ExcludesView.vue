@@ -212,7 +212,7 @@ onMounted(loadData)
 }
 
 .panel-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -220,7 +220,7 @@ onMounted(loadData)
 }
 
 .panel-hint {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -230,7 +230,7 @@ onMounted(loadData)
   border: none;
   color: var(--text-primary);
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   padding: 0.875rem 1.25rem;
   resize: vertical;
@@ -255,12 +255,12 @@ onMounted(loadData)
 }
 
 .save-ok {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--success);
 }
 
 .save-err {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
   flex: 1;
 }
@@ -280,7 +280,7 @@ onMounted(loadData)
 }
 
 .ref-title {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -296,7 +296,7 @@ onMounted(loadData)
 }
 
 .ref-section-title {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -321,7 +321,7 @@ onMounted(loadData)
 
 .ref-entry code {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   background: var(--bg-base);
   padding: 0.15rem 0.4rem;
@@ -330,13 +330,13 @@ onMounted(loadData)
 }
 
 .ref-entry span {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   padding-left: 0.25rem;
 }
 
 .ref-note {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   line-height: 1.5;
   padding-top: 0.5rem;

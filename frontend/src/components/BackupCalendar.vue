@@ -415,7 +415,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .panel-title {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -427,7 +427,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 
 .cal-select {
   padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-base);
@@ -449,7 +449,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   color: var(--text-primary);
   cursor: pointer;
   padding: 0.2rem 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .cal-nav-btn:hover {
@@ -458,7 +458,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 
 .cal-month-label {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
 }
 
@@ -469,7 +469,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-header-cell {
-  font-size: 0.6rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -506,7 +506,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-day-num {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-primary);
 }
 
@@ -523,7 +523,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-dot-more {
-  font-size: 0.5rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
@@ -534,7 +534,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-detail-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 0.5rem;
@@ -545,7 +545,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .cal-event-dot {
@@ -588,11 +588,11 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-event-badge {
-  font-size: 0.6rem;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   text-transform: uppercase;
   padding: 0.1rem 0.35rem;
-  border-radius: 0.2rem;
+  border-radius: var(--radius-sm);
 }
 
 .cal-badge-success {
@@ -617,7 +617,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 
 .state-msg {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 1rem 0;
 }
 
@@ -662,28 +662,28 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 
 .cal-error-title {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--danger);
 }
 
 .cal-error-close {
   background: transparent;
   border: none;
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
   cursor: pointer;
   color: var(--text-muted);
   line-height: 1;
 }
 
 .cal-error-meta {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-bottom: 0.75rem;
 }
 
 .cal-error-msg {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-primary);
   background: var(--bg-base);
   border: 1px solid var(--border);

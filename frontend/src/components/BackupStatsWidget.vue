@@ -201,7 +201,7 @@ function navigateToActivity(status?: string): void {
 }
 
 .panel-title {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -215,7 +215,7 @@ function navigateToActivity(status?: string): void {
 
 .stats-select {
   padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-base);
@@ -231,7 +231,7 @@ function navigateToActivity(status?: string): void {
 
 .toggle-btn {
   padding: 0.25rem 0.5rem;
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -240,8 +240,8 @@ function navigateToActivity(status?: string): void {
   color: var(--text-muted);
   cursor: pointer;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
 }
 
 .toggle-btn:not(:last-child) {
@@ -254,12 +254,12 @@ function navigateToActivity(status?: string): void {
 
 .toggle-btn.active {
   background: var(--accent);
-  color: var(--text-on-accent, #fff);
+  color: var(--text-on-accent);
 }
 
 .state-msg {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 0.5rem 0;
 }
 
@@ -282,8 +282,8 @@ function navigateToActivity(status?: string): void {
 .mini-stat-link {
   cursor: pointer;
   transition:
-    background 0.15s,
-    border-color 0.15s;
+    background var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .mini-stat-link:hover {
@@ -291,17 +291,17 @@ function navigateToActivity(status?: string): void {
 }
 
 .mini-stat-value {
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .mini-stat-value-sm {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 .mini-stat-label {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);

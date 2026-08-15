@@ -324,7 +324,7 @@ onMounted(loadQuota)
 }
 
 .info-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -335,13 +335,13 @@ onMounted(loadQuota)
 .status-badge {
   display: inline-block;
   padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
 .badge-ok {
-  background: var(--success-subtle, oklch(0.95 0.05 145));
+  background: var(--success-subtle);
   color: var(--success);
 }
 
@@ -362,7 +362,7 @@ onMounted(loadQuota)
 .usage-labels {
   display: flex;
   justify-content: space-between;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   margin-bottom: 0.4rem;
 }
 
@@ -377,15 +377,15 @@ onMounted(loadQuota)
 
 .progress-bar-track {
   height: 8px;
-  background: var(--bg-input, var(--border));
-  border-radius: 4px;
+  background: var(--bg-input);
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .progress-bar-fill {
   height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s ease;
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-slow) ease;
 }
 
 .bar-ok {
@@ -405,7 +405,7 @@ onMounted(loadQuota)
   grid-template-columns: auto 1fr;
   gap: 0.4rem 1rem;
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .quota-details dt {
@@ -419,7 +419,7 @@ onMounted(loadQuota)
 
 .muted {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .state-msg {
@@ -430,7 +430,7 @@ onMounted(loadQuota)
 
 .state-msg-sm {
   padding: 1rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .state-error {
@@ -462,7 +462,7 @@ onMounted(loadQuota)
 }
 
 .toggle-row-label {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
@@ -476,6 +476,6 @@ onMounted(loadQuota)
 
 .form-error {
   color: var(--danger);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 </style>

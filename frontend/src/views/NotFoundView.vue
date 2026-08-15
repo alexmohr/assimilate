@@ -50,7 +50,7 @@ function goHome(): void {
 }
 
 .error-code {
-  font-size: 4rem;
+  font-size: var(--fs-3xl);
   font-weight: 800;
   color: var(--accent);
   line-height: 1;
@@ -58,14 +58,14 @@ function goHome(): void {
 }
 
 .error-title {
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 0.5rem;
 }
 
 .error-message {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin: 0 0 1.5rem;
   line-height: 1.5;
@@ -77,10 +77,10 @@ function goHome(): void {
   color: #fff;
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .error-btn:hover {

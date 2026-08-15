@@ -68,15 +68,15 @@ defineProps<{
   align-items: center;
   gap: 0.3rem;
   padding: 0.18rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   border: none;
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
 }
 
 .entity-issue-chip:hover {
@@ -98,8 +98,8 @@ defineProps<{
   align-items: center;
   gap: 0.3rem;
   padding: 0.18rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -112,8 +112,8 @@ defineProps<{
   align-items: center;
   gap: 0.35rem;
   padding: 0.18rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   background: var(--accent-subtle);
   color: var(--accent);

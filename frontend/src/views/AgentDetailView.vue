@@ -2015,7 +2015,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 1.5rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .crumb-link {
@@ -2062,12 +2062,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   cursor: pointer;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .tab-btn:hover {
@@ -2101,7 +2101,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .tab-title {
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 
@@ -2118,13 +2118,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .info-title {
-  font-size: 0.95rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   margin-bottom: 1.25rem;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .info-grid {
@@ -2136,14 +2136,14 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 .info-grid dt {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 500;
 }
 
 .info-grid dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .info-actions {
@@ -2157,7 +2157,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .restart-hint {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -2165,7 +2165,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 /* Tags */
 .muted {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .tags-section {
@@ -2185,8 +2185,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
   align-items: center;
   gap: 0.3rem;
   padding: 0.2rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 500;
   border: 1px solid;
 }
@@ -2196,11 +2196,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   line-height: 1;
   padding: 0;
   opacity: 0.6;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
 }
 
 .tag-remove:hover {
@@ -2232,7 +2232,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 .input-sm {
   padding: 0.35rem 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   width: auto;
   min-width: 140px;
 }
@@ -2263,7 +2263,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 .repo-name {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
 }
 
@@ -2280,7 +2280,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .detail-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2290,13 +2290,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .detail-value {
-  font-size: 0.825rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
 .cron-badge {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   padding: 0.15rem 0.4rem;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -2323,8 +2323,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
   padding: 1.25rem;
   cursor: pointer;
   transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+    box-shadow var(--duration-base),
+    border-color var(--duration-base);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -2347,7 +2347,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 .card-hostname {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -2355,7 +2355,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .card-repo {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   font-family: var(--mono);
   white-space: nowrap;
@@ -2371,8 +2371,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
 .type-badge {
   display: inline-block;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -2404,13 +2404,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .stat-value {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -2450,7 +2450,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .result-status-badge {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -2475,12 +2475,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .result-date {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .result-duration {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -2489,7 +2489,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-bottom: 0.35rem;
 }
@@ -2506,7 +2506,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 .result-stats {
   display: flex;
   gap: 1rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 
@@ -2516,8 +2516,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .result-output {
-  font-size: 0.7rem;
-  background: var(--bg-code, var(--bg-hover));
+  font-size: var(--fs-2xs);
+  background: var(--bg-code);
   border-radius: var(--radius-sm);
   padding: 0.5rem;
   margin-top: 0.25rem;
@@ -2548,21 +2548,21 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .result-link-hint {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--accent);
   margin-top: 0.4rem;
   display: block;
 }
 
 .result-expand-hint {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   margin-top: 0.4rem;
   display: block;
 }
 
 .result-section-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   display: block;
   margin-bottom: 0.25rem;
@@ -2629,7 +2629,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 .section-divider {
   grid-column: 1 / -1;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2648,13 +2648,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .toggle-row-label {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
 .token-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   margin-bottom: 0.75rem;
 }
@@ -2672,7 +2672,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 .token-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--success);
   word-break: break-all;
   background: transparent;
@@ -2683,7 +2683,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
   min-height: 80px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
@@ -2695,7 +2695,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .path-item {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   padding: 0.2rem 0.5rem;
   background: var(--bg-input);
   border-radius: var(--radius-sm);
@@ -2703,8 +2703,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .fcp-action-badge {
-  font-family: var(--font-sans, sans-serif);
-  font-size: 0.7rem;
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2715,7 +2715,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
   min-height: 60px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
@@ -2733,7 +2733,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .hook-cmds-label {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2749,7 +2749,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .pattern-delete {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
   flex-shrink: 0;
 }
 
@@ -2784,13 +2784,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .danger-heading {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .danger-desc {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -2801,7 +2801,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 .danger-warning-text {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--danger);
   margin-bottom: 0.5rem;
 }

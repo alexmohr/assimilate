@@ -143,7 +143,7 @@ function liveRelativeTime(iso: string): string {
 }
 
 .panel-title {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 0.75rem;
@@ -151,7 +151,7 @@ function liveRelativeTime(iso: string): string {
 
 .state-msg {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 0.5rem 0;
 }
 
@@ -201,7 +201,7 @@ function liveRelativeTime(iso: string): string {
 }
 
 .activity-host {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -210,7 +210,7 @@ function liveRelativeTime(iso: string): string {
 }
 
 .activity-target {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -226,19 +226,19 @@ function liveRelativeTime(iso: string): string {
 }
 
 .activity-time {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
 .activity-duration {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   font-family: var(--mono);
 }
 
 .activity-error {
-  font-size: 0.65rem;
-  background: var(--bg-code, var(--bg-hover));
+  font-size: var(--fs-2xs);
+  background: var(--bg-code);
   border-radius: var(--radius-sm);
   padding: 0.4rem;
   margin-top: 0.25rem;

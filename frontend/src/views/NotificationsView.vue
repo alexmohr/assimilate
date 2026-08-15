@@ -1561,13 +1561,13 @@ onMounted(() => {
   padding: 0.75rem 1.25rem;
   border: none;
   background: none;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .tab:hover {
@@ -1622,11 +1622,11 @@ onMounted(() => {
 
 .channel-name {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .channel-type-badge {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
@@ -1645,7 +1645,7 @@ onMounted(() => {
   margin-top: 0.5rem;
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius-sm);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .test-success {
@@ -1661,8 +1661,8 @@ onMounted(() => {
 .smtp-validation-result {
   margin-left: 0.5rem;
   padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
 }
 
 .channel-meta {
@@ -1678,7 +1678,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .meta-label {
@@ -1695,15 +1695,15 @@ onMounted(() => {
   border: none;
   padding: 0.1rem 0.3rem;
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   border-radius: var(--radius-sm);
   line-height: 1;
 }
 
 .meta-edit-btn:hover {
-  background: var(--surface-raised);
-  color: var(--primary);
+  background: var(--bg-elevated);
+  color: var(--accent);
 }
 
 .table-wrapper {
@@ -1715,13 +1715,13 @@ onMounted(() => {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .data-table th {
   padding: 0.75rem 1rem;
   text-align: left;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -1747,7 +1747,7 @@ onMounted(() => {
 }
 
 .delivery-status {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-sm);
   font-weight: 500;
@@ -1764,7 +1764,7 @@ onMounted(() => {
 
 .expand-chevron {
   color: var(--text-muted);
-  transition: transform 0.15s;
+  transition: transform var(--duration-base);
 }
 
 .delivery-row.expanded .expand-chevron {
@@ -1797,7 +1797,7 @@ onMounted(() => {
 }
 
 .detail-block-label {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1811,7 +1811,7 @@ onMounted(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1874,7 +1874,7 @@ onMounted(() => {
     content: attr(data-label);
     flex-shrink: 0;
     text-align: left;
-    font-size: 0.72rem;
+    font-size: var(--fs-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -1920,14 +1920,14 @@ onMounted(() => {
 }
 
 .wizard-step-indicator {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-left: auto;
   margin-right: 0.75rem;
 }
 
 .step-description {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-bottom: 1rem;
 }
@@ -1952,7 +1952,7 @@ onMounted(() => {
 }
 
 .event-label {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
@@ -1976,7 +1976,7 @@ onMounted(() => {
 }
 
 .scope-section-title {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1989,7 +1989,7 @@ onMounted(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0.4rem;
-  font-size: 0.83rem;
+  font-size: var(--fs-sm);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -1999,7 +1999,7 @@ onMounted(() => {
 }
 
 .scope-item input[type='checkbox'] {
-  accent-color: var(--primary);
+  accent-color: var(--accent);
 }
 
 /* Form */
@@ -2024,7 +2024,7 @@ onMounted(() => {
   border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
   border-radius: var(--radius-sm);
   padding: 0.6rem 0.8rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--warning);
   margin-bottom: 1rem;
 }

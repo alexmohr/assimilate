@@ -326,14 +326,14 @@ function actionBadgeClass(action: string): string {
 }
 
 .page-title {
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
 }
 
 .row-count {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
 }
 
@@ -358,7 +358,7 @@ function actionBadgeClass(action: string): string {
 }
 
 .filter-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -372,9 +372,9 @@ function actionBadgeClass(action: string): string {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.4rem 0.6rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .filter-input:focus,
@@ -394,7 +394,7 @@ function actionBadgeClass(action: string): string {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.4rem 0.6rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
 }
 
@@ -417,7 +417,7 @@ function actionBadgeClass(action: string): string {
 .cell-ts {
   color: var(--text-muted);
   white-space: nowrap;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .cell-user {
@@ -427,12 +427,12 @@ function actionBadgeClass(action: string): string {
 
 .cell-target {
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .cell-ip {
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .mono {
@@ -442,8 +442,8 @@ function actionBadgeClass(action: string): string {
 .badge {
   display: inline-block;
   padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: capitalize;
 }
@@ -454,7 +454,7 @@ function actionBadgeClass(action: string): string {
 }
 
 .badge-success {
-  background: var(--success-subtle, oklch(0.95 0.05 145));
+  background: var(--success-subtle);
   color: var(--success);
 }
 
@@ -479,7 +479,7 @@ function actionBadgeClass(action: string): string {
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
@@ -488,7 +488,7 @@ function actionBadgeClass(action: string): string {
 
 .muted {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .per-page-selector {

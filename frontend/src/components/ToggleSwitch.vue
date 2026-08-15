@@ -58,12 +58,12 @@ defineEmits<{
   position: relative;
   width: 36px;
   height: 20px;
-  border-radius: 10px;
+  border-radius: var(--radius-pill);
   background: var(--border);
   border: none;
   cursor: pointer;
   padding: 0;
-  transition: background 0.2s ease;
+  transition: background var(--duration-slow) ease;
   flex-shrink: 0;
 }
 
@@ -84,7 +84,7 @@ defineEmits<{
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .toggle-track.active .toggle-thumb {
@@ -92,7 +92,7 @@ defineEmits<{
 }
 
 .toggle-text {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   user-select: none;
 }

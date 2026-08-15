@@ -442,13 +442,13 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 }
 
 .stat-value {
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -465,11 +465,11 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
 }
 
 .threshold-row dt {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -497,13 +497,13 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 .status-badge {
   display: inline-block;
   padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
 .badge-ok {
-  background: var(--success-subtle, oklch(0.95 0.05 145));
+  background: var(--success-subtle);
   color: var(--success);
 }
 

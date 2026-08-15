@@ -23,6 +23,7 @@ Use when:
 * **Build verification is MANDATORY.** After ANY change to frontend code, run `npm run build` in `frontend/` and confirm it exits successfully before considering the task complete. A broken production build is never acceptable.
 * **Never submit template expressions that contain syntax errors.** Common mistakes: unbalanced quotes in attribute bindings, invalid JavaScript in `v-if`/`v-for`/`:prop` expressions, missing commas in object literals inside templates. If unsure, run `npm run build` to verify.
 * Write or update unit/component tests for any non-trivial frontend logic change.
+* **Use the design tokens.** Never write a literal `font-size`, `border-radius` or transition duration — take it from `frontend/src/style.css`. `frontend/src/design-tokens.test.ts` enforces this and will fail CI on a literal or on a `var()` that references an undefined token. See the "Design tokens" section below.
 
 ## Workflow
 
@@ -41,6 +42,17 @@ For end-to-end tests (Playwright, `frontend/e2e/`), see `skills/testing/SKILL.md
 * [ ] `npm run test` passes (or build validated if no test target applies)
 * [ ] No `.npm-audit-allowlist.json` entries added without human approval
 * [ ] Non-trivial logic changes have unit/component test coverage
+
+## Design tokens
+
+All visual constants live in `frontend/src/style.css` and are enforced by `frontend/src/design-tokens.test.ts`. The audit that produced them is `docs/contributing/ui-design-audit.md`.
+
+* **Type scale** — `--fs-2xs` `--fs-xs` `--fs-sm` `--fs-base` `--fs-md` `--fs-lg` `--fs-xl`, plus `--fs-2xl` / `--fs-3xl` for decorative numerals only (error codes, score rings). Never a literal `rem` value. The `--fs-*` name is deliberate: Tailwind's theme already owns `--text-*` to drive its `text-*` utilities, so reusing those names would make one token resolve to two different values depending on how it was reached.
+* **Radius** — `--radius-sm`, `--radius`, `--radius-pill`. Literal `50%` (a circle) and `0` (a deliberate square edge) are the only exceptions.
+* **Duration** — `--duration-fast` (0.1s), `--duration-base` (0.15s, the default for hover/state feedback), `--duration-slow` (0.3s), `--duration-value` (0.4s, for progress fills and chart sweeps). Keyframe `animation` timings are exempt; `transition` is not.
+* **Colour** — every colour comes from a token defined in both `:root` and `.dark`. A `var(--x, fallback)` with a hardcoded fallback is a bug: if `--x` exists the fallback is dead, and if it does not the value silently stops following the theme.
+* **Focus** — a single `:focus-visible` rule in `@layer base` covers every control. It is wrapped in `:where()` so it carries zero specificity. Do not add per-component focus styling, and do not use `outline: none` without `:focus-visible` handling (the global rule survives `outline: none` on `:focus`, which is why the pattern is safe).
+* **Motion** — `@media (prefers-reduced-motion: reduce)` in `@layer base` neutralises every animation and transition. Do not add motion that bypasses it.
 
 ## `local/no-string-literal-control-flow` ESLint rule
 

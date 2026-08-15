@@ -90,14 +90,14 @@ const statusLabel = computed(() => {
 .quota-track {
   position: relative;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   background: var(--border);
 }
 
 .quota-fill {
   height: 100%;
-  border-radius: 3px;
-  transition: width 0.3s ease;
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-slow) ease;
 }
 
 .quota-fill-ok {
@@ -122,7 +122,7 @@ const statusLabel = computed(() => {
   top: -3px;
   bottom: -3px;
   width: 2px;
-  border-radius: 1px;
+  border-radius: var(--radius-pill);
   background: var(--text-muted);
   box-shadow: 0 0 0 2px var(--bg-card);
 }
@@ -132,7 +132,7 @@ const statusLabel = computed(() => {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
 }
 
 .quota-usage {

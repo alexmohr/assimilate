@@ -60,7 +60,7 @@ defineProps<{
 
 <style scoped>
 .panel-title {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 0.75rem;
@@ -82,7 +82,7 @@ defineProps<{
   border-top: 1px solid var(--border);
   color: inherit;
   text-decoration: none;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .work-row span,

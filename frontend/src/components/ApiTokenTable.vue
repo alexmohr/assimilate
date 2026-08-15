@@ -66,7 +66,7 @@ defineEmits<{
 .tokens-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
@@ -75,7 +75,7 @@ defineEmits<{
 .tokens-table th {
   text-align: left;
   padding: 0.7rem 1rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -104,7 +104,7 @@ defineEmits<{
 }
 
 .cell-date {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 </style>

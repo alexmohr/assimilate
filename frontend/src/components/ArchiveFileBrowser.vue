@@ -316,7 +316,7 @@ function handleDeleteWholeArchive(): void {
   align-items: center;
   justify-content: center;
   min-height: 200px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
 }
 
@@ -326,7 +326,7 @@ function handleDeleteWholeArchive(): void {
 }
 
 .browser-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -349,7 +349,7 @@ function handleDeleteWholeArchive(): void {
 }
 
 .archive-meta-label {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -357,7 +357,7 @@ function handleDeleteWholeArchive(): void {
 }
 
 .archive-meta-value {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
 }
 
@@ -373,7 +373,7 @@ function handleDeleteWholeArchive(): void {
   gap: 0.5rem;
   padding: 1.5rem;
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .state-error {
@@ -395,13 +395,13 @@ function handleDeleteWholeArchive(): void {
   border: none;
   color: var(--accent);
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   padding: 0.15rem 0.3rem;
   border-radius: var(--radius-sm);
   transition:
-    background 0.1s,
-    color 0.1s;
+    background var(--duration-fast),
+    color var(--duration-fast);
 }
 
 .crumb:hover {
@@ -432,7 +432,7 @@ function handleDeleteWholeArchive(): void {
 :deep(.data-table) {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 /* No border-bottom here: the global PrimeVue passthrough config
@@ -443,7 +443,7 @@ function handleDeleteWholeArchive(): void {
   padding: 0.5rem 1rem;
   color: var(--text-muted);
   font-weight: 600;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -455,7 +455,7 @@ function handleDeleteWholeArchive(): void {
 
 :deep(.data-table tr.clickable) {
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 :deep(.data-table tr.clickable:hover) {
@@ -468,7 +468,7 @@ function handleDeleteWholeArchive(): void {
   gap: 0.5rem;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .name-text {
@@ -484,13 +484,13 @@ function handleDeleteWholeArchive(): void {
 }
 
 .td-size {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .td-date {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -503,12 +503,12 @@ function handleDeleteWholeArchive(): void {
 
 .filter-input {
   width: 100%;
-  background: var(--bg-input, var(--bg-card));
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.35rem 0.5rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .filter-input:focus {

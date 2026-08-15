@@ -90,7 +90,7 @@ function statusColor(entry: HealthEntry): string {
 }
 
 .panel-title {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -100,7 +100,7 @@ function statusColor(entry: HealthEntry): string {
 
 .state-msg {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 0.5rem 0;
 }
 
@@ -117,7 +117,7 @@ function statusColor(entry: HealthEntry): string {
   padding: 0.4rem 0.5rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .health-item:hover {
@@ -140,7 +140,7 @@ function statusColor(entry: HealthEntry): string {
 }
 
 .health-name {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -149,7 +149,7 @@ function statusColor(entry: HealthEntry): string {
 }
 
 .health-time {
-  font-size: 0.68rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
@@ -157,9 +157,9 @@ function statusColor(entry: HealthEntry): string {
   background: var(--danger-subtle);
   color: var(--danger);
   padding: 0.1rem 0.35rem;
-  border-radius: 0.2rem;
+  border-radius: var(--radius-sm);
   font-weight: 700;
-  font-size: 0.55rem;
+  font-size: var(--fs-2xs);
   flex-shrink: 0;
 }
 
@@ -169,10 +169,10 @@ function statusColor(entry: HealthEntry): string {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   padding: 0.35rem 0.75rem;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .view-all-btn:hover {

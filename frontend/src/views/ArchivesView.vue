@@ -825,7 +825,7 @@ onMounted(loadRepos)
   gap: 0.5rem;
   padding: 1.5rem;
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .state-error {
@@ -844,7 +844,7 @@ onMounted(loadRepos)
 }
 
 .selector-label {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -858,9 +858,9 @@ onMounted(loadRepos)
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   min-width: 280px;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .select-input:focus {
@@ -869,7 +869,7 @@ onMounted(loadRepos)
 }
 
 .muted-hint {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -901,7 +901,7 @@ onMounted(loadRepos)
 }
 
 .panel-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -911,7 +911,7 @@ onMounted(loadRepos)
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .data-table th {
@@ -919,7 +919,7 @@ onMounted(loadRepos)
   padding: 0.5rem 1rem;
   color: var(--text-muted);
   font-weight: 600;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border);
@@ -937,7 +937,7 @@ onMounted(loadRepos)
 
 .data-table tr.clickable {
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .data-table tr.clickable:hover {
@@ -951,7 +951,7 @@ onMounted(loadRepos)
 
 .td-mono {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -959,18 +959,18 @@ onMounted(loadRepos)
 }
 
 .td-date {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .td-host {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .host-link {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--accent);
   text-decoration: none;
 }
@@ -980,7 +980,7 @@ onMounted(loadRepos)
 }
 
 .unmatched-host-link {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--warning);
   text-decoration: none;
 }
@@ -990,11 +990,11 @@ onMounted(loadRepos)
 }
 
 .match-icon {
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .match-ok {
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 .match-warn {
@@ -1011,7 +1011,7 @@ onMounted(loadRepos)
   gap: 0.5rem;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .name-text {
@@ -1022,7 +1022,7 @@ onMounted(loadRepos)
 }
 
 .td-size {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -1033,12 +1033,12 @@ onMounted(loadRepos)
 
 .filter-input {
   width: 100%;
-  background: var(--bg-input, var(--bg-card));
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.35rem 0.5rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .filter-input:focus {
@@ -1066,13 +1066,13 @@ onMounted(loadRepos)
   border: none;
   color: var(--accent);
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   padding: 0.15rem 0.3rem;
   border-radius: var(--radius-sm);
   transition:
-    background 0.1s,
-    color 0.1s;
+    background var(--duration-fast),
+    color var(--duration-fast);
 }
 
 .crumb:hover {
@@ -1101,7 +1101,7 @@ onMounted(loadRepos)
   align-items: center;
   justify-content: center;
   min-height: 200px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .spinner {
@@ -1128,7 +1128,7 @@ onMounted(loadRepos)
 
 .passphrase-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   margin-bottom: 0.75rem;
 }
@@ -1146,7 +1146,7 @@ onMounted(loadRepos)
 .passphrase-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   word-break: break-all;
   background: transparent;

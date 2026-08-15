@@ -149,7 +149,7 @@ onUnmounted(() => {
 }
 
 .panel-title {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -159,7 +159,7 @@ onUnmounted(() => {
 
 .state-msg {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 0.5rem 0;
 }
 
@@ -176,7 +176,7 @@ onUnmounted(() => {
   padding: 0.35rem 0.5rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .scheduled-item:hover {
@@ -184,7 +184,7 @@ onUnmounted(() => {
 }
 
 .scheduled-icon {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   flex-shrink: 0;
 }
 
@@ -197,7 +197,7 @@ onUnmounted(() => {
 }
 
 .scheduled-repo {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -206,13 +206,13 @@ onUnmounted(() => {
 }
 
 .scheduled-time {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   font-family: var(--mono);
 }
 
 .scheduled-countdown {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   flex-shrink: 0;
 }

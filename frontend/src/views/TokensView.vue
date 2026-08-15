@@ -171,8 +171,8 @@ onMounted(fetchTokens)
 }
 
 .token-warning {
-  font-size: 0.8125rem;
-  color: var(--warning, var(--text-secondary));
+  font-size: var(--fs-sm);
+  color: var(--warning);
   font-weight: 600;
   margin-bottom: 0.5rem;
 }
@@ -189,7 +189,7 @@ onMounted(fetchTokens)
 
 .token-text {
   flex: 1;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-family: monospace;
   word-break: break-all;
   color: var(--text-primary);

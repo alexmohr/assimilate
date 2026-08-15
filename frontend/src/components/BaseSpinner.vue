@@ -81,7 +81,7 @@ withDefaults(defineProps<Props>(), {
 }
 
 .spinner-text {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
 }
 

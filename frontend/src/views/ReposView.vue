@@ -1745,12 +1745,12 @@ onMounted(loadRepos)
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   position: relative;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .btn-filter-toggle:hover {
@@ -1781,7 +1781,7 @@ onMounted(loadRepos)
 }
 
 .sort-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1817,8 +1817,8 @@ onMounted(loadRepos)
   padding: 1.25rem;
   cursor: pointer;
   transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+    box-shadow var(--duration-base),
+    border-color var(--duration-base);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -1843,25 +1843,25 @@ onMounted(loadRepos)
   flex: 1;
   height: 6px;
   background: var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .import-progress-bar {
   height: 100%;
   background: var(--accent);
-  border-radius: 3px;
-  transition: width 0.4s ease;
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-value) ease;
 }
 
 .import-progress-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .import-status-inline {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin: 0;
   white-space: nowrap;
@@ -1893,7 +1893,7 @@ onMounted(loadRepos)
 .card-name {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -1901,7 +1901,7 @@ onMounted(loadRepos)
 }
 
 .card-ssh {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   font-family: var(--mono);
   white-space: nowrap;
@@ -1917,8 +1917,8 @@ onMounted(loadRepos)
 .meta-pill {
   display: inline-block;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 500;
   background: var(--bg-card);
   color: var(--text-muted);
@@ -1937,13 +1937,13 @@ onMounted(loadRepos)
 }
 
 .stat-value {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1990,7 +1990,7 @@ onMounted(loadRepos)
 }
 
 .toggle-row-label {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
@@ -2002,7 +2002,7 @@ onMounted(loadRepos)
 }
 
 .deploy-result {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
 }
 
@@ -2051,14 +2051,14 @@ onMounted(loadRepos)
   padding: 0.5rem 0.75rem;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
 }
 
 .breadcrumb {
   cursor: pointer;
   color: var(--accent);
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 .breadcrumb:hover {
@@ -2083,7 +2083,7 @@ onMounted(loadRepos)
 .browser-error {
   padding: 0.75rem;
   color: var(--danger);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .browser-list {
@@ -2096,7 +2096,7 @@ onMounted(loadRepos)
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   border-bottom: 1px solid var(--border-subtle);
   cursor: default;
@@ -2148,7 +2148,7 @@ onMounted(loadRepos)
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   color: var(--text-secondary);
   cursor: pointer;
@@ -2164,12 +2164,12 @@ onMounted(loadRepos)
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .btn-xs {
   padding: 0.2rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 /* Tag filter dropdown */
@@ -2178,7 +2178,7 @@ onMounted(loadRepos)
 }
 
 .dropdown-arrow {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   margin-left: 0.15rem;
 }
 
@@ -2206,9 +2206,9 @@ onMounted(loadRepos)
   padding: 0.3rem 0.4rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .tag-dropdown-item:hover {
@@ -2238,8 +2238,8 @@ onMounted(loadRepos)
   display: inline-flex;
   align-items: center;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 500;
   border: 1px solid;
 }
@@ -2266,17 +2266,17 @@ onMounted(loadRepos)
 }
 
 .tag-group-title {
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .tag-group-count {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   background: var(--bg-hover);
   padding: 0.1rem 0.4rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 /* Quota filter chips */
@@ -2291,9 +2291,9 @@ onMounted(loadRepos)
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   padding: 0.25rem 0.65rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-secondary);
@@ -2341,7 +2341,7 @@ onMounted(loadRepos)
 .pool-header {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius, 0.625rem);
+  border-radius: var(--radius);
   padding: 0.85rem 1rem;
   display: flex;
   flex-direction: column;
@@ -2361,14 +2361,14 @@ onMounted(loadRepos)
 
 .pool-host {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   font-weight: 600;
 }
 
 .pool-total {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
   flex-shrink: 0;
@@ -2377,7 +2377,7 @@ onMounted(loadRepos)
 .pool-track {
   position: relative;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
   background: var(--border);
 }
 
@@ -2385,7 +2385,7 @@ onMounted(loadRepos)
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
 }
 
 .pool-seg-step-0 {
@@ -2405,12 +2405,12 @@ onMounted(loadRepos)
   top: -2px;
   bottom: -2px;
   width: 2px;
-  border-radius: 1px;
+  border-radius: var(--radius-pill);
   background: var(--text-secondary);
 }
 
 .pool-note {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -2427,7 +2427,7 @@ onMounted(loadRepos)
 }
 
 .folder-modal-error {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--danger);
   margin: 0;
 }

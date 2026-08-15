@@ -349,7 +349,7 @@ function cancelDownload(): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   background: var(--bg-card);
   border: 2px solid var(--border);
@@ -374,7 +374,7 @@ function cancelDownload(): void {
 
 .field-label {
   display: block;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -383,7 +383,7 @@ function cancelDownload(): void {
 }
 
 .field-hint {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-top: 0.4rem;
 }
@@ -394,7 +394,7 @@ function cancelDownload(): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .full-width {
@@ -408,7 +408,7 @@ function cancelDownload(): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-family: var(--mono);
   resize: vertical;
 }
@@ -426,7 +426,7 @@ function cancelDownload(): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .radio-group {
@@ -440,7 +440,7 @@ function cancelDownload(): void {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -453,7 +453,7 @@ function cancelDownload(): void {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 0.4rem 1rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .confirm-list dt {
@@ -472,14 +472,14 @@ function cancelDownload(): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.1rem 0.4rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   margin-right: 0.3rem;
   margin-bottom: 0.2rem;
 }
 
 .form-error {
   color: var(--danger);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin-top: 0.75rem;
 }
 

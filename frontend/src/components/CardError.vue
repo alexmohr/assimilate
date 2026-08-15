@@ -62,7 +62,7 @@ const expanded = ref(false)
   background: none;
   border: none;
   color: var(--danger);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 500;
   cursor: pointer;
   padding: 0.2rem 0;
@@ -73,7 +73,7 @@ const expanded = ref(false)
 }
 
 .toggle-arrow {
-  font-size: 0.6rem;
+  font-size: var(--fs-2xs);
   margin-left: 0.1rem;
 }
 
@@ -86,7 +86,7 @@ const expanded = ref(false)
   border: 1px solid var(--danger-subtle);
   border-radius: var(--radius-sm);
   padding: 0.6rem 0.75rem;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-family: var(--mono);
   color: var(--danger);
   white-space: pre-wrap;

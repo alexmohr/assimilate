@@ -923,8 +923,8 @@ async function fetchOverview(): Promise<void> {
 .stat-card-link {
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    background 0.15s;
+    border-color var(--duration-base),
+    background var(--duration-base);
 }
 
 .stat-card-link:hover {
@@ -933,7 +933,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -941,7 +941,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .stat-value {
-  font-size: 1.5rem;
+  font-size: var(--fs-xl);
   font-weight: 700;
   color: var(--text-primary);
   display: flex;
@@ -950,7 +950,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .stat-value-sm {
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
 }
 
 .stat-danger {
@@ -1000,7 +1000,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .panel-title {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 1rem;
@@ -1028,7 +1028,7 @@ async function fetchOverview(): Promise<void> {
 
 .trends-select {
   padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-base);
@@ -1045,7 +1045,7 @@ async function fetchOverview(): Promise<void> {
 
 .toggle-btn {
   padding: 0.25rem 0.5rem;
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1054,8 +1054,8 @@ async function fetchOverview(): Promise<void> {
   color: var(--text-muted);
   cursor: pointer;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
 }
 
 .toggle-btn:not(:last-child) {
@@ -1068,18 +1068,18 @@ async function fetchOverview(): Promise<void> {
 
 .toggle-btn.active {
   background: var(--accent);
-  color: var(--text-on-accent, #fff);
+  color: var(--text-on-accent);
 }
 
 .state-msg {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 1rem 0;
 }
 
 .chart-desc {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }
@@ -1098,7 +1098,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .ring-progress {
-  transition: stroke-dasharray 0.6s ease;
+  transition: stroke-dasharray var(--duration-value) ease;
 }
 
 .ring-center {
@@ -1111,17 +1111,17 @@ async function fetchOverview(): Promise<void> {
 }
 
 .ring-pct {
-  font-size: 1.75rem;
+  font-size: var(--fs-2xl);
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .ring-pct-sm {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 .ring-sub {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
@@ -1136,7 +1136,7 @@ async function fetchOverview(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 
@@ -1160,13 +1160,13 @@ async function fetchOverview(): Promise<void> {
 
 .legend-link {
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 2px 6px;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .legend-link:hover {
-  background: var(--hover);
+  background: var(--bg-hover);
   text-decoration: underline;
 }
 
@@ -1181,10 +1181,10 @@ async function fetchOverview(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   cursor: pointer;
   user-select: none;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
 }
 
 .storage-legend-item:hover {
@@ -1202,7 +1202,7 @@ async function fetchOverview(): Promise<void> {
 .legend-color {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: 0;
   flex-shrink: 0;
 }
 
@@ -1240,8 +1240,8 @@ async function fetchOverview(): Promise<void> {
 .health-card-link {
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    background 0.15s;
+    border-color var(--duration-base),
+    background var(--duration-base);
 }
 
 .health-card-link:hover {
@@ -1264,7 +1264,7 @@ async function fetchOverview(): Promise<void> {
 
 .hc-host {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1275,19 +1275,19 @@ async function fetchOverview(): Promise<void> {
   background: var(--danger-subtle);
   color: var(--danger);
   padding: 0.1rem 0.4rem;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-sm);
   font-weight: 700;
-  font-size: 0.6rem;
+  font-size: var(--fs-2xs);
   flex-shrink: 0;
 }
 
 .hc-target {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
 .hc-time {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
@@ -1350,7 +1350,7 @@ async function fetchOverview(): Promise<void> {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .active-backup-schedule {
@@ -1369,7 +1369,7 @@ async function fetchOverview(): Promise<void> {
 
 .active-backup-time {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   margin-left: auto;
 }
 
@@ -1399,6 +1399,6 @@ async function fetchOverview(): Promise<void> {
 .active-backup-target {
   color: var(--text-secondary);
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 </style>

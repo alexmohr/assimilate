@@ -307,7 +307,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 }
 
 .panel-title {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -322,7 +322,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 
 .stats-select {
   padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-base);
@@ -338,7 +338,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 
 .toggle-btn {
   padding: 0.25rem 0.5rem;
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -347,8 +347,8 @@ const hasData = computed((): boolean => entries.value.length >= 2)
   color: var(--text-muted);
   cursor: pointer;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
 }
 
 .toggle-btn:not(:last-child) {
@@ -361,18 +361,18 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 
 .toggle-btn.active {
   background: var(--accent);
-  color: var(--text-on-accent, #fff);
+  color: var(--text-on-accent);
 }
 
 .state-msg {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   padding: 1rem 0;
 }
 
 .chart-desc {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }
@@ -390,7 +390,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 }
 
 .metric-label {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;

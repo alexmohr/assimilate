@@ -807,7 +807,7 @@ onMounted(async () => {
 
 .page-subtitle {
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   margin-bottom: 1.5rem;
 }
 
@@ -825,12 +825,12 @@ onMounted(async () => {
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   cursor: pointer;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .tab:hover {
@@ -865,7 +865,7 @@ onMounted(async () => {
 
 .form-label {
   display: block;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 0.35rem;
@@ -880,9 +880,9 @@ onMounted(async () => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   box-sizing: border-box;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .form-input:focus {
@@ -898,7 +898,7 @@ onMounted(async () => {
 .msg {
   padding: 0.6rem 0.875rem;
   border-radius: var(--radius-sm);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin-bottom: 1rem;
 }
 
@@ -923,7 +923,7 @@ onMounted(async () => {
 
 .tokens-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin: 0;
 }
 
@@ -937,12 +937,12 @@ onMounted(async () => {
   color: var(--text-muted);
   padding: 2rem;
   text-align: center;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .token-warning {
   color: var(--warning);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   margin-bottom: 0.75rem;
 }
@@ -959,7 +959,7 @@ onMounted(async () => {
 
 .token-value {
   flex: 1;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   word-break: break-all;
   color: var(--text-primary);
@@ -984,11 +984,11 @@ onMounted(async () => {
 
 .setting-label {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .setting-desc {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -1006,12 +1006,12 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    color 0.15s,
-    background 0.15s;
+    border-color var(--duration-base),
+    color var(--duration-base),
+    background var(--duration-base);
 }
 
 .theme-option:hover {
@@ -1026,7 +1026,7 @@ onMounted(async () => {
 }
 
 .theme-icon {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 /* TOTP Styles */
@@ -1040,7 +1040,7 @@ onMounted(async () => {
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .totp-enabled {
@@ -1057,7 +1057,7 @@ onMounted(async () => {
 
 .totp-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin: 0;
 }
 
@@ -1068,14 +1068,14 @@ onMounted(async () => {
 }
 
 .section-title {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
   font-weight: 600;
   margin: 0;
 }
 
 .totp-setup-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin: 0;
 }
 
@@ -1095,14 +1095,14 @@ onMounted(async () => {
 }
 
 .totp-secret-text {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   text-align: center;
 }
 
 .totp-secret {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   word-break: break-all;
 }
 
@@ -1119,7 +1119,7 @@ onMounted(async () => {
 
 .recovery-codes-warning {
   color: var(--warning);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   margin: 0;
 }
@@ -1136,7 +1136,7 @@ onMounted(async () => {
 
 .recovery-code {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   padding: 0.25rem 0.5rem;
   background: var(--bg-card);
@@ -1146,14 +1146,14 @@ onMounted(async () => {
 /* Sessions Styles */
 .sessions-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin-bottom: 1rem;
 }
 
 .sessions-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
@@ -1162,7 +1162,7 @@ onMounted(async () => {
 .sessions-table th {
   text-align: left;
   padding: 0.7rem 1rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1186,20 +1186,20 @@ onMounted(async () => {
 }
 
 .cell-type {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .badge {
   display: inline-block;
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
 .badge-current {
-  background: var(--accent-subtle, rgba(59, 130, 246, 0.1));
+  background: var(--accent-subtle);
   color: var(--accent);
 }
 

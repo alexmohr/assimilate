@@ -1033,12 +1033,12 @@ watch(
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   position: relative;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .btn-filter-toggle:hover {
@@ -1071,7 +1071,7 @@ watch(
 }
 
 .sort-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1107,8 +1107,8 @@ watch(
   padding: 1.25rem;
   cursor: pointer;
   transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+    box-shadow var(--duration-base),
+    border-color var(--duration-base);
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -1140,7 +1140,7 @@ watch(
 .card-hostname {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -1148,7 +1148,7 @@ watch(
 }
 
 .card-display {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -1164,13 +1164,13 @@ watch(
 }
 
 .stat-value {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1194,8 +1194,8 @@ watch(
   display: inline-flex;
   align-items: center;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 500;
   border: 1px solid;
 }
@@ -1206,7 +1206,7 @@ watch(
 }
 
 .dropdown-arrow {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   margin-left: 0.15rem;
 }
 
@@ -1234,9 +1234,9 @@ watch(
   padding: 0.3rem 0.4rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .tag-dropdown-item:hover {
@@ -1271,7 +1271,7 @@ watch(
 
 .token-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
 }
 
@@ -1288,7 +1288,7 @@ watch(
 .token-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--success);
   word-break: break-all;
   background: transparent;
@@ -1299,7 +1299,7 @@ watch(
   min-height: 80px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
@@ -1313,8 +1313,8 @@ watch(
 .badge-imported {
   display: inline-block;
   padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1326,8 +1326,8 @@ watch(
 .badge-hidden {
   display: inline-block;
   padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1345,7 +1345,7 @@ watch(
   align-items: center;
   gap: 0.4rem;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   user-select: none;
 }

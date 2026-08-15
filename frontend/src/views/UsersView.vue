@@ -774,7 +774,7 @@ onMounted(fetchUsers)
 .users-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .users-table th {
@@ -798,7 +798,7 @@ onMounted(fetchUsers)
 }
 
 .you-badge {
-  font-size: 0.6875rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   background: var(--bg-hover);
   padding: 0.0625rem 0.375rem;
@@ -806,7 +806,7 @@ onMounted(fetchUsers)
 }
 
 .role-badge {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   padding: 0.125rem 0.5rem;
@@ -825,7 +825,7 @@ onMounted(fetchUsers)
 
 .date-cell {
   color: var(--text-secondary);
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
 }
 
 .actions-cell {
@@ -869,7 +869,7 @@ onMounted(fetchUsers)
 }
 
 .modal-header h2 {
-  font-size: 1.05rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
@@ -886,15 +886,15 @@ onMounted(fetchUsers)
   background: none;
   border: none;
   padding: 0.6rem 1rem;
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .tab:hover {
@@ -926,7 +926,7 @@ onMounted(fetchUsers)
 }
 
 .form-group label {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -938,7 +938,7 @@ onMounted(fetchUsers)
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .form-group input:focus,
@@ -948,7 +948,7 @@ onMounted(fetchUsers)
 }
 
 .modal-error {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
   padding: 0.5rem 0.75rem;
   background: var(--danger-subtle);
@@ -956,7 +956,7 @@ onMounted(fetchUsers)
 }
 
 .modal-success {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--success);
   padding: 0.5rem 0.75rem;
   background: var(--success-subtle);
@@ -975,7 +975,7 @@ onMounted(fetchUsers)
 }
 
 .rg-heading {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -984,7 +984,7 @@ onMounted(fetchUsers)
 }
 
 .rg-empty {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   padding: 0.5rem 0;
 }
@@ -1007,7 +1007,7 @@ onMounted(fetchUsers)
   padding: 0.35rem 0.4rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .rg-item:hover {
@@ -1020,7 +1020,7 @@ onMounted(fetchUsers)
 }
 
 .rg-item-name {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-primary);
 }
@@ -1033,7 +1033,7 @@ onMounted(fetchUsers)
 .permissions-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
 }
 
 .permissions-table th {
@@ -1042,7 +1042,7 @@ onMounted(fetchUsers)
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -1054,7 +1054,7 @@ onMounted(fetchUsers)
 
 .perm-repo-cell {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .perm-check-cell {

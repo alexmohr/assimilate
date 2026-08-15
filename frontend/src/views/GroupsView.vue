@@ -526,7 +526,7 @@ onMounted(async () => {
 
 .desc-cell {
   color: var(--text-secondary);
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
 }
 
 .count-cell {
@@ -539,7 +539,7 @@ onMounted(async () => {
 }
 
 .modal-subtitle {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   margin: -0.25rem 0 1rem;
 }
@@ -563,7 +563,7 @@ onMounted(async () => {
   padding: 0.4rem 0.5rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .member-item:hover {
@@ -576,13 +576,13 @@ onMounted(async () => {
 }
 
 .member-name {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-primary);
 }
 
 .member-role {
-  font-size: 0.6875rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   margin-left: auto;

@@ -1010,7 +1010,7 @@ function filterByRun(runId: string): void {
 }
 
 .row-count {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
 }
 
@@ -1038,7 +1038,7 @@ function filterByRun(runId: string): void {
 }
 
 .filter-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1058,12 +1058,12 @@ function filterByRun(runId: string): void {
   border-right: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
 }
 
 .segment-btn:last-child {
@@ -1087,9 +1087,9 @@ function filterByRun(runId: string): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.4rem 0.6rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .select-input:focus,
@@ -1103,11 +1103,11 @@ function filterByRun(runId: string): void {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
   align-self: flex-end;
 }
 
@@ -1125,12 +1125,12 @@ function filterByRun(runId: string): void {
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   position: relative;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .btn-filter-toggle:hover {
@@ -1158,13 +1158,13 @@ function filterByRun(runId: string): void {
   text-align: center;
   padding: 3rem;
   color: var(--text-muted);
-  font-size: 0.95rem;
+  font-size: var(--fs-md);
 }
 
 .log-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .log-table thead tr {
@@ -1174,7 +1174,7 @@ function filterByRun(runId: string): void {
 .log-table th {
   padding: 0.75rem 1rem;
   text-align: left;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1207,7 +1207,7 @@ function filterByRun(runId: string): void {
 .run-card-summary {
   cursor: pointer;
   padding: 0.85rem 1.1rem;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .run-card-summary:hover {
@@ -1235,20 +1235,20 @@ function filterByRun(runId: string): void {
 }
 
 .run-card-time {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .run-card-meta {
   margin-top: 0.35rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
 .run-card-message {
   margin: 0.35rem 0 0;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   word-break: break-word;
 }
@@ -1263,7 +1263,7 @@ function filterByRun(runId: string): void {
 }
 
 .run-card-duration {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   font-family: var(--mono);
 }
@@ -1271,8 +1271,8 @@ function filterByRun(runId: string): void {
 .badge {
   display: inline-block;
   padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: capitalize;
 }
@@ -1310,7 +1310,7 @@ function filterByRun(runId: string): void {
 
 .detail-loading {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .detail-grid {
@@ -1329,7 +1329,7 @@ function filterByRun(runId: string): void {
 
 .detail-heading {
   margin: 0 0 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1353,21 +1353,21 @@ function filterByRun(runId: string): void {
 
 .detail-dl dt {
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
 .detail-dl dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .status-pre {
   margin: 0;
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1401,7 +1401,7 @@ function filterByRun(runId: string): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
   word-break: break-all;
   font-family: monospace;
@@ -1419,11 +1419,11 @@ function filterByRun(runId: string): void {
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   transition:
-    background 0.15s,
-    border-color 0.15s;
+    background var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .btn-load-more:hover:not(:disabled) {
@@ -1460,10 +1460,10 @@ function filterByRun(runId: string): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.4rem 0.6rem 0.4rem 1.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
   width: 100%;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .search-input:focus {
@@ -1476,7 +1476,7 @@ function filterByRun(runId: string): void {
 
 .log-table-mono {
   font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .log-entry-row {
@@ -1498,7 +1498,7 @@ function filterByRun(runId: string): void {
 
 .cell-mono {
   font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 
@@ -1532,7 +1532,7 @@ function filterByRun(runId: string): void {
 }
 
 .badge-level {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1550,7 +1550,7 @@ function filterByRun(runId: string): void {
 }
 
 .badge-info {
-  background: var(--accent-subtle, color-mix(in srgb, var(--accent) 15%, transparent));
+  background: var(--accent-subtle);
   color: var(--accent);
 }
 
@@ -1567,7 +1567,7 @@ function filterByRun(runId: string): void {
 
 .schedule-label {
   display: block;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-top: 0.1rem;
 }
@@ -1576,7 +1576,7 @@ function filterByRun(runId: string): void {
   display: block;
   margin-top: 0.2rem;
   padding: 0.15rem 0.4rem;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1597,7 +1597,7 @@ function filterByRun(runId: string): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -1611,7 +1611,7 @@ function filterByRun(runId: string): void {
   color: var(--text-muted);
   cursor: pointer;
   padding: 0;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   line-height: 1;
 }
 
@@ -1661,7 +1661,7 @@ function filterByRun(runId: string): void {
 }
 
 .live-session-title {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1670,7 +1670,7 @@ function filterByRun(runId: string): void {
 
 .live-session-meta {
   margin-left: auto;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--accent);
   font-family: var(--mono);
 }
@@ -1681,7 +1681,7 @@ function filterByRun(runId: string): void {
   padding: 0.5rem 1rem;
   background: var(--bg-base);
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 

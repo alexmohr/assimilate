@@ -179,7 +179,7 @@ onUnmounted(() => {
 }
 
 .modal-title {
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
 }
 
@@ -195,8 +195,8 @@ onUnmounted(() => {
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition:
-    color 0.15s,
-    background 0.15s;
+    color var(--duration-base),
+    background var(--duration-base);
 }
 
 .modal-close:hover {
@@ -217,12 +217,12 @@ onUnmounted(() => {
 
 .modal-enter-active,
 .modal-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-slow) ease;
 }
 
 .modal-enter-active .modal-dialog,
 .modal-leave-active .modal-dialog {
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .modal-enter-from,

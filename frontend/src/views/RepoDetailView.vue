@@ -2358,25 +2358,25 @@ async function resetImport(): Promise<void> {
   flex: 1;
   height: 4px;
   background: var(--border);
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .import-progress-bar {
   height: 100%;
   background: var(--accent);
-  border-radius: 2px;
-  transition: width 0.4s ease;
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-value) ease;
 }
 
 .import-progress-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .import-status-msg {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   margin: 0.4rem 0 0;
   word-break: break-word;
@@ -2388,7 +2388,7 @@ async function resetImport(): Promise<void> {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 1.5rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .crumb-link {
@@ -2424,7 +2424,7 @@ async function resetImport(): Promise<void> {
   align-items: center;
   gap: 0.5rem;
   text-align: left;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .state-error {
@@ -2449,12 +2449,12 @@ async function resetImport(): Promise<void> {
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   cursor: pointer;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .tab-btn:hover {
@@ -2508,7 +2508,7 @@ async function resetImport(): Promise<void> {
 }
 
 .info-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -2529,14 +2529,14 @@ async function resetImport(): Promise<void> {
 
 .info-grid dt {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 500;
 }
 
 .info-grid dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 /* Edit form */
@@ -2578,7 +2578,7 @@ async function resetImport(): Promise<void> {
 }
 
 .toggle-row-label {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
@@ -2600,8 +2600,8 @@ async function resetImport(): Promise<void> {
   align-items: center;
   gap: 0.3rem;
   padding: 0.2rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
   font-weight: 500;
   border: 1px solid;
 }
@@ -2611,11 +2611,11 @@ async function resetImport(): Promise<void> {
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   line-height: 1;
   padding: 0;
   opacity: 0.6;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
 }
 
 .tag-remove:hover {
@@ -2647,7 +2647,7 @@ async function resetImport(): Promise<void> {
 
 /* Borg console */
 .console-desc {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   margin-bottom: 0.75rem;
   line-height: 1.5;
@@ -2655,7 +2655,7 @@ async function resetImport(): Promise<void> {
 
 .console-code {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -2670,7 +2670,7 @@ async function resetImport(): Promise<void> {
 
 .console-prefix {
   font-family: var(--mono);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -2678,7 +2678,7 @@ async function resetImport(): Promise<void> {
 .console-input {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .console-hints {
@@ -2690,20 +2690,20 @@ async function resetImport(): Promise<void> {
 }
 
 .console-hint-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
 .console-hint-cmd {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   padding: 0.1rem 0.4rem;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--accent);
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .console-hint-cmd:hover {
@@ -2713,10 +2713,10 @@ async function resetImport(): Promise<void> {
 .console-error {
   margin-top: 0.75rem;
   padding: 0.6rem 0.75rem;
-  background: var(--danger-subtle, oklch(0.97 0.04 25));
+  background: var(--danger-subtle);
   border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
 }
 
@@ -2734,7 +2734,7 @@ async function resetImport(): Promise<void> {
   padding: 0.4rem 0.75rem;
   background: var(--bg-input);
   border-bottom: 1px solid var(--border);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .console-output-label {
@@ -2742,32 +2742,32 @@ async function resetImport(): Promise<void> {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
 }
 
 .exit-ok {
   color: var(--success);
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .exit-warn {
   color: var(--warning);
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .exit-err {
   color: var(--danger);
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .console-pre {
   margin: 0;
   padding: 0.75rem;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-primary);
@@ -2784,7 +2784,7 @@ async function resetImport(): Promise<void> {
 .console-empty {
   display: block;
   padding: 0.75rem;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -2818,13 +2818,13 @@ async function resetImport(): Promise<void> {
 }
 
 .danger-heading {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .danger-desc {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -2837,7 +2837,7 @@ async function resetImport(): Promise<void> {
 }
 
 .danger-hint {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--warning);
   text-align: right;
   max-width: 180px;
@@ -2849,22 +2849,22 @@ async function resetImport(): Promise<void> {
 
 .break-lock-warning {
   color: var(--danger);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   line-height: 1.5;
 }
 
 .break-lock-success {
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: var(--success-subtle, oklch(0.95 0.05 145));
+  background: var(--success-subtle);
   border-radius: var(--radius-sm);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--success);
   white-space: pre-line;
 }
 
 .current-op-running {
-  color: var(--warning, oklch(0.7 0.15 80));
+  color: var(--warning);
   font-weight: 500;
 }
 
@@ -2873,8 +2873,8 @@ async function resetImport(): Promise<void> {
   padding: 0.85rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-muted);
-  font-size: 0.8rem;
+  background: var(--bg-card);
+  font-size: var(--fs-sm);
   line-height: 1.5;
   word-break: break-all;
 }
@@ -2896,7 +2896,7 @@ async function resetImport(): Promise<void> {
 }
 
 .panel-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -2920,9 +2920,9 @@ async function resetImport(): Promise<void> {
   align-items: center;
   justify-content: space-between;
   padding: 0.5rem 0.75rem;
-  background: var(--accent-subtle, oklch(0.95 0.03 250));
+  background: var(--accent-subtle);
   border-bottom: 1px solid var(--border);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
 }
 
@@ -2964,14 +2964,14 @@ async function resetImport(): Promise<void> {
   gap: 0.5rem;
   width: 100%;
   padding: 0.5rem 0.75rem;
-  background: var(--bg-subtle);
+  background: var(--bg-hover);
   border: none;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
   text-align: left;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .group-header:hover {
@@ -2980,8 +2980,8 @@ async function resetImport(): Promise<void> {
 
 .group-chevron {
   display: inline-block;
-  font-size: 1rem;
-  transition: transform 0.15s;
+  font-size: var(--fs-lg);
+  transition: transform var(--duration-base);
   transform: rotate(90deg);
 }
 
@@ -2998,10 +2998,10 @@ async function resetImport(): Promise<void> {
 }
 
 .group-count {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   background: var(--bg-card);
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   padding: 0.1rem 0.5rem;
   min-width: 1.4rem;
   text-align: center;
@@ -3021,7 +3021,7 @@ async function resetImport(): Promise<void> {
   background: none;
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -3038,7 +3038,7 @@ async function resetImport(): Promise<void> {
 }
 
 .archive-date {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
@@ -3046,7 +3046,7 @@ async function resetImport(): Promise<void> {
 
 .archive-name {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3063,7 +3063,7 @@ async function resetImport(): Promise<void> {
 .archive-row-delete {
   margin-left: auto;
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity var(--duration-fast);
   flex-shrink: 0;
 }
 
@@ -3074,7 +3074,7 @@ async function resetImport(): Promise<void> {
 
 .archive-host,
 .archive-size {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -3110,14 +3110,14 @@ async function resetImport(): Promise<void> {
 
 .input-sm {
   padding: 0.35rem 0.55rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   width: auto;
   min-width: 140px;
 }
 
 .passphrase-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   margin-bottom: 0.75rem;
 }
@@ -3135,7 +3135,7 @@ async function resetImport(): Promise<void> {
 .passphrase-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   word-break: break-all;
   background: transparent;
@@ -3150,10 +3150,10 @@ async function resetImport(): Promise<void> {
   gap: 1rem;
   margin-bottom: 1rem;
   padding: 0.75rem 1rem;
-  background: var(--warning-subtle, oklch(0.97 0.04 80));
+  background: var(--warning-subtle);
   border: 1px solid var(--warning);
   border-radius: var(--radius);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .unmatched-banner-text {
@@ -3164,7 +3164,7 @@ async function resetImport(): Promise<void> {
 }
 
 .unmatched-hostnames {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -3176,11 +3176,11 @@ async function resetImport(): Promise<void> {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .unmatched-hint {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -3188,7 +3188,7 @@ async function resetImport(): Promise<void> {
   width: 2.5rem;
   min-width: 2.5rem;
   text-align: center;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .th-match {
@@ -3216,7 +3216,7 @@ async function resetImport(): Promise<void> {
   color: var(--warning);
   text-decoration: underline;
   text-decoration-color: transparent;
-  transition: text-decoration-color 0.15s;
+  transition: text-decoration-color var(--duration-base);
 }
 
 .unmatched-host-link:hover {
@@ -3259,8 +3259,8 @@ async function resetImport(): Promise<void> {
   padding: 1.25rem;
   cursor: pointer;
   transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+    box-shadow var(--duration-base),
+    border-color var(--duration-base);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -3278,7 +3278,7 @@ async function resetImport(): Promise<void> {
 .card-hostname {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -3294,8 +3294,8 @@ async function resetImport(): Promise<void> {
 .host-count {
   display: inline-block;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   background: var(--bg-card);
@@ -3305,8 +3305,8 @@ async function resetImport(): Promise<void> {
 .type-badge {
   display: inline-block;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -3338,13 +3338,13 @@ async function resetImport(): Promise<void> {
 }
 
 .stat-value {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;

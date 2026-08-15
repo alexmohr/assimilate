@@ -233,7 +233,7 @@ function toggleRecoveryCode(): void {
 
 <style scoped>
 .login-icon {
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 
 .remember-me {
@@ -250,7 +250,7 @@ function toggleRecoveryCode(): void {
 }
 
 .remember-me label {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
@@ -272,14 +272,14 @@ function toggleRecoveryCode(): void {
 }
 
 .totp-info-text {
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 0.25rem;
 }
 
 .totp-info-subtext {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   margin: 0;
 }

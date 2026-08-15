@@ -132,7 +132,7 @@ async function deploy(): Promise<void> {
 
 <style scoped>
 .deploy-hint {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   margin-bottom: 0.75rem;
 }
@@ -170,7 +170,7 @@ async function deploy(): Promise<void> {
 }
 
 .toggle-row-label {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
@@ -181,7 +181,7 @@ async function deploy(): Promise<void> {
 }
 
 .deploy-result {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
 }
 

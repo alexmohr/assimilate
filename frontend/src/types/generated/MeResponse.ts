@@ -29,6 +29,10 @@ export type MeResponse = {
    */
   remember_me: boolean;
   /**
+   * Whether the user has permission to upgrade agents.
+   */
+  can_upgrade_agent: boolean;
+  /**
    * Whether TOTP is enabled for the user.
    */
   totp_enabled: boolean;

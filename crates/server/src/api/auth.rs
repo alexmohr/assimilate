@@ -474,6 +474,7 @@ pub async fn me(
         (None, false)
     };
     let role = users::get_user_role_string(&state.pool, auth.user_id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
 
     let totp_fields = db::get_user_totp_fields(&state.pool, auth.user_id).await?;
     let totp_enabled = totp_fields.is_some_and(|f| f.enabled);
@@ -485,6 +486,7 @@ pub async fn me(
         must_change_password: user.must_change_password,
         session_expires_at,
         remember_me,
+        can_upgrade_agent: effective.can_upgrade_agent || effective.can_delete_repo,
         totp_enabled,
     }))
 }
@@ -727,7 +729,24 @@ pub async fn revoke_session(
 
 #[cfg(test)]
 mod tests {
+    use shared::responses::MeResponse;
+
     use super::{DUMMY_BCRYPT_HASH, helpers};
+
+    #[test]
+    fn me_response_includes_can_upgrade_agent() {
+        let response = MeResponse {
+            id: 0,
+            username: "test".to_string(),
+            role: "admin".to_string(),
+            must_change_password: false,
+            session_expires_at: None,
+            remember_me: false,
+            can_upgrade_agent: true,
+            totp_enabled: false,
+        };
+        assert!(response.can_upgrade_agent);
+    }
 
     #[test]
     fn dummy_bcrypt_hash_cost_matches_hash_password() {

@@ -524,12 +524,6 @@ onMounted(async () => {
   width: 550px;
 }
 
-.modal-subtitle {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  margin: -0.25rem 0 1rem;
-}
-
 .desc-cell {
   color: var(--text-secondary);
   font-size: 0.8125rem;
@@ -537,6 +531,17 @@ onMounted(async () => {
 
 .count-cell {
   font-weight: 500;
+}
+
+.actions-cell {
+  display: flex;
+  gap: 0.375rem;
+}
+
+.modal-subtitle {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  margin: -0.25rem 0 1rem;
 }
 
 .members-list {

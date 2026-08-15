@@ -33,6 +33,7 @@ interface Role {
   can_manage_tags: boolean
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
+  can_upgrade_agent: boolean
 }
 
 function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean): Role {
@@ -52,6 +53,7 @@ function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean
     can_manage_tags: allPerms,
     can_view_all_repos: allPerms,
     can_manage_tunnels: allPerms,
+    can_upgrade_agent: allPerms,
   }
 }
 
@@ -107,7 +109,7 @@ describe('RolesView', () => {
 
     const counts = wrapper.findAll('.perm-count')
     expect(counts.length).toBeGreaterThan(0)
-    expect(counts[0].text()).toContain('/12')
+    expect(counts[0].text()).toContain('/13')
   })
 
   it('renders New button', async () => {
@@ -129,6 +131,35 @@ describe('RolesView', () => {
     const no = wrapper.findAll('.perm-no')
     expect(yes.length).toBeGreaterThan(0)
     expect(no.length).toBeGreaterThan(0)
+  })
+
+  it('renders the create role form when New is clicked', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    expect(wrapper.find('form').exists()).toBe(true)
+    expect(wrapper.find('input#create-role-name').exists()).toBe(true)
+    const perms = wrapper.findAll('.perm-checkbox')
+    expect(perms.length).toBe(13)
+  })
+
+  it('opens the edit modal and populates the form', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const editButtons = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
+    expect(editButtons.length).toBeGreaterThan(0)
+    await editButtons[0].trigger('click')
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Edit Role')
+    expect(wrapper.text()).toContain('admin')
   })
 
   it('rejects an empty name, then creates a role once the name field is filled in', async () => {

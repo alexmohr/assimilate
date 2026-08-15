@@ -51,6 +51,7 @@ Admins can create custom roles with any combination of these capabilities:
 | Manage Tags | Create and assign tags |
 | View All Repos | See all repositories regardless of per-repo permissions |
 | Manage Tunnels | Configure SSH reverse tunnels |
+| Upgrade Agent | Deploy and upgrade the agent binary on remote hosts via SSH |
 
 ### Admin Bypass
 

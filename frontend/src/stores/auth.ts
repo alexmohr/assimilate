@@ -13,6 +13,7 @@ export interface AuthUser {
   must_change_password: boolean
   created_at: string
   last_login_at: string | null
+  can_upgrade_agent: boolean
   totp_enabled?: boolean
 }
 
@@ -26,6 +27,7 @@ const ADMIN_ROLE_NAME = 'admin'
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<AuthUser | null>(null)
   const isAdmin = computed(() => user.value?.role === ADMIN_ROLE_NAME)
+  const canUpgradeAgent = computed(() => user.value?.can_upgrade_agent ?? false)
   const loading = ref(false)
   const sessionExpiresAt = ref<string | null>(null)
   const rememberMe = ref(false)
@@ -165,6 +167,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     loading,
     isAdmin,
+    canUpgradeAgent,
     fetchMe,
     login,
     verifyTotp,

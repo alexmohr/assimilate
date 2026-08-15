@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Page } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, loginAsOperator, test } from './fixtures'
 
 interface AgentMock {
   id: number
@@ -155,6 +155,19 @@ test('deploy button shown for agent with no version', async ({ page }) => {
   await page.goto('/agents')
   await agentCard(page)
   await expect(page.getByRole('button', { name: 'Deploy' })).toBeVisible({ timeout: 5_000 })
+})
+
+test('no deploy/upgrade button for a role without can_upgrade_agent', async ({ page }) => {
+  await loginAsOperator(page)
+  await interceptAgentPage(
+    page,
+    { ...BASE_AGENT, agent_version: '0.1.0' },
+    makeVersion(null, '0.2.0'),
+  )
+  await page.goto('/agents')
+  await agentCard(page)
+  await expect(page.getByRole('button', { name: 'Upgrade' })).not.toBeVisible()
+  await expect(page.getByRole('button', { name: 'Deploy' })).not.toBeVisible()
 })
 
 test('deploy dialog prefills the last-used SSH user and auto-loads the remote unit', async ({

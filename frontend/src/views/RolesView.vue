@@ -4,10 +4,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { Plus, Trash2 } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
@@ -28,6 +28,7 @@ interface Role {
   can_manage_tags: boolean
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
+  can_upgrade_agent: boolean
 }
 
 type PermissionKey =
@@ -43,6 +44,7 @@ type PermissionKey =
   | 'can_manage_tags'
   | 'can_view_all_repos'
   | 'can_manage_tunnels'
+  | 'can_upgrade_agent'
 
 const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_create_agent', label: 'Create Agent' },
@@ -57,6 +59,7 @@ const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_manage_tags', label: 'Manage Tags' },
   { key: 'can_view_all_repos', label: 'View All Repos' },
   { key: 'can_manage_tunnels', label: 'Manage Tunnels' },
+  { key: 'can_upgrade_agent', label: 'Upgrade Agent' },
 ]
 
 const SEEDED_ROLES = new Set(['admin', 'operator', 'viewer'])
@@ -65,21 +68,28 @@ const roles = ref<Role[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load roles')
 loading.value = true
 
+function emptyPerms(): Record<PermissionKey, boolean> {
+  return {
+    can_create_agent: false,
+    can_delete_agent: false,
+    can_delete_own_agent: false,
+    can_create_repo: false,
+    can_delete_repo: false,
+    can_delete_own_repo: false,
+    can_create_schedule: false,
+    can_delete_schedule: false,
+    can_delete_own_schedule: false,
+    can_manage_tags: false,
+    can_view_all_repos: false,
+    can_manage_tunnels: false,
+    can_upgrade_agent: false,
+  }
+}
+
 const showCreateModal = ref(false)
 const createForm = ref<{ name: string } & Record<PermissionKey, boolean>>({
   name: '',
-  can_create_agent: false,
-  can_delete_agent: false,
-  can_delete_own_agent: false,
-  can_create_repo: false,
-  can_delete_repo: false,
-  can_delete_own_repo: false,
-  can_create_schedule: false,
-  can_delete_schedule: false,
-  can_delete_own_schedule: false,
-  can_manage_tags: false,
-  can_view_all_repos: false,
-  can_manage_tunnels: false,
+  ...emptyPerms(),
 })
 const {
   loading: createSubmitting,
@@ -89,20 +99,7 @@ const {
 
 const showEditModal = ref(false)
 const editTarget = ref<Role | null>(null)
-const editForm = ref<Record<PermissionKey, boolean>>({
-  can_create_agent: false,
-  can_delete_agent: false,
-  can_delete_own_agent: false,
-  can_create_repo: false,
-  can_delete_repo: false,
-  can_delete_own_repo: false,
-  can_create_schedule: false,
-  can_delete_schedule: false,
-  can_delete_own_schedule: false,
-  can_manage_tags: false,
-  can_view_all_repos: false,
-  can_manage_tunnels: false,
-})
+const editForm = ref<Record<PermissionKey, boolean>>(emptyPerms())
 const {
   loading: editSubmitting,
   error: editError,
@@ -141,21 +138,7 @@ async function fetchRoles(): Promise<void> {
 }
 
 function openCreate(): void {
-  createForm.value = {
-    name: '',
-    can_create_agent: false,
-    can_delete_agent: false,
-    can_delete_own_agent: false,
-    can_create_repo: false,
-    can_delete_repo: false,
-    can_delete_own_repo: false,
-    can_create_schedule: false,
-    can_delete_schedule: false,
-    can_delete_own_schedule: false,
-    can_manage_tags: false,
-    can_view_all_repos: false,
-    can_manage_tunnels: false,
-  }
+  createForm.value = { name: '', ...emptyPerms() }
   createError.value = null
   showCreateModal.value = true
 }
@@ -180,6 +163,7 @@ async function submitCreate(): Promise<void> {
       can_manage_tags: createForm.value.can_manage_tags,
       can_view_all_repos: createForm.value.can_view_all_repos,
       can_manage_tunnels: createForm.value.can_manage_tunnels,
+      can_upgrade_agent: createForm.value.can_upgrade_agent,
     })
     showCreateModal.value = false
     await fetchRoles()
@@ -188,20 +172,11 @@ async function submitCreate(): Promise<void> {
 
 function openEdit(role: Role): void {
   editTarget.value = role
-  editForm.value = {
-    can_create_agent: role.can_create_agent,
-    can_delete_agent: role.can_delete_agent,
-    can_delete_own_agent: role.can_delete_own_agent,
-    can_create_repo: role.can_create_repo,
-    can_delete_repo: role.can_delete_repo,
-    can_delete_own_repo: role.can_delete_own_repo,
-    can_create_schedule: role.can_create_schedule,
-    can_delete_schedule: role.can_delete_schedule,
-    can_delete_own_schedule: role.can_delete_own_schedule,
-    can_manage_tags: role.can_manage_tags,
-    can_view_all_repos: role.can_view_all_repos,
-    can_manage_tunnels: role.can_manage_tunnels,
+  const perms = emptyPerms()
+  for (const key of Object.keys(perms) as PermissionKey[]) {
+    perms[key] = role[key]
   }
+  editForm.value = perms
   editError.value = null
   showEditModal.value = true
 }
@@ -232,7 +207,9 @@ async function confirmDelete(): Promise<void> {
   })
 }
 
-onMounted(fetchRoles)
+onMounted((): void => {
+  void fetchRoles()
+})
 </script>
 
 <template>
@@ -600,8 +577,8 @@ onMounted(fetchRoles)
   align-items: center;
   gap: 0.4rem;
   font-size: 0.8rem;
-  color: var(--text-primary);
   cursor: pointer;
+  color: var(--text-primary);
 }
 
 .perm-checkbox input[type='checkbox'] {

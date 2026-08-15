@@ -46,6 +46,12 @@ pub struct LoginResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states; \
+              splitting into enums or sub-structs would break the frontend TS bindings and RBAC \
+              field names for no correctness benefit"
+)]
 /// Response containing me.
 pub struct MeResponse {
     #[ts(type = "number")]
@@ -61,6 +67,8 @@ pub struct MeResponse {
     pub session_expires_at: Option<DateTime<Utc>>,
     /// Whether the session should be remembered beyond the current browser session.
     pub remember_me: bool,
+    /// Whether the user has permission to upgrade agents.
+    pub can_upgrade_agent: bool,
     /// Whether TOTP is enabled for the user.
     pub totp_enabled: bool,
 }
@@ -1010,6 +1018,8 @@ pub struct RoleResponse {
     pub can_view_all_repos: bool,
     /// Whether the role can manage tunnels.
     pub can_manage_tunnels: bool,
+    /// Whether the role can upgrade agents.
+    pub can_upgrade_agent: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

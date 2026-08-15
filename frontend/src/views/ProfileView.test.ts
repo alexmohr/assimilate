@@ -489,5 +489,23 @@ describe('ProfileView', () => {
 
       expect(vi.mocked(apiClient.delete)).toHaveBeenCalledWith('/tokens/1')
     })
+
+    it('shows an error message when deleting a token fails', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { tokens: [mockToken] } })
+      vi.mocked(apiClient.delete).mockRejectedValue(new Error('network error'))
+
+      const wrapper = renderWithPlugins(ProfileView, {
+        storeState: { auth: { user: { ...baseUser } } },
+      })
+
+      await openDeleteTokenModal(wrapper)
+
+      const confirmDeleteBtn = findInBody('Delete')
+      expect(confirmDeleteBtn).toBeDefined()
+      confirmDeleteBtn!.click()
+      await flushPromises()
+
+      expect(findInBody('Failed to delete token: network error')).toBeDefined()
+    })
   })
 })

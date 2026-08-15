@@ -45,6 +45,7 @@ import type {
 import type { Repo } from '../types/repo'
 import { apiClient } from '../api/client'
 import BaseModal from '../components/BaseModal.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 type TabId = 'channels' | 'history'
 
@@ -52,6 +53,11 @@ interface ScopeOption {
   id: number
   label: string
 }
+
+const tabs: TabOption<TabId>[] = [
+  { id: 'channels', label: 'Channels', icon: Bell },
+  { id: 'history', label: 'History', icon: Send },
+]
 
 const activeTab = ref<TabId>('channels')
 const channels = ref<NotificationChannel[]>([])
@@ -707,25 +713,11 @@ onMounted(() => {
       </div>
     </div>
 
-    <div class="tabs">
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'channels' }"
-        @click="activeTab = 'channels'"
-      >
-        <Bell :size="14" />
-        Channels
-      </button>
-
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'history' }"
-        @click="activeTab = 'history'"
-      >
-        <Send :size="14" />
-        History
-      </button>
-    </div>
+    <BaseTabs
+      v-model="activeTab"
+      :tabs="tabs"
+      label="Notification sections"
+    />
 
     <!-- Channels Tab -->
     <div v-if="activeTab === 'channels'">
@@ -764,7 +756,7 @@ onMounted(() => {
                 class="channel-icon"
               />
               <span class="channel-name">{{ channel.name }}</span>
-              <span class="channel-type-badge">{{ channelTypeLabel(channel.channel_type) }}</span>
+              <span class="badge badge--neutral">{{ channelTypeLabel(channel.channel_type) }}</span>
             </div>
             <div class="channel-actions">
               <button
@@ -1502,45 +1494,6 @@ onMounted(() => {
   max-width: 1100px;
 }
 
-.tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-}
-
-.tab {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.75rem 1.25rem;
-  border: none;
-  background: none;
-  font-size: var(--fs-base);
-  color: var(--text-muted);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.tab:hover {
-  color: var(--text-secondary);
-}
-
-.tab.active {
-  color: var(--text-secondary);
-  border-bottom-color: currentColor;
-  font-weight: 600;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
 .state-error {
   color: var(--danger);
 }
@@ -1578,16 +1531,6 @@ onMounted(() => {
 .channel-name {
   font-weight: 600;
   font-size: var(--fs-md);
-}
-
-.channel-type-badge {
-  font-size: var(--fs-xs);
-  padding: 0.15rem 0.5rem;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
 }
 
 .channel-actions {
@@ -1665,12 +1608,6 @@ onMounted(() => {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
 }
 
 .data-table th {

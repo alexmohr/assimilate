@@ -229,11 +229,6 @@ async function compare(): Promise<void> {
 
 .field-label {
   display: block;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   margin-bottom: 0.4rem;
 }
 
@@ -257,8 +252,6 @@ async function compare(): Promise<void> {
 }
 
 .form-error {
-  color: var(--danger);
-  font-size: var(--fs-base);
   margin-bottom: 0.75rem;
 }
 

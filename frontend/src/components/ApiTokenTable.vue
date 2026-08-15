@@ -25,7 +25,7 @@ defineEmits<{
 </script>
 
 <template>
-  <table class="tokens-table">
+  <table class="data-table">
     <thead>
       <tr>
         <th>Name</th>
@@ -63,38 +63,11 @@ defineEmits<{
 </template>
 
 <style scoped>
-.tokens-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.tokens-table th {
-  text-align: left;
-  padding: 0.7rem 1rem;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-}
-
-.tokens-table td {
-  padding: 0.65rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.tokens-table tr:last-child td {
+.data-table tr:last-child td {
   border-bottom: none;
 }
 
-.tokens-table tr:hover td {
+.data-table tr:hover td {
   background: var(--bg-hover);
 }
 

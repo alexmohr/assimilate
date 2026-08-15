@@ -24,6 +24,14 @@ import UpcomingWork from '../components/UpcomingWork.vue'
 import RepositoryCapacity from '../components/RepositoryCapacity.vue'
 import type { DashboardOperation, DashboardOverview } from '../types/dashboard'
 import type { Repo } from '../types/repo'
+import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
+
+const rangeOptions: SegmentedOption<number>[] = [
+  { value: 7, label: '7d' },
+  { value: 14, label: '14d' },
+  { value: 30, label: '30d' },
+  { value: 90, label: '90d' },
+]
 
 interface StorageRepoEntry {
   name: string
@@ -650,36 +658,11 @@ async function fetchOverview(): Promise<void> {
                     {{ repo.name }}
                   </option>
                 </select>
-                <div class="view-toggle">
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 7 }"
-                    @click="successDaysFilter = 7"
-                  >
-                    7d
-                  </button>
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 14 }"
-                    @click="successDaysFilter = 14"
-                  >
-                    14d
-                  </button>
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 30 }"
-                    @click="successDaysFilter = 30"
-                  >
-                    30d
-                  </button>
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 90 }"
-                    @click="successDaysFilter = 90"
-                  >
-                    90d
-                  </button>
-                </div>
+                <BaseSegmented
+                  v-model="successDaysFilter"
+                  :options="rangeOptions"
+                  label="Success rate range"
+                />
               </div>
             </div>
             <p class="chart-desc">
@@ -988,31 +971,9 @@ async function fetchOverview(): Promise<void> {
 }
 
 /* Panel */
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
 
 .panel-full {
   flex: 1;
-}
-
-.panel-title {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
 }
 
 .panel-header .panel-title {
@@ -1033,48 +994,6 @@ async function fetchOverview(): Promise<void> {
   border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text-primary);
-}
-
-.view-toggle {
-  display: flex;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.toggle-btn {
-  padding: 0.25rem 0.5rem;
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    background var(--duration-base),
-    color var(--duration-base);
-}
-
-.toggle-btn:not(:last-child) {
-  border-right: 1px solid var(--border);
-}
-
-.toggle-btn:hover {
-  background: var(--bg-hover);
-}
-
-.toggle-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent);
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  padding: 1rem 0;
 }
 
 .chart-desc {

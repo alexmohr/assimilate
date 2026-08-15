@@ -149,7 +149,7 @@ onMounted(loadQuota)
       <div class="info-header-actions">
         <span
           v-if="quota && quota.enabled"
-          class="status-badge"
+          class="badge"
           :class="statusBadgeClass"
         >
           {{ statusLabel }}
@@ -332,29 +332,6 @@ onMounted(loadQuota)
   margin: 0;
 }
 
-.status-badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-
-.badge-ok {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.badge-warn {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-crit {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
 .quota-usage {
   margin-bottom: 1rem;
 }
@@ -422,17 +399,6 @@ onMounted(loadQuota)
   font-size: var(--fs-base);
 }
 
-.state-msg {
-  text-align: center;
-  padding: 1.5rem;
-  color: var(--text-muted);
-}
-
-.state-msg-sm {
-  padding: 1rem;
-  font-size: var(--fs-base);
-}
-
 .state-error {
   color: var(--danger);
 }
@@ -472,10 +438,5 @@ onMounted(loadQuota)
   gap: 0.75rem;
   padding-top: 0.5rem;
   border-top: 1px solid var(--border);
-}
-
-.form-error {
-  color: var(--danger);
-  font-size: var(--fs-base);
 }
 </style>

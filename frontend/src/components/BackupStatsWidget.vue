@@ -11,6 +11,14 @@ import { formatDuration } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { Repo } from '../types/repo'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+
+const rangeOptions: SegmentedOption<number>[] = [
+  { value: 7, label: '7d' },
+  { value: 14, label: '14d' },
+  { value: 30, label: '30d' },
+  { value: 90, label: '90d' },
+]
 
 interface ActivityEntry {
   id: number
@@ -96,41 +104,16 @@ function navigateToActivity(status?: string): void {
             {{ repo.name }}
           </option>
         </select>
-        <div class="view-toggle">
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 7 }"
-            @click="selectedDays = 7"
-          >
-            7d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 14 }"
-            @click="selectedDays = 14"
-          >
-            14d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 30 }"
-            @click="selectedDays = 30"
-          >
-            30d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 90 }"
-            @click="selectedDays = 90"
-          >
-            90d
-          </button>
-        </div>
+        <BaseSegmented
+          v-model="selectedDays"
+          :options="rangeOptions"
+          label="Backup statistics range"
+        />
       </div>
     </div>
     <div
       v-if="loading"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       Loading…
     </div>
@@ -184,29 +167,6 @@ function navigateToActivity(status?: string): void {
 </template>
 
 <style scoped>
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-
-.panel-title {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
 .controls {
   display: flex;
   align-items: center;
@@ -220,47 +180,6 @@ function navigateToActivity(status?: string): void {
   border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text-primary);
-}
-
-.view-toggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.toggle-btn {
-  padding: 0.25rem 0.5rem;
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    background var(--duration-base),
-    color var(--duration-base);
-}
-
-.toggle-btn:not(:last-child) {
-  border-right: 1px solid var(--border);
-}
-
-.toggle-btn:hover {
-  background: var(--bg-hover);
-}
-
-.toggle-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent);
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  padding: 0.5rem 0;
 }
 
 .stats-grid {

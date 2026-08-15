@@ -201,14 +201,14 @@ function findWarningRow(wrapper: ReturnType<typeof mount>) {
     .findAll('.run-card:not(.run-card-system) .run-card-summary')
     .filter(
       (r) =>
-        r.find('.badge-warning').exists() &&
+        r.find('.badge--warning').exists() &&
         r.find('.run-card-hostname').text() === 'web-server-01' &&
         r.find('.run-card-meta').text().startsWith('/var/www'),
     )
 }
 
 function findSegmentBtn(wrapper: ReturnType<typeof mount>, text: string) {
-  return wrapper.findAll('.segment-btn').find((b) => b.text() === text)
+  return wrapper.findAll('.segmented-option').find((b) => b.text() === text)
 }
 
 describe('ActivityLogView', () => {
@@ -242,7 +242,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const btnTexts = wrapper.findAll('.segment-btn').map((b) => b.text())
+      const btnTexts = wrapper.findAll('.segmented-option').map((b) => b.text())
       expect(btnTexts).toContain('All')
       expect(btnTexts).toContain('Backup')
       expect(btnTexts).toContain('System')
@@ -355,7 +355,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const successBadges = wrapper.findAll('.badge-success')
+      const successBadges = wrapper.findAll('.badge--success')
       expect(successBadges.length).toBeGreaterThan(0)
     })
 
@@ -364,7 +364,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const failedBadges = wrapper.findAll('.badge-failed')
+      const failedBadges = wrapper.findAll('.badge--danger')
       expect(failedBadges.length).toBeGreaterThan(0)
     })
 
@@ -373,7 +373,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const warningBadges = wrapper.findAll('.badge-warning')
+      const warningBadges = wrapper.findAll('.badge--warning')
       expect(warningBadges.length).toBeGreaterThan(0)
     })
 
@@ -441,7 +441,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const systemBtn = wrapper.findAll('.segment-btn').find((b) => b.text() === 'System')
+      const systemBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'System')
       await systemBtn?.trigger('click')
       await flushPromises()
 
@@ -551,7 +551,7 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       const rows = wrapper.findAll('.run-card:not(.run-card-system)')
-      const nonFailedBadges = rows.filter((r) => r.find('.badge-failed').exists())
+      const nonFailedBadges = rows.filter((r) => r.find('.badge--danger').exists())
       expect(nonFailedBadges.length).toBe(rows.length)
     })
 
@@ -624,7 +624,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const logsBtn = wrapper.findAll('.segment-btn').find((b) => b.text() === 'Server Logs')
+      const logsBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'Server Logs')
       await logsBtn?.trigger('click')
       await flushPromises()
 
@@ -666,16 +666,16 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const systemBtn = wrapper.findAll('.segment-btn').find((b) => b.text() === 'System')
+      const systemBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'System')
       await systemBtn?.trigger('click')
       await flushPromises()
 
       const badges = wrapper.findAll('.run-card .badge')
       const successBadge = badges.find((b) => b.text() === 'repo sync')
       const failedBadge = badges.find((b) => b.text() === 'repo sync failed')
-      expect(successBadge?.classes()).toContain('badge-success')
-      expect(successBadge?.classes()).not.toContain('badge-failed')
-      expect(failedBadge?.classes()).toContain('badge-failed')
+      expect(successBadge?.classes()).toContain('badge--success')
+      expect(successBadge?.classes()).not.toContain('badge--danger')
+      expect(failedBadge?.classes()).toContain('badge--danger')
     })
   })
 

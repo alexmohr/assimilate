@@ -112,7 +112,7 @@ describe('UsersView', () => {
 
     await flushPromises()
 
-    const badges = wrapper.findAll('.role-badge')
+    const badges = wrapper.findAll('.badge--neutral')
     expect(badges.length).toBe(3)
   })
 

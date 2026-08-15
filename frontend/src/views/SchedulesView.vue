@@ -456,7 +456,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             {{ s.target_hostnames.length }} agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
           </span>
           <span
-            class="type-badge"
+            class="badge badge--neutral"
             :class="`type-${s.schedule_type ?? 'backup'}`"
           >
             {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
@@ -533,10 +533,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 }
 
 .toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
 
@@ -663,15 +659,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   letter-spacing: 0.02em;
   background: var(--bg-card);
   color: var(--text-secondary);
-}
-
-.type-badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
 .type-backup {

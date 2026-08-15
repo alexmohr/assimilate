@@ -91,13 +91,13 @@ function liveRelativeTime(iso: string): string {
     <h2 class="panel-title">Recent Activity</h2>
     <div
       v-if="loading"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       Loading…
     </div>
     <div
       v-else-if="items.length === 0"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       No recent activity.
     </div>
@@ -135,26 +135,6 @@ function liveRelativeTime(iso: string): string {
 </template>
 
 <style scoped>
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.panel-title {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.75rem;
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  padding: 0.5rem 0;
-}
-
 .activity-list {
   display: flex;
   flex-direction: column;

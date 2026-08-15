@@ -87,7 +87,7 @@ describe('RolesView', () => {
 
     await flushPromises()
 
-    const badges = wrapper.findAll('.seeded-badge')
+    const badges = wrapper.findAll('.badge--neutral')
     expect(badges.length).toBe(3)
     badges.forEach((b) => expect(b.text()).toBe('built-in'))
   })

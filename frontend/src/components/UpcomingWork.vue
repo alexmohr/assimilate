@@ -59,13 +59,6 @@ defineProps<{
 </template>
 
 <style scoped>
-.panel-title {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.75rem;
-}
-
 .work-list {
   display: flex;
   flex-direction: column;

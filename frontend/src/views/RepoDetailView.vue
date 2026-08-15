@@ -35,6 +35,7 @@ import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
+import BaseTabs from '../components/BaseTabs.vue'
 
 type TabId = 'overview' | 'archives' | 'schedules'
 
@@ -1048,17 +1049,11 @@ async function resetImport(): Promise<void> {
     </div>
 
     <template v-else-if="repo">
-      <div class="tab-bar">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          class="tab-btn"
-          :class="{ active: activeTab === tab.id }"
-          @click="activeTab = tab.id"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
+      <BaseTabs
+        v-model="activeTab"
+        :tabs="tabs"
+        label="Repository sections"
+      />
 
       <!-- Overview Tab -->
       <div
@@ -1131,15 +1126,15 @@ async function resetImport(): Promise<void> {
               <dt>Status</dt>
               <dd>
                 <span
-                  class="status-badge repo-status-badge"
+                  class="badge repo-status-badge"
                   :class="
                     repo.import_error
-                      ? 'status-error'
+                      ? 'badge--danger'
                       : repo.importing
-                        ? 'status-importing'
+                        ? 'badge--warning badge--pulse'
                         : repo.enabled
-                          ? 'status-online'
-                          : 'status-offline'
+                          ? 'badge--success'
+                          : 'badge--neutral'
                   "
                   :title="repo.import_error ?? undefined"
                 >
@@ -1659,7 +1654,7 @@ async function resetImport(): Promise<void> {
         <ArchiveBrowserLayout>
           <template #list>
             <!-- Archive list -->
-            <div class="panel archives-panel">
+            <div class="panel panel--sectioned archives-panel">
               <div class="panel-header">
                 <span class="panel-title">Archives</span>
               </div>
@@ -1843,7 +1838,7 @@ async function resetImport(): Promise<void> {
             </div>
           </template>
           <template #browser>
-            <div class="panel browser-panel">
+            <div class="panel panel--sectioned browser-panel">
               <ArchiveFileBrowser
                 :repo-id="repoId"
                 :archive="selectedArchive"
@@ -1900,7 +1895,7 @@ async function resetImport(): Promise<void> {
                 agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
               </span>
               <span
-                class="type-badge"
+                class="badge badge--neutral"
                 :class="`type-${s.schedule_type ?? 'backup'}`"
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
@@ -2311,20 +2306,6 @@ async function resetImport(): Promise<void> {
 }
 
 /* States */
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-msg-sm {
-  padding: 1.5rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  text-align: left;
-  font-size: var(--fs-base);
-}
 
 .state-error {
   color: var(--danger);
@@ -2335,36 +2316,6 @@ async function resetImport(): Promise<void> {
 }
 
 /* Tab bar */
-.tab-bar {
-  display: flex;
-  gap: 0.25rem;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-}
-
-.tab-btn {
-  padding: 0.75rem 1.25rem;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.tab-btn:hover {
-  color: var(--text-primary);
-}
-
-.tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
 
 .tab-content {
   animation: fadeIn 0.15s ease;
@@ -2482,57 +2433,6 @@ async function resetImport(): Promise<void> {
 }
 
 /* Tags */
-.tags-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.2rem 0.5rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  border: 1px solid;
-}
-
-.tag-remove {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: var(--fs-md);
-  line-height: 1;
-  padding: 0;
-  opacity: 0.6;
-  transition: opacity var(--duration-base);
-}
-
-.tag-remove:hover {
-  opacity: 1;
-}
-
-.tag-add-row {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.tag-create-inline {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-}
 
 .color-input {
   width: 28px;
@@ -2689,51 +2589,6 @@ async function resetImport(): Promise<void> {
 }
 
 /* Danger zone */
-.danger-zone {
-  border-color: var(--danger);
-}
-
-.danger-zone .info-title {
-  color: var(--danger);
-}
-
-.danger-body {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-}
-
-.danger-body + .danger-body {
-  margin-top: 1.25rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--border);
-}
-
-.danger-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.danger-heading {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.danger-desc {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
-.danger-action-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.35rem;
-  flex-shrink: 0;
-}
 
 .danger-hint {
   font-size: var(--fs-2xs);
@@ -2779,28 +2634,6 @@ async function resetImport(): Promise<void> {
 }
 
 /* Archives layout */
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.panel-title {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
 
 .archive-controls {
   display: flex;
@@ -3199,15 +3032,6 @@ async function resetImport(): Promise<void> {
   letter-spacing: 0.02em;
   background: var(--bg-card);
   color: var(--text-secondary);
-}
-
-.type-badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
 .type-backup {

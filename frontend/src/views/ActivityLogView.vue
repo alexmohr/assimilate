@@ -18,6 +18,8 @@ import { formatDuration, formatBytes, formatDateShort, formatEventType } from '.
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
+import { backupStatusBadgeClass, badgeClass, logLevelTone } from '../utils/badge'
+import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 
 interface ActivityRow {
   id: number
@@ -109,6 +111,13 @@ const expandedSystemId = ref<number | null>(null)
 const offset = ref(0)
 const hasMore = ref(true)
 const PAGE_SIZE = 50
+
+const categoryOptions: SegmentedOption<CategoryFilter>[] = [
+  { value: 'all', label: 'All' },
+  { value: 'backup', label: 'Backup' },
+  { value: 'system', label: 'System' },
+  { value: 'logs', label: 'Server Logs' },
+]
 
 const activeCategory = ref<CategoryFilter>('all')
 const filterMachine = ref('')
@@ -461,32 +470,19 @@ const unifiedRows = computed<UnifiedRow[]>(() => {
 })
 
 function statusClass(status: string): string {
-  switch (normalizeBackupStatus(status)) {
-    case 'success':
-      return 'badge-success'
-    case 'warning':
-      return 'badge-warning'
-    case 'started':
-      return 'badge-started'
-    case 'pending':
-      return 'badge-pending'
-    case 'cancelled':
-      return 'badge-cancelled'
-    case 'failed':
-      return 'badge-failed'
-  }
+  return backupStatusBadgeClass(status)
 }
 
 function eventTypeClass(eventType: string): string {
   switch (classifyEventType(eventType)) {
     case 'success':
-      return 'badge-success'
+      return badgeClass('success')
     case 'warning':
-      return 'badge-warning'
+      return badgeClass('warning')
     case 'failed':
-      return 'badge-failed'
+      return badgeClass('danger')
     case 'other':
-      return 'badge-started'
+      return badgeClass('info')
   }
 }
 
@@ -558,36 +554,11 @@ function filterByRun(runId: string): void {
       <div class="filter-row">
         <div class="filter-group">
           <label class="filter-label">Type</label>
-          <div class="segment-group">
-            <button
-              class="segment-btn"
-              :class="{ active: activeCategory === 'all' }"
-              @click="activeCategory = 'all'"
-            >
-              All
-            </button>
-            <button
-              class="segment-btn"
-              :class="{ active: activeCategory === 'backup' }"
-              @click="activeCategory = 'backup'"
-            >
-              Backup
-            </button>
-            <button
-              class="segment-btn"
-              :class="{ active: activeCategory === 'system' }"
-              @click="activeCategory = 'system'"
-            >
-              System
-            </button>
-            <button
-              class="segment-btn"
-              :class="{ active: activeCategory === 'logs' }"
-              @click="activeCategory = 'logs'"
-            >
-              Server Logs
-            </button>
-          </div>
+          <BaseSegmented
+            v-model="activeCategory"
+            :options="categoryOptions"
+            label="Activity type"
+          />
         </div>
 
         <button
@@ -783,8 +754,8 @@ function filterByRun(runId: string): void {
           <Column header="Level">
             <template #body="{ data }">
               <span
-                class="badge badge-level"
-                :class="`badge-${data.level.toLowerCase()}`"
+                class="badge"
+                :class="badgeClass(logLevelTone(data.level))"
               >
                 {{ data.level }}
               </span>
@@ -1045,41 +1016,6 @@ function filterByRun(runId: string): void {
   color: var(--text-muted);
 }
 
-.segment-group {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.segment-btn {
-  padding: 0.4rem 0.75rem;
-  border: none;
-  border-right: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background var(--duration-base),
-    color var(--duration-base);
-}
-
-.segment-btn:last-child {
-  border-right: none;
-}
-
-.segment-btn.active {
-  background: var(--accent);
-  color: #fff;
-}
-
-.segment-btn:hover:not(.active) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .select-input,
 .date-input {
   background: var(--bg-input);
@@ -1154,13 +1090,6 @@ function filterByRun(runId: string): void {
 }
 
 .loading,
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-  font-size: var(--fs-md);
-}
-
 .log-table {
   width: 100%;
   border-collapse: collapse;
@@ -1266,40 +1195,6 @@ function filterByRun(runId: string): void {
   font-size: var(--fs-sm);
   color: var(--text-muted);
   font-family: var(--mono);
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.badge-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.badge-started {
-  background: var(--info-subtle);
-  color: var(--info);
-}
-
-.badge-pending {
-  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
-  color: var(--text-muted);
 }
 
 .detail-panel {
@@ -1529,40 +1424,6 @@ function filterByRun(runId: string): void {
 
 .col-msg {
   width: auto;
-}
-
-.badge-level {
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 0.15rem 0.45rem;
-}
-
-.badge-error {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.badge-warn {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-info {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.badge-debug {
-  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
-  color: var(--text-muted);
-}
-
-.badge-trace {
-  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
-  color: var(--text-muted);
-  opacity: 0.7;
 }
 
 .schedule-label {

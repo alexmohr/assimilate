@@ -743,13 +743,13 @@ watch(
           <div class="card-top-badges">
             <span
               v-if="agent.is_hidden"
-              class="badge-hidden"
+              class="badge badge--neutral"
             >
               Hidden
             </span>
             <span
               v-if="isImported(agent)"
-              class="badge-imported"
+              class="badge badge--accent"
             >
               Imported
             </span>
@@ -989,10 +989,6 @@ watch(
 }
 
 .toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
 
@@ -1063,12 +1059,6 @@ watch(
   background: var(--bg-hover);
   color: var(--text-primary);
   font-weight: 600;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
 }
 
 .state-error {
@@ -1171,57 +1161,11 @@ watch(
   gap: 0.3rem;
 }
 
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 500;
-  border: 1px solid;
-}
-
 /* Tag filter dropdown */
-.tag-filter-wrapper {
-  position: relative;
-}
 
 .dropdown-arrow {
   font-size: var(--fs-2xs);
   margin-left: 0.15rem;
-}
-
-.tag-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 0.35rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  padding: 0.5rem;
-  min-width: 160px;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.tag-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.4rem;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-  transition: background var(--duration-fast);
-}
-
-.tag-dropdown-item:hover {
-  background: var(--bg-hover);
 }
 
 .tag-dropdown-item input[type='checkbox'] {
@@ -1229,17 +1173,6 @@ watch(
   height: 14px;
   margin: 0;
   cursor: pointer;
-}
-
-.tag-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.tag-dropdown-name {
-  white-space: nowrap;
 }
 
 /* Overlay & Dialog */
@@ -1289,32 +1222,6 @@ watch(
   align-items: center;
   gap: 0.4rem;
   flex-shrink: 0;
-}
-
-.badge-imported {
-  display: inline-block;
-  padding: 0.15rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--accent-subtle);
-  color: var(--accent);
-  border: 1px solid var(--accent);
-}
-
-.badge-hidden {
-  display: inline-block;
-  padding: 0.15rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
 }
 
 .host-card-hidden {

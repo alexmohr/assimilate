@@ -357,7 +357,7 @@ onMounted(loadRepos)
 
     <div
       v-if="reposLoading"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       Loading repositories...
     </div>
@@ -409,7 +409,7 @@ onMounted(loadRepos)
         class="main-layout"
       >
         <!-- Archive list -->
-        <div class="panel archives-panel">
+        <div class="panel panel--sectioned archives-panel">
           <div class="panel-header">
             <span class="panel-title">Archives</span>
             <div class="panel-actions">
@@ -439,7 +439,7 @@ onMounted(loadRepos)
 
           <div
             v-if="archivesLoading"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             <span class="spinner" />
             Loading archives...
@@ -452,7 +452,7 @@ onMounted(loadRepos)
           </div>
           <div
             v-else-if="archives.length === 0"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             No archives found.
           </div>
@@ -586,7 +586,7 @@ onMounted(loadRepos)
         <!-- File browser -->
         <div
           v-if="selectedArchive"
-          class="panel browser-panel"
+          class="panel panel--sectioned browser-panel"
         >
           <div class="panel-header">
             <span class="panel-title">Files — {{ selectedArchive.name }}</span>
@@ -610,7 +610,7 @@ onMounted(loadRepos)
           />
           <div
             v-else-if="indexing"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             <BaseSpinner size="sm" />
             Indexing archive contents — this only happens once…
@@ -623,7 +623,7 @@ onMounted(loadRepos)
           </div>
           <div
             v-else-if="contents.length === 0"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             Empty directory.
           </div>
@@ -734,7 +734,7 @@ onMounted(loadRepos)
 
         <div
           v-else
-          class="panel browser-panel empty-browser"
+          class="panel panel--sectioned browser-panel empty-browser"
         >
           <span class="muted">Select an archive to browse its contents.</span>
         </div>
@@ -804,15 +804,6 @@ onMounted(loadRepos)
   color: var(--text-primary);
 }
 
-.state-msg {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1.5rem;
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-}
-
 .state-error {
   color: var(--danger);
 }
@@ -865,38 +856,9 @@ onMounted(loadRepos)
   align-items: start;
 }
 
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-}
-
 .panel-actions {
   display: flex;
   gap: 0.25rem;
-}
-
-.panel-title {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
 }
 
 .data-table th {

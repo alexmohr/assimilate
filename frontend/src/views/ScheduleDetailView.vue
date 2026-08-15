@@ -17,7 +17,7 @@ import { useElapsedClock } from '../composables/useElapsedTimer'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
-import { AlertTriangle } from '@lucide/vue'
+import { AlertTriangle, ExternalLink } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import CronBuilder from '../components/CronBuilder.vue'
@@ -33,6 +33,8 @@ import type { ScheduleBackupSourcesResponse } from '../types/generated'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
+import { backupStatusBadgeClass } from '../utils/badge'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 interface ScheduleTarget {
   agent_id: number
@@ -178,6 +180,13 @@ const scheduleType = computed(() =>
   isCreate.value ? selectedType.value : (schedule.value?.schedule_type ?? 'backup'),
 )
 const isBackup = computed(() => scheduleType.value === 'backup')
+
+const visibleTabs = computed<TabOption<TabId>[]>(() => {
+  const tabs: TabOption<TabId>[] = [{ id: 'settings', label: 'Settings' }]
+  if (isBackup.value) tabs.push({ id: 'advanced', label: 'Advanced' })
+  if (isBackup.value && !isCreate.value) tabs.push({ id: 'backups', label: 'Backups' })
+  return tabs
+})
 
 const agentMap = computed(() => {
   const m = new Map<number, AgentRow>()
@@ -651,20 +660,7 @@ onMessage('DataChanged', () => {
 })
 
 function reportStatusClass(status: string): string {
-  switch (normalizeBackupStatus(status)) {
-    case 'success':
-      return 'badge-success'
-    case 'warning':
-      return 'badge-warning'
-    case 'started':
-      return 'badge-started'
-    case 'cancelled':
-      return 'badge-cancelled'
-    case 'pending':
-      return 'badge-pending'
-    case 'failed':
-      return 'badge-failed'
-  }
+  return backupStatusBadgeClass(status)
 }
 
 watch(
@@ -744,38 +740,25 @@ watch(activeTab, (tab) => {
     />
 
     <template v-if="schedule || isCreate">
-      <div class="tab-bar">
-        <button
-          class="tab-btn"
-          :class="{ active: activeTab === 'settings' }"
-          @click="activeTab = 'settings'"
-        >
-          Settings
-        </button>
-        <button
-          v-if="isBackup"
-          class="tab-btn"
-          :class="{ active: activeTab === 'advanced' }"
-          @click="activeTab = 'advanced'"
-        >
-          Advanced
-        </button>
-        <button
-          v-if="isBackup && !isCreate"
-          class="tab-btn"
-          :class="{ active: activeTab === 'backups' }"
-          @click="activeTab = 'backups'"
-        >
-          Backups
-        </button>
-        <button
+      <BaseTabs
+        v-model="activeTab"
+        :tabs="visibleTabs"
+        label="Schedule sections"
+      >
+        <template
           v-if="!isCreate"
-          class="tab-btn tab-btn-link"
-          @click="goToLogs"
+          #trailing
         >
-          Logs ↗
-        </button>
-      </div>
+          <button
+            type="button"
+            class="tab tab-link"
+            @click="goToLogs"
+          >
+            Logs
+            <ExternalLink :size="13" />
+          </button>
+        </template>
+      </BaseTabs>
 
       <!-- Settings Tab -->
       <div
@@ -1516,9 +1499,9 @@ watch(activeTab, (tab) => {
         </div>
         <div
           v-else
-          class="reports-table-wrap"
+          class="table-wrap"
         >
-          <table class="reports-table">
+          <table class="data-table data-table--compact">
             <thead>
               <tr>
                 <th>Started</th>
@@ -1601,11 +1584,11 @@ watch(activeTab, (tab) => {
         >
           <template #list>
             <!-- Archive list -->
-            <div class="panel backups-list-panel">
+            <div class="panel panel--sectioned backups-list-panel">
               <div class="panel-header">
                 <span class="panel-title">Archives</span>
               </div>
-              <table class="archives-table">
+              <table class="data-table data-table--compact">
                 <thead>
                   <tr>
                     <th>Archive</th>
@@ -1639,7 +1622,7 @@ watch(activeTab, (tab) => {
           </template>
           <template #browser>
             <!-- File browser -->
-            <div class="panel backups-browser-panel">
+            <div class="panel panel--sectioned backups-browser-panel">
               <ArchiveFileBrowser
                 :repo-id="schedule?.repo_id ?? null"
                 :archive="selectedScheduleArchive"
@@ -1731,6 +1714,20 @@ watch(activeTab, (tab) => {
 </template>
 
 <style scoped>
+/* Not a tab: it leaves the page. Pushed to the end and kept muted so it does
+   not read as a fourth section. */
+.tab-link {
+  margin-left: auto;
+  color: var(--text-muted);
+  gap: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tab-link:hover {
+  color: var(--text-primary);
+}
+
 .schedule-detail {
   color: var(--text-primary);
   max-width: 900px;
@@ -1764,12 +1761,6 @@ watch(activeTab, (tab) => {
   font-family: var(--mono);
 }
 
-.page-title {
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  margin: 0 0 0.4rem;
-}
-
 .error-banner {
   background: var(--danger-subtle);
   border: 1px solid var(--danger);
@@ -1778,43 +1769,6 @@ watch(activeTab, (tab) => {
   border-radius: var(--radius-sm);
   margin-bottom: 1rem;
   font-size: var(--fs-base);
-}
-
-.tab-bar {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin-top: 1.5rem;
-  margin-bottom: 1.5rem;
-}
-
-.tab-btn {
-  padding: 0.6rem 1.2rem;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.tab-btn:hover {
-  color: var(--text-primary);
-}
-
-.tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-.tab-btn-link {
-  margin-left: auto;
-  color: var(--text-muted);
 }
 
 .form-grid {
@@ -1940,8 +1894,6 @@ watch(activeTab, (tab) => {
 
 .field-hint {
   display: block;
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
   margin-top: 0.25rem;
 }
 
@@ -2324,37 +2276,11 @@ watch(activeTab, (tab) => {
 }
 
 /* Danger zone */
+
+/* Sits directly after the settings form here, so it needs breathing room the
+   other detail views get from their surrounding grid. */
 .danger-zone {
-  border-color: var(--danger);
   margin-top: 2rem;
-}
-
-.danger-zone .info-title {
-  color: var(--danger);
-}
-
-.danger-body {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-}
-
-.danger-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.danger-heading {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.danger-desc {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
 }
 
 /* Dialog */
@@ -2380,28 +2306,6 @@ watch(activeTab, (tab) => {
   padding: 2rem 0;
   display: flex;
   justify-content: center;
-}
-
-.reports-table-wrap {
-  overflow-x: auto;
-}
-
-.reports-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-sm);
-}
-
-.reports-table th {
-  text-align: left;
-  padding: 0.5rem 0.75rem;
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
 }
 
 .report-row td {
@@ -2447,58 +2351,7 @@ watch(activeTab, (tab) => {
   color: var(--text-muted);
 }
 
-.badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.badge-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.badge-started {
-  background: var(--info-subtle);
-  color: var(--info);
-}
-
-.badge-cancelled {
-  background: var(--bg-hover);
-  color: var(--text-muted);
-}
-
-.btn-danger {
-  background: var(--danger);
-  color: #fff;
-  border: none;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: var(--danger-hover);
-}
-
 /* Backups tab layout */
-
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
 
 .backups-list-panel .panel-header {
   padding: 0.75rem 1rem;
@@ -2513,45 +2366,20 @@ watch(activeTab, (tab) => {
   color: var(--text-muted);
 }
 
-.archives-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-sm);
-}
-
-.archives-table th {
-  text-align: left;
-  padding: 0.45rem 0.75rem;
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.archives-table td {
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  vertical-align: middle;
-  color: var(--text-secondary);
-}
-
-.archives-table tr:last-child td {
+.data-table tr:last-child td {
   border-bottom: none;
 }
 
-.archives-table tr {
+.data-table tr {
   cursor: pointer;
   transition: background var(--duration-fast);
 }
 
-.archives-table tr:hover {
+.data-table tr:hover {
   background: var(--bg-hover);
 }
 
-.archives-table tr.selected td {
+.data-table tr.selected td {
   background: var(--accent-subtle);
   color: var(--text-primary);
 }

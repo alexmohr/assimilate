@@ -13,6 +13,7 @@ import { Plus, Pencil, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 interface User {
   id: number
@@ -57,7 +58,16 @@ const deleteSubmitting = ref(false)
 
 const showEditModal = ref(false)
 const editUser = ref<User | null>(null)
-const editTab = ref<'general' | 'password' | 'roles' | 'permissions'>('general')
+type EditTab = 'general' | 'password' | 'roles' | 'permissions'
+
+const editTabs: TabOption<EditTab>[] = [
+  { id: 'general', label: 'General' },
+  { id: 'password', label: 'Password' },
+  { id: 'roles', label: 'Roles & Groups' },
+  { id: 'permissions', label: 'Permissions' },
+]
+
+const editTab = ref<EditTab>('general')
 const editRole = ref<'admin' | 'user'>('user')
 const editRoleSubmitting = ref(false)
 const editRoleError = ref('')
@@ -305,7 +315,7 @@ onMounted(fetchUsers)
 
     <table
       v-else
-      class="users-table"
+      class="data-table"
     >
       <thead>
         <tr>
@@ -326,14 +336,14 @@ onMounted(fetchUsers)
               {{ user.username }}
               <span
                 v-if="isSelf(user)"
-                class="you-badge"
+                class="badge badge--accent"
                 >you</span
               >
             </span>
           </td>
           <td>
             <span
-              class="role-badge"
+              class="badge badge--neutral"
               :class="user.role"
               >{{ user.role }}</span
             >
@@ -443,36 +453,11 @@ onMounted(fetchUsers)
           Edit User — {{ editUser?.username }}
         </h2>
       </template>
-      <div class="tabs">
-        <button
-          class="tab"
-          :class="{ active: editTab === 'general' }"
-          @click="editTab = 'general'"
-        >
-          General
-        </button>
-        <button
-          class="tab"
-          :class="{ active: editTab === 'password' }"
-          @click="editTab = 'password'"
-        >
-          Password
-        </button>
-        <button
-          class="tab"
-          :class="{ active: editTab === 'roles' }"
-          @click="editTab = 'roles'"
-        >
-          Roles &amp; Groups
-        </button>
-        <button
-          class="tab"
-          :class="{ active: editTab === 'permissions' }"
-          @click="editTab = 'permissions'"
-        >
-          Permissions
-        </button>
-      </div>
+      <BaseTabs
+        v-model="editTab"
+        :tabs="editTabs"
+        label="User settings sections"
+      />
       <div class="tab-scroll">
         <!-- General Tab -->
         <div
@@ -635,9 +620,9 @@ onMounted(fetchUsers)
           </div>
           <div
             v-else
-            class="permissions-table-wrap"
+            class="permissions-scroll"
           >
-            <table class="permissions-table">
+            <table class="data-table data-table--compact">
               <thead>
                 <tr>
                   <th>Repository</th>
@@ -736,46 +721,10 @@ onMounted(fetchUsers)
   padding: 2rem 0;
 }
 
-.users-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
-}
-
-.users-table th {
-  text-align: left;
-  padding: 0.625rem 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.users-table td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
 .user-cell {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-.you-badge {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  background: var(--bg-hover);
-  padding: 0.0625rem 0.375rem;
-  border-radius: var(--radius-sm);
-}
-
-.role-badge {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  padding: 0.125rem 0.5rem;
-  border-radius: var(--radius-sm);
 }
 
 .role-badge.admin {
@@ -803,36 +752,6 @@ onMounted(fetchUsers)
   @media (max-width: 700px) {
     display: none;
   }
-}
-
-.tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.tab {
-  background: none;
-  border: none;
-  padding: 0.6rem 1rem;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.tab:hover {
-  color: var(--text-primary);
-}
-
-.tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 
 .tab-scroll {
@@ -954,31 +873,9 @@ onMounted(fetchUsers)
   color: var(--text-primary);
 }
 
-.permissions-table-wrap {
+.permissions-scroll {
   max-height: 350px;
   overflow-y: auto;
-}
-
-.permissions-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-sm);
-}
-
-.permissions-table th {
-  text-align: left;
-  padding: 0.5rem 0.5rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-}
-
-.permissions-table td {
-  padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
 }
 
 .perm-repo-cell {

@@ -264,7 +264,7 @@ onMounted((): void => {
       v-else
       class="matrix-wrap"
     >
-      <table class="matrix-table">
+      <table class="data-table data-table--compact">
         <thead>
           <tr>
             <th class="role-name-col">Role</th>
@@ -288,7 +288,7 @@ onMounted((): void => {
               <span class="role-name">{{ role.name }}</span>
               <span
                 v-if="isSeeded(role)"
-                class="seeded-badge"
+                class="badge badge--neutral"
                 >built-in</span
               >
               <span class="perm-count"
@@ -448,21 +448,6 @@ onMounted((): void => {
   overflow-x: auto;
 }
 
-.matrix-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-sm);
-}
-
-.matrix-table th {
-  text-align: center;
-  padding: 0.5rem 0.35rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  font-size: var(--fs-2xs);
-}
-
 .role-name-col {
   text-align: left !important;
   min-width: 140px;
@@ -487,14 +472,7 @@ onMounted((): void => {
   min-width: 120px;
 }
 
-.matrix-table td {
-  padding: 0.5rem 0.35rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  text-align: center;
-}
-
-.matrix-table tr.seeded {
+.data-table tr.seeded {
   background: var(--bg-hover);
 }
 
@@ -508,16 +486,6 @@ onMounted((): void => {
 .role-name {
   font-weight: 600;
   font-size: var(--fs-base);
-}
-
-.seeded-badge {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  background: var(--bg-input);
-  padding: 0.1rem 0.35rem;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
 }
 
 .perm-count {

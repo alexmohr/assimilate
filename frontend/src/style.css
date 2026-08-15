@@ -210,6 +210,346 @@
     min-height: 2rem;
   }
 
+  .btn-xs {
+    padding: 0.2rem 0.5rem;
+    font-size: var(--fs-xs);
+  }
+
+  /* --- Panel -------------------------------------------------------------
+     The app's one card surface. `.panel` is padded; `.panel--sectioned`
+     gives it a ruled header with a flush body, which is what the detail
+     views and list panels want. */
+  .panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+  }
+
+  .panel--sectioned {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .panel--sectioned > .panel-header {
+    padding: 0.875rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+
+  .panel--sectioned > .panel-body {
+    padding: 1.25rem;
+  }
+
+  /* Sentence case in primary ink: a panel heading, not a form label.
+     Uppercase-muted is reserved for `.field-label`, so the two roles stay
+     distinguishable when they sit in the same card. */
+  .panel-title {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  /* --- Badge -------------------------------------------------------------
+     One shape, one size, five tones. A leading `.badge-dot` marks live
+     state (Online, Running, Failed); no dot means classification (Manual,
+     Imported, Admin). */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-shrink: 0;
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .badge-dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+
+  .badge--success {
+    background: var(--success-subtle);
+    color: var(--success);
+  }
+
+  .badge--warning {
+    background: var(--warning-subtle);
+    color: var(--warning);
+  }
+
+  .badge--danger {
+    background: var(--danger-subtle);
+    color: var(--danger);
+  }
+
+  .badge--info {
+    background: var(--info-subtle);
+    color: var(--info);
+  }
+
+  .badge--accent {
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+
+  .badge--neutral {
+    background: var(--bg-hover);
+    color: var(--text-muted);
+  }
+
+  /* --- Danger zone --------------------------------------------------------
+     The destructive-actions panel on a detail page. Rows are `.danger-body`;
+     the separator between them comes from here, not from each caller. */
+  .danger-zone {
+    border-color: var(--danger);
+  }
+
+  .danger-zone .info-title {
+    color: var(--danger);
+  }
+
+  .danger-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+  }
+
+  .danger-body + .danger-body {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .danger-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .danger-heading {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .danger-desc {
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+  }
+
+  .danger-action-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 640px) {
+    .danger-body {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .danger-action-wrap {
+      align-items: stretch;
+    }
+  }
+
+  /* --- Tags ---------------------------------------------------------------
+     Two shapes share these rules: the tag filter dropdown on the list views
+     and the tag editor on the detail views. Both were duplicated verbatim in
+     two files each (F-26). */
+
+  .tag-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--fs-2xs);
+    font-weight: 500;
+    border: 1px solid;
+  }
+
+  .tag-filter-wrapper {
+    position: relative;
+  }
+
+  .tag-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 0.35rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    padding: 0.5rem;
+    min-width: 160px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .tag-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.4rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+    transition: background var(--duration-fast);
+  }
+
+  .tag-dropdown-name {
+    white-space: nowrap;
+  }
+
+  .tag-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tags-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .tag-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: var(--fs-md);
+    line-height: 1;
+    padding: 0;
+    opacity: 0.6;
+    transition: opacity var(--duration-base);
+  }
+
+  .tag-add-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .tag-create-inline {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .tag-dropdown-item:hover {
+    background: var(--bg-hover);
+  }
+
+  .tag-remove:hover {
+    opacity: 1;
+  }
+
+  /* --- Segmented control ------------------------------------------------- */
+  .segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .segmented-option {
+    padding: 0.35rem 0.75rem;
+    border: none;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background var(--duration-base),
+      color var(--duration-base);
+  }
+
+  .segmented-option + .segmented-option {
+    border-left: 1px solid var(--border);
+  }
+
+  .segmented-option:hover:not(.active) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .segmented-option.active {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+  }
+
+  /* --- Tabs --------------------------------------------------------------- */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    padding: 0.75rem 1.25rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: var(--fs-base);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      color var(--duration-base),
+      border-color var(--duration-base);
+  }
+
+  .tab:hover {
+    color: var(--text-primary);
+  }
+
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+
   .field {
     display: flex;
     flex-direction: column;
@@ -270,35 +610,9 @@
     white-space: pre-line;
   }
 
-  .status-badge {
-    flex-shrink: 0;
-    padding: 0.2rem 0.6rem;
-    border-radius: var(--radius-pill);
-    font-size: var(--fs-2xs);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-
-  .status-online {
-    background: var(--success-subtle);
-    color: var(--success);
-  }
-
-  .status-offline {
-    background: var(--bg-hover);
-    color: var(--text-muted);
-  }
-
-  .status-importing {
-    background: var(--warning-subtle);
-    color: var(--warning);
+  /* Layered on a tone to mark work in flight, e.g. an import running. */
+  .badge--pulse {
     animation: pulse-importing 1.5s ease-in-out infinite;
-  }
-
-  .status-error {
-    background: var(--danger-subtle);
-    color: var(--danger);
   }
 
   @keyframes pulse-importing {
@@ -360,14 +674,30 @@
     width: 260px;
   }
 
+  /* Block-level "nothing here" message, centred in the space it occupies. */
   .state-msg {
     text-align: center;
     padding: 3rem;
     color: var(--text-muted);
   }
 
+  /* The same message inside a dashboard widget, where 3rem of padding would
+     push the panel out of its grid row. */
+  .state-msg--inline {
+    text-align: left;
+    padding: 0.5rem 0;
+    font-size: var(--fs-base);
+  }
+
   .state-error {
     color: var(--danger);
+  }
+
+  /* --- Table --------------------------------------------------------------
+     One table style. `--compact` is for wide numeric grids (storage rows,
+     permission matrices) that genuinely need the density. */
+  .table-wrap {
+    overflow-x: auto;
   }
 
   .data-table {
@@ -388,6 +718,16 @@
     padding: 0.625rem 0.75rem;
     border-bottom: 1px solid var(--border-subtle);
     color: var(--text-primary);
+  }
+
+  .data-table--compact {
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .data-table--compact th,
+  .data-table--compact td {
+    padding: 0.5rem;
   }
 
   .name-cell {

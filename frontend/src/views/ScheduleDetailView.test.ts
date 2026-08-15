@@ -243,7 +243,7 @@ describe('ScheduleDetailView - edit mode', () => {
   it('has Advanced tab for backup type', async () => {
     const wrapper = await createEditWrapper()
 
-    const tabs = wrapper.findAll('.tab-btn')
+    const tabs = wrapper.findAll('.tab')
     expect(tabs.some((t) => t.text() === 'Advanced')).toBe(true)
   })
 
@@ -253,7 +253,7 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    const tabs = wrapper.findAll('.tab-btn')
+    const tabs = wrapper.findAll('.tab')
     await tabs.find((t) => t.text() === 'Advanced')!.trigger('click')
     await flushPromises()
 
@@ -280,7 +280,7 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
     await flushPromises()
 
-    const tabs = wrapper.findAll('.tab-btn')
+    const tabs = wrapper.findAll('.tab')
     expect(tabs.some((t) => t.text() === 'Advanced')).toBe(false)
   })
 
@@ -810,7 +810,7 @@ describe('ScheduleDetailView - Backups tab', () => {
   it('shows Backups tab button for backup-type schedule in edit mode', async () => {
     const wrapper = await createBackupsWrapper([])
 
-    const tabs = wrapper.findAll('.tab-btn')
+    const tabs = wrapper.findAll('.tab')
     expect(tabs.some((t) => t.text() === 'Backups')).toBe(true)
   })
 
@@ -830,7 +830,7 @@ describe('ScheduleDetailView - Backups tab', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
     await flushPromises()
 
-    const tabs = wrapper.findAll('.tab-btn')
+    const tabs = wrapper.findAll('.tab')
     expect(tabs.some((t) => t.text() === 'Backups')).toBe(false)
   })
 
@@ -839,7 +839,7 @@ describe('ScheduleDetailView - Backups tab', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
-    const tabs = wrapper.findAll('.tab-btn')
+    const tabs = wrapper.findAll('.tab')
     expect(tabs.some((t) => t.text() === 'Backups')).toBe(false)
   })
 
@@ -855,7 +855,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       },
     ])
 
-    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
@@ -893,7 +893,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       },
     ])
 
-    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
@@ -919,7 +919,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       },
     ])
 
-    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
@@ -946,7 +946,7 @@ describe('ScheduleDetailView - Backups tab', () => {
 
     expect(wrapper.find('.save-bar').exists()).toBe(true)
 
-    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 

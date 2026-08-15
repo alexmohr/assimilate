@@ -385,7 +385,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
 
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
     expect(archivesTab).toBeDefined()
     await archivesTab!.trigger('click')
     await flushPromises()
@@ -397,7 +397,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     expect(schedulesTab).toBeDefined()
     await schedulesTab!.trigger('click')
     await flushPromises()
@@ -425,7 +425,7 @@ describe('RepoDetailView', () => {
 
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     await schedulesTab!.trigger('click')
     await flushPromises()
 
@@ -446,7 +446,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess(mockRepo, refreshedHostKey, [{ ...mockRepoSchedule, enabled: false }])
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     await schedulesTab!.trigger('click')
     await flushPromises()
 
@@ -475,7 +475,7 @@ describe('RepoDetailView', () => {
     )
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     await schedulesTab!.trigger('click')
     await flushPromises()
 
@@ -511,7 +511,7 @@ describe('RepoDetailView', () => {
 
     const wrapper = await renderRepoDetail()
 
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
     expect(archivesTab).toBeDefined()
     await archivesTab!.trigger('click')
     await flushPromises()
@@ -549,7 +549,7 @@ describe('RepoDetailView', () => {
     })
     await flushPromises()
 
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
     await archivesTab!.trigger('click')
     await flushPromises()
 
@@ -577,7 +577,7 @@ describe('RepoDetailView', () => {
     async function goToArchivesTab(
       wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
     ): Promise<void> {
-      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
       await archivesTab!.trigger('click')
       await flushPromises()
     }
@@ -775,7 +775,7 @@ describe('RepoDetailView', () => {
 
       expect(wrapper.find('.archive-filter-banner').exists()).toBe(false)
 
-      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
       await archivesTab!.trigger('click')
       await flushPromises()
 
@@ -907,7 +907,7 @@ describe('RepoDetailView', () => {
     async function openArchivesTab(
       wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
     ): Promise<void> {
-      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
       await archivesTab!.trigger('click')
       await flushPromises()
     }

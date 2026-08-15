@@ -39,7 +39,7 @@ function statusColor(entry: HealthEntry): string {
     <h2 class="panel-title">Detailed Status</h2>
     <div
       v-if="props.health.length === 0"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       No repositories configured.
     </div>
@@ -82,28 +82,6 @@ function statusColor(entry: HealthEntry): string {
 </template>
 
 <style scoped>
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.panel-title {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin: 0 0 0.75rem;
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  padding: 0.5rem 0;
-}
-
 .health-list {
   display: flex;
   flex-direction: column;

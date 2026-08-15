@@ -18,6 +18,7 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
+import { badgeClass, thresholdTone } from '../utils/badge'
 
 const { isMobile } = useMobile()
 
@@ -157,8 +158,8 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
         <div class="quota-card-top">
           <span class="quota-host">{{ quota.ssh_host }}</span>
           <span
-            class="status-badge"
-            :class="`badge-${statusFor(quota)}`"
+            class="badge"
+            :class="badgeClass(thresholdTone(statusFor(quota)))"
           >
             {{ statusLabel(quota) }}
           </span>
@@ -268,8 +269,8 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
             </td>
             <td>
               <span
-                class="status-badge"
-                :class="`badge-${statusFor(quota)}`"
+                class="badge"
+                :class="badgeClass(thresholdTone(statusFor(quota)))"
               >
                 {{ statusLabel(quota) }}
               </span>
@@ -490,29 +491,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 
 .muted {
   color: var(--text-muted);
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-
-.badge-ok {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-critical {
-  background: var(--danger-subtle);
-  color: var(--danger);
 }
 
 .toggle-row {

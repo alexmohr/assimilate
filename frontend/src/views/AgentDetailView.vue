@@ -35,6 +35,8 @@ import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
+import BaseTabs from '../components/BaseTabs.vue'
+import { backupStatusBadgeClass } from '../utils/badge'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -900,17 +902,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
     <template v-else-if="agent">
       <!-- Tab bar -->
-      <div class="tab-bar">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          class="tab-btn"
-          :class="{ active: activeTab === tab.id }"
-          @click="activeTab = tab.id"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
+      <BaseTabs
+        v-model="activeTab"
+        :tabs="tabs"
+        label="Agent sections"
+      />
 
       <!-- Overview Tab -->
       <div
@@ -929,8 +925,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <dt>Status</dt>
             <dd>
               <span
-                class="status-badge"
-                :class="isOnline(agent) ? 'status-online' : 'status-offline'"
+                class="badge"
+                :class="isOnline(agent) ? 'badge--success' : 'badge--neutral'"
               >
                 {{ isOnline(agent) ? 'Online' : 'Offline' }}
               </span>
@@ -1658,7 +1654,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             />
             <div class="card-meta">
               <span
-                class="type-badge"
+                class="badge badge--neutral"
                 :class="`type-${s.schedule_type ?? 'backup'}`"
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
@@ -1741,7 +1737,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
             @click="handleResultClick(r)"
           >
             <div class="result-header">
-              <span class="result-status-badge">{{ r.status }}</span>
+              <span
+                class="badge"
+                :class="backupStatusBadgeClass(r.status)"
+                >{{ r.status }}</span
+              >
               <span class="result-date">{{ relativeTime(r.finished_at) }}</span>
               <span class="result-duration">{{ r.duration_secs }}s</span>
             </div>
@@ -1979,47 +1979,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
   font-family: var(--mono);
 }
 
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
 .state-error {
   color: var(--danger);
 }
 
 /* Tab bar */
-.tab-bar {
-  display: flex;
-  gap: 0.25rem;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-}
-
-.tab-btn {
-  padding: 0.75rem 1.25rem;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.tab-btn:hover {
-  color: var(--text-primary);
-}
-
-.tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
 
 .tab-content {
   animation: fadeIn 0.15s ease;
@@ -2107,58 +2071,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
 .muted {
   color: var(--text-muted);
   font-size: var(--fs-base);
-}
-
-.tags-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.2rem 0.5rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  border: 1px solid;
-}
-
-.tag-remove {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: var(--fs-md);
-  line-height: 1;
-  padding: 0;
-  opacity: 0.6;
-  transition: opacity var(--duration-base);
-}
-
-.tag-remove:hover {
-  opacity: 1;
-}
-
-.tag-add-row {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.tag-create-inline {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
 }
 
 .color-input {
@@ -2309,15 +2221,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   gap: 0.4rem;
 }
 
-.type-badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
 .type-backup {
   background: var(--success-subtle);
   color: var(--success);
@@ -2388,31 +2291,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 0.5rem;
-}
-
-.result-status-badge {
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 0.15rem 0.4rem;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-}
-
-.result-failed .result-status-badge {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-}
-
-.result-warning .result-status-badge {
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
-}
-
-.result-success .result-status-badge {
-  color: var(--success);
-  background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 
 .result-date {
@@ -2699,37 +2577,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 /* Danger zone */
-.danger-zone {
-  border-color: var(--danger);
-}
-
-.danger-zone .info-title {
-  color: var(--danger);
-}
-
-.danger-body {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-}
-
-.danger-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.danger-heading {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.danger-desc {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
 
 .danger-body-sep {
   margin-top: 1rem;

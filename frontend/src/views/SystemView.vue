@@ -279,7 +279,7 @@ async function resetSystem(): Promise<void> {
       />
       <div
         v-else-if="versionError"
-        class="state-msg error"
+        class="state-msg state-msg--inline state-error"
       >
         {{ versionError }}
       </div>
@@ -325,7 +325,7 @@ async function resetSystem(): Promise<void> {
       />
       <div
         v-else-if="error"
-        class="state-msg error"
+        class="state-msg state-msg--inline state-error"
       >
         {{ error }}
       </div>
@@ -355,7 +355,7 @@ async function resetSystem(): Promise<void> {
       <template v-else>
         <div
           v-if="settingsError"
-          class="state-msg error"
+          class="state-msg state-msg--inline state-error"
         >
           {{ settingsError }}
         </div>
@@ -575,7 +575,7 @@ async function resetSystem(): Promise<void> {
       />
       <div
         v-else-if="databaseStorageError"
-        class="state-msg error"
+        class="state-msg state-msg--inline state-error"
       >
         {{ databaseStorageError }}
       </div>
@@ -584,8 +584,8 @@ async function resetSystem(): Promise<void> {
           <span>Total database size</span>
           <strong>{{ formatBytes(databaseStorage.database_bytes) }}</strong>
         </div>
-        <div class="storage-table-wrap">
-          <table class="storage-table">
+        <div class="table-wrap">
+          <table class="data-table data-table--compact">
             <thead>
               <tr>
                 <th>Table</th>
@@ -889,15 +889,6 @@ async function resetSystem(): Promise<void> {
   border-radius: var(--radius-sm);
 }
 
-.state-msg {
-  font-size: var(--fs-base);
-  color: var(--text-muted);
-}
-
-.state-msg.error {
-  color: var(--danger);
-}
-
 .key-box {
   display: flex;
   align-items: flex-start;
@@ -971,11 +962,6 @@ async function resetSystem(): Promise<void> {
   max-width: 120px !important;
 }
 
-.field-hint {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-}
-
 .settings-actions {
   display: flex;
   align-items: center;
@@ -1004,35 +990,13 @@ async function resetSystem(): Promise<void> {
   font-size: var(--fs-lg);
 }
 
-.storage-table-wrap {
-  overflow-x: auto;
-}
-
-.storage-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-}
-
-.storage-table th,
-.storage-table td {
-  padding: 0.625rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  text-align: right;
-}
-
-.storage-table th {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.storage-table th:first-child,
-.storage-table td:first-child {
+.data-table th,
+.data-table th:first-child,
+.data-table td:first-child {
   text-align: left;
 }
 
-.storage-table tbody tr:last-child td {
+.data-table tbody tr:last-child td {
   border-bottom: 0;
 }
 

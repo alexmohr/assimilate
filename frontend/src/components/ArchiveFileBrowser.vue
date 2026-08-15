@@ -155,7 +155,7 @@ function handleDeleteWholeArchive(): void {
       />
       <div
         v-else-if="indexing"
-        class="state-msg"
+        class="state-msg state-msg--inline"
       >
         <BaseSpinner size="sm" />
         Indexing archive contents -- this only happens once...
@@ -168,7 +168,7 @@ function handleDeleteWholeArchive(): void {
       </div>
       <div
         v-else-if="contents.length === 0"
-        class="state-msg"
+        class="state-msg state-msg--inline"
       >
         Empty directory.
       </div>
@@ -365,15 +365,6 @@ function handleDeleteWholeArchive(): void {
   width: 1px;
   height: 1rem;
   background: var(--border);
-}
-
-.state-msg {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1.5rem;
-  color: var(--text-muted);
-  font-size: var(--fs-base);
 }
 
 .state-error {

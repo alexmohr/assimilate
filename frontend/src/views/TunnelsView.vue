@@ -227,7 +227,7 @@ function statusClass(status: TunnelStatus): string {
   if (status === 'connected') return 'status-connected'
   if (status === 'disconnected') return 'status-disconnected'
   if (status === 'reconnecting') return 'status-reconnecting'
-  return 'status-error'
+  return 'badge--danger'
 }
 
 function statusErrorMessage(status: TunnelStatus): string | null {
@@ -298,7 +298,7 @@ onMounted(() => {
       v-else
       class="table-wrapper"
     >
-      <table class="tunnels-table">
+      <table class="data-table">
         <thead>
           <tr>
             <th>Agent</th>
@@ -607,12 +607,6 @@ onMounted(() => {
   max-width: 1100px;
 }
 
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
 .state-error {
   color: var(--danger);
 }
@@ -623,37 +617,11 @@ onMounted(() => {
   border-radius: var(--radius);
 }
 
-.tunnels-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
-}
-
-.tunnels-table th {
-  padding: 0.75rem 1rem;
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.tunnels-table td {
-  padding: 0.75rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.tunnels-table tbody tr:last-child td {
+.data-table tbody tr:last-child td {
   border-bottom: none;
 }
 
-.tunnels-table tbody tr:hover td {
+.data-table tbody tr:hover td {
   background: var(--bg-hover);
 }
 

@@ -249,7 +249,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
     </div>
     <div
       v-if="loading"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       Loading…
     </div>
@@ -393,32 +393,19 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 </template>
 
 <style scoped>
+/* The calendar sits in a fixed grid cell, so it must fill the row and clip
+   rather than push the grid wider. */
 .panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
   min-width: 0;
   overflow: hidden;
   height: 100%;
-  box-sizing: border-box;
 }
 
 .panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
   min-width: 0;
 }
 
 .panel-title {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -613,12 +600,6 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 .cal-badge-started {
   background: var(--info-subtle);
   color: var(--info);
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  padding: 1rem 0;
 }
 
 .cal-event-clickable {

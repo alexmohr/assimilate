@@ -15,6 +15,7 @@ import { formatDateShort } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import type { AuditEntryResponse, AuditLogResponse } from '../types/generated'
+import { badgeClass } from '../utils/badge'
 
 type AuditEntry = AuditEntryResponse
 type AuditResponse = AuditLogResponse
@@ -292,16 +293,7 @@ function classifyAuditAction(action: string): AuditActionCategory {
 }
 
 function actionBadgeClass(action: string): string {
-  switch (classifyAuditAction(action)) {
-    case 'danger':
-      return 'badge-danger'
-    case 'success':
-      return 'badge-success'
-    case 'warning':
-      return 'badge-warning'
-    case 'neutral':
-      return 'badge-neutral'
-  }
+  return badgeClass(classifyAuditAction(action))
 }
 </script>
 
@@ -320,16 +312,7 @@ function actionBadgeClass(action: string): string {
 }
 
 .page-header {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-}
-
-.page-title {
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
 }
 
 .row-count {
@@ -404,12 +387,6 @@ function actionBadgeClass(action: string): string {
   border: 1px solid var(--border);
 }
 
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
 .state-error {
   color: var(--danger);
 }
@@ -437,35 +414,6 @@ function actionBadgeClass(action: string): string {
 
 .mono {
   font-family: var(--mono);
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.badge-danger {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.badge-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-neutral {
-  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
-  color: var(--text-secondary);
 }
 
 .detail-expansion {

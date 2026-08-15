@@ -1078,8 +1078,8 @@ onMounted(loadRepos)
               <div class="card-badges">
                 <span
                   v-if="entry.repo.import_error || entry.repo.importing"
-                  class="status-badge"
-                  :class="entry.repo.import_error ? 'status-error' : 'status-importing'"
+                  class="badge"
+                  :class="entry.repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
                   :title="entry.repo.import_error ?? undefined"
                 >
                   {{
@@ -1150,8 +1150,8 @@ onMounted(loadRepos)
           <div class="card-badges">
             <span
               v-if="repo.import_error || repo.importing"
-              class="status-badge"
-              :class="repo.import_error ? 'status-error' : 'status-importing'"
+              class="badge"
+              :class="repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
               :title="repo.import_error ?? undefined"
             >
               {{
@@ -1262,8 +1262,8 @@ onMounted(loadRepos)
               <div class="card-badges">
                 <span
                   v-if="repo.import_error || repo.importing"
-                  class="status-badge"
-                  :class="repo.import_error ? 'status-error' : 'status-importing'"
+                  class="badge"
+                  :class="repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
                   :title="repo.import_error ?? undefined"
                 >
                   {{
@@ -1716,10 +1716,6 @@ onMounted(loadRepos)
 }
 
 .toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
 
@@ -1783,12 +1779,6 @@ onMounted(loadRepos)
   background: var(--bg-hover);
   color: var(--text-primary);
   font-weight: 600;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
 }
 
 .state-error {
@@ -2154,52 +2144,11 @@ onMounted(loadRepos)
   font-size: var(--fs-xs);
 }
 
-.btn-xs {
-  padding: 0.2rem 0.5rem;
-  font-size: var(--fs-xs);
-}
-
 /* Tag filter dropdown */
-.tag-filter-wrapper {
-  position: relative;
-}
 
 .dropdown-arrow {
   font-size: var(--fs-2xs);
   margin-left: 0.15rem;
-}
-
-.tag-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 0.35rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  padding: 0.5rem;
-  min-width: 160px;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.tag-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.4rem;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-  transition: background var(--duration-fast);
-}
-
-.tag-dropdown-item:hover {
-  background: var(--bg-hover);
 }
 
 .tag-dropdown-item input[type='checkbox'] {
@@ -2209,27 +2158,7 @@ onMounted(loadRepos)
   cursor: pointer;
 }
 
-.tag-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.tag-dropdown-name {
-  white-space: nowrap;
-}
-
 /* Tag pills on cards */
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 500;
-  border: 1px solid;
-}
 
 /* Grouped view */
 .repo-grouped {

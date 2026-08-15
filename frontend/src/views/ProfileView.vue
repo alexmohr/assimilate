@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useTheme } from '../composables/useTheme'
@@ -23,11 +23,20 @@ import type {
   TotpVerifyResponse,
 } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 
 const authStore = useAuthStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
+const tabs: TabOption<TabId>[] = [
+  { id: 'password', label: 'Change Password' },
+  { id: 'tokens', label: 'API Tokens' },
+  { id: 'totp', label: 'Two-Factor Auth' },
+  { id: 'sessions', label: 'Sessions' },
+  { id: 'appearance', label: 'Appearance' },
+]
+
 const activeTab = ref<TabId>('password')
 
 const newPassword = ref('')
@@ -205,10 +214,9 @@ function cancelRevokeSession(): void {
   revokeError.value = ''
 }
 
-function handleSessionsTab(): void {
-  activeTab.value = 'sessions'
-  fetchSessions()
-}
+watch(activeTab, (tab: TabId) => {
+  if (tab === 'sessions') fetchSessions()
+})
 
 onMounted(async () => {
   fetchTokens()
@@ -227,43 +235,11 @@ onMounted(async () => {
       {{ authStore.user?.username }}
     </p>
 
-    <div class="tabs">
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'password' }"
-        @click="activeTab = 'password'"
-      >
-        Change Password
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'tokens' }"
-        @click="activeTab = 'tokens'"
-      >
-        API Tokens
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'totp' }"
-        @click="activeTab = 'totp'"
-      >
-        Two-Factor Auth
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'sessions' }"
-        @click="handleSessionsTab"
-      >
-        Sessions
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'appearance' }"
-        @click="activeTab = 'appearance'"
-      >
-        Appearance
-      </button>
-    </div>
+    <BaseTabs
+      v-model="activeTab"
+      :tabs="tabs"
+      label="Profile sections"
+    />
 
     <!-- Password Tab -->
     <div
@@ -533,7 +509,7 @@ onMounted(async () => {
 
       <table
         v-else-if="sessions.length"
-        class="sessions-table"
+        class="data-table"
       >
         <thead>
           <tr>
@@ -565,12 +541,12 @@ onMounted(async () => {
             <td>
               <span
                 v-if="session.current"
-                class="badge badge-current"
+                class="badge badge--success"
                 >Current</span
               >
               <span
                 v-else
-                class="badge badge-other"
+                class="badge badge--neutral"
                 >Active</span
               >
             </td>
@@ -766,37 +742,6 @@ onMounted(async () => {
   color: var(--text-muted);
   font-size: var(--fs-md);
   margin-bottom: 1.5rem;
-}
-
-.tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.tab {
-  padding: 0.6rem 1.25rem;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.tab:hover {
-  color: var(--text-primary);
-}
-
-.tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 
 .tab-content {
@@ -1107,62 +1052,16 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 
-.sessions-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.sessions-table th {
-  text-align: left;
-  padding: 0.7rem 1rem;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-}
-
-.sessions-table td {
-  padding: 0.65rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.sessions-table tr:last-child td {
+.data-table tr:last-child td {
   border-bottom: none;
 }
 
-.sessions-table tr:hover td {
+.data-table tr:hover td {
   background: var(--bg-hover);
 }
 
 .cell-type {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-
-.badge-current {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.badge-other {
-  background: var(--bg-card);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
 }
 </style>

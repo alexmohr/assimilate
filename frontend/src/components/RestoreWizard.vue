@@ -374,17 +374,10 @@ function cancelDownload(): void {
 
 .field-label {
   display: block;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   margin-bottom: 0.5rem;
 }
 
 .field-hint {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
   margin-top: 0.4rem;
 }
 
@@ -475,12 +468,6 @@ function cancelDownload(): void {
   font-size: var(--fs-xs);
   margin-right: 0.3rem;
   margin-bottom: 0.2rem;
-}
-
-.form-error {
-  color: var(--danger);
-  font-size: var(--fs-base);
-  margin-top: 0.75rem;
 }
 
 .success-msg {

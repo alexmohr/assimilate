@@ -325,6 +325,7 @@ async function acceptHostKey(): Promise<void> {
 const { onMessage } = useWebSocket()
 
 onMessage('DataChanged', () => {
+  logger.debug('[diag] DataChanged received', Array.from(deletingArchiveNames.value))
   refreshRepo().catch(logger.error)
   loadArchives()
     .then(() => {
@@ -334,6 +335,11 @@ onMessage('DataChanged', () => {
       // handler above sweeps those once the repo's delete queue drains.
       const stillPresent = new Set(sortedArchives.value.map((a) => a.name))
       const next = new Set([...deletingArchiveNames.value].filter((name) => stillPresent.has(name)))
+      logger.debug(
+        '[diag] DataChanged loadArchives resolved',
+        Array.from(stillPresent),
+        Array.from(next),
+      )
       if (next.size !== deletingArchiveNames.value.size) {
         deletingArchiveNames.value = next
       }
@@ -357,6 +363,7 @@ onMessage('ImportProgress', (payload) => {
 })
 
 onMessage('RepoOpChanged', (payload) => {
+  logger.debug('[diag] RepoOpChanged received', payload, Array.from(deletingArchiveNames.value))
   if (repo.value && payload.repo_id === repo.value.id) {
     currentOp.value = payload.op
     // Once this repo's active operation is no longer a delete or the
@@ -406,6 +413,7 @@ function isArchiveDeleting(name: string): boolean {
 }
 
 function requestArchiveDeletion(archive: ArchiveEntry): void {
+  logger.debug('[diag] requestArchiveDeletion', archive.name, isArchiveDeleting(archive.name))
   if (isArchiveDeleting(archive.name)) return
   archivePendingDeletion.value = archive
 }
@@ -418,6 +426,7 @@ function closeArchiveDeleteDialog(): void {
 
 async function confirmArchiveDeletion(): Promise<void> {
   const archive = archivePendingDeletion.value
+  logger.debug('[diag] confirmArchiveDeletion called', archive?.name ?? null)
   if (!archive) return
   archiveDeleteLoading.value = true
   // Mark it deleting before the request goes out, not after it resolves: the
@@ -426,8 +435,15 @@ async function confirmArchiveDeletion(): Promise<void> {
   // show "in flight" the instant the user confirms rather than staying
   // clickable-again until the response comes back.
   deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
+  logger.debug(
+    '[diag] marked deleting',
+    archive.name,
+    Array.from(deletingArchiveNames.value),
+    isArchiveDeleting(archive.name),
+  )
   try {
     await deleteArchiveByName(archive)
+    logger.debug('[diag] deleteArchiveByName resolved', archive.name)
     archivePendingDeletion.value = null
     if (selectedArchive.value?.name === archive.name) {
       selectedArchive.value = null
@@ -435,6 +451,7 @@ async function confirmArchiveDeletion(): Promise<void> {
     await refreshRepo()
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
+    logger.debug('[diag] deleteArchiveByName threw', archive.name, e)
     toastError(extractError(e))
     // The request never made it (or the server rejected it), so it was
     // never actually queued - undo the optimistic mark.

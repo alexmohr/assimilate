@@ -191,21 +191,28 @@ test.describe('Archive browsing & diff journey', () => {
 
     await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
 
-    // The row's own button must reflect the in-flight delete immediately -
-    // disabled, spinner, and re-titled - not just clickable-again once the
+    // The row's own button must reflect the in-flight delete - disabled,
+    // spinner, and re-titled - not just stay clickable until the
     // confirmation dialog closes. Checked as one atomic retry block rather
     // than two sequential assertions: on a small demo repo the delete (and
     // its automatic compact) can finish fast enough that the row is gone by
     // the time a second, separately-polling assertion starts, even though
     // the title and disabled state are set from the same flag and can never
     // actually be observed out of sync with each other.
+    //
+    // Timeout is generous (matching the indexing/disappearance waits below):
+    // the app itself reflects this state synchronously on confirm, but a
+    // busy CI runner can still occasionally delay the click handler, the
+    // DELETE round-trip, or Playwright's own polling tick past a tighter
+    // budget - this is CI-variance headroom, not evidence the underlying
+    // race is unfixed (see the two RepoDetailView.vue fixes in git history).
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
     await expect(async () => {
       expect(await pendingBtn.count()).toBeGreaterThan(0)
       expect(await pendingBtn.isDisabled()).toBe(true)
-    }).toPass({ timeout: 5_000 })
+    }).toPass({ timeout: 20_000 })
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

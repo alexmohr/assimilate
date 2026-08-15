@@ -1019,6 +1019,47 @@ describe('RepoDetailView', () => {
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
     })
 
+    it('removes the row and clears its in-progress state directly on ArchiveDeleted, without a DataChanged refresh', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // No further loadArchives call and no DataChanged - ArchiveDeleted
+      // alone must be enough to drop the row. sortedArchives is mocked as
+      // an independent ref here (a real computed in production, derived
+      // from archives), so check the underlying archives list this handler
+      // actually mutates rather than rendered text.
+      const callsBefore = mockLoadArchives.mock.calls.length
+      wsHandlers.ArchiveDeleted({ repo_id: mockRepo.id, archive_name: deletingArchive.name })
+      await flushPromises()
+
+      expect(mockLoadArchives.mock.calls.length).toBe(callsBefore)
+      expect(mockBrowserArchives.value.some((a) => a.name === deletingArchive.name)).toBe(false)
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('ignores ArchiveDeleted events for a different repository', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      wsHandlers.ArchiveDeleted({ repo_id: mockRepo.id + 1, archive_name: deletingArchive.name })
+      await flushPromises()
+
+      expect(mockBrowserArchives.value.some((a) => a.name === deletingArchive.name)).toBe(true)
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+    })
+
     it('clears stale in-progress state once RepoOpChanged reports the repo is no longer deleting', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)

@@ -193,23 +193,28 @@ test.describe('Archive browsing & diff journey', () => {
     await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
 
     // RepoDetailView marks the row as deleting synchronously, before the
-    // DELETE request even goes out. An earlier version of this test papered
-    // over an observability gap here with an artificial WebSocket delay -
-    // removed once the actual bug was found and fixed: RepoOpChanged's
-    // stale-marker cleanup used to clear deletingArchiveNames immediately,
-    // racing DataChanged's own list-refresh-driven prune for a delete that
-    // had just succeeded. It now refetches before clearing (see
-    // RepoDetailView.vue), so the two no longer race.
+    // DELETE request even goes out. Two earlier real races have since been
+    // fixed at the app level rather than papered over here: RepoOpChanged's
+    // stale-marker cleanup used to clear deletingArchiveNames immediately
+    // against possibly-stale local state, racing DataChanged's own
+    // list-refresh-driven prune for a delete that had just succeeded (it
+    // now refetches before clearing); and the client used to learn a delete
+    // had finished only via the generic DataChanged signal, forcing a full
+    // list refetch-and-diff to notice this specific archive was gone. The
+    // server now also broadcasts a precise ArchiveDeleted { archive_name }
+    // event the moment this archive's delete + auto-compact finish, which
+    // RepoDetailView applies directly and synchronously - no refetch in the
+    // loop for the common success path at all.
     //
     // What's left is a plain Playwright coordination gap, not an app race:
     // two separate `expect().toBeVisible()`/`expect().toBeDisabled()` calls
     // each poll the DOM on their own schedule, so the row can appear (proof
     // the marking above ran) and then disappear (the delete finishing) in
     // the gap between the two polls, on a backend fast enough to complete
-    // the whole delete+compact+notify+refetch cycle inside it. `toPass`
-    // re-reads both properties together in one atomic check, so either the
-    // row is caught in the pending state with both properties true at once,
-    // or the retry loop keeps trying - it does not tolerate the row never
+    // the whole delete+compact+notify cycle inside it. `toPass` re-reads
+    // both properties together in one atomic check, so either the row is
+    // caught in the pending state with both properties true at once, or the
+    // retry loop keeps trying - it does not tolerate the row never
     // appearing at all, or being visible-but-not-disabled. A fixed, tight
     // interval (rather than toPass's default 100/250/500/1000ms backoff,
     // which samples far less often over 5s) matters here: a CI run once

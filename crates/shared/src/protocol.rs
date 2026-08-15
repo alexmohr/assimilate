@@ -566,6 +566,18 @@ pub enum ServerToUi {
         /// The current operation, or `None` if no operation is active.
         op: Option<ActiveRepoOp>,
     },
+    /// Notification that a specific archive was deleted (delete + the
+    /// automatic compact that follows it both finished successfully). Fired
+    /// alongside the generic `DataChanged` refresh signal so a client
+    /// tracking this exact archive can react immediately, without waiting on
+    /// a full list refetch to notice it's gone.
+    ArchiveDeleted {
+        /// The repository the archive was deleted from.
+        #[ts(type = "number")]
+        repo_id: i64,
+        /// The name of the deleted archive.
+        archive_name: String,
+    },
     /// Log line emitted during a backup.
     BackupLog {
         /// The hostname of the agent generating the log.
@@ -923,6 +935,15 @@ mod tests {
             repo_id: 7,
             line: r#"{"type":"log_message","levelname":"WARNING","message":"File changed"}"#
                 .to_owned(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_ui_archive_deleted_round_trips() {
+        let msg = ServerToUi::ArchiveDeleted {
+            repo_id: 7,
+            archive_name: "server-daily-2024-01-01T02:00:00".to_owned(),
         };
         assert_round_trips(&msg);
     }

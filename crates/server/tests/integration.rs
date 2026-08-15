@@ -1483,6 +1483,102 @@ async fn test_delete_archive_transitions_straight_to_compact_without_a_stale_dra
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_delete_archive_broadcasts_archive_deleted_before_data_changed() {
+    use tokio::time::{Duration, timeout};
+
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let mut ws_rx = state.ui_broadcast.subscribe();
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('archive-deleted-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "archive-deleted-broadcast-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The precise ArchiveDeleted event must name the deleted archive and
+    // arrive before the generic DataChanged refresh signal - a client
+    // reacting to it directly shouldn't have to wait on (or race) the
+    // broader refetch-and-diff path.
+    let (archive_deleted_at, data_changed_at) = timeout(Duration::from_secs(10), async {
+        let mut archive_deleted_at = None;
+        let mut data_changed_at = None;
+        let mut position = 0usize;
+        loop {
+            let msg = loop {
+                match ws_rx.recv().await {
+                    Ok(m) => break m,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(e) => panic!("ui broadcast channel closed unexpectedly: {e}"),
+                }
+            };
+            match msg {
+                shared::protocol::ServerToUi::ArchiveDeleted {
+                    repo_id: rid,
+                    archive_name,
+                } if rid == repo_id => {
+                    assert_eq!(archive_name, "delete-me");
+                    archive_deleted_at = Some(position);
+                }
+                shared::protocol::ServerToUi::DataChanged if archive_deleted_at.is_some() => {
+                    data_changed_at = Some(position);
+                }
+                _ => {}
+            }
+            if let (Some(a), Some(d)) = (archive_deleted_at, data_changed_at) {
+                return (a, d);
+            }
+            position += 1;
+        }
+    })
+    .await
+    .expect("should observe both ArchiveDeleted and a subsequent DataChanged");
+
+    assert!(
+        archive_deleted_at < data_changed_at,
+        "ArchiveDeleted should broadcast before DataChanged"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_delete_multiple_archives_queues_without_conflict() {
     use tokio::time::{Duration, timeout};
 

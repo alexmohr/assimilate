@@ -668,6 +668,15 @@ async fn run_archive_deletion(
             op: state.repo_op_tracker.get(repo_id).await,
         });
 
+    // Precise, before the generic refresh signal: a client tracking this
+    // exact archive can react immediately, without waiting on a full list
+    // refetch (triggered by DataChanged below) to notice it's gone.
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::ArchiveDeleted {
+            repo_id,
+            archive_name,
+        });
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);

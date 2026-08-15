@@ -324,18 +324,38 @@ async function acceptHostKey(): Promise<void> {
 
 const { onMessage } = useWebSocket()
 
+onMessage('ArchiveDeleted', (payload) => {
+  if (repo.value && payload.repo_id === repo.value.id) {
+    // Precise and synchronous: the server names exactly which archive
+    // finished deleting, so drop it from the list directly instead of
+    // waiting on DataChanged's full refetch-and-diff below to eventually
+    // notice it's gone.
+    archives.value = archives.value.filter((a) => a.name !== payload.archive_name)
+    if (deletingArchiveNames.value.has(payload.archive_name)) {
+      const next = new Set(deletingArchiveNames.value)
+      next.delete(payload.archive_name)
+      deletingArchiveNames.value = next
+    }
+    if (selectedArchive.value?.name === payload.archive_name) {
+      selectedArchive.value = null
+    }
+  }
+})
+
 onMessage('DataChanged', () => {
   refreshRepo().catch(logger.error)
   // Silent: this refresh runs in the background on every DataChanged event,
   // not just ones the user triggered - blanking the whole list to a loading
   // placeholder while it's in flight would hide unrelated UI state (like an
   // in-progress delete's row) for no reason.
+  //
+  // A successful delete is already handled directly by ArchiveDeleted above
+  // (fired before this); what's left to prune here is a delete that failed
+  // (the archive never actually left the list, so ArchiveDeleted never
+  // fired for it) - the RepoOpChanged handler below sweeps that stale
+  // marker once the repo's delete queue drains.
   loadArchives(true)
     .then(() => {
-      // An archive that's gone from the freshly-loaded list was actually
-      // deleted - stop tracking it as in-flight. One still present just
-      // hasn't finished yet (or failed and stayed); the RepoOpChanged
-      // handler below sweeps those once the repo's delete queue drains.
       const stillPresent = new Set(sortedArchives.value.map((a) => a.name))
       const next = new Set([...deletingArchiveNames.value].filter((name) => stillPresent.has(name)))
       if (next.size !== deletingArchiveNames.value.size) {
@@ -390,8 +410,14 @@ onMessage('RepoOpChanged', (payload) => {
 })
 
 // Archive browser
-const { sortedArchives, archivesLoading, archivesError, loadArchives, deleteArchiveByName } =
-  useArchiveBrowser(repoIdRef)
+const {
+  archives,
+  sortedArchives,
+  archivesLoading,
+  archivesError,
+  loadArchives,
+  deleteArchiveByName,
+} = useArchiveBrowser(repoIdRef)
 
 const selectedArchive = ref<ArchiveEntry | null>(null)
 

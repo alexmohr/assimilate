@@ -48,6 +48,7 @@ const {
   showDeleteModal,
   deleteTarget,
   deleteSubmitting,
+  deleteError,
   fetchTokens,
   openCreate: openCreateToken,
   submitCreate: submitCreateToken,
@@ -726,6 +727,12 @@ onMounted(async () => {
               Delete token <strong>{{ deleteTarget?.name }}</strong
               >? Any integrations using this token will stop working.
             </p>
+            <div
+              v-if="deleteError"
+              class="msg msg-error"
+            >
+              {{ deleteError }}
+            </div>
           </div>
           <div class="dialog-footer">
             <button

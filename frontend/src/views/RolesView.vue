@@ -215,7 +215,7 @@ onMounted((): void => {
 <template>
   <div class="roles-page">
     <div class="page-header">
-      <span class="page-title">Roles</span>
+      <h1 class="page-title">Roles</h1>
       <div class="header-actions">
         <button
           class="btn btn-primary"

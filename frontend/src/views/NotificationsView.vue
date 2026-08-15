@@ -44,6 +44,7 @@ import type {
 } from '../types/notifications'
 import type { Repo } from '../types/repo'
 import { apiClient } from '../api/client'
+import BaseModal from '../components/BaseModal.vue'
 
 type TabId = 'channels' | 'history'
 
@@ -912,633 +913,587 @@ onMounted(() => {
     </div>
 
     <!-- Add Channel Wizard -->
-    <Teleport to="body">
-      <div
-        v-if="showAddChannelDialog"
-        class="overlay"
-        @click.self="showAddChannelDialog = false"
-      >
-        <div class="dialog dialog-wizard">
-          <div class="dialog-header">
-            <h2 class="dialog-title">New Channel</h2>
-            <span class="wizard-step-indicator">Step {{ wizardStep }} of 3</span>
-            <button
-              class="close-btn"
-              @click="showAddChannelDialog = false"
+    <BaseModal
+      :open="showAddChannelDialog"
+      size="lg"
+      title="New Channel"
+      @close="showAddChannelDialog = false"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          New Channel
+        </h2>
+        <span class="wizard-step-indicator">Step {{ wizardStep }} of 3</span>
+      </template>
+      <!-- Step 1: Type & Config -->
+      <template v-if="wizardStep === 1">
+        <div class="field">
+          <label class="field-label">Type <span class="required">*</span></label>
+          <select
+            v-model="addChannelForm.channel_type"
+            class="input"
+            @change="resetAddChannelConfig"
+          >
+            <option
+              v-for="ct in CHANNEL_TYPES"
+              :key="ct"
+              :value="ct"
             >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <!-- Step 1: Type & Config -->
-            <template v-if="wizardStep === 1">
-              <div class="field">
-                <label class="field-label">Type <span class="required">*</span></label>
-                <select
-                  v-model="addChannelForm.channel_type"
-                  class="input"
-                  @change="resetAddChannelConfig"
-                >
-                  <option
-                    v-for="ct in CHANNEL_TYPES"
-                    :key="ct"
-                    :value="ct"
-                  >
-                    {{ channelTypeLabel(ct) }}
-                  </option>
-                </select>
-              </div>
-              <div class="field">
-                <label class="field-label">Name <span class="required">*</span></label>
-                <input
-                  v-model="addChannelForm.name"
-                  class="input"
-                  placeholder="e.g. Ops Email"
-                />
-              </div>
-
-              <!-- Email Config -->
-              <template v-if="addChannelForm.channel_type === 'email'">
-                <div class="field">
-                  <label class="field-label">SMTP Host <span class="required">*</span></label>
-                  <input
-                    v-model="addChannelEmailCfg.smtp_host"
-                    class="input mono"
-                    placeholder="smtp.example.com"
-                  />
-                </div>
-                <div class="field-row">
-                  <div class="field">
-                    <label class="field-label">SMTP User</label>
-                    <input
-                      v-model="addChannelEmailCfg.smtp_user"
-                      class="input"
-                    />
-                  </div>
-                  <div class="field field-narrow">
-                    <label class="field-label">Port</label>
-                    <input
-                      v-model.number="addChannelEmailCfg.smtp_port"
-                      class="input"
-                      type="number"
-                    />
-                  </div>
-                </div>
-                <div class="field">
-                  <label class="field-label">SMTP Password</label>
-                  <input
-                    v-model="addChannelEmailCfg.smtp_password"
-                    class="input"
-                    type="password"
-                  />
-                </div>
-                <div class="field">
-                  <label class="field-label">From Address <span class="required">*</span></label>
-                  <input
-                    v-model="addChannelEmailCfg.from_address"
-                    class="input"
-                    placeholder="noreply@example.com"
-                  />
-                </div>
-                <div class="field">
-                  <label class="field-label">To Addresses <span class="required">*</span></label>
-                  <input
-                    v-model="toAddressesInput"
-                    class="input"
-                    placeholder="admin@example.com, ops@example.com"
-                  />
-                  <span class="field-hint">Comma-separated email addresses</span>
-                </div>
-                <div class="field">
-                  <label class="field-label">Security</label>
-                  <select
-                    v-model="addChannelEmailCfg.security"
-                    class="input"
-                  >
-                    <option value="starttls">STARTTLS (port 587)</option>
-                    <option value="tls">SSL/TLS (port 465)</option>
-                    <option value="none">None (insecure)</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    :disabled="smtpValidating"
-                    @click="validateSmtpCredentials(addChannelEmailCfg)"
-                  >
-                    {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
-                  </button>
-                  <span
-                    v-if="smtpValidationResult"
-                    class="smtp-validation-result"
-                    :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
-                  >
-                    {{ smtpValidationResult.message }}
-                  </span>
-                </div>
-              </template>
-
-              <!-- Webhook Config -->
-              <template v-if="addChannelForm.channel_type === 'webhook'">
-                <div class="field">
-                  <label class="field-label">URL <span class="required">*</span></label>
-                  <input
-                    v-model="addChannelWebhookCfg.url"
-                    class="input mono"
-                    placeholder="https://hooks.example.com/notify"
-                  />
-                </div>
-              </template>
-
-              <!-- Web Push hint -->
-              <div
-                v-if="addChannelForm.channel_type === 'web_push' && !vapidConfigured"
-                class="form-hint-warning"
-              >
-                VAPID keys must be configured before creating a Web Push channel.
-              </div>
-
-              <div class="field">
-                <ToggleSwitch
-                  :model-value="addChannelForm.enabled"
-                  @update:model-value="addChannelForm.enabled = $event"
-                >
-                  Enable immediately
-                </ToggleSwitch>
-              </div>
-            </template>
-
-            <!-- Step 2: Events -->
-            <template v-if="wizardStep === 2">
-              <p class="step-description">Select which events should trigger this channel.</p>
-              <div class="events-list">
-                <div
-                  v-for="et in EVENT_TYPES"
-                  :key="et"
-                  class="event-item"
-                >
-                  <ToggleSwitch
-                    :model-value="wizardEvents.includes(et)"
-                    @update:model-value="toggleWizardEvent(et)"
-                  />
-                  <span class="event-label">{{ eventTypeLabel(et) }}</span>
-                </div>
-              </div>
-            </template>
-
-            <!-- Step 3: Scope -->
-            <template v-if="wizardStep === 3">
-              <p class="step-description">
-                Optionally restrict this channel to specific resources. Leave empty for all.
-              </p>
-              <input
-                v-model="scopeSearch"
-                class="input scope-search"
-                type="text"
-                placeholder="Search..."
-              />
-              <div class="scope-sections">
-                <div
-                  v-if="scopeRepos.length > 0"
-                  class="scope-section"
-                >
-                  <span class="scope-section-title">Repositories</span>
-                  <label
-                    v-for="opt in filteredScopeOptions(scopeRepos)"
-                    :key="'r' + opt.id"
-                    class="scope-item"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="isWizardScopeSelected('repo_ids', opt.id)"
-                      @change="toggleWizardScopeItem('repo_ids', opt.id)"
-                    />
-                    <span>{{ opt.label }}</span>
-                  </label>
-                </div>
-                <div
-                  v-if="scopeAgents.length > 0"
-                  class="scope-section"
-                >
-                  <span class="scope-section-title">Hosts</span>
-                  <label
-                    v-for="opt in filteredScopeOptions(scopeAgents)"
-                    :key="'c' + opt.id"
-                    class="scope-item"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="isWizardScopeSelected('agent_ids', opt.id)"
-                      @change="toggleWizardScopeItem('agent_ids', opt.id)"
-                    />
-                    <span>{{ opt.label }}</span>
-                  </label>
-                </div>
-                <div
-                  v-if="scopeSchedules.length > 0"
-                  class="scope-section"
-                >
-                  <span class="scope-section-title">Schedules</span>
-                  <label
-                    v-for="opt in filteredScopeOptions(scopeSchedules)"
-                    :key="'s' + opt.id"
-                    class="scope-item"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="isWizardScopeSelected('schedule_ids', opt.id)"
-                      @change="toggleWizardScopeItem('schedule_ids', opt.id)"
-                    />
-                    <span>{{ opt.label }}</span>
-                  </label>
-                </div>
-              </div>
-            </template>
-
-            <div
-              v-if="addChannelError"
-              class="form-error"
-            >
-              {{ addChannelError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              v-if="wizardStep > 1"
-              class="btn btn-ghost"
-              @click="wizardPrevStep"
-            >
-              Back
-            </button>
-            <button
-              v-else
-              class="btn btn-ghost"
-              @click="showAddChannelDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              v-if="wizardStep < 3"
-              class="btn btn-primary"
-              :disabled="wizardStep === 1 && !addChannelFormValid"
-              @click="wizardNextStep"
-            >
-              Next
-            </button>
-            <button
-              v-else
-              class="btn btn-primary"
-              :disabled="addChannelLoading"
-              @click="submitAddChannel"
-            >
-              {{ addChannelLoading ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+              {{ channelTypeLabel(ct) }}
+            </option>
+          </select>
         </div>
-      </div>
-    </Teleport>
+        <div class="field">
+          <label class="field-label">Name <span class="required">*</span></label>
+          <input
+            v-model="addChannelForm.name"
+            class="input"
+            placeholder="e.g. Ops Email"
+          />
+        </div>
 
-    <!-- Edit Channel Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showEditChannelDialog"
-        class="overlay"
-        @click.self="showEditChannelDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Edit Channel</h2>
-            <button
-              class="close-btn"
-              @click="showEditChannelDialog = false"
-            >
-              &times;
-            </button>
+        <!-- Email Config -->
+        <template v-if="addChannelForm.channel_type === 'email'">
+          <div class="field">
+            <label class="field-label">SMTP Host <span class="required">*</span></label>
+            <input
+              v-model="addChannelEmailCfg.smtp_host"
+              class="input mono"
+              placeholder="smtp.example.com"
+            />
           </div>
-          <div class="dialog-body">
+          <div class="field-row">
             <div class="field">
-              <label class="field-label">Name</label>
+              <label class="field-label">SMTP User</label>
               <input
-                v-model="editChannelForm.name"
+                v-model="addChannelEmailCfg.smtp_user"
                 class="input"
               />
             </div>
-
-            <!-- Email Config Edit -->
-            <template v-if="editChannelType() === 'email' && editChannelForm.config">
-              <div class="field">
-                <label class="field-label">SMTP Host</label>
-                <input
-                  v-model="editChannelEmailCfg.smtp_host"
-                  class="input mono"
-                />
-              </div>
-              <div class="field-row">
-                <div class="field">
-                  <label class="field-label">SMTP User</label>
-                  <input
-                    v-model="editChannelEmailCfg.smtp_user"
-                    class="input"
-                  />
-                </div>
-                <div class="field field-narrow">
-                  <label class="field-label">Port</label>
-                  <input
-                    v-model.number="editChannelEmailCfg.smtp_port"
-                    class="input"
-                    type="number"
-                  />
-                </div>
-              </div>
-              <div class="field">
-                <label class="field-label">SMTP Password</label>
-                <input
-                  v-model="editChannelEmailCfg.smtp_password"
-                  class="input"
-                  type="password"
-                />
-              </div>
-              <div class="field">
-                <label class="field-label">From Address</label>
-                <input
-                  v-model="editChannelEmailCfg.from_address"
-                  class="input"
-                />
-              </div>
-              <div class="field">
-                <label class="field-label">To Addresses</label>
-                <input
-                  v-model="editToAddressesInput"
-                  class="input"
-                  placeholder="admin@example.com, ops@example.com"
-                />
-                <span class="field-hint">Comma-separated email addresses</span>
-              </div>
-              <div class="field">
-                <label class="field-label">Security</label>
-                <select
-                  v-model="editChannelEmailCfg.security"
-                  class="input"
-                >
-                  <option value="starttls">STARTTLS (port 587)</option>
-                  <option value="tls">SSL/TLS (port 465)</option>
-                  <option value="none">None (insecure)</option>
-                </select>
-              </div>
-              <div class="field">
-                <button
-                  class="btn btn-sm btn-ghost"
-                  :disabled="smtpValidating"
-                  @click="validateSmtpCredentials(editChannelEmailCfg)"
-                >
-                  {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
-                </button>
-                <span
-                  v-if="smtpValidationResult"
-                  class="smtp-validation-result"
-                  :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
-                >
-                  {{ smtpValidationResult.message }}
-                </span>
-              </div>
-            </template>
-
-            <!-- Webhook Config Edit -->
-            <template v-if="editChannelType() === 'webhook' && editChannelForm.config">
-              <div class="field">
-                <label class="field-label">URL</label>
-                <input
-                  v-model="editChannelWebhookCfg.url"
-                  class="input mono"
-                />
-              </div>
-            </template>
-
-            <div class="field">
-              <ToggleSwitch
-                :model-value="editChannelForm.enabled ?? false"
-                @update:model-value="editChannelForm.enabled = $event"
-              >
-                Enabled
-              </ToggleSwitch>
-            </div>
-            <div
-              v-if="editChannelError"
-              class="form-error"
-            >
-              {{ editChannelError }}
+            <div class="field field-narrow">
+              <label class="field-label">Port</label>
+              <input
+                v-model.number="addChannelEmailCfg.smtp_port"
+                class="input"
+                type="number"
+              />
             </div>
           </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showEditChannelDialog = false"
+          <div class="field">
+            <label class="field-label">SMTP Password</label>
+            <input
+              v-model="addChannelEmailCfg.smtp_password"
+              class="input"
+              type="password"
+            />
+          </div>
+          <div class="field">
+            <label class="field-label">From Address <span class="required">*</span></label>
+            <input
+              v-model="addChannelEmailCfg.from_address"
+              class="input"
+              placeholder="noreply@example.com"
+            />
+          </div>
+          <div class="field">
+            <label class="field-label">To Addresses <span class="required">*</span></label>
+            <input
+              v-model="toAddressesInput"
+              class="input"
+              placeholder="admin@example.com, ops@example.com"
+            />
+            <span class="field-hint">Comma-separated email addresses</span>
+          </div>
+          <div class="field">
+            <label class="field-label">Security</label>
+            <select
+              v-model="addChannelEmailCfg.security"
+              class="input"
             >
-              Cancel
-            </button>
+              <option value="starttls">STARTTLS (port 587)</option>
+              <option value="tls">SSL/TLS (port 465)</option>
+              <option value="none">None (insecure)</option>
+            </select>
+          </div>
+          <div class="field">
             <button
-              class="btn btn-primary"
-              :disabled="editChannelLoading"
-              @click="submitEditChannel"
+              class="btn btn-sm btn-ghost"
+              :disabled="smtpValidating"
+              @click="validateSmtpCredentials(addChannelEmailCfg)"
             >
-              {{ editChannelLoading ? 'Saving...' : 'Save' }}
+              {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
             </button>
+            <span
+              v-if="smtpValidationResult"
+              class="smtp-validation-result"
+              :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
+            >
+              {{ smtpValidationResult.message }}
+            </span>
+          </div>
+        </template>
+
+        <!-- Webhook Config -->
+        <template v-if="addChannelForm.channel_type === 'webhook'">
+          <div class="field">
+            <label class="field-label">URL <span class="required">*</span></label>
+            <input
+              v-model="addChannelWebhookCfg.url"
+              class="input mono"
+              placeholder="https://hooks.example.com/notify"
+            />
+          </div>
+        </template>
+
+        <!-- Web Push hint -->
+        <div
+          v-if="addChannelForm.channel_type === 'web_push' && !vapidConfigured"
+          class="form-hint-warning"
+        >
+          VAPID keys must be configured before creating a Web Push channel.
+        </div>
+
+        <div class="field">
+          <ToggleSwitch
+            :model-value="addChannelForm.enabled"
+            @update:model-value="addChannelForm.enabled = $event"
+          >
+            Enable immediately
+          </ToggleSwitch>
+        </div>
+      </template>
+
+      <!-- Step 2: Events -->
+      <template v-if="wizardStep === 2">
+        <p class="step-description">Select which events should trigger this channel.</p>
+        <div class="events-list">
+          <div
+            v-for="et in EVENT_TYPES"
+            :key="et"
+            class="event-item"
+          >
+            <ToggleSwitch
+              :model-value="wizardEvents.includes(et)"
+              @update:model-value="toggleWizardEvent(et)"
+            />
+            <span class="event-label">{{ eventTypeLabel(et) }}</span>
           </div>
         </div>
+      </template>
+
+      <!-- Step 3: Scope -->
+      <template v-if="wizardStep === 3">
+        <p class="step-description">
+          Optionally restrict this channel to specific resources. Leave empty for all.
+        </p>
+        <input
+          v-model="scopeSearch"
+          class="input scope-search"
+          type="text"
+          placeholder="Search..."
+        />
+        <div class="scope-sections">
+          <div
+            v-if="scopeRepos.length > 0"
+            class="scope-section"
+          >
+            <span class="scope-section-title">Repositories</span>
+            <label
+              v-for="opt in filteredScopeOptions(scopeRepos)"
+              :key="'r' + opt.id"
+              class="scope-item"
+            >
+              <input
+                type="checkbox"
+                :checked="isWizardScopeSelected('repo_ids', opt.id)"
+                @change="toggleWizardScopeItem('repo_ids', opt.id)"
+              />
+              <span>{{ opt.label }}</span>
+            </label>
+          </div>
+          <div
+            v-if="scopeAgents.length > 0"
+            class="scope-section"
+          >
+            <span class="scope-section-title">Hosts</span>
+            <label
+              v-for="opt in filteredScopeOptions(scopeAgents)"
+              :key="'c' + opt.id"
+              class="scope-item"
+            >
+              <input
+                type="checkbox"
+                :checked="isWizardScopeSelected('agent_ids', opt.id)"
+                @change="toggleWizardScopeItem('agent_ids', opt.id)"
+              />
+              <span>{{ opt.label }}</span>
+            </label>
+          </div>
+          <div
+            v-if="scopeSchedules.length > 0"
+            class="scope-section"
+          >
+            <span class="scope-section-title">Schedules</span>
+            <label
+              v-for="opt in filteredScopeOptions(scopeSchedules)"
+              :key="'s' + opt.id"
+              class="scope-item"
+            >
+              <input
+                type="checkbox"
+                :checked="isWizardScopeSelected('schedule_ids', opt.id)"
+                @change="toggleWizardScopeItem('schedule_ids', opt.id)"
+              />
+              <span>{{ opt.label }}</span>
+            </label>
+          </div>
+        </div>
+      </template>
+
+      <div
+        v-if="addChannelError"
+        class="form-error"
+      >
+        {{ addChannelError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          v-if="wizardStep > 1"
+          class="btn btn-ghost"
+          @click="wizardPrevStep"
+        >
+          Back
+        </button>
+        <button
+          v-else
+          class="btn btn-ghost"
+          @click="showAddChannelDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          v-if="wizardStep < 3"
+          class="btn btn-primary"
+          :disabled="wizardStep === 1 && !addChannelFormValid"
+          @click="wizardNextStep"
+        >
+          Next
+        </button>
+        <button
+          v-else
+          class="btn btn-primary"
+          :disabled="addChannelLoading"
+          @click="submitAddChannel"
+        >
+          {{ addChannelLoading ? 'Creating...' : 'Create' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Edit Channel Dialog -->
+    <BaseModal
+      :open="showEditChannelDialog"
+      title="Edit Channel"
+      @close="showEditChannelDialog = false"
+    >
+      <div class="field">
+        <label class="field-label">Name</label>
+        <input
+          v-model="editChannelForm.name"
+          class="input"
+        />
+      </div>
+
+      <!-- Email Config Edit -->
+      <template v-if="editChannelType() === 'email' && editChannelForm.config">
+        <div class="field">
+          <label class="field-label">SMTP Host</label>
+          <input
+            v-model="editChannelEmailCfg.smtp_host"
+            class="input mono"
+          />
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label class="field-label">SMTP User</label>
+            <input
+              v-model="editChannelEmailCfg.smtp_user"
+              class="input"
+            />
+          </div>
+          <div class="field field-narrow">
+            <label class="field-label">Port</label>
+            <input
+              v-model.number="editChannelEmailCfg.smtp_port"
+              class="input"
+              type="number"
+            />
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">SMTP Password</label>
+          <input
+            v-model="editChannelEmailCfg.smtp_password"
+            class="input"
+            type="password"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label">From Address</label>
+          <input
+            v-model="editChannelEmailCfg.from_address"
+            class="input"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label">To Addresses</label>
+          <input
+            v-model="editToAddressesInput"
+            class="input"
+            placeholder="admin@example.com, ops@example.com"
+          />
+          <span class="field-hint">Comma-separated email addresses</span>
+        </div>
+        <div class="field">
+          <label class="field-label">Security</label>
+          <select
+            v-model="editChannelEmailCfg.security"
+            class="input"
+          >
+            <option value="starttls">STARTTLS (port 587)</option>
+            <option value="tls">SSL/TLS (port 465)</option>
+            <option value="none">None (insecure)</option>
+          </select>
+        </div>
+        <div class="field">
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="smtpValidating"
+            @click="validateSmtpCredentials(editChannelEmailCfg)"
+          >
+            {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
+          </button>
+          <span
+            v-if="smtpValidationResult"
+            class="smtp-validation-result"
+            :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
+          >
+            {{ smtpValidationResult.message }}
+          </span>
+        </div>
+      </template>
+
+      <!-- Webhook Config Edit -->
+      <template v-if="editChannelType() === 'webhook' && editChannelForm.config">
+        <div class="field">
+          <label class="field-label">URL</label>
+          <input
+            v-model="editChannelWebhookCfg.url"
+            class="input mono"
+          />
+        </div>
+      </template>
+
+      <div class="field">
+        <ToggleSwitch
+          :model-value="editChannelForm.enabled ?? false"
+          @update:model-value="editChannelForm.enabled = $event"
+        >
+          Enabled
+        </ToggleSwitch>
+      </div>
+      <div
+        v-if="editChannelError"
+        class="form-error"
+      >
+        {{ editChannelError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showEditChannelDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          :disabled="editChannelLoading"
+          @click="submitEditChannel"
+        >
+          {{ editChannelLoading ? 'Saving...' : 'Save' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Delete Channel Dialog -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showDeleteChannelDialog"
+      title="Delete Channel"
+      size="sm"
+      @close="showDeleteChannelDialog = false"
+    >
+      <p class="confirm-text">
+        Delete channel <strong>{{ deleteChannelName }}</strong
+        >? All associated rules will also be removed.
+      </p>
       <div
-        v-if="showDeleteChannelDialog"
-        class="overlay"
-        @click.self="showDeleteChannelDialog = false"
+        v-if="deleteChannelError"
+        class="form-error"
       >
-        <div class="dialog dialog-sm">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Channel</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteChannelDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="confirm-text">
-              Delete channel <strong>{{ deleteChannelName }}</strong
-              >? All associated rules will also be removed.
-            </p>
-            <div
-              v-if="deleteChannelError"
-              class="form-error"
-            >
-              {{ deleteChannelError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteChannelDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteChannelLoading"
-              @click="confirmDeleteChannel"
-            >
-              {{ deleteChannelLoading ? 'Deleting...' : 'Delete' }}
-            </button>
-          </div>
-        </div>
+        {{ deleteChannelError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteChannelDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteChannelLoading"
+          @click="confirmDeleteChannel"
+        >
+          {{ deleteChannelLoading ? 'Deleting...' : 'Delete' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Events Edit Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showEventsModal && activeEventsChannel"
-        class="overlay"
-        @click.self="showEventsModal = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Events — {{ activeEventsChannel.name }}</h2>
-            <button
-              class="close-btn"
-              @click="showEventsModal = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="step-description">
-              Toggle which events trigger notifications for this channel.
-            </p>
-            <div class="events-list">
-              <div
-                v-for="et in EVENT_TYPES"
-                :key="et"
-                class="event-item"
-              >
-                <ToggleSwitch
-                  :model-value="isEventEnabled(activeEventsChannel.id, et)"
-                  :disabled="isRuleToggling(activeEventsChannel.id, et)"
-                  @update:model-value="toggleRule(activeEventsChannel.id, et)"
-                />
-                <span class="event-label">{{ eventTypeLabel(et) }}</span>
-              </div>
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showEventsModal = false"
-            >
-              Done
-            </button>
-          </div>
+    <BaseModal
+      v-if="activeEventsChannel"
+      :open="showEventsModal"
+      @close="showEventsModal = false"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Events — {{ activeEventsChannel.name }}
+        </h2>
+      </template>
+      <p class="step-description">Toggle which events trigger notifications for this channel.</p>
+      <div class="events-list">
+        <div
+          v-for="et in EVENT_TYPES"
+          :key="et"
+          class="event-item"
+        >
+          <ToggleSwitch
+            :model-value="isEventEnabled(activeEventsChannel.id, et)"
+            :disabled="isRuleToggling(activeEventsChannel.id, et)"
+            @update:model-value="toggleRule(activeEventsChannel.id, et)"
+          />
+          <span class="event-label">{{ eventTypeLabel(et) }}</span>
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showEventsModal = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Scope Edit Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showScopeModal && activeScopeChannel"
-        class="overlay"
-        @click.self="showScopeModal = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Scope — {{ activeScopeChannel.name }}</h2>
-            <button
-              class="close-btn"
-              @click="showScopeModal = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="step-description">
-              Restrict this channel to specific resources. Leave empty for all.
-            </p>
+    <BaseModal
+      v-if="activeScopeChannel"
+      :open="showScopeModal"
+      @close="showScopeModal = false"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Scope — {{ activeScopeChannel.name }}
+        </h2>
+      </template>
+      <p class="step-description">
+        Restrict this channel to specific resources. Leave empty for all.
+      </p>
+      <input
+        v-model="scopeSearch"
+        class="input scope-search"
+        type="text"
+        placeholder="Search..."
+      />
+      <div class="scope-sections">
+        <div
+          v-if="scopeRepos.length > 0"
+          class="scope-section"
+        >
+          <span class="scope-section-title">Repositories</span>
+          <label
+            v-for="opt in filteredScopeOptions(scopeRepos)"
+            :key="'r' + opt.id"
+            class="scope-item"
+          >
             <input
-              v-model="scopeSearch"
-              class="input scope-search"
-              type="text"
-              placeholder="Search..."
+              type="checkbox"
+              :checked="isScopeSelected(activeScopeChannel, 'repo_ids', opt.id)"
+              @change="toggleScopeItem(activeScopeChannel, 'repo_ids', opt.id)"
             />
-            <div class="scope-sections">
-              <div
-                v-if="scopeRepos.length > 0"
-                class="scope-section"
-              >
-                <span class="scope-section-title">Repositories</span>
-                <label
-                  v-for="opt in filteredScopeOptions(scopeRepos)"
-                  :key="'r' + opt.id"
-                  class="scope-item"
-                >
-                  <input
-                    type="checkbox"
-                    :checked="isScopeSelected(activeScopeChannel, 'repo_ids', opt.id)"
-                    @change="toggleScopeItem(activeScopeChannel, 'repo_ids', opt.id)"
-                  />
-                  <span>{{ opt.label }}</span>
-                </label>
-              </div>
-              <div
-                v-if="scopeAgents.length > 0"
-                class="scope-section"
-              >
-                <span class="scope-section-title">Hosts</span>
-                <label
-                  v-for="opt in filteredScopeOptions(scopeAgents)"
-                  :key="'c' + opt.id"
-                  class="scope-item"
-                >
-                  <input
-                    type="checkbox"
-                    :checked="isScopeSelected(activeScopeChannel, 'agent_ids', opt.id)"
-                    @change="toggleScopeItem(activeScopeChannel, 'agent_ids', opt.id)"
-                  />
-                  <span>{{ opt.label }}</span>
-                </label>
-              </div>
-              <div
-                v-if="scopeSchedules.length > 0"
-                class="scope-section"
-              >
-                <span class="scope-section-title">Schedules</span>
-                <label
-                  v-for="opt in filteredScopeOptions(scopeSchedules)"
-                  :key="'s' + opt.id"
-                  class="scope-item"
-                >
-                  <input
-                    type="checkbox"
-                    :checked="isScopeSelected(activeScopeChannel, 'schedule_ids', opt.id)"
-                    @change="toggleScopeItem(activeScopeChannel, 'schedule_ids', opt.id)"
-                  />
-                  <span>{{ opt.label }}</span>
-                </label>
-              </div>
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showScopeModal = false"
-            >
-              Done
-            </button>
-          </div>
+            <span>{{ opt.label }}</span>
+          </label>
+        </div>
+        <div
+          v-if="scopeAgents.length > 0"
+          class="scope-section"
+        >
+          <span class="scope-section-title">Hosts</span>
+          <label
+            v-for="opt in filteredScopeOptions(scopeAgents)"
+            :key="'c' + opt.id"
+            class="scope-item"
+          >
+            <input
+              type="checkbox"
+              :checked="isScopeSelected(activeScopeChannel, 'agent_ids', opt.id)"
+              @change="toggleScopeItem(activeScopeChannel, 'agent_ids', opt.id)"
+            />
+            <span>{{ opt.label }}</span>
+          </label>
+        </div>
+        <div
+          v-if="scopeSchedules.length > 0"
+          class="scope-section"
+        >
+          <span class="scope-section-title">Schedules</span>
+          <label
+            v-for="opt in filteredScopeOptions(scopeSchedules)"
+            :key="'s' + opt.id"
+            class="scope-item"
+          >
+            <input
+              type="checkbox"
+              :checked="isScopeSelected(activeScopeChannel, 'schedule_ids', opt.id)"
+              @change="toggleScopeItem(activeScopeChannel, 'schedule_ids', opt.id)"
+            />
+            <span>{{ opt.label }}</span>
+          </label>
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showScopeModal = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -1915,9 +1870,6 @@ onMounted(() => {
 }
 
 /* Wizard */
-.dialog-wizard {
-  max-width: 520px;
-}
 
 .wizard-step-indicator {
   font-size: var(--fs-xs);

@@ -34,6 +34,7 @@ import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/sc
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
+import BaseModal from '../components/BaseModal.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -1792,201 +1793,141 @@ watch(wsStatus, (newStatus, oldStatus) => {
     </template>
 
     <!-- Token Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showTokenDialog"
-        class="overlay"
-        @click.self="showTokenDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ regenToken ? 'New Token Generated' : 'Error' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="showTokenDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <template v-if="regenToken">
-              <p class="token-warning">Copy this token now. It will not be shown again.</p>
-              <div class="token-box">
-                <code class="token-text">{{ regenToken }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="copyToClipboard(regenToken ?? '')"
-                >
-                  {{ tokenCopied ? 'Copied!' : 'Copy' }}
-                </button>
-              </div>
-            </template>
-            <div
-              v-else-if="regenError"
-              class="form-error"
-            >
-              {{ regenError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showTokenDialog = false"
-            >
-              Done
-            </button>
-          </div>
+    <BaseModal
+      :open="showTokenDialog"
+      :title="regenToken ? 'New Token Generated' : 'Error'"
+      @close="showTokenDialog = false"
+    >
+      <template v-if="regenToken">
+        <p class="token-warning">Copy this token now. It will not be shown again.</p>
+        <div class="token-box">
+          <code class="token-text">{{ regenToken }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(regenToken ?? '')"
+          >
+            {{ tokenCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
+      </template>
+      <div
+        v-else-if="regenError"
+        class="form-error"
+      >
+        {{ regenError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showTokenDialog = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Delete Agent Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteDialog"
-        class="overlay"
-        @click.self="showDeleteDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Agent</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Permanently delete <strong>{{ agent?.hostname }}</strong
-              >? All associated schedules and backup reports will be removed. This action cannot be
-              undone.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteLoading"
-              @click="confirmDeleteHost"
-            >
-              {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showDeleteDialog"
+      title="Delete Agent"
+      @close="showDeleteDialog = false"
+    >
+      <p>
+        Permanently delete <strong>{{ agent?.hostname }}</strong
+        >? All associated schedules and backup reports will be removed. This action cannot be
+        undone.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteLoading"
+          @click="confirmDeleteHost"
+        >
+          {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Delete Archives Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteArchivesDialog"
-        class="overlay"
-        @click.self="showDeleteArchivesDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Archives &amp; Remove Agent</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteArchivesDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="danger-warning-text">
-              This will <strong>permanently destroy all borg archives</strong> belonging to
-              <strong>{{ agent?.hostname }}</strong> and remove the agent from the system.
-            </p>
-            <p class="danger-warning-text">
-              This operation is <strong>irreversible</strong>. Backup data will be permanently lost
-              and cannot be recovered.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteArchivesDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteArchivesLoading"
-              @click="confirmDeleteArchives"
-            >
-              {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showDeleteArchivesDialog"
+      title="Delete Archives &amp; Remove Agent"
+      @close="showDeleteArchivesDialog = false"
+    >
+      <p class="danger-warning-text">
+        This will <strong>permanently destroy all borg archives</strong> belonging to
+        <strong>{{ agent?.hostname }}</strong> and remove the agent from the system.
+      </p>
+      <p class="danger-warning-text">
+        This operation is <strong>irreversible</strong>. Backup data will be permanently lost and
+        cannot be recovered.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteArchivesDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteArchivesLoading"
+          @click="confirmDeleteArchives"
+        >
+          {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Hostname Alias Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showAliasConfirm"
-        class="overlay"
-        @click.self="declineAlias"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Add Hostname Pattern?</h2>
-            <button
-              class="close-btn"
-              @click="declineAlias"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Hostname changed from <strong>{{ pendingAliasOldHostname }}</strong> to
-              <strong>{{ pendingAliasNewHostname }}</strong
-              >.
-            </p>
-            <p>
-              Add <code>{{ pendingAliasOldHostname }}</code> as an alternative hostname pattern so
-              existing archives still match?
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="declineAlias"
-            >
-              No
-            </button>
-            <button
-              class="btn btn-primary"
-              @click="confirmAddAlias"
-            >
-              Add Pattern
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showAliasConfirm"
+      title="Add Hostname Pattern?"
+      @close="declineAlias"
+    >
+      <p>
+        Hostname changed from <strong>{{ pendingAliasOldHostname }}</strong> to
+        <strong>{{ pendingAliasNewHostname }}</strong
+        >.
+      </p>
+      <p>
+        Add <code>{{ pendingAliasOldHostname }}</code> as an alternative hostname pattern so
+        existing archives still match?
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="declineAlias"
+        >
+          No
+        </button>
+        <button
+          class="btn btn-primary"
+          @click="confirmAddAlias"
+        >
+          Add Pattern
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Merge Agent Dialog -->
-    <Teleport to="body">
-      <MergeAgentDialog
-        v-if="showMergeDialog && agent"
-        :source="agent"
-        :all-agents="allAgents"
-        @merged="onMerged"
-        @cancel="showMergeDialog = false"
-      />
-    </Teleport>
+    <MergeAgentDialog
+      v-if="showMergeDialog && agent"
+      :source="agent"
+      :all-agents="allAgents"
+      @merged="onMerged"
+      @cancel="showMergeDialog = false"
+    />
 
     <!-- Deploy Agent Dialog -->
     <AgentDeployDialog
@@ -2594,10 +2535,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 /* Overlay & Dialog */
-
-.dialog-lg {
-  width: 680px;
-}
 
 /* Form */
 

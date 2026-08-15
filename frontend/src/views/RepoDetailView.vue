@@ -1978,367 +1978,266 @@ async function resetImport(): Promise<void> {
     </BaseModal>
 
     <!-- Passphrase Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showPassphraseDialog"
-        class="overlay"
-        @click.self="showPassphraseDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ passphrase ? 'Repository Passphrase' : 'Error' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="showPassphraseDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <template v-if="passphrase">
-              <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
-              <div class="passphrase-box">
-                <code class="passphrase-text">{{ passphrase }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="passphrase && copyToClipboard(passphrase)"
-                >
-                  {{ passphraseCopied ? 'Copied!' : 'Copy' }}
-                </button>
-              </div>
-            </template>
-            <div
-              v-else-if="passphraseError"
-              class="form-error"
-            >
-              {{ passphraseError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showPassphraseDialog = false"
-            >
-              Done
-            </button>
-          </div>
+    <BaseModal
+      :open="showPassphraseDialog"
+      :title="passphrase ? 'Repository Passphrase' : 'Error'"
+      @close="showPassphraseDialog = false"
+    >
+      <template v-if="passphrase">
+        <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
+        <div class="passphrase-box">
+          <code class="passphrase-text">{{ passphrase }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="passphrase && copyToClipboard(passphrase)"
+          >
+            {{ passphraseCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
+      </template>
+      <div
+        v-else-if="passphraseError"
+        class="form-error"
+      >
+        {{ passphraseError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showPassphraseDialog = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Delete Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteDialog"
-        class="overlay"
-        @click.self="showDeleteDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">⚠️ DESTROY Repository From Disk</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p style="color: var(--danger); font-weight: 600">
-              This will PERMANENTLY DELETE all data for
-              <strong>{{ repo?.name }}</strong> from the remote filesystem. This action is
-              irreversible. All backup archives will be lost forever.
-            </p>
-            <p>
-              The repository at <code>{{ repo?.repo_path }}</code> on
-              <code>{{ repo?.ssh_host }}</code> will be removed using <code>rm -rf</code>.
-            </p>
-            <p>
-              All associated schedules will be <strong>disabled</strong> and their repository link
-              removed. They will need to be reassigned or deleted manually.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteLoading"
-              @click="confirmDelete"
-            >
-              {{ deleteLoading ? 'Destroying...' : 'Destroy Forever' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showDeleteDialog"
+      title="⚠️ DESTROY Repository From Disk"
+      @close="showDeleteDialog = false"
+    >
+      <p style="color: var(--danger); font-weight: 600">
+        This will PERMANENTLY DELETE all data for
+        <strong>{{ repo?.name }}</strong> from the remote filesystem. This action is irreversible.
+        All backup archives will be lost forever.
+      </p>
+      <p>
+        The repository at <code>{{ repo?.repo_path }}</code> on
+        <code>{{ repo?.ssh_host }}</code> will be removed using <code>rm -rf</code>.
+      </p>
+      <p>
+        All associated schedules will be <strong>disabled</strong> and their repository link
+        removed. They will need to be reassigned or deleted manually.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteLoading"
+          @click="confirmDelete"
+        >
+          {{ deleteLoading ? 'Destroying...' : 'Destroy Forever' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Remove (DB only) Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showRemoveDialog"
-        class="overlay"
-        @click.self="showRemoveDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Remove Repository</h2>
-            <button
-              class="close-btn"
-              @click="showRemoveDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Are you sure you want to remove <strong>{{ repo?.name }}</strong> from the database?
-            </p>
-            <p>
-              All associated schedules will be <strong>disabled</strong> and their repository link
-              removed. They will need to be reassigned or deleted manually. Reports will be deleted.
-            </p>
-            <p>The repository data on disk will NOT be touched.</p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showRemoveDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="removeLoading"
-              @click="confirmRemove"
-            >
-              {{ removeLoading ? 'Removing...' : 'Remove' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showRemoveDialog"
+      title="Remove Repository"
+      @close="showRemoveDialog = false"
+    >
+      <p>
+        Are you sure you want to remove <strong>{{ repo?.name }}</strong> from the database?
+      </p>
+      <p>
+        All associated schedules will be <strong>disabled</strong> and their repository link
+        removed. They will need to be reassigned or deleted manually. Reports will be deleted.
+      </p>
+      <p>The repository data on disk will NOT be touched.</p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showRemoveDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="removeLoading"
+          @click="confirmRemove"
+        >
+          {{ removeLoading ? 'Removing...' : 'Remove' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Confirm Relocation Dialog -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showConfirmRelocationDialog"
+      title="Confirm Repository Relocation"
+      @close="showConfirmRelocationDialog = false"
+    >
+      <p class="break-lock-warning">
+        This sets <code>BORG_RELOCATED_REPO_ACCESS_IS_OK=yes</code> for the next backup run,
+        allowing borg to accept the repository at its new location. Only confirm if you
+        intentionally moved or re-pathed the repository.
+      </p>
       <div
-        v-if="showConfirmRelocationDialog"
-        class="overlay"
-        @click.self="showConfirmRelocationDialog = false"
+        v-if="confirmRelocationResult"
+        class="break-lock-success"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Confirm Repository Relocation</h2>
-            <button
-              class="close-btn"
-              @click="showConfirmRelocationDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="break-lock-warning">
-              This sets <code>BORG_RELOCATED_REPO_ACCESS_IS_OK=yes</code> for the next backup run,
-              allowing borg to accept the repository at its new location. Only confirm if you
-              intentionally moved or re-pathed the repository.
-            </p>
-            <div
-              v-if="confirmRelocationResult"
-              class="break-lock-success"
-            >
-              {{ confirmRelocationResult }}
-            </div>
-            <div
-              v-if="confirmRelocationError"
-              class="form-error"
-            >
-              {{ confirmRelocationError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showConfirmRelocationDialog = false"
-            >
-              {{ confirmRelocationResult ? 'Close' : 'Cancel' }}
-            </button>
-            <button
-              v-if="!confirmRelocationResult"
-              class="btn btn-danger"
-              :disabled="confirmRelocationLoading"
-              @click="doConfirmRelocation"
-            >
-              {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, Confirm Relocation' }}
-            </button>
-          </div>
-        </div>
+        {{ confirmRelocationResult }}
       </div>
-    </Teleport>
+      <div
+        v-if="confirmRelocationError"
+        class="form-error"
+      >
+        {{ confirmRelocationError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showConfirmRelocationDialog = false"
+        >
+          {{ confirmRelocationResult ? 'Close' : 'Cancel' }}
+        </button>
+        <button
+          v-if="!confirmRelocationResult"
+          class="btn btn-danger"
+          :disabled="confirmRelocationLoading"
+          @click="doConfirmRelocation"
+        >
+          {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, Confirm Relocation' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Reset & Re-import Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showResetAndSyncDialog"
-        class="overlay"
-        @click.self="showResetAndSyncDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Reset &amp; Re-import?</h2>
-            <button
-              class="close-btn"
-              @click="showResetAndSyncDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p style="color: var(--danger); font-weight: 600">
-              This will permanently delete ALL archive metadata for
-              <strong>{{ repo?.name }}</strong> and re-import from borg. This operation cannot be
-              undone.
-            </p>
-            <p>
-              Backup reports, file indexes, tags, and archive paths will be deleted. The repository
-              data on disk (borg archives themselves) is NOT touched.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showResetAndSyncDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="resetAndSyncLoading"
-              @click="resetAndSync"
-            >
-              {{ resetAndSyncLoading ? 'Resetting...' : 'Confirm Reset' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showResetAndSyncDialog"
+      title="Reset &amp; Re-import?"
+      @close="showResetAndSyncDialog = false"
+    >
+      <p style="color: var(--danger); font-weight: 600">
+        This will permanently delete ALL archive metadata for
+        <strong>{{ repo?.name }}</strong> and re-import from borg. This operation cannot be undone.
+      </p>
+      <p>
+        Backup reports, file indexes, tags, and archive paths will be deleted. The repository data
+        on disk (borg archives themselves) is NOT touched.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showResetAndSyncDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="resetAndSyncLoading"
+          @click="resetAndSync"
+        >
+          {{ resetAndSyncLoading ? 'Resetting...' : 'Confirm Reset' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- SSH Host Key Dialog -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showAcceptHostKeyDialog"
+      title="Accept SSH Host Key"
+      @close="showAcceptHostKeyDialog = false"
+    >
+      <p class="break-lock-warning">
+        A different SSH host key was detected for <code>{{ repo?.ssh_host }}</code
+        >. Verify the key below before accepting it.
+      </p>
       <div
-        v-if="showAcceptHostKeyDialog"
-        class="overlay"
-        @click.self="showAcceptHostKeyDialog = false"
+        v-if="expectedHostKey"
+        class="ssh-key-box mono"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Accept SSH Host Key</h2>
-            <button
-              class="close-btn"
-              @click="showAcceptHostKeyDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="break-lock-warning">
-              A different SSH host key was detected for <code>{{ repo?.ssh_host }}</code
-              >. Verify the key below before accepting it.
-            </p>
-            <div
-              v-if="expectedHostKey"
-              class="ssh-key-box mono"
-            >
-              {{ expectedHostKey }}
-            </div>
-            <div
-              v-if="acceptHostKeyError"
-              class="form-error"
-            >
-              {{ acceptHostKeyError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showAcceptHostKeyDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              v-if="expectedHostKey"
-              class="btn btn-primary"
-              :disabled="acceptHostKeyLoading"
-              @click="acceptHostKey"
-            >
-              {{ acceptHostKeyLoading ? 'Accepting...' : 'Accept Key' }}
-            </button>
-          </div>
-        </div>
+        {{ expectedHostKey }}
       </div>
-    </Teleport>
+      <div
+        v-if="acceptHostKeyError"
+        class="form-error"
+      >
+        {{ acceptHostKeyError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showAcceptHostKeyDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          v-if="expectedHostKey"
+          class="btn btn-primary"
+          :disabled="acceptHostKeyLoading"
+          @click="acceptHostKey"
+        >
+          {{ acceptHostKeyLoading ? 'Accepting...' : 'Accept Key' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Break Lock Confirmation Dialog -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showBreakLockDialog"
+      title="Break Repository Lock"
+      @close="showBreakLockDialog = false"
+    >
+      <p class="break-lock-warning">
+        This will forcibly remove the lock from the repository, and clear any stale local cache lock
+        found for it. Only use this if you are certain no backup is currently running. Breaking a
+        lock during an active backup
+        <strong>will corrupt the repository</strong>.
+      </p>
       <div
-        v-if="showBreakLockDialog"
-        class="overlay"
-        @click.self="showBreakLockDialog = false"
+        v-if="breakLockResult"
+        class="break-lock-success"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Break Repository Lock</h2>
-            <button
-              class="close-btn"
-              @click="showBreakLockDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="break-lock-warning">
-              This will forcibly remove the lock from the repository, and clear any stale local
-              cache lock found for it. Only use this if you are certain no backup is currently
-              running. Breaking a lock during an active backup
-              <strong>will corrupt the repository</strong>.
-            </p>
-            <div
-              v-if="breakLockResult"
-              class="break-lock-success"
-            >
-              {{ breakLockResult }}
-            </div>
-            <div
-              v-if="breakLockError"
-              class="form-error"
-            >
-              {{ breakLockError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showBreakLockDialog = false"
-            >
-              {{ breakLockResult ? 'Close' : 'Cancel' }}
-            </button>
-            <button
-              v-if="!breakLockResult"
-              class="btn btn-danger"
-              :disabled="breakLockLoading"
-              @click="confirmBreakLock"
-            >
-              {{ breakLockLoading ? 'Breaking Lock...' : 'Yes, Break Lock' }}
-            </button>
-          </div>
-        </div>
+        {{ breakLockResult }}
       </div>
-    </Teleport>
+      <div
+        v-if="breakLockError"
+        class="form-error"
+      >
+        {{ breakLockError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showBreakLockDialog = false"
+        >
+          {{ breakLockResult ? 'Close' : 'Cancel' }}
+        </button>
+        <button
+          v-if="!breakLockResult"
+          class="btn btn-danger"
+          :disabled="breakLockLoading"
+          @click="confirmBreakLock"
+        >
+          {{ breakLockLoading ? 'Breaking Lock...' : 'Yes, Break Lock' }}
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 

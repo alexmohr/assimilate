@@ -141,8 +141,8 @@ describe('TokensView', () => {
       .trigger('click')
     expect(wrapper.text()).toContain('Create API Token')
 
-    await wrapper.find('button.close-btn').trigger('click')
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    await wrapper.find('button.modal-close').trigger('click')
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
 
     await wrapper
       .findAll('button')
@@ -150,8 +150,8 @@ describe('TokensView', () => {
       .trigger('click')
     expect(wrapper.text()).toContain('Create API Token')
 
-    await wrapper.find('.overlay').trigger('click')
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    await wrapper.find('.modal-backdrop').trigger('mousedown')
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
   })
 
   it('creates a token and shows the plaintext once', async () => {
@@ -181,7 +181,7 @@ describe('TokensView', () => {
       .find((b) => b.text() === 'Done')!
       .trigger('click')
     await flushPromises()
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
   })
 
   it('cancels the delete confirm dialog, then deletes a token once confirmed', async () => {
@@ -206,6 +206,6 @@ describe('TokensView', () => {
     await flushPromises()
 
     expect(wrapper.find('.form-error').exists()).toBe(true)
-    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(true)
   })
 })

@@ -11,6 +11,7 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
+import BaseModal from '../components/BaseModal.vue'
 
 interface Role {
   id: number
@@ -328,105 +329,94 @@ onMounted((): void => {
     </div>
 
     <!-- Create Role Modal -->
-    <div
-      v-if="showCreateModal"
-      class="overlay"
-      @click.self="showCreateModal = false"
+    <BaseModal
+      :open="showCreateModal"
+      size="lg"
+      title="Create Role"
+      form
+      @close="showCreateModal = false"
+      @submit="submitCreate"
     >
-      <div class="dialog dialog-lg">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Create Role</h2>
-          <button
-            class="close-btn"
-            @click="showCreateModal = false"
-          >
-            &times;
-          </button>
-        </div>
-        <form @submit.prevent="submitCreate">
-          <div class="dialog-body">
-            <div class="field">
-              <label
-                class="field-label"
-                for="create-role-name"
-                >Name <span class="required">*</span></label
-              >
-              <input
-                id="create-role-name"
-                v-model="createForm.name"
-                type="text"
-                class="input"
-                required
-              />
-            </div>
-            <div class="permissions-grid">
-              <label
-                v-for="perm in PERMISSION_LABELS"
-                :key="perm.key"
-                class="perm-checkbox"
-              >
-                <input
-                  v-model="createForm[perm.key]"
-                  type="checkbox"
-                />
-                <span>{{ perm.label }}</span>
-              </label>
-            </div>
-          </div>
-          <ModalFormActions
-            :submitting="createSubmitting"
-            :disabled="!createForm.name.trim()"
-            :error="createError"
-            submit-label="Create"
-            submitting-label="Creating..."
-            @cancel="showCreateModal = false"
-          />
-        </form>
+      <div class="field">
+        <label
+          class="field-label"
+          for="create-role-name"
+          >Name <span class="required">*</span></label
+        >
+        <input
+          id="create-role-name"
+          v-model="createForm.name"
+          type="text"
+          class="input"
+          required
+        />
       </div>
-    </div>
+      <div class="permissions-grid">
+        <label
+          v-for="perm in PERMISSION_LABELS"
+          :key="perm.key"
+          class="perm-checkbox"
+        >
+          <input
+            v-model="createForm[perm.key]"
+            type="checkbox"
+          />
+          <span>{{ perm.label }}</span>
+        </label>
+      </div>
+
+      <template #footer>
+        <ModalFormActions
+          :submitting="createSubmitting"
+          :disabled="!createForm.name.trim()"
+          :error="createError"
+          submit-label="Create"
+          submitting-label="Creating..."
+          @cancel="showCreateModal = false"
+        />
+      </template>
+    </BaseModal>
 
     <!-- Edit Role Modal -->
-    <div
-      v-if="showEditModal"
-      class="overlay"
-      @click.self="showEditModal = false"
+    <BaseModal
+      :open="showEditModal"
+      size="lg"
+      form
+      @close="showEditModal = false"
+      @submit="submitEdit"
     >
-      <div class="dialog dialog-lg">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Edit Role &mdash; {{ editTarget?.name }}</h2>
-          <button
-            class="close-btn"
-            @click="showEditModal = false"
-          >
-            &times;
-          </button>
-        </div>
-        <form @submit.prevent="submitEdit">
-          <div class="dialog-body">
-            <div class="permissions-grid">
-              <label
-                v-for="perm in PERMISSION_LABELS"
-                :key="perm.key"
-                class="perm-checkbox"
-              >
-                <input
-                  v-model="editForm[perm.key]"
-                  type="checkbox"
-                />
-                <span>{{ perm.label }}</span>
-              </label>
-            </div>
-          </div>
-          <ModalFormActions
-            :submitting="editSubmitting"
-            :error="editError"
-            submit-label="Save"
-            submitting-label="Saving..."
-            @cancel="showEditModal = false"
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Edit Role &mdash; {{ editTarget?.name }}
+        </h2>
+      </template>
+      <div class="permissions-grid">
+        <label
+          v-for="perm in PERMISSION_LABELS"
+          :key="perm.key"
+          class="perm-checkbox"
+        >
+          <input
+            v-model="editForm[perm.key]"
+            type="checkbox"
           />
-        </form>
+          <span>{{ perm.label }}</span>
+        </label>
       </div>
-    </div>
+
+      <template #footer>
+        <ModalFormActions
+          :submitting="editSubmitting"
+          :error="editError"
+          submit-label="Save"
+          submitting-label="Saving..."
+          @cancel="showEditModal = false"
+        />
+      </template>
+    </BaseModal>
 
     <!-- Delete Role Modal -->
     <ConfirmDeleteDialog
@@ -452,10 +442,6 @@ onMounted((): void => {
   .page-description {
     display: none;
   }
-}
-
-.dialog-lg {
-  width: 550px;
 }
 
 .matrix-wrap {

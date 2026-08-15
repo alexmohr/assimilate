@@ -32,6 +32,7 @@ import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ScheduleBackupSourcesResponse } from '../types/generated'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { Repo } from '../types/repo'
+import BaseModal from '../components/BaseModal.vue'
 
 interface ScheduleTarget {
   agent_id: number
@@ -1698,48 +1699,34 @@ watch(activeTab, (tab) => {
     </template>
 
     <!-- Delete Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteDialog"
-        class="overlay"
-        @click.self="showDeleteDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Schedule</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Are you sure you want to delete this
-              <strong>{{ schedule ? scheduleTypeLabel(schedule.schedule_type) : '' }}</strong>
-              schedule? All associated backup reports will also be removed.
-            </p>
-            <p>This action cannot be undone.</p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteLoading"
-              @click="confirmDeleteSchedule"
-            >
-              {{ deleteLoading ? 'Deleting...' : 'Delete Schedule' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showDeleteDialog"
+      title="Delete Schedule"
+      @close="showDeleteDialog = false"
+    >
+      <p>
+        Are you sure you want to delete this
+        <strong>{{ schedule ? scheduleTypeLabel(schedule.schedule_type) : '' }}</strong>
+        schedule? All associated backup reports will also be removed.
+      </p>
+      <p>This action cannot be undone.</p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteLoading"
+          @click="confirmDeleteSchedule"
+        >
+          {{ deleteLoading ? 'Deleting...' : 'Delete Schedule' }}
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -2381,62 +2368,12 @@ watch(activeTab, (tab) => {
   z-index: 9999;
 }
 
-.dialog {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  width: min(480px, 90vw);
-  box-shadow: var(--shadow-lg);
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.dialog-title {
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  margin: 0;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: var(--fs-xl);
-  color: var(--text-muted);
-  cursor: pointer;
-  line-height: 1;
-}
-
-.close-btn:hover {
-  color: var(--text-primary);
-}
-
-.dialog-body {
-  padding: 1.25rem;
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
 .dialog-body p {
   margin: 0 0 0.75rem;
 }
 
 .dialog-body p:last-child {
   margin-bottom: 0;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 1rem 1.25rem;
-  border-top: 1px solid var(--border);
 }
 
 .reports-loading {

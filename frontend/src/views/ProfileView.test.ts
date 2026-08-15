@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import ProfileView from './ProfileView.vue'
 import { apiClient } from '../api/client'
@@ -408,10 +408,11 @@ describe('ProfileView', () => {
       await wrapper.vm.$nextTick()
     }
 
-    function findInBody(text: string): HTMLElement | undefined {
-      return Array.from(document.body.querySelectorAll('*')).find(
-        (el) => el.textContent?.trim() === text,
-      ) as HTMLElement | undefined
+    function findInModal(
+      wrapper: ReturnType<typeof renderWithPlugins>,
+      text: string,
+    ): DOMWrapper<Element> | undefined {
+      return wrapper.findAll('.modal-dialog *').find((el) => el.text().trim() === text)
     }
 
     async function openDeleteTokenModal(wrapper: ReturnType<typeof renderWithPlugins>) {
@@ -433,13 +434,13 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const dialogTitle = findInBody('Delete Token')
-      expect(dialogTitle).toBeDefined()
+      expect(wrapper.find('.modal-title').text()).toBe('Delete Token')
 
-      const overlay = document.querySelector('.overlay') as HTMLElement
-      expect(overlay).not.toBeNull()
-      overlay.click()
+      const overlay = wrapper.find('.modal-backdrop')
+      expect(overlay.exists()).toBe(true)
+      await overlay.trigger('mousedown')
       await flushPromises()
+      expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     })
 
     it('closes delete token modal via close button', async () => {
@@ -451,10 +452,11 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const closeBtns = document.body.querySelectorAll('button.close-btn')
-      expect(closeBtns.length).toBeGreaterThanOrEqual(1)
-      closeBtns[0].click()
+      const closeBtn = wrapper.find('button.modal-close')
+      expect(closeBtn.exists()).toBe(true)
+      await closeBtn.trigger('click')
       await flushPromises()
+      expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     })
 
     it('closes delete token modal via Cancel button', async () => {
@@ -466,10 +468,11 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const cancelBtn = findInBody('Cancel')
+      const cancelBtn = findInModal(wrapper, 'Cancel')
       expect(cancelBtn).toBeDefined()
-      cancelBtn!.click()
+      await cancelBtn!.trigger('click')
       await flushPromises()
+      expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     })
 
     it('deletes a token from the modal', async () => {
@@ -482,9 +485,9 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const confirmDeleteBtn = findInBody('Delete')
+      const confirmDeleteBtn = findInModal(wrapper, 'Delete')
       expect(confirmDeleteBtn).toBeDefined()
-      confirmDeleteBtn!.click()
+      await confirmDeleteBtn!.trigger('click')
       await flushPromises()
 
       expect(vi.mocked(apiClient.delete)).toHaveBeenCalledWith('/tokens/1')
@@ -500,12 +503,14 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const confirmDeleteBtn = findInBody('Delete')
+      const confirmDeleteBtn = findInModal(wrapper, 'Delete')
       expect(confirmDeleteBtn).toBeDefined()
-      confirmDeleteBtn!.click()
+      await confirmDeleteBtn!.trigger('click')
       await flushPromises()
 
-      expect(findInBody('Failed to delete token: network error')).toBeDefined()
+      expect(wrapper.find('.modal-dialog').text()).toContain(
+        'Failed to delete token: network error',
+      )
     })
   })
 })

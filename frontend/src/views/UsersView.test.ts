@@ -154,10 +154,11 @@ describe('UsersView', () => {
     await editButtons[0]!.trigger('click')
     await flushPromises()
 
-    const permissionsTab = Array.from(
-      document.querySelectorAll<HTMLButtonElement>('button.tab'),
-    ).find((t) => t.textContent?.trim() === 'Permissions')
-    permissionsTab!.click()
+    const permissionsTab = wrapper
+      .findAll('button.tab')
+      .find((t) => t.text().trim() === 'Permissions')
+    expect(permissionsTab).toBeDefined()
+    await permissionsTab!.trigger('click')
     await flushPromises()
 
     expect(document.body.textContent).toContain('web-server-01 / daily')

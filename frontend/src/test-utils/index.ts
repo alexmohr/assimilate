@@ -128,9 +128,9 @@ export async function cancelThenConfirmDelete(
   const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
   await deleteButton!.trigger('click')
 
-  await wrapper.find('button.close-btn').trigger('click')
+  await wrapper.find('button.modal-close').trigger('click')
   await flushPromises()
-  expect(wrapper.find('.overlay').exists()).toBe(false)
+  expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
   expect(mockDelete).not.toHaveBeenCalled()
 
   await deleteButton!.trigger('click')
@@ -153,12 +153,19 @@ export function renderWithPlugins(
   void router.push(options.routeOverrides ?? '/')
 
   return mount(component, {
+    // Attached so `document`-based queries see the markup; combined with the
+    // Teleport stub below, modal content is reachable both ways.
+    attachTo: document.body,
     props: options.props,
     slots: options.slots,
     global: {
       plugins: [pinia, router],
       stubs: {
         RouterLink: routerLinkStub,
+        // Modals render through BaseModal, which teleports to <body>. Without
+        // this, their content lands outside the wrapper and `wrapper.find`
+        // cannot reach it. Matches what the component tests already do.
+        Teleport: true,
       },
     },
   })

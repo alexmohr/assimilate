@@ -161,7 +161,7 @@ describe('GroupsView', () => {
     await flushPromises()
 
     await clickButtonWithText(wrapper, 'New')
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
     expect(wrapper.find('#create-name').exists()).toBe(false)
 
@@ -199,7 +199,7 @@ describe('GroupsView', () => {
     const editButton = wrapper.findAll('button').find((b) => b.text() === 'Edit')
 
     await editButton!.trigger('click')
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
     expect(wrapper.find('#edit-name').exists()).toBe(false)
 

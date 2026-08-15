@@ -22,6 +22,7 @@ import type {
   TotpSetupResponse,
   TotpVerifyResponse,
 } from '../types/generated'
+import BaseModal from '../components/BaseModal.vue'
 
 type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 
@@ -635,168 +636,124 @@ onMounted(async () => {
     </div>
 
     <!-- Create Token Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showCreateModal"
-        class="overlay"
-        @click.self="closeCreateModal"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ newTokenPlaintext ? 'Token Created' : 'Create API Token' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="closeCreateModal"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <template v-if="!newTokenPlaintext">
-              <div class="form-group">
-                <label class="form-label">Token Name</label>
-                <input
-                  v-model="createName"
-                  class="form-input"
-                  placeholder="e.g. CI pipeline"
-                  :disabled="createSubmitting"
-                  @keydown.enter.prevent="submitCreateToken"
-                />
-              </div>
-              <div
-                v-if="createError"
-                class="msg msg-error"
-              >
-                {{ createError }}
-              </div>
-            </template>
-            <template v-else>
-              <p class="token-warning">Copy this token now. It will not be shown again.</p>
-              <div class="token-display">
-                <code class="token-value">{{ newTokenPlaintext }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="copyToClipboard(newTokenPlaintext)"
-                >
-                  {{ tokenCopied ? 'Copied' : 'Copy' }}
-                </button>
-              </div>
-            </template>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="closeCreateModal"
-            >
-              {{ newTokenPlaintext ? 'Done' : 'Cancel' }}
-            </button>
-            <button
-              v-if="!newTokenPlaintext"
-              class="btn btn-primary"
-              :disabled="createSubmitting || !createName.trim()"
-              @click="submitCreateToken"
-            >
-              {{ createSubmitting ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+    <BaseModal
+      :open="showCreateModal"
+      :title="newTokenPlaintext ? 'Token Created' : 'Create API Token'"
+      @close="closeCreateModal"
+    >
+      <template v-if="!newTokenPlaintext">
+        <div class="form-group">
+          <label class="form-label">Token Name</label>
+          <input
+            v-model="createName"
+            class="form-input"
+            placeholder="e.g. CI pipeline"
+            :disabled="createSubmitting"
+            @keydown.enter.prevent="submitCreateToken"
+          />
         </div>
-      </div>
-    </Teleport>
+        <div
+          v-if="createError"
+          class="msg msg-error"
+        >
+          {{ createError }}
+        </div>
+      </template>
+      <template v-else>
+        <p class="token-warning">Copy this token now. It will not be shown again.</p>
+        <div class="token-display">
+          <code class="token-value">{{ newTokenPlaintext }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(newTokenPlaintext)"
+          >
+            {{ tokenCopied ? 'Copied' : 'Copy' }}
+          </button>
+        </div>
+      </template>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="closeCreateModal"
+        >
+          {{ newTokenPlaintext ? 'Done' : 'Cancel' }}
+        </button>
+        <button
+          v-if="!newTokenPlaintext"
+          class="btn btn-primary"
+          :disabled="createSubmitting || !createName.trim()"
+          @click="submitCreateToken"
+        >
+          {{ createSubmitting ? 'Creating...' : 'Create' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Delete Token Modal -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showDeleteModal"
+      title="Delete Token"
+      @close="showDeleteModal = false"
+    >
+      <p>
+        Delete token <strong>{{ deleteTarget?.name }}</strong
+        >? Any integrations using this token will stop working.
+      </p>
       <div
-        v-if="showDeleteModal"
-        class="overlay"
-        @click.self="showDeleteModal = false"
+        v-if="deleteError"
+        class="msg msg-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Token</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteModal = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Delete token <strong>{{ deleteTarget?.name }}</strong
-              >? Any integrations using this token will stop working.
-            </p>
-            <div
-              v-if="deleteError"
-              class="msg msg-error"
-            >
-              {{ deleteError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteSubmitting"
-              @click="confirmDeleteToken"
-            >
-              {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-            </button>
-          </div>
-        </div>
+        {{ deleteError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteModal = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteSubmitting"
+          @click="confirmDeleteToken"
+        >
+          {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Revoke Session Modal -->
-    <Teleport to="body">
+    <BaseModal
+      :open="revokeSessionId !== null"
+      title="Revoke Session"
+      @close="cancelRevokeSession"
+    >
+      <p>Revoke this session? The device will be signed out immediately.</p>
       <div
-        v-if="revokeSessionId"
-        class="overlay"
-        @click.self="cancelRevokeSession"
+        v-if="revokeError"
+        class="msg msg-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Revoke Session</h2>
-            <button
-              class="close-btn"
-              @click="cancelRevokeSession"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>Revoke this session? The device will be signed out immediately.</p>
-            <div
-              v-if="revokeError"
-              class="msg msg-error"
-            >
-              {{ revokeError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="cancelRevokeSession"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="revokeSubmitting"
-              @click="doRevokeSession"
-            >
-              {{ revokeSubmitting ? 'Revoking...' : 'Revoke' }}
-            </button>
-          </div>
-        </div>
+        {{ revokeError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="cancelRevokeSession"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="revokeSubmitting"
+          @click="doRevokeSession"
+        >
+          {{ revokeSubmitting ? 'Revoking...' : 'Revoke' }}
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 

@@ -917,7 +917,9 @@ describe('RepoDetailView', () => {
     // wrapper.find(); go through the real DOM instead, matching this file's
     // existing document.body-based assertions for teleported content.
     async function clickModalConfirm(): Promise<void> {
-      const confirmBtn = document.body.querySelector<HTMLButtonElement>('button.btn-danger')
+      const confirmBtn = document.body.querySelector<HTMLButtonElement>(
+        '.modal-dialog button.btn-danger',
+      )
       expect(confirmBtn).not.toBeNull()
       expect(confirmBtn!.textContent).toBe('Delete Archive')
       confirmBtn!.click()
@@ -1266,7 +1268,9 @@ describe('RepoDetailView', () => {
     }
 
     async function clickBreakLockConfirm(): Promise<void> {
-      const confirmBtn = document.body.querySelector<HTMLButtonElement>('button.btn-danger')
+      const confirmBtn = document.body.querySelector<HTMLButtonElement>(
+        '.modal-dialog button.btn-danger',
+      )
       expect(confirmBtn).not.toBeNull()
       expect(confirmBtn!.textContent).toBe('Yes, Break Lock')
       confirmBtn!.click()

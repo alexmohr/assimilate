@@ -38,6 +38,7 @@ const ALL_AGENTS: AgentRow[] = [
 
 function mountDialog(): ReturnType<typeof mount> {
   return mount(MergeAgentDialog, {
+    global: { stubs: { Teleport: true } },
     props: { source: SOURCE, allAgents: ALL_AGENTS },
     attachTo: document.body,
   })

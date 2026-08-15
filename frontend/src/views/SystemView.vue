@@ -17,6 +17,7 @@ import type {
   SettingsResponse,
   SystemResetResponse,
 } from '../types/generated'
+import BaseModal from '../components/BaseModal.vue'
 
 interface VersionInfo {
   server_version: string
@@ -771,105 +772,77 @@ async function resetSystem(): Promise<void> {
     </div>
 
     <!-- Regenerate Confirmation -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showRegenConfirm"
+      title="Regenerate SSH Key"
+      @close="showRegenConfirm = false"
+    >
+      <p class="warning-text">
+        This will generate a new SSH keypair and invalidate the current key. All borg repository
+        hosts will need to be updated with the new public key.
+      </p>
+      <p class="warning-text warning-bold">
+        Existing SSH connections using the old key will stop working immediately.
+      </p>
       <div
-        v-if="showRegenConfirm"
-        class="overlay"
-        @click.self="showRegenConfirm = false"
+        v-if="regenError"
+        class="form-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Regenerate SSH Key</h2>
-            <button
-              class="close-btn"
-              @click="showRegenConfirm = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="warning-text">
-              This will generate a new SSH keypair and invalidate the current key. All borg
-              repository hosts will need to be updated with the new public key.
-            </p>
-            <p class="warning-text warning-bold">
-              Existing SSH connections using the old key will stop working immediately.
-            </p>
-            <div
-              v-if="regenError"
-              class="form-error"
-            >
-              {{ regenError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showRegenConfirm = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="regenerating"
-              @click="regenerateKey"
-            >
-              {{ regenerating ? 'Regenerating...' : 'Regenerate Key' }}
-            </button>
-          </div>
-        </div>
+        {{ regenError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showRegenConfirm = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="regenerating"
+          @click="regenerateKey"
+        >
+          {{ regenerating ? 'Regenerating...' : 'Regenerate Key' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Reset Confirmation -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showResetConfirm"
+      title="Reset System State"
+      @close="showResetConfirm = false"
+    >
+      <p class="warning-text">This will immediately:</p>
+      <ul class="reset-list">
+        <li>Cancel all running and pending backup operations in the database</li>
+        <li>Send abort signals to all currently connected agents</li>
+      </ul>
+      <p class="warning-text warning-bold">Schedules are left unchanged.</p>
       <div
-        v-if="showResetConfirm"
-        class="overlay"
-        @click.self="showResetConfirm = false"
+        v-if="resetError"
+        class="form-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Reset System State</h2>
-            <button
-              class="close-btn"
-              @click="showResetConfirm = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="warning-text">This will immediately:</p>
-            <ul class="reset-list">
-              <li>Cancel all running and pending backup operations in the database</li>
-              <li>Send abort signals to all currently connected agents</li>
-            </ul>
-            <p class="warning-text warning-bold">Schedules are left unchanged.</p>
-            <div
-              v-if="resetError"
-              class="form-error"
-            >
-              {{ resetError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showResetConfirm = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="resetting"
-              @click="resetSystem"
-            >
-              {{ resetting ? 'Resetting...' : 'Reset System' }}
-            </button>
-          </div>
-        </div>
+        {{ resetError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showResetConfirm = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="resetting"
+          @click="resetSystem"
+        >
+          {{ resetting ? 'Resetting...' : 'Reset System' }}
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 

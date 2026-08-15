@@ -13,6 +13,7 @@ import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
+import BaseModal from '../components/BaseModal.vue'
 
 interface Group {
   id: number
@@ -316,122 +317,102 @@ onMounted(async () => {
     </table>
 
     <!-- Create Group Modal -->
-    <div
-      v-if="showCreateModal"
-      class="overlay"
-      @click.self="showCreateModal = false"
+    <BaseModal
+      :open="showCreateModal"
+      title="Create Group"
+      form
+      @close="showCreateModal = false"
+      @submit="submitCreate"
     >
-      <div class="dialog">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Create Group</h2>
-          <button
-            class="close-btn"
-            @click="showCreateModal = false"
-          >
-            &times;
-          </button>
-        </div>
-        <form @submit.prevent="submitCreate">
-          <div class="dialog-body">
-            <div class="field">
-              <label
-                class="field-label"
-                for="create-name"
-                >Name <span class="required">*</span></label
-              >
-              <input
-                id="create-name"
-                v-model="createForm.name"
-                type="text"
-                class="input"
-                required
-              />
-            </div>
-            <div class="field">
-              <label
-                class="field-label"
-                for="create-desc"
-                >Description</label
-              >
-              <input
-                id="create-desc"
-                v-model="createForm.description"
-                type="text"
-                class="input"
-                placeholder="Optional description"
-              />
-            </div>
-          </div>
-          <ModalFormActions
-            :submitting="createSubmitting"
-            :disabled="!createForm.name.trim()"
-            :error="createError"
-            submit-label="Create"
-            submitting-label="Creating..."
-            @cancel="showCreateModal = false"
-          />
-        </form>
+      <div class="field">
+        <label
+          class="field-label"
+          for="create-name"
+          >Name <span class="required">*</span></label
+        >
+        <input
+          id="create-name"
+          v-model="createForm.name"
+          type="text"
+          class="input"
+          required
+        />
       </div>
-    </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="create-desc"
+          >Description</label
+        >
+        <input
+          id="create-desc"
+          v-model="createForm.description"
+          type="text"
+          class="input"
+          placeholder="Optional description"
+        />
+      </div>
+
+      <template #footer>
+        <ModalFormActions
+          :submitting="createSubmitting"
+          :disabled="!createForm.name.trim()"
+          :error="createError"
+          submit-label="Create"
+          submitting-label="Creating..."
+          @cancel="showCreateModal = false"
+        />
+      </template>
+    </BaseModal>
 
     <!-- Edit Group Modal -->
-    <div
-      v-if="showEditModal"
-      class="overlay"
-      @click.self="showEditModal = false"
+    <BaseModal
+      :open="showEditModal"
+      title="Edit Group"
+      form
+      @close="showEditModal = false"
+      @submit="submitEdit"
     >
-      <div class="dialog">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Edit Group</h2>
-          <button
-            class="close-btn"
-            @click="showEditModal = false"
-          >
-            &times;
-          </button>
-        </div>
-        <form @submit.prevent="submitEdit">
-          <div class="dialog-body">
-            <div class="field">
-              <label
-                class="field-label"
-                for="edit-name"
-                >Name <span class="required">*</span></label
-              >
-              <input
-                id="edit-name"
-                v-model="editForm.name"
-                type="text"
-                class="input"
-                required
-              />
-            </div>
-            <div class="field">
-              <label
-                class="field-label"
-                for="edit-desc"
-                >Description</label
-              >
-              <input
-                id="edit-desc"
-                v-model="editForm.description"
-                type="text"
-                class="input"
-                placeholder="Optional description"
-              />
-            </div>
-          </div>
-          <ModalFormActions
-            :submitting="editSubmitting"
-            :disabled="!editForm.name.trim()"
-            :error="editError"
-            submit-label="Save"
-            submitting-label="Saving..."
-            @cancel="showEditModal = false"
-          />
-        </form>
+      <div class="field">
+        <label
+          class="field-label"
+          for="edit-name"
+          >Name <span class="required">*</span></label
+        >
+        <input
+          id="edit-name"
+          v-model="editForm.name"
+          type="text"
+          class="input"
+          required
+        />
       </div>
-    </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="edit-desc"
+          >Description</label
+        >
+        <input
+          id="edit-desc"
+          v-model="editForm.description"
+          type="text"
+          class="input"
+          placeholder="Optional description"
+        />
+      </div>
+
+      <template #footer>
+        <ModalFormActions
+          :submitting="editSubmitting"
+          :disabled="!editForm.name.trim()"
+          :error="editError"
+          submit-label="Save"
+          submitting-label="Saving..."
+          @cancel="showEditModal = false"
+        />
+      </template>
+    </BaseModal>
 
     <!-- Delete Group Modal -->
     <ConfirmDeleteDialog
@@ -447,54 +428,45 @@ onMounted(async () => {
     </ConfirmDeleteDialog>
 
     <!-- Members Modal -->
-    <div
-      v-if="showMembersModal"
-      class="overlay"
-      @click.self="showMembersModal = false"
+    <BaseModal
+      :open="showMembersModal"
+      size="lg"
+      title="Group Members"
+      @close="showMembersModal = false"
     >
-      <div class="dialog dialog-lg">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Group Members</h2>
-          <button
-            class="close-btn"
-            @click="showMembersModal = false"
-          >
-            &times;
-          </button>
-        </div>
-        <div class="dialog-body">
-          <p class="modal-subtitle">
-            Manage members of <strong>{{ membersTarget?.name }}</strong>
-          </p>
-          <BaseSpinner
-            v-if="membersLoading"
-            size="sm"
+      <p class="modal-subtitle">
+        Manage members of <strong>{{ membersTarget?.name }}</strong>
+      </p>
+      <BaseSpinner
+        v-if="membersLoading"
+        size="sm"
+      />
+      <div
+        v-else-if="allUsers.length === 0"
+        class="state-msg"
+      >
+        No users found.
+      </div>
+      <div
+        v-else
+        class="members-list"
+      >
+        <label
+          v-for="user in allUsers"
+          :key="user.id"
+          class="member-item"
+        >
+          <input
+            type="checkbox"
+            :checked="memberUserIds.includes(user.id)"
+            @change="toggleMember(user.id)"
           />
-          <div
-            v-else-if="allUsers.length === 0"
-            class="state-msg"
-          >
-            No users found.
-          </div>
-          <div
-            v-else
-            class="members-list"
-          >
-            <label
-              v-for="user in allUsers"
-              :key="user.id"
-              class="member-item"
-            >
-              <input
-                type="checkbox"
-                :checked="memberUserIds.includes(user.id)"
-                @change="toggleMember(user.id)"
-              />
-              <span class="member-name">{{ user.username }}</span>
-              <span class="member-role">{{ user.role }}</span>
-            </label>
-          </div>
-        </div>
+          <span class="member-name">{{ user.username }}</span>
+          <span class="member-role">{{ user.role }}</span>
+        </label>
+      </div>
+
+      <template #footer>
         <ModalFormActions
           type="button"
           :submitting="membersSubmitting"
@@ -504,8 +476,8 @@ onMounted(async () => {
           @cancel="showMembersModal = false"
           @confirm="saveMembers"
         />
-      </div>
-    </div>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -518,10 +490,6 @@ onMounted(async () => {
   .page-description {
     display: none;
   }
-}
-
-.dialog-lg {
-  width: 550px;
 }
 
 .desc-cell {

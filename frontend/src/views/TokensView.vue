@@ -12,6 +12,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
+import BaseModal from '../components/BaseModal.vue'
 
 const {
   tokens,
@@ -73,79 +74,73 @@ onMounted(fetchTokens)
       @action="showCreateModal = true"
     />
 
-    <div
-      v-if="showCreateModal"
-      class="overlay"
-      @click.self="closeCreateModal"
+    <!-- One dialog, two states: collect a name, then reveal the token once. -->
+    <BaseModal
+      :open="showCreateModal"
+      :title="newTokenPlaintext ? 'Token Created' : 'Create API Token'"
+      :form="!newTokenPlaintext"
+      @close="closeCreateModal"
+      @submit="submitCreate"
     >
-      <div class="dialog">
-        <template v-if="!newTokenPlaintext">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Create API Token</h2>
-            <button
-              class="close-btn"
-              @click="closeCreateModal"
-            >
-              &times;
-            </button>
-          </div>
-          <form @submit.prevent="submitCreate">
-            <div class="dialog-body">
-              <div class="field">
-                <label
-                  class="field-label"
-                  for="token-name"
-                  >Token Name</label
-                >
-                <input
-                  id="token-name"
-                  v-model="createName"
-                  type="text"
-                  class="input"
-                  required
-                  placeholder="e.g. CI pipeline"
-                />
-              </div>
-            </div>
-            <ModalFormActions
-              :submitting="createSubmitting"
-              :disabled="!createName.trim()"
-              :error="createError"
-              submit-label="Create"
-              submitting-label="Create"
-              @cancel="closeCreateModal"
-            />
-          </form>
-        </template>
-        <template v-else>
-          <div class="dialog-header">
-            <h2 class="dialog-title">Token Created</h2>
-          </div>
-          <div class="dialog-body">
-            <div class="token-notice">
-              <p class="token-warning">Copy this token now. It will not be shown again.</p>
-              <div class="token-box">
-                <code class="token-text">{{ newTokenPlaintext }}</code>
-                <button
-                  class="btn btn-sm"
-                  @click="copyToClipboard(newTokenPlaintext)"
-                >
-                  {{ tokenCopied ? 'Copied!' : 'Copy' }}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="closeCreateModal"
-            >
-              Done
-            </button>
-          </div>
-        </template>
+      <template v-if="!newTokenPlaintext">
+        <div class="field">
+          <label
+            class="field-label"
+            for="token-name"
+            >Token Name</label
+          >
+          <input
+            id="token-name"
+            v-model="createName"
+            type="text"
+            class="input"
+            required
+            placeholder="e.g. CI pipeline"
+          />
+        </div>
+        <div
+          v-if="createError"
+          class="form-error"
+        >
+          {{ createError }}
+        </div>
+      </template>
+      <div
+        v-else
+        class="token-notice"
+      >
+        <p class="token-warning">Copy this token now. It will not be shown again.</p>
+        <div class="token-box">
+          <code class="token-text">{{ newTokenPlaintext }}</code>
+          <button
+            type="button"
+            class="btn btn-sm"
+            @click="copyToClipboard(newTokenPlaintext)"
+          >
+            {{ tokenCopied ? 'Copied!' : 'Copy' }}
+          </button>
+        </div>
       </div>
-    </div>
+
+      <template #footer>
+        <ModalFormActions
+          v-if="!newTokenPlaintext"
+          :submitting="createSubmitting"
+          :disabled="!createName.trim()"
+          submit-label="Create"
+          submitting-label="Creating..."
+          @cancel="closeCreateModal"
+        />
+        <button
+          v-else
+          type="button"
+          class="btn btn-primary"
+          @click="closeCreateModal"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <ConfirmDeleteDialog
       :show="showDeleteModal"

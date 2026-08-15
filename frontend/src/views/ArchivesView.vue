@@ -21,6 +21,7 @@ import FileSearch from '../components/FileSearch.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
 import type { ContentsResponse, ContentEntryResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
+import BaseModal from '../components/BaseModal.vue'
 
 interface ArchiveEntry {
   name: string
@@ -746,55 +747,39 @@ onMounted(loadRepos)
     </template>
 
     <!-- Passphrase Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showPassphraseDialog"
-        class="overlay"
-        @click.self="showPassphraseDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ passphrase ? 'Repository Passphrase' : 'Error' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="showPassphraseDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <template v-if="passphrase">
-              <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
-              <div class="passphrase-box">
-                <code class="passphrase-text">{{ passphrase }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="passphrase && copyToClipboard(passphrase)"
-                >
-                  {{ passphraseCopied ? 'Copied!' : 'Copy' }}
-                </button>
-              </div>
-            </template>
-            <div
-              v-else-if="passphraseError"
-              class="form-error"
-            >
-              {{ passphraseError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showPassphraseDialog = false"
-            >
-              Done
-            </button>
-          </div>
+    <BaseModal
+      :open="showPassphraseDialog"
+      :title="passphrase ? 'Repository Passphrase' : 'Error'"
+      @close="showPassphraseDialog = false"
+    >
+      <template v-if="passphrase">
+        <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
+        <div class="passphrase-box">
+          <code class="passphrase-text">{{ passphrase }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="passphrase && copyToClipboard(passphrase)"
+          >
+            {{ passphraseCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
+      </template>
+      <div
+        v-else-if="passphraseError"
+        class="form-error"
+      >
+        {{ passphraseError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showPassphraseDialog = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
     <!-- Restore Wizard -->
     <RestoreWizard
       :open="showRestoreWizard"

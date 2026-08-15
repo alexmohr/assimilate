@@ -157,7 +157,7 @@ describe('RolesView', () => {
     expect(editButtons.length).toBeGreaterThan(0)
     await editButtons[0].trigger('click')
 
-    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(true)
     expect(wrapper.text()).toContain('Edit Role')
     expect(wrapper.text()).toContain('admin')
   })
@@ -213,7 +213,7 @@ describe('RolesView', () => {
     await flushPromises()
 
     await clickButtonWithText(wrapper, 'New')
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
     expect(wrapper.find('#create-role-name').exists()).toBe(false)
 
@@ -231,7 +231,7 @@ describe('RolesView', () => {
     const editButton = wrapper.findAll('button').find((b) => b.text() === 'Edit')
 
     await editButton!.trigger('click')
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
     expect(wrapper.find('.permissions-grid').exists()).toBe(false)
 
@@ -269,10 +269,10 @@ describe('RolesView', () => {
     const enabledDelete = deleteButtons.find((b) => b.attributes('disabled') === undefined)
     await enabledDelete!.trigger('click')
 
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     expect(apiClient.delete).not.toHaveBeenCalled()
   })
 })

@@ -4,63 +4,55 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import BaseModal from './BaseModal.vue'
+
 withDefaults(
   defineProps<{
     show: boolean
     title: string
     submitting: boolean
     error?: string | null
+    /** Verb shown on the confirm button. Defaults to a delete. */
+    confirmLabel?: string
+    submittingLabel?: string
   }>(),
-  { error: null },
+  { error: null, confirmLabel: 'Delete', submittingLabel: 'Deleting...' },
 )
 
 const emit = defineEmits<{ cancel: []; confirm: [] }>()
 </script>
 
 <template>
-  <div
-    v-if="show"
-    class="overlay"
-    @click.self="emit('cancel')"
+  <BaseModal
+    :open="show"
+    :title="title"
+    @close="emit('cancel')"
   >
-    <div class="dialog">
-      <div class="dialog-header">
-        <h2 class="dialog-title">{{ title }}</h2>
-        <button
-          class="close-btn"
-          @click="emit('cancel')"
-        >
-          &times;
-        </button>
-      </div>
-      <div class="dialog-body">
-        <p class="confirm-text">
-          <slot />
-        </p>
-        <div
-          v-if="error"
-          class="form-error"
-        >
-          {{ error }}
-        </div>
-      </div>
-      <div class="dialog-footer">
-        <button
-          type="button"
-          class="btn btn-ghost"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="btn btn-danger"
-          :disabled="submitting"
-          @click="emit('confirm')"
-        >
-          {{ submitting ? 'Deleting...' : 'Delete' }}
-        </button>
-      </div>
+    <p class="confirm-text">
+      <slot />
+    </p>
+    <div
+      v-if="error"
+      class="form-error"
+    >
+      {{ error }}
     </div>
-  </div>
+    <template #footer>
+      <button
+        type="button"
+        class="btn btn-ghost"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="btn btn-danger"
+        :disabled="submitting"
+        @click="emit('confirm')"
+      >
+        {{ submitting ? submittingLabel : confirmLabel }}
+      </button>
+    </template>
+  </BaseModal>
 </template>

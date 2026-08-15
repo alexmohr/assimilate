@@ -1343,331 +1343,322 @@ onMounted(loadRepos)
     </div>
 
     <!-- Repo Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showRepoDialog"
-        class="overlay"
-        @click.self="showRepoDialog = false"
-      >
-        <div class="dialog dialog-lg">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              <template v-if="repoMode === 'edit'">Edit Repository</template>
-              <template v-else-if="addTab === 'create'">Create Repository</template>
-              <template v-else>Import Repository</template>
-            </h2>
+    <BaseModal
+      :open="showRepoDialog"
+      size="lg"
+      @close="showRepoDialog = false"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          <template v-if="repoMode === 'edit'">Edit Repository</template>
+          <template v-else-if="addTab === 'create'">Create Repository</template>
+          <template v-else>Import Repository</template>
+        </h2>
+      </template>
+      <div class="form-grid">
+        <!-- Name field -->
+        <div
+          v-if="repoMode === 'create'"
+          class="field field-full"
+        >
+          <label class="field-label">Name <span class="required">*</span></label>
+          <input
+            v-model="repoForm.name"
+            class="input"
+            placeholder="e.g. inhouse-backups"
+          />
+          <span class="field-hint">A short identifier for this storage target</span>
+        </div>
+        <div
+          v-else
+          class="field field-full"
+        >
+          <label class="field-label">Name</label>
+          <input
+            :value="repoForm.name"
+            class="input"
+            disabled
+          />
+        </div>
+
+        <!-- SSH params -->
+        <div
+          v-if="repoMode === 'create' && sshTargets.length > 0"
+          class="field field-full"
+        >
+          <label class="field-label">Fill SSH from existing</label>
+          <select
+            class="input"
+            @change="applySshTarget"
+          >
+            <option value="">-- Select to auto-fill --</option>
+            <option
+              v-for="t in sshTargets"
+              :key="t.label"
+              :value="t.label"
+            >
+              {{ t.label }}
+            </option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label class="field-label">SSH User</label>
+          <input
+            v-model="repoForm.ssh_user"
+            class="input mono"
+            placeholder="borg"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label">SSH Host <span class="required">*</span></label>
+          <input
+            v-model="repoForm.ssh_host"
+            class="input mono"
+            placeholder="backup.example.com"
+          />
+        </div>
+        <div class="field field-narrow">
+          <label class="field-label">SSH Port</label>
+          <input
+            v-model.number="repoForm.ssh_port"
+            class="input"
+            type="number"
+            min="1"
+            max="65535"
+          />
+        </div>
+
+        <!-- Test & Deploy SSH Key (create mode) -->
+        <div
+          v-if="repoMode === 'create'"
+          class="field field-full"
+        >
+          <div class="ssh-actions">
             <button
-              class="close-btn"
-              @click="showRepoDialog = false"
+              class="btn btn-sm btn-ghost"
+              :disabled="testConn.loading || !sshReady"
+              @click="testConnection"
             >
-              &times;
-            </button>
-          </div>
-
-          <div class="dialog-body">
-            <div class="form-grid">
-              <!-- Name field -->
-              <div
-                v-if="repoMode === 'create'"
-                class="field field-full"
-              >
-                <label class="field-label">Name <span class="required">*</span></label>
-                <input
-                  v-model="repoForm.name"
-                  class="input"
-                  placeholder="e.g. inhouse-backups"
-                />
-                <span class="field-hint">A short identifier for this storage target</span>
-              </div>
-              <div
-                v-else
-                class="field field-full"
-              >
-                <label class="field-label">Name</label>
-                <input
-                  :value="repoForm.name"
-                  class="input"
-                  disabled
-                />
-              </div>
-
-              <!-- SSH params -->
-              <div
-                v-if="repoMode === 'create' && sshTargets.length > 0"
-                class="field field-full"
-              >
-                <label class="field-label">Fill SSH from existing</label>
-                <select
-                  class="input"
-                  @change="applySshTarget"
-                >
-                  <option value="">-- Select to auto-fill --</option>
-                  <option
-                    v-for="t in sshTargets"
-                    :key="t.label"
-                    :value="t.label"
-                  >
-                    {{ t.label }}
-                  </option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="field-label">SSH User</label>
-                <input
-                  v-model="repoForm.ssh_user"
-                  class="input mono"
-                  placeholder="borg"
-                />
-              </div>
-              <div class="field">
-                <label class="field-label">SSH Host <span class="required">*</span></label>
-                <input
-                  v-model="repoForm.ssh_host"
-                  class="input mono"
-                  placeholder="backup.example.com"
-                />
-              </div>
-              <div class="field field-narrow">
-                <label class="field-label">SSH Port</label>
-                <input
-                  v-model.number="repoForm.ssh_port"
-                  class="input"
-                  type="number"
-                  min="1"
-                  max="65535"
-                />
-              </div>
-
-              <!-- Test & Deploy SSH Key (create mode) -->
-              <div
-                v-if="repoMode === 'create'"
-                class="field field-full"
-              >
-                <div class="ssh-actions">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    :disabled="testConn.loading || !sshReady"
-                    @click="testConnection"
-                  >
-                    {{ testConn.loading ? 'Testing...' : 'Test Connection' }}
-                  </button>
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    :disabled="!sshReady"
-                    @click="showDeployKey = !showDeployKey"
-                  >
-                    {{ showDeployKey ? '\u2212 Deploy Key' : '+ Deploy Key' }}
-                  </button>
-                  <span
-                    v-if="testConn.result"
-                    class="deploy-result"
-                    :class="testConn.result.ssh_ok ? 'result-ok' : 'result-warn'"
-                  >
-                    <template v-if="testConn.result.ssh_ok && testConn.result.borg_installed"
-                      >SSH OK, borg {{ testConn.result.borg_version }}</template
-                    >
-                    <template v-else-if="testConn.result.ssh_ok">SSH OK, borg not found</template>
-                    <template v-else>{{ testConn.result.error ?? 'Connection failed' }}</template>
-                  </span>
-                </div>
-
-                <SshKeyDeployPanel
-                  v-if="showDeployKey"
-                  :ssh-host="repoForm.ssh_host"
-                  :ssh-user="repoForm.ssh_user"
-                  :ssh-port="repoForm.ssh_port"
-                />
-              </div>
-            </div>
-
-            <!-- Folder Browser / Repo Path -->
-            <div class="browser-section">
-              <div class="browser-header">
-                <label class="field-label">Repo Path <span class="required">*</span></label>
-                <div class="browser-path-row">
-                  <div class="path-autocomplete-wrapper">
-                    <input
-                      v-model="repoForm.repo_path"
-                      class="input mono"
-                      placeholder="/backup/repos/myhost"
-                      @input="onPathInput"
-                      @blur="hideAutocomplete"
-                    />
-                    <div
-                      v-if="showAutocomplete"
-                      class="autocomplete-dropdown"
-                    >
-                      <div
-                        v-for="entry in autocompleteEntries"
-                        :key="entry.name"
-                        class="autocomplete-item"
-                        @mousedown.prevent="selectAutocomplete(entry)"
-                      >
-                        <Folder :size="14" />
-                        <span>{{ entry.name }}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    v-if="repoMode === 'create'"
-                    class="btn btn-sm btn-ghost"
-                    :disabled="!sshReady || browser.loading"
-                    @click="browseDir(repoForm.repo_path || '/')"
-                  >
-                    {{ browser.loading ? 'Loading...' : 'Browse' }}
-                  </button>
-                </div>
-              </div>
-
-              <div
-                v-if="browser.showBrowser"
-                class="browser-panel"
-              >
-                <!-- Breadcrumbs -->
-                <div class="browser-breadcrumbs">
-                  <span
-                    v-for="(crumb, i) in breadcrumbs"
-                    :key="crumb.path"
-                    class="breadcrumb"
-                    :class="{ 'breadcrumb-last': i === breadcrumbs.length - 1 }"
-                    @click="i < breadcrumbs.length - 1 && navigateTo(crumb.path)"
-                  >
-                    {{ crumb.label
-                    }}<span
-                      v-if="i > 0 && i < breadcrumbs.length - 1"
-                      class="breadcrumb-sep"
-                      >/</span
-                    >
-                  </span>
-                  <button
-                    v-if="addTab === 'create'"
-                    class="btn btn-xs btn-ghost browser-mkdir-btn"
-                    :disabled="!sshReady"
-                    @click="createFolder"
-                  >
-                    <FolderPlus :size="14" />
-                    New Folder
-                  </button>
-                </div>
-
-                <div
-                  v-if="browser.error"
-                  class="browser-error"
-                >
-                  {{ browser.error }}
-                </div>
-
-                <div
-                  v-else
-                  class="browser-list"
-                >
-                  <!-- Parent directory -->
-                  <div
-                    v-if="browser.path !== '/'"
-                    class="browser-entry browser-entry-dir"
-                    @click="navigateUp"
-                  >
-                    <Folder :size="14" />
-                    <span class="entry-name">..</span>
-                  </div>
-                  <!-- Entries (directories only) -->
-                  <div
-                    v-for="entry in browser.entries"
-                    :key="entry.name"
-                    class="browser-entry browser-entry-dir"
-                    @click="selectDir(entry)"
-                  >
-                    <Folder :size="14" />
-                    <span class="entry-name">{{ entry.name }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Remaining form fields -->
-            <div class="form-grid form-grid-below">
-              <div
-                v-if="repoMode === 'create'"
-                class="field field-full"
-              >
-                <label class="field-label">Passphrase <span class="required">*</span></label>
-                <input
-                  v-model="repoForm.passphrase"
-                  class="input"
-                  type="password"
-                  placeholder="Repository encryption passphrase"
-                />
-              </div>
-
-              <div
-                v-if="repoMode === 'create' && addTab === 'create'"
-                class="field"
-              >
-                <label class="field-label">Encryption <span class="required">*</span></label>
-                <select
-                  v-model="repoForm.encryption"
-                  class="input"
-                >
-                  <option value="repokey">repokey</option>
-                  <option value="repokey-blake2">repokey-blake2</option>
-                  <option value="keyfile">keyfile</option>
-                  <option value="keyfile-blake2">keyfile-blake2</option>
-                  <option value="authenticated">authenticated</option>
-                  <option value="authenticated-blake2">authenticated-blake2</option>
-                  <option value="none">none</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="field-label">Compression</label>
-                <select
-                  v-model="repoForm.compression"
-                  class="input"
-                >
-                  <option value="lz4">lz4</option>
-                  <option value="zstd">zstd</option>
-                  <option value="none">none</option>
-                </select>
-              </div>
-
-              <div
-                v-if="repoMode === 'edit'"
-                class="field field-full toggle-row"
-              >
-                <span class="toggle-row-label">Repo enabled</span>
-                <ToggleSwitch v-model="repoForm.enabled" />
-              </div>
-            </div>
-
-            <div
-              v-if="repoError"
-              class="form-error"
-            >
-              {{ repoError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showRepoDialog = false"
-            >
-              Cancel
+              {{ testConn.loading ? 'Testing...' : 'Test Connection' }}
             </button>
             <button
-              class="btn btn-primary"
-              :disabled="repoLoading || !formValid"
-              @click="submitRepo"
+              class="btn btn-sm btn-ghost"
+              :disabled="!sshReady"
+              @click="showDeployKey = !showDeployKey"
             >
-              <template v-if="repoLoading"> Saving... </template>
-              <template v-else-if="repoMode === 'edit'"> Save </template>
-              <template v-else-if="addTab === 'create'"> Create Repo </template>
-              <template v-else> Import Repo </template>
+              {{ showDeployKey ? '\u2212 Deploy Key' : '+ Deploy Key' }}
+            </button>
+            <span
+              v-if="testConn.result"
+              class="deploy-result"
+              :class="testConn.result.ssh_ok ? 'result-ok' : 'result-warn'"
+            >
+              <template v-if="testConn.result.ssh_ok && testConn.result.borg_installed"
+                >SSH OK, borg {{ testConn.result.borg_version }}</template
+              >
+              <template v-else-if="testConn.result.ssh_ok">SSH OK, borg not found</template>
+              <template v-else>{{ testConn.result.error ?? 'Connection failed' }}</template>
+            </span>
+          </div>
+
+          <SshKeyDeployPanel
+            v-if="showDeployKey"
+            :ssh-host="repoForm.ssh_host"
+            :ssh-user="repoForm.ssh_user"
+            :ssh-port="repoForm.ssh_port"
+          />
+        </div>
+      </div>
+
+      <!-- Folder Browser / Repo Path -->
+      <div class="browser-section">
+        <div class="browser-header">
+          <label class="field-label">Repo Path <span class="required">*</span></label>
+          <div class="browser-path-row">
+            <div class="path-autocomplete-wrapper">
+              <input
+                v-model="repoForm.repo_path"
+                class="input mono"
+                placeholder="/backup/repos/myhost"
+                @input="onPathInput"
+                @blur="hideAutocomplete"
+              />
+              <div
+                v-if="showAutocomplete"
+                class="autocomplete-dropdown"
+              >
+                <div
+                  v-for="entry in autocompleteEntries"
+                  :key="entry.name"
+                  class="autocomplete-item"
+                  @mousedown.prevent="selectAutocomplete(entry)"
+                >
+                  <Folder :size="14" />
+                  <span>{{ entry.name }}</span>
+                </div>
+              </div>
+            </div>
+            <button
+              v-if="repoMode === 'create'"
+              class="btn btn-sm btn-ghost"
+              :disabled="!sshReady || browser.loading"
+              @click="browseDir(repoForm.repo_path || '/')"
+            >
+              {{ browser.loading ? 'Loading...' : 'Browse' }}
             </button>
           </div>
         </div>
+
+        <div
+          v-if="browser.showBrowser"
+          class="browser-panel"
+        >
+          <!-- Breadcrumbs -->
+          <div class="browser-breadcrumbs">
+            <span
+              v-for="(crumb, i) in breadcrumbs"
+              :key="crumb.path"
+              class="breadcrumb"
+              :class="{ 'breadcrumb-last': i === breadcrumbs.length - 1 }"
+              @click="i < breadcrumbs.length - 1 && navigateTo(crumb.path)"
+            >
+              {{ crumb.label
+              }}<span
+                v-if="i > 0 && i < breadcrumbs.length - 1"
+                class="breadcrumb-sep"
+                >/</span
+              >
+            </span>
+            <button
+              v-if="addTab === 'create'"
+              class="btn btn-xs btn-ghost browser-mkdir-btn"
+              :disabled="!sshReady"
+              @click="createFolder"
+            >
+              <FolderPlus :size="14" />
+              New Folder
+            </button>
+          </div>
+
+          <div
+            v-if="browser.error"
+            class="browser-error"
+          >
+            {{ browser.error }}
+          </div>
+
+          <div
+            v-else
+            class="browser-list"
+          >
+            <!-- Parent directory -->
+            <div
+              v-if="browser.path !== '/'"
+              class="browser-entry browser-entry-dir"
+              @click="navigateUp"
+            >
+              <Folder :size="14" />
+              <span class="entry-name">..</span>
+            </div>
+            <!-- Entries (directories only) -->
+            <div
+              v-for="entry in browser.entries"
+              :key="entry.name"
+              class="browser-entry browser-entry-dir"
+              @click="selectDir(entry)"
+            >
+              <Folder :size="14" />
+              <span class="entry-name">{{ entry.name }}</span>
+            </div>
+          </div>
+        </div>
       </div>
-    </Teleport>
+
+      <!-- Remaining form fields -->
+      <div class="form-grid form-grid-below">
+        <div
+          v-if="repoMode === 'create'"
+          class="field field-full"
+        >
+          <label class="field-label">Passphrase <span class="required">*</span></label>
+          <input
+            v-model="repoForm.passphrase"
+            class="input"
+            type="password"
+            placeholder="Repository encryption passphrase"
+          />
+        </div>
+
+        <div
+          v-if="repoMode === 'create' && addTab === 'create'"
+          class="field"
+        >
+          <label class="field-label">Encryption <span class="required">*</span></label>
+          <select
+            v-model="repoForm.encryption"
+            class="input"
+          >
+            <option value="repokey">repokey</option>
+            <option value="repokey-blake2">repokey-blake2</option>
+            <option value="keyfile">keyfile</option>
+            <option value="keyfile-blake2">keyfile-blake2</option>
+            <option value="authenticated">authenticated</option>
+            <option value="authenticated-blake2">authenticated-blake2</option>
+            <option value="none">none</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Compression</label>
+          <select
+            v-model="repoForm.compression"
+            class="input"
+          >
+            <option value="lz4">lz4</option>
+            <option value="zstd">zstd</option>
+            <option value="none">none</option>
+          </select>
+        </div>
+
+        <div
+          v-if="repoMode === 'edit'"
+          class="field field-full toggle-row"
+        >
+          <span class="toggle-row-label">Repo enabled</span>
+          <ToggleSwitch v-model="repoForm.enabled" />
+        </div>
+      </div>
+
+      <div
+        v-if="repoError"
+        class="form-error"
+      >
+        {{ repoError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showRepoDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          :disabled="repoLoading || !formValid"
+          @click="submitRepo"
+        >
+          <template v-if="repoLoading"> Saving... </template>
+          <template v-else-if="repoMode === 'edit'"> Save </template>
+          <template v-else-if="addTab === 'create'"> Create Repo </template>
+          <template v-else> Import Repo </template>
+        </button>
+      </template>
+    </BaseModal>
   </div>
 
   <BaseModal
@@ -1957,10 +1948,6 @@ onMounted(loadRepos)
 }
 
 /* Overlay & Dialog */
-
-.dialog-lg {
-  width: 680px;
-}
 
 .form-grid {
   display: grid;

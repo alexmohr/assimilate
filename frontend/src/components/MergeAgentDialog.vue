@@ -8,6 +8,7 @@ import { ref, computed } from 'vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
 import type { AgentRow } from '../types/agent'
+import BaseModal from './BaseModal.vue'
 
 interface MergeResult {
   merged: boolean
@@ -56,91 +57,81 @@ async function confirmMerge(): Promise<void> {
 </script>
 
 <template>
-  <div
-    class="overlay"
-    @click.self="emit('cancel')"
+  <BaseModal
+    :open="true"
+    title="Merge Agent"
+    size="sm"
+    @close="emit('cancel')"
   >
-    <div class="dialog dialog-sm">
-      <div class="dialog-header">
-        <h2 class="dialog-title">Merge Agent</h2>
-        <button
-          class="close-btn"
-          @click="emit('cancel')"
-        >
-          &times;
-        </button>
-      </div>
-      <div class="dialog-body">
-        <div class="field">
-          <label class="field-label">Source (imported)</label>
-          <input
-            class="input mono"
-            :value="source.hostname"
-            disabled
-          />
-        </div>
-        <div class="field">
-          <label class="field-label">Merge into <span class="required">*</span></label>
-          <select
-            v-model="targetHostname"
-            class="input"
-          >
-            <option value="">Select target agent...</option>
-            <option
-              v-for="c in realAgents"
-              :key="c.id"
-              :value="c.hostname"
-            >
-              {{ c.hostname }}{{ c.display_name ? ` — ${c.display_name}` : '' }}
-            </option>
-          </select>
-        </div>
-        <div class="field toggle-row">
-          <span class="toggle-row-label">Save pattern for future imports</span>
-          <input
-            v-model="savePattern"
-            type="checkbox"
-            class="checkbox"
-          />
-        </div>
-        <div
-          v-if="savePattern"
-          class="field"
-        >
-          <label class="field-label">Pattern</label>
-          <input
-            v-model="patternValue"
-            class="input mono"
-            placeholder="e.g. myhost*"
-          />
-          <span class="field-hint">
-            This pattern will be added to the target agent's hostname aliases.
-          </span>
-        </div>
-        <div
-          v-if="mergeError"
-          class="form-error"
-        >
-          {{ mergeError }}
-        </div>
-      </div>
-      <div class="dialog-footer">
-        <button
-          class="btn btn-ghost"
-          @click="emit('cancel')"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-primary"
-          :disabled="mergeLoading || !targetHostname"
-          @click="confirmMerge"
-        >
-          {{ mergeLoading ? 'Merging...' : 'Merge' }}
-        </button>
-      </div>
+    <div class="field">
+      <label class="field-label">Source (imported)</label>
+      <input
+        class="input mono"
+        :value="source.hostname"
+        disabled
+      />
     </div>
-  </div>
+    <div class="field">
+      <label class="field-label">Merge into <span class="required">*</span></label>
+      <select
+        v-model="targetHostname"
+        class="input"
+      >
+        <option value="">Select target agent...</option>
+        <option
+          v-for="c in realAgents"
+          :key="c.id"
+          :value="c.hostname"
+        >
+          {{ c.hostname }}{{ c.display_name ? ` — ${c.display_name}` : '' }}
+        </option>
+      </select>
+    </div>
+    <div class="field toggle-row">
+      <span class="toggle-row-label">Save pattern for future imports</span>
+      <input
+        v-model="savePattern"
+        type="checkbox"
+        class="checkbox"
+      />
+    </div>
+    <div
+      v-if="savePattern"
+      class="field"
+    >
+      <label class="field-label">Pattern</label>
+      <input
+        v-model="patternValue"
+        class="input mono"
+        placeholder="e.g. myhost*"
+      />
+      <span class="field-hint">
+        This pattern will be added to the target agent's hostname aliases.
+      </span>
+    </div>
+    <div
+      v-if="mergeError"
+      class="form-error"
+    >
+      {{ mergeError }}
+    </div>
+
+    <template #footer>
+      <button
+        class="btn btn-ghost"
+        @click="emit('cancel')"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-primary"
+        :disabled="mergeLoading || !targetHostname"
+        @click="confirmMerge"
+      >
+        {{ mergeLoading ? 'Merging...' : 'Merge' }}
+      </button>
+    </template>
+  </BaseModal>
 </template>
 
 <style scoped>

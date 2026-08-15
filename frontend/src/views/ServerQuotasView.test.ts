@@ -158,10 +158,10 @@ describe('ServerQuotasView', () => {
 
     expect(wrapper.text()).toContain('API error')
 
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await nextTick()
 
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('.modal-dialog').exists()).toBe(false)
   })
 
   it('removes a configured quota', async () => {

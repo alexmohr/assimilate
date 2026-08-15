@@ -11,7 +11,7 @@ withDefaults(
     error?: string | null
     submitLabel: string
     submittingLabel: string
-    /** 'button' for handlers invoked directly (no enclosing `<form>`); 'submit' relies on the form's `@submit.prevent`. */
+    /** 'button' for handlers invoked directly; 'submit' relies on BaseModal's `form` mode. */
     type?: 'submit' | 'button'
   }>(),
   { disabled: false, error: null, type: 'submit' },
@@ -21,27 +21,27 @@ const emit = defineEmits<{ cancel: []; confirm: [] }>()
 </script>
 
 <template>
+  <!-- Goes in BaseModal's #footer slot, which supplies the button row. The
+       error takes a full row of its own above the buttons. -->
   <div
     v-if="error"
     class="form-error"
   >
     {{ error }}
   </div>
-  <div class="dialog-footer">
-    <button
-      type="button"
-      class="btn btn-ghost"
-      @click="emit('cancel')"
-    >
-      Cancel
-    </button>
-    <button
-      :type="type"
-      class="btn btn-primary"
-      :disabled="disabled || submitting"
-      @click="type === 'button' ? emit('confirm') : undefined"
-    >
-      {{ submitting ? submittingLabel : submitLabel }}
-    </button>
-  </div>
+  <button
+    type="button"
+    class="btn btn-ghost"
+    @click="emit('cancel')"
+  >
+    Cancel
+  </button>
+  <button
+    :type="type"
+    class="btn btn-primary"
+    :disabled="disabled || submitting"
+    @click="type === 'button' ? emit('confirm') : undefined"
+  >
+    {{ submitting ? submittingLabel : submitLabel }}
+  </button>
 </template>

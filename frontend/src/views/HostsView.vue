@@ -26,6 +26,7 @@ import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
+import BaseModal from '../components/BaseModal.vue'
 
 interface AgentTagRow {
   agent_id: number
@@ -831,142 +832,124 @@ watch(
       </div>
     </div>
 
-    <!-- Add Agent Dialog -->
-    <Teleport to="body">
+    <!-- Add Agent Dialog. One dialog, two states: collect the hostname,
+         then reveal the generated token once. -->
+    <BaseModal
+      :open="showAddDialog"
+      :title="newToken ? 'Agent Created' : 'Add Agent'"
+      @close="closeAddDialog"
+    >
+      <template v-if="!newToken">
+        <div class="field">
+          <label class="field-label">Hostname <span class="required">*</span></label>
+          <input
+            v-model="addForm.hostname"
+            class="input"
+            placeholder="e.g. workstation-01"
+            @keyup.enter="submitAdd"
+          />
+          <span class="field-hint"
+            >Must match the machine's actual hostname (output of <code>hostname</code>).</span
+          >
+        </div>
+        <div class="field">
+          <label class="field-label">Display Name</label>
+          <input
+            v-model="addForm.display_name"
+            class="input"
+            placeholder="Optional friendly name"
+          />
+        </div>
+        <div
+          v-if="addError"
+          class="form-error"
+        >
+          {{ addError }}
+        </div>
+      </template>
+
       <div
-        v-if="showAddDialog"
-        class="overlay"
-        @click.self="closeAddDialog"
+        v-else
+        class="token-notice"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ newToken ? 'Agent Created' : 'Add Agent' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="closeAddDialog"
-            >
-              &times;
-            </button>
-          </div>
-
-          <template v-if="!newToken">
-            <div class="dialog-body">
-              <div class="field">
-                <label class="field-label">Hostname <span class="required">*</span></label>
-                <input
-                  v-model="addForm.hostname"
-                  class="input"
-                  placeholder="e.g. workstation-01"
-                  @keyup.enter="submitAdd"
-                />
-                <span class="field-hint"
-                  >Must match the machine's actual hostname (output of <code>hostname</code>).</span
-                >
-              </div>
-              <div class="field">
-                <label class="field-label">Display Name</label>
-                <input
-                  v-model="addForm.display_name"
-                  class="input"
-                  placeholder="Optional friendly name"
-                />
-              </div>
-              <div
-                v-if="addError"
-                class="form-error"
-              >
-                {{ addError }}
-              </div>
-            </div>
-            <div class="dialog-footer">
-              <button
-                class="btn btn-ghost"
-                @click="closeAddDialog"
-              >
-                Cancel
-              </button>
-              <button
-                class="btn btn-primary"
-                :disabled="addLoading || !addForm.hostname.trim()"
-                @click="submitAdd"
-              >
-                {{ addLoading ? 'Creating...' : 'Create' }}
-              </button>
-            </div>
-          </template>
-
-          <template v-else>
-            <div class="dialog-body">
-              <div class="token-notice">
-                <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
-                <div class="token-box">
-                  <code class="token-text">{{ newToken }}</code>
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    @click="copyToClipboard(newToken ?? '')"
-                  >
-                    {{ tokenCopied ? 'Copied!' : 'Copy' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div class="dialog-footer">
-              <button
-                class="btn btn-primary"
-                @click="closeAddDialog"
-              >
-                Done
-              </button>
-            </div>
-          </template>
+        <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
+        <div class="token-box">
+          <code class="token-text">{{ newToken }}</code>
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(newToken ?? '')"
+          >
+            {{ tokenCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <template v-if="!newToken">
+          <button
+            type="button"
+            class="btn btn-ghost"
+            @click="closeAddDialog"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="addLoading || !addForm.hostname.trim()"
+            @click="submitAdd"
+          >
+            {{ addLoading ? 'Creating...' : 'Create' }}
+          </button>
+        </template>
+        <button
+          v-else
+          type="button"
+          class="btn btn-primary"
+          @click="closeAddDialog"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Adopt Agent Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showAdoptDialog"
-        class="overlay"
-        @click.self="showAdoptDialog = false"
-      >
-        <div class="dialog dialog-sm">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Agent Adopted &mdash; {{ adoptHostname }}</h2>
-            <button
-              class="close-btn"
-              @click="showAdoptDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <div class="token-notice">
-              <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
-              <div class="token-box">
-                <code class="token-text">{{ adoptToken }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="copyToClipboard(adoptToken ?? '')"
-                >
-                  {{ tokenCopied ? 'Copied!' : 'Copy' }}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showAdoptDialog = false"
-            >
-              Done
-            </button>
-          </div>
+    <BaseModal
+      :open="showAdoptDialog"
+      size="sm"
+      @close="showAdoptDialog = false"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Agent Adopted &mdash; {{ adoptHostname }}
+        </h2>
+      </template>
+      <div class="token-notice">
+        <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
+        <div class="token-box">
+          <code class="token-text">{{ adoptToken }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(adoptToken ?? '')"
+          >
+            {{ tokenCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showAdoptDialog = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Deploy Agent Dialog -->
     <AgentDeployDialog
@@ -988,15 +971,13 @@ watch(
     />
 
     <!-- Merge Agent Dialog -->
-    <Teleport to="body">
-      <MergeAgentDialog
-        v-if="showMergeDialog && mergeSource"
-        :source="mergeSource"
-        :all-agents="agents"
-        @merged="onMerged"
-        @cancel="showMergeDialog = false"
-      />
-    </Teleport>
+    <MergeAgentDialog
+      v-if="showMergeDialog && mergeSource"
+      :source="mergeSource"
+      :all-agents="agents"
+      @merged="onMerged"
+      @cancel="showMergeDialog = false"
+    />
   </div>
 </template>
 

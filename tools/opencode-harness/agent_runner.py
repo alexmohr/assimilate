@@ -188,15 +188,20 @@ def _format_claude_event(line: str) -> str | None:
         return "; ".join(parts) if parts else None
 
     if kind == "user":
+        # Claude routinely batches a whole round of parallel tool calls'
+        # results into one user event as multiple tool_result blocks - collect
+        # every one instead of returning after the first, or a failure that
+        # isn't first in the batch silently never reaches the harness log.
         message = event.get("message") or {}
+        parts = []
         for block in message.get("content") or []:
             if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
             content = block.get("content")
             text = content if isinstance(content, str) else json.dumps(content)
             label = "tool result FAILED" if block.get("is_error") else "tool result"
-            return f"{label}: {_truncate(text, 300)}"
-        return None
+            parts.append(f"{label}: {_truncate(text, 300)}")
+        return "; ".join(parts) if parts else None
 
     if kind == "result":
         cost = event.get("total_cost_usd")

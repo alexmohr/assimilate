@@ -9,6 +9,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_runner import SUPPORTED_CLIS as _VALID_AGENT_CLIS
+
 
 def _int(name: str, default: int) -> int:
     return int(os.environ.get(name, str(default)))
@@ -25,10 +27,6 @@ def _optional_int(name: str) -> int | None:
     val = os.environ.get(name)
     return int(val) if val else None
 
-
-# The coding-agent CLI backends this harness knows how to drive - see
-# agent_runner.SUPPORTED_CLIS, which this must stay in sync with.
-_VALID_AGENT_CLIS = ("opencode", "claude")
 
 # Each backend's own cheap/fast classifier model, used as HARNESS_ROUTER_MODEL's
 # default - keyed by agent_cli so switching backends doesn't silently try to

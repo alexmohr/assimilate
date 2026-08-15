@@ -395,16 +395,19 @@ onMessage('RepoOpChanged', (payload) => {
     // fact just succeeded: this event and DataChanged can arrive in either
     // order, so "not yet in the refreshed list" and "genuinely still there"
     // were indistinguishable without a fetch of our own. Refetching first
+    // (silently, so the whole panel doesn't flash a loading placeholder)
     // resolves that: by the time it returns, the delete has already
     // concluded (the op queue was already idle), so the list is
     // authoritative either way - present means genuinely stale/failed,
-    // absent means already gone - and it's always correct to clear.
+    // absent means already gone - and it's always correct to clear. Still
+    // clears even if the reload fails, so a marker can never get stuck
+    // forever.
     if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
       loadArchives(true)
-        .then(() => {
+        .catch(logger.error)
+        .finally(() => {
           deletingArchiveNames.value = new Set()
         })
-        .catch(logger.error)
     }
   }
 })
@@ -457,7 +460,10 @@ async function confirmArchiveDeletion(): Promise<void> {
   // reach the WebSocket handler - and prune this archive from the list -
   // before the await below would otherwise return, which would mean the
   // "deleting" state was never observed and the row just vanishes instead
-  // of showing the in-flight state the UI promises.
+  // of showing the in-flight state the UI promises. The DELETE call itself
+  // can also take a moment on its own (repo-level lock contention with
+  // another queued operation, network latency), so the button must show
+  // "in flight" the instant the user confirms either way.
   deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
   try {
     await deleteArchiveByName(archive)
@@ -472,6 +478,11 @@ async function confirmArchiveDeletion(): Promise<void> {
     next.delete(archive.name)
     deletingArchiveNames.value = next
     toastError(extractError(e))
+    // The request never made it (or the server rejected it), so it was
+    // never actually queued - undo the optimistic mark.
+    deletingArchiveNames.value = new Set(
+      [...deletingArchiveNames.value].filter((name) => name !== archive.name),
+    )
   } finally {
     archiveDeleteLoading.value = false
   }

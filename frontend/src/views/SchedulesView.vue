@@ -27,6 +27,7 @@ import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import ToggleSwitch from '../components/ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
@@ -61,6 +62,7 @@ const showMobileFilters = ref(false)
 
 const runNowLoading = ref<number | null>(null)
 const cancelLoading = ref<number | null>(null)
+const toggleLoading = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 
 function scheduleTypeLabel(t: ScheduleType): string {
@@ -254,6 +256,41 @@ async function runNow(s: ScheduleRow): Promise<void> {
   }
 }
 
+async function toggleScheduleEnabled(s: ScheduleRow): Promise<void> {
+  const nextEnabled = !s.enabled
+  toggleLoading.value = s.id
+  try {
+    const res = await apiClient.put<ScheduleRow>(`/schedules/${s.id}`, {
+      name: s.name,
+      cron_expression: s.cron_expression,
+      enabled: nextEnabled,
+      canary_enabled: s.canary_enabled,
+      exclude_patterns_raw: s.exclude_patterns_raw,
+      file_change_patterns_raw: s.file_change_patterns_raw,
+      ignore_global_excludes: s.ignore_global_excludes,
+      keep_hourly: s.keep_hourly,
+      keep_daily: s.keep_daily,
+      keep_weekly: s.keep_weekly,
+      keep_monthly: s.keep_monthly,
+      keep_yearly: s.keep_yearly,
+      compact_enabled: s.compact_enabled,
+      rate_limit_kbps: s.rate_limit_kbps,
+      pre_backup_commands: s.pre_backup_commands,
+      post_backup_commands: s.post_backup_commands,
+      on_failure: s.on_failure,
+    })
+    const index = schedules.value.findIndex((row) => row.id === s.id)
+    if (index !== -1) {
+      schedules.value[index] = res.data
+    }
+    toastSuccess(nextEnabled ? 'Schedule enabled.' : 'Schedule disabled.')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    toggleLoading.value = null
+  }
+}
+
 async function cancelBackup(s: ScheduleRow): Promise<void> {
   cancelLoading.value = s.id
   try {
@@ -401,6 +438,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         :key="s.id"
         class="schedule-card"
         :class="{ 'schedule-card-notable': !s.enabled }"
+        :data-schedule-id="s.id"
         @click="navigateToSchedule(s)"
       >
         <span class="card-hostname">{{
@@ -444,6 +482,15 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           class="card-actions"
           @click.stop
         >
+          <div class="schedule-toggle">
+            <ToggleSwitch
+              :model-value="s.enabled"
+              :disabled="toggleLoading === s.id"
+              :label="s.enabled ? 'Disable schedule' : 'Enable schedule'"
+              @update:model-value="toggleScheduleEnabled(s)"
+            />
+            <span class="schedule-toggle-label">{{ s.enabled ? 'Enabled' : 'Disabled' }}</span>
+          </div>
           <button
             v-if="s.isRunning"
             class="btn btn-sm btn-danger"
@@ -668,8 +715,21 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 
 .card-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   margin-top: auto;
+}
+
+.schedule-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.schedule-toggle-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 </style>

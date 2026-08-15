@@ -1149,6 +1149,46 @@ describe('RepoDetailView', () => {
 
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
     })
+
+    it('shows the in-progress state immediately on confirm, before the delete request resolves', async () => {
+      let resolveDelete: ((value: boolean) => void) | undefined
+      mockDeleteArchiveByName.mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveDelete = resolve
+          }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      // The row must flip to "in flight" the moment the user confirms, not
+      // once the (still in-flight) delete request comes back.
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      resolveDelete?.(true)
+      await flushPromises()
+    })
+
+    it('rolls back the in-progress state when the delete request fails', async () => {
+      mockDeleteArchiveByName.mockRejectedValueOnce(new Error('boom'))
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      // The delete never actually got queued, so the optimistic "in flight"
+      // marker must not stick around and leave the row permanently disabled.
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+    })
   })
 
   describe('Break Lock', () => {

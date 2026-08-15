@@ -1315,6 +1315,13 @@ pub async fn exec_borg(
 
     info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
 
+    // Serializes against every other operation that touches this repo's local borg cache
+    // (backup, delete, import, rescan, reset & sync, and Break Lock's own cache-lock
+    // clearing) - an ad-hoc admin command like `compact`/`prune`/`recreate` genuinely uses
+    // the cache exactly like those do, and without this an unrelated concurrent operation
+    // could corrupt state.
+    let _repo_lock_guard = state.repo_lock.acquire(repo_id).await;
+
     let output = Borg::new()
         .with_registry(state.task_registry.clone())
         .run(&req.args, &env)
@@ -1396,6 +1403,12 @@ pub async fn migrate_encryption(
         u16::try_from(repo.ssh_port).unwrap_or(22),
         &repo.repo_path,
     );
+
+    // Serializes against every other operation that touches this repo's local borg cache
+    // (backup, delete, import, rescan, reset & sync, Break Lock's cache-lock clearing) for
+    // the whole migration, not just the `borg init` call below - the SSH rename that
+    // precedes it already mutates the repository a concurrent operation could be using.
+    let _repo_lock_guard = state.repo_lock.acquire(repo_id).await;
 
     let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
@@ -1775,10 +1788,11 @@ async fn run_borg_break_lock(
     // documented risk this feature doesn't change), clearing the *local cache* lock
     // deletes files out from under whatever currently holds them, with no equivalent
     // "borg will just re-acquire it" recovery path. Every other operation that touches
-    // this repo's local cache (backup, delete, import, rescan, reset & sync) serializes
-    // through `repo_lock` first, so successfully acquiring it here proves none of them
-    // is concurrently using the cache - safe to probe and clear. The wait is short and
-    // bounded rather than a blocking `.acquire()`: Break Lock exists specifically to
+    // this repo's local cache (backup, delete, import, rescan, reset & sync, an ad-hoc
+    // admin command via `exec_borg`, encryption migration) serializes through `repo_lock`
+    // first, so successfully acquiring it here proves none of them is concurrently using
+    // the cache - safe to probe and clear. The wait is short and bounded rather than a
+    // blocking `.acquire()`: Break Lock exists specifically to
     // recover from an operation that's hung and will never release this lock on its
     // own, so waiting on it indefinitely here would defeat the action's entire purpose.
     // If the wait times out, skip cache-lock clearing for this call (surfaced as a note

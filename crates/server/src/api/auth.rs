@@ -480,7 +480,7 @@ pub async fn me(
         must_change_password: user.must_change_password,
         session_expires_at,
         remember_me,
-        can_upgrade_agent: effective.can_upgrade_agent,
+        can_upgrade_agent: effective.can_upgrade_agent || effective.can_delete_repo,
         totp_enabled,
     }))
 }

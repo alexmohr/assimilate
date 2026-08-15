@@ -364,10 +364,21 @@ onMessage('RepoOpChanged', (payload) => {
     // for it has finished - success or failure - since repo operations run
     // strictly one at a time. Any name still marked "deleting" at that
     // point is stale (a failed delete that the DataChanged-driven prune
-    // below never saw disappear from the list), so sweep it clear rather
+    // above never saw disappear from the list), so sweep it clear rather
     // than leaving its row disabled forever.
+    //
+    // Refresh the archive list first: on a small repo the delete (and any
+    // compact) can finish fast enough that this event and the DataChanged
+    // one race each other, and clearing unconditionally right away can win
+    // that race - showing a row that's about to disappear as briefly idle
+    // instead. Still clears even if the reload fails, so a marker can never
+    // get stuck forever.
     if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
-      deletingArchiveNames.value = new Set()
+      loadArchives()
+        .catch(logger.error)
+        .finally(() => {
+          deletingArchiveNames.value = new Set()
+        })
     }
   }
 })

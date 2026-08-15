@@ -56,6 +56,7 @@ vi.mock('../composables/useWebSocket', () => ({
 }))
 
 const mockDeleteArchiveByName = vi.fn()
+const mockLoadArchives = vi.fn()
 
 vi.mock('../composables/useArchiveBrowser', () => ({
   useArchiveBrowser: () => ({
@@ -72,7 +73,7 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     breadcrumbs: ref([]),
     dirs: ref([]),
     files: ref([]),
-    loadArchives: vi.fn().mockResolvedValue(undefined),
+    loadArchives: mockLoadArchives,
     selectArchive: vi.fn(),
     loadContents: vi.fn(),
     navigateTo: vi.fn(),
@@ -244,6 +245,7 @@ describe('RepoDetailView', () => {
     mockBrowserArchives.value = []
     mockSortedArchives.value = []
     mockDeleteArchiveByName.mockResolvedValue(true)
+    mockLoadArchives.mockResolvedValue(undefined)
   })
 
   it('renders repo name in breadcrumb and info grid', async () => {
@@ -984,6 +986,38 @@ describe('RepoDetailView', () => {
       await flushPromises()
 
       expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('keeps the in-progress state until the archive list reload completes, even once RepoOpChanged clears', async () => {
+      let resolveLoad: (() => void) | undefined
+      mockLoadArchives.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveLoad = resolve
+          }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // On a small repo, the delete (and any compact) can finish and this
+      // event can fire before the archive list has actually caught up.
+      // Clearing immediately here would show the row as briefly idle
+      // instead of properly disabled or gone - the marker must survive
+      // until the triggered reload resolves.
+      wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
+      await flushPromises()
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      resolveLoad?.()
+      await flushPromises()
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
     })
 

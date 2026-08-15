@@ -1481,6 +1481,100 @@ async fn test_delete_archive_transitions_straight_to_compact_without_a_stale_dra
     );
 }
 
+/// The exact race a follow-up review flagged: when a repo has no operation
+/// already active, `enqueue()` alone never sets `active`, so a broadcast
+/// fired right after it (before the spawned task's `begin()` runs) carries
+/// `op: None` - indistinguishable to clients from "this repo's delete queue
+/// has fully drained". The frontend clears its per-archive "deleting" state
+/// on exactly that signal, so a client that had just set its own "deleting"
+/// state for the archive it asked to delete could see it wiped out by this
+/// stale broadcast a moment later. The fix is to skip the enqueue-time
+/// broadcast entirely when nothing was already active, since the spawned
+/// task's `begin()` broadcasts the real `delete_archive` state moments
+/// later regardless.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_archive_does_not_broadcast_a_drained_op_before_it_ever_begins() {
+    use tokio::time::{Duration, timeout};
+
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let mut ws_rx = state.ui_broadcast.subscribe();
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('enqueue-broadcast-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "delete-archive-enqueue-broadcast-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The first RepoOpChanged broadcast for this repo must already report
+    // the delete as active - never a cleared (`None`) op sent while it was
+    // merely queued.
+    let first_kind = timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = loop {
+                match ws_rx.recv().await {
+                    Ok(m) => break m,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(e) => panic!("ui broadcast channel closed unexpectedly: {e}"),
+                }
+            };
+            if let shared::protocol::ServerToUi::RepoOpChanged { repo_id: rid, op } = msg
+                && rid == repo_id
+            {
+                return op.map(|o| o.kind);
+            }
+        }
+    })
+    .await
+    .expect("should observe a RepoOpChanged broadcast for this repo");
+
+    assert_eq!(
+        first_kind,
+        Some(shared::protocol::RepoOpKind::DeleteArchive),
+        "the first RepoOpChanged broadcast for a freshly queued delete must not report a cleared \
+         op - a client that just marked this archive as deleting client-side would see that state \
+         wiped out by a stale 'nothing happening' signal"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_delete_multiple_archives_queues_without_conflict() {

@@ -56,6 +56,7 @@ vi.mock('../composables/useWebSocket', () => ({
 }))
 
 const mockDeleteArchiveByName = vi.fn()
+const mockLoadArchives = vi.fn()
 
 vi.mock('../composables/useArchiveBrowser', () => ({
   useArchiveBrowser: () => ({
@@ -72,7 +73,7 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     breadcrumbs: ref([]),
     dirs: ref([]),
     files: ref([]),
-    loadArchives: vi.fn().mockResolvedValue(undefined),
+    loadArchives: mockLoadArchives,
     selectArchive: vi.fn(),
     loadContents: vi.fn(),
     navigateTo: vi.fn(),
@@ -244,6 +245,7 @@ describe('RepoDetailView', () => {
     mockBrowserArchives.value = []
     mockSortedArchives.value = []
     mockDeleteArchiveByName.mockResolvedValue(true)
+    mockLoadArchives.mockResolvedValue(undefined)
   })
 
   it('renders repo name in breadcrumb and info grid', async () => {
@@ -987,6 +989,38 @@ describe('RepoDetailView', () => {
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
     })
 
+    it('keeps the in-progress state until the archive list reload completes, even once RepoOpChanged clears', async () => {
+      let resolveLoad: (() => void) | undefined
+      mockLoadArchives.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveLoad = resolve
+          }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // On a small repo, the delete (and any compact) can finish and this
+      // event can fire before the archive list has actually caught up.
+      // Clearing immediately here would show the row as briefly idle
+      // instead of properly disabled or gone - the marker must survive
+      // until the triggered reload resolves.
+      wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
+      await flushPromises()
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      resolveLoad?.()
+      await flushPromises()
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
     it('keeps the in-progress state while the automatic post-delete compact is running', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
@@ -1008,6 +1042,46 @@ describe('RepoDetailView', () => {
       await flushPromises()
 
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+    })
+
+    it('shows the in-progress state immediately on confirm, before the delete request resolves', async () => {
+      let resolveDelete: ((value: boolean) => void) | undefined
+      mockDeleteArchiveByName.mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveDelete = resolve
+          }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      // The row must flip to "in flight" the moment the user confirms, not
+      // once the (still in-flight) delete request comes back.
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      resolveDelete?.(true)
+      await flushPromises()
+    })
+
+    it('rolls back the in-progress state when the delete request fails', async () => {
+      mockDeleteArchiveByName.mockRejectedValueOnce(new Error('boom'))
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      // The delete never actually got queued, so the optimistic "in flight"
+      // marker must not stick around and leave the row permanently disabled.
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
     })
   })
 })

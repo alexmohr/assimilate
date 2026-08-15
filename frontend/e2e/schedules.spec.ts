@@ -242,6 +242,57 @@ test.describe('Schedules management', () => {
     })
   })
 
+  test('toggles a schedule enabled/disabled from the list card without opening it', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+
+    // Snapshot the seeded row so the mocked PUT response below can echo back a
+    // complete ScheduleResponse, without ever sending the PUT to the real
+    // backend (which would mutate demo data other, possibly-parallel, tests rely on).
+    // Schedule 1 is the daily web-server-01/server-daily schedule (see other
+    // tests in this file, e.g. the direct `/schedules/1` navigations below) -
+    // its own `name` field is blank, so the card falls back to the repo name.
+    // The other schedules seeded/created against the same repo across the
+    // full e2e run also fall back to "server-daily", so the card is located
+    // by its data-schedule-id rather than by text.
+    const scheduleId = 1
+    const getResp = await page.request.get(`/api/schedules/${scheduleId}`)
+    expect(getResp.ok()).toBe(true)
+    const original = (await getResp.json()) as Record<string, unknown>
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator(`.schedule-card[data-schedule-id="${scheduleId}"]`)
+    await expect(card.locator('.schedule-toggle-label')).toHaveText('Enabled')
+    await expect(card).not.toHaveClass(/schedule-card-notable/)
+
+    await page.route(`**/api/schedules/${scheduleId}`, async (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback()
+      const body = (await route.request().postDataJSON()) as Record<string, unknown>
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...original, ...body }),
+      })
+    })
+
+    const [putResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().endsWith(`/api/schedules/${scheduleId}`) && resp.request().method() === 'PUT',
+      ),
+      card.locator('button[role="switch"]').click(),
+    ])
+    expect(putResponse.ok()).toBe(true)
+    expect(putResponse.request().postDataJSON()).toMatchObject({ enabled: false })
+
+    await expect(card.locator('.schedule-toggle-label')).toHaveText('Disabled')
+    await expect(card).toHaveClass(/schedule-card-notable/)
+    await expect(card.locator('.entity-status-pill')).toHaveText('Disabled')
+  })
+
   test('creating a new schedule succeeds (regression: agent_ids/_per_agent field naming)', async ({
     page,
   }) => {

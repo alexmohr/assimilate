@@ -364,10 +364,21 @@ onMessage('RepoOpChanged', (payload) => {
     // for it has finished - success or failure - since repo operations run
     // strictly one at a time. Any name still marked "deleting" at that
     // point is stale (a failed delete that the DataChanged-driven prune
-    // below never saw disappear from the list), so sweep it clear rather
+    // above never saw disappear from the list), so sweep it clear rather
     // than leaving its row disabled forever.
+    //
+    // Refresh the archive list first: on a small repo the delete (and any
+    // compact) can finish fast enough that this event and the DataChanged
+    // one race each other, and clearing unconditionally right away can win
+    // that race - showing a row that's about to disappear as briefly idle
+    // instead. Still clears even if the reload fails, so a marker can never
+    // get stuck forever.
     if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
-      deletingArchiveNames.value = new Set()
+      loadArchives()
+        .catch(logger.error)
+        .finally(() => {
+          deletingArchiveNames.value = new Set()
+        })
     }
   }
 })
@@ -409,9 +420,14 @@ async function confirmArchiveDeletion(): Promise<void> {
   const archive = archivePendingDeletion.value
   if (!archive) return
   archiveDeleteLoading.value = true
+  // Mark it deleting before the request goes out, not after it resolves: the
+  // DELETE call itself can take a moment (repo-level lock contention with
+  // another queued operation, network latency), and the row's button must
+  // show "in flight" the instant the user confirms rather than staying
+  // clickable-again until the response comes back.
+  deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
   try {
     await deleteArchiveByName(archive)
-    deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
     archivePendingDeletion.value = null
     if (selectedArchive.value?.name === archive.name) {
       selectedArchive.value = null
@@ -420,6 +436,11 @@ async function confirmArchiveDeletion(): Promise<void> {
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
     toastError(extractError(e))
+    // The request never made it (or the server rejected it), so it was
+    // never actually queued - undo the optimistic mark.
+    deletingArchiveNames.value = new Set(
+      [...deletingArchiveNames.value].filter((name) => name !== archive.name),
+    )
   } finally {
     archiveDeleteLoading.value = false
   }

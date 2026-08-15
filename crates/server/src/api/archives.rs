@@ -560,12 +560,27 @@ pub async fn delete_archive(
     // server-side borg operation for a repository runs sequentially via the
     // per-repo lock, so deleting many archives at once just lines them up.
     state.repo_op_tracker.enqueue(repo_id).await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged {
-            repo_id,
-            op: state.repo_op_tracker.get(repo_id).await,
-        });
+    // Only broadcast here if something is already active: `enqueue` alone
+    // never sets `active`, so when this is the first operation queued for
+    // the repo, `get()` comes back `None` - indistinguishable from "nothing
+    // happening here" to clients. The frontend treats any non-delete/compact
+    // `op` as "the delete queue has fully drained" and clears its per-archive
+    // in-flight tracking accordingly, so broadcasting that transient `None`
+    // can race with (and clobber) a client's own just-set "deleting" state
+    // for the very deletion this call just queued. The spawned task below
+    // calls `begin()` and broadcasts the real `delete_archive` state moments
+    // later regardless, so skipping this broadcast when nothing was already
+    // active loses nothing - it only avoids the misleading intermediate one.
+    // When something else is already active, this still fires immediately so
+    // its displayed `queued` count reflects the new arrival without waiting.
+    if let Some(op) = state.repo_op_tracker.get(repo_id).await {
+        state
+            .ui_broadcast
+            .send(shared::protocol::ServerToUi::RepoOpChanged {
+                repo_id,
+                op: Some(op),
+            });
+    }
 
     tokio::spawn(run_archive_deletion(
         state,

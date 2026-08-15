@@ -619,11 +619,13 @@ module.exports = async ({
   const hasClaudeReviewFailed = existingLabels.includes(CLAUDE_REVIEW_FAILED_LABEL.name);
 
   // Hard guarantee: claude-approved must never survive while a pre-flight
-  // stage is failing, no matter how it got set. `ready to merge` no longer
-  // depends on any review verdict (see the status precedence chain below),
-  // so this is purely about not leaving a misleading label on the PR - a
-  // human glancing at labels shouldn't see "approved" next to a currently
-  // failing precheck. pre-review-checks.js already waits for both stages'
+  // stage is failing, no matter how it got set. Even though `ready to merge`
+  // does depend on a genuine review verdict now (see hasGenuineApproval
+  // below), a stale approval sitting next to a currently failing precheck is
+  // still misleading on its own - a human glancing at labels shouldn't see
+  // "approved" next to "coverage failed"/"duplicate code", regardless of
+  // whether it's also blocking the merge gate. pre-review-checks.js already
+  // waits for both stages'
   // check runs to conclude before ever invoking Claude, so this isn't the
   // primary defense anymore - it's for a new push landing on the PR while
   // Claude's review of the previous commit is still in progress, which
@@ -668,6 +670,26 @@ module.exports = async ({
   // an actual failure of this commit - see labelReflectsCurrentCommit above.
   const coverageFailedForThisCommit = hasCoverageFailed && coverageLabelCurrent;
   const duplicateCodeForThisCommit = hasDuplicateCode && duplicateLabelCurrent;
+
+  // The same "genuine approval" gate the auto-merge path already applied
+  // (see autoMergeIfApproved's call site below) now also gates the
+  // `ready to merge` status itself, not just the merge action - see
+  // skills/review/SKILL.md. A native APPROVED review is intrinsically
+  // provenance-safe (GitHub guarantees a real, distinct reviewer and
+  // rejects self-approval outright). The same-account fallback,
+  // `claude-approved`, is an ordinary label anyone with triage+ access could
+  // add by hand, so it's only trusted here when the most recent event that
+  // added it was actually authored by this repo's own automation - see
+  // claudeApprovedIsGenuine.
+  const isNativeApproval = nativeReviewDecision === "APPROVED";
+  const isLabelApproval = !isNativeApproval && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name);
+  const hasGenuineApproval =
+    isNativeApproval || (isLabelApproval && (await claudeApprovedIsGenuine(github, owner, repo, prNumber)));
+  if (isLabelApproval && !hasGenuineApproval) {
+    core.info(
+      `PR #${prNumber}: claude-approved is present but wasn't applied by ${TRUSTED_AUTOMATION_LOGIN} - not treating it as a genuine approval.`,
+    );
+  }
 
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
   const mergeConflict = mergeableState === "dirty";
@@ -859,8 +881,20 @@ module.exports = async ({
       // completeness.ok is already implied true here: the
       // `completeness.completed && !completeness.ok` branch above would
       // have caught a failing check before ever reaching this point.
-      status = STATUS_LABELS.READY_TO_MERGE;
-      summary = "CI is green — ready to merge.";
+      if (hasGenuineApproval) {
+        status = STATUS_LABELS.READY_TO_MERGE;
+        summary = "CI is green and a genuine approval is on record — ready to merge.";
+      } else {
+        // Every deterministic gate is clear, but nobody's actually signed
+        // off yet - a genuine approval (native review, or `claude-approved`
+        // applied by this repo's own automation) is required before this
+        // can be `ready to merge`, not just a green build. See
+        // skills/review/SKILL.md.
+        status = STATUS_LABELS.NEEDS_REVIEW;
+        summary =
+          "CI is green, but no genuine approval yet — needs a native approving review or a " +
+          `\`${REVIEW_VERDICT_LABELS.APPROVED.name}\` label applied by ${TRUSTED_AUTOMATION_LOGIN}.`;
+      }
     } else {
       // Not "nothing to review yet" in quite the same sense as the
       // ciConclusion === null branch above (CI itself is done), but every
@@ -919,30 +953,16 @@ module.exports = async ({
 
   // Auto-merge: every deterministic gate this function computes (CI green,
   // no merge conflict, no coverage/duplicate-code failure, no active
-  // changes-requested verdict, no pending human sign-off) is already folded
-  // into `status === READY_TO_MERGE` - the one thing it deliberately does
-  // NOT require is an actual approval (see skills/review/SKILL.md: "An
-  // approving review is not required" for the label itself, since nobody
-  // should approve a red build). Squash-merging on top of that still needs
-  // a real approval to have happened, so check that separately here rather
-  // than loosening READY_TO_MERGE's own meaning.
+  // changes-requested verdict, no pending human sign-off) plus a genuine
+  // approval is already folded into `status === READY_TO_MERGE` itself now
+  // (see hasGenuineApproval above and skills/review/SKILL.md) - reaching
+  // this branch already implies `approved`, nothing left to re-derive here.
   if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
-    const isNativeApproval = nativeReviewDecision === "APPROVED";
-    // The label path only ever kicks in when there's no real native
-    // decision to trust yet - see resolveEffectiveReviewDecision.
-    const isLabelApproval = !isNativeApproval && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name);
-    const approved =
-      isNativeApproval || (isLabelApproval && (await claudeApprovedIsGenuine(github, owner, repo, prNumber)));
-    if (isLabelApproval && !approved) {
-      core.info(
-        `PR #${prNumber}: claude-approved is present but wasn't applied by ${TRUSTED_AUTOMATION_LOGIN} - not auto-merging.`,
-      );
-    }
-    if (approved && !autoMergeEnabled) {
+    if (!autoMergeEnabled) {
       core.info(
         `PR #${prNumber}: ready to merge with a genuine approval, but AUTO_MERGE_ENABLED is off - leaving it for a human to merge.`,
       );
-    } else if (approved) {
+    } else {
       await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);
     }
   }

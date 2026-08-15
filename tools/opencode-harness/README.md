@@ -336,16 +336,16 @@ third, mid-tier model the way opencode's table sometimes uses qwen3.7-plus:
 | Large refactors | `claude-opus-5` | `claude-sonnet-5` | Better when many files and dependencies are involved. |
 | Code review | `claude-opus-5` | `claude-sonnet-5` | Opus 5 as reviewer, Sonnet 5 as implementer. |
 | Debug mysterious bugs | `claude-opus-5` | `claude-sonnet-5` | Use the stronger reasoning model first. |
-| Write tests | `claude-sonnet-5` | `claude-haiku-4-5-20251001` | Good balance of speed and correctness. |
-| Unit test fixes | `claude-sonnet-5` | `claude-haiku-4-5-20251001` | Usually straightforward. |
+| Write tests | `claude-sonnet-5` | `claude-opus-5` | Good balance of speed and correctness. Escalate to Opus 5 for tricky test scenarios. |
+| Unit test fixes | `claude-sonnet-5` | `claude-opus-5` | Usually straightforward. |
 | Documentation generation | `claude-haiku-4-5-20251001` | `claude-sonnet-5` | Saves your stronger models for harder tasks. |
 | Simple boilerplate code | `claude-haiku-4-5-20251001` **(alternative used)** | `claude-sonnet-5` (row model) | High quota, lower importance. |
 | Dependency upgrades | `claude-opus-5` | `claude-sonnet-5` | Needs awareness of ecosystem changes. |
 | Security review | `claude-opus-5` | `claude-sonnet-5` | Prefer deeper reasoning. |
 | Architecture design | `claude-opus-5` | `claude-sonnet-5` | Planning favors Opus 5's deeper reasoning over raw coding speed. |
 | Repo exploration / onboarding | `claude-haiku-4-5-20251001` | `claude-sonnet-5` | Read-only search/orientation work. Cheap and fast is the right default; escalate by hand for a question that genuinely needs deep cross-file reasoning, not just wide reading. |
-| Small bug fixes | `claude-sonnet-5` | `claude-haiku-4-5-20251001` | Fast turnaround. |
-| Mass automated PR repair bot | `claude-sonnet-5` | `claude-haiku-4-5-20251001` | Best quota/capability ratio. |
+| Small bug fixes | `claude-sonnet-5` | `claude-opus-5` | Fast turnaround. |
+| Mass automated PR repair bot | `claude-sonnet-5` | `claude-opus-5` | Best quota/capability ratio. |
 | Cheap background agent tasks | `claude-haiku-4-5-20251001` | `claude-sonnet-5` | Use only for low-risk work. |
 
 The classifier answers with a strict JSON object (`task_type`, `complexity`,

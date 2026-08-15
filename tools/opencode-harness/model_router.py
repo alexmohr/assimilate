@@ -252,13 +252,13 @@ CLAUDE_ROUTING_TABLE: dict[str, ModelRoute] = {
     "write_tests": ModelRoute(
         "Write tests",
         "claude-sonnet-5",
-        "claude-haiku-4-5-20251001",
-        "Good balance of speed and correctness.",
+        "claude-opus-5",
+        "Good balance of speed and correctness. Escalate to Opus 5 for tricky test scenarios.",
     ),
     "unit_test_fix": ModelRoute(
         "Unit test fixes",
         "claude-sonnet-5",
-        "claude-haiku-4-5-20251001",
+        "claude-opus-5",
         "Usually straightforward.",
     ),
     "documentation": ModelRoute(
@@ -302,13 +302,13 @@ CLAUDE_ROUTING_TABLE: dict[str, ModelRoute] = {
     "small_bug_fix": ModelRoute(
         "Small bug fixes",
         "claude-sonnet-5",
-        "claude-haiku-4-5-20251001",
+        "claude-opus-5",
         "Fast turnaround.",
     ),
     "mass_pr_repair": ModelRoute(
         "Mass automated PR repair bot",
         "claude-sonnet-5",
-        "claude-haiku-4-5-20251001",
+        "claude-opus-5",
         "Best quota/capability ratio.",
     ),
     "cheap_background": ModelRoute(

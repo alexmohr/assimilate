@@ -2542,6 +2542,74 @@ async fn test_session_idle_timeout_resets_on_activity(pool: sqlx::PgPool) {
     );
 }
 
+// Regression test: `me()`'s `can_upgrade_agent` field must fold in the
+// codebase-wide admin-bypass (can_delete_repo - see
+// docs/access-control.md), matching require_upgrade_agent's own bypass
+// (deploy.rs). Without this, a custom "admin-like" role with
+// can_delete_repo=true but can_upgrade_agent left false is correctly
+// authorized by the backend but the frontend never renders the
+// Deploy/Upgrade button, since it gates purely on this field.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_me_can_upgrade_agent_reflects_admin_bypass(pool: sqlx::PgPool) {
+    let mut app = build_test_app(pool.clone());
+
+    let user = server::db::insert_user(&pool, "admin-like-me", "hash")
+        .await
+        .expect("insert user");
+    let role = server::db::insert_role(
+        &pool,
+        &server::db::InsertRoleParams {
+            name: "admin-like-me-role",
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: true,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+            can_upgrade_agent: false,
+        },
+    )
+    .await
+    .expect("insert role");
+    server::db::set_user_roles(&pool, user.id, &[role.id])
+        .await
+        .expect("assign role");
+
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    let session_id = "admin-bypass-me-session-0000000000";
+    let hashed_id = hash_token(session_id);
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(&hashed_id)
+        .bind(user.id)
+        .bind(expires)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = Request::builder()
+        .uri("/api/auth/me")
+        .method("GET")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("can_upgrade_agent").unwrap(),
+        true,
+        "can_delete_repo should bypass into can_upgrade_agent, matching require_upgrade_agent"
+    );
+}
+
 /// Regression test: for a TOTP-enabled account, entering the correct
 /// password alone must NOT clear the account's password-lockout escalation
 /// state or record a successful `login_attempts` row -- login isn't

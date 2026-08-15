@@ -9,11 +9,12 @@ import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useTheme } from '../composables/useTheme'
 import { useEscapeKey } from '../composables/useEscapeKey'
-import { useClipboard } from '../composables/useClipboard'
+import { useApiTokens } from '../composables/useApiTokens'
 import { formatDate } from '../utils/format'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
 import { Trash2 } from '@lucide/vue'
+import ApiTokenTable from '../components/ApiTokenTable.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type {
   SessionListResponse,
@@ -24,14 +25,6 @@ import type {
 
 type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 
-interface ApiToken {
-  id: number
-  user_id: number
-  name: string
-  created_at: string
-  last_used_at: string | null
-}
-
 const authStore = useAuthStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
 const activeTab = ref<TabId>('password')
@@ -41,6 +34,28 @@ const confirmPassword = ref('')
 const passwordError = ref('')
 const passwordSuccess = ref('')
 const passwordSubmitting = ref(false)
+
+const {
+  tokens,
+  loading: tokensLoading,
+  showCreateModal,
+  createName,
+  createError,
+  createSubmitting,
+  newTokenPlaintext,
+  tokenCopied,
+  copyToClipboard,
+  showDeleteModal,
+  deleteTarget,
+  deleteSubmitting,
+  deleteError,
+  fetchTokens,
+  openCreate: openCreateToken,
+  submitCreate: submitCreateToken,
+  closeCreateModal,
+  openDelete: openDeleteToken,
+  confirmDelete: confirmDeleteToken,
+} = useApiTokens()
 
 // TOTP setup state
 const totpSetupData = ref<TotpSetupResponse | null>(null)
@@ -63,18 +78,6 @@ const revokeSessionId = ref<string | null>(null)
 const revokeSubmitting = ref(false)
 const revokeError = ref('')
 const sessionsError = ref('')
-
-const tokens = ref<ApiToken[]>([])
-const tokensLoading = ref(true)
-const showCreateModal = ref(false)
-const createName = ref('')
-const createError = ref('')
-const createSubmitting = ref(false)
-const newTokenPlaintext = ref('')
-const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
-const showDeleteModal = ref(false)
-const deleteTarget = ref<ApiToken | null>(null)
-const deleteSubmitting = ref(false)
 
 useEscapeKey(showCreateModal, closeCreateModal)
 
@@ -102,63 +105,6 @@ async function handlePasswordSubmit(): Promise<void> {
     passwordError.value = extractError(e, 'Failed to change password')
   } finally {
     passwordSubmitting.value = false
-  }
-}
-
-async function fetchTokens(): Promise<void> {
-  tokensLoading.value = true
-  try {
-    const res = await apiClient.get<{ tokens: ApiToken[] }>('/tokens')
-    tokens.value = res.data.tokens
-  } finally {
-    tokensLoading.value = false
-  }
-}
-
-function openCreateToken(): void {
-  createName.value = ''
-  createError.value = ''
-  newTokenPlaintext.value = ''
-  showCreateModal.value = true
-}
-
-async function submitCreateToken(): Promise<void> {
-  createError.value = ''
-  createSubmitting.value = true
-  try {
-    const res = await apiClient.post<{ token: ApiToken; plaintext: string }>('/tokens', {
-      name: createName.value,
-    })
-    newTokenPlaintext.value = res.data.plaintext
-    await fetchTokens()
-  } catch (e: unknown) {
-    createError.value = extractError(e, 'Failed to create token')
-  } finally {
-    createSubmitting.value = false
-  }
-}
-
-function closeCreateModal(): void {
-  showCreateModal.value = false
-  newTokenPlaintext.value = ''
-  tokenCopied.value = false
-}
-
-function openDeleteToken(token: ApiToken): void {
-  deleteTarget.value = token
-  showDeleteModal.value = true
-}
-
-async function confirmDeleteToken(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleteSubmitting.value = true
-  try {
-    await apiClient.delete(`/tokens/${deleteTarget.value.id}`)
-    showDeleteModal.value = false
-    deleteTarget.value = null
-    await fetchTokens()
-  } finally {
-    deleteSubmitting.value = false
   }
 }
 
@@ -405,44 +351,11 @@ onMounted(async () => {
         size="lg"
       />
 
-      <table
+      <ApiTokenTable
         v-else-if="tokens.length"
-        class="tokens-table"
-      >
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Created</th>
-            <th>Last Used</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="token in tokens"
-            :key="token.id"
-          >
-            <td class="cell-name">
-              {{ token.name }}
-            </td>
-            <td class="cell-date">
-              {{ formatDate(token.created_at) }}
-            </td>
-            <td class="cell-date">
-              {{ formatDate(token.last_used_at, 'Never') }}
-            </td>
-            <td>
-              <button
-                class="btn btn-sm btn-ghost btn-danger-text"
-                title="Delete"
-                @click="openDeleteToken(token)"
-              >
-                <Trash2 :size="14" />
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+        :tokens="tokens"
+        @delete="openDeleteToken"
+      />
 
       <div
         v-else
@@ -814,6 +727,12 @@ onMounted(async () => {
               Delete token <strong>{{ deleteTarget?.name }}</strong
               >? Any integrations using this token will stop working.
             </p>
+            <div
+              v-if="deleteError"
+              class="msg msg-error"
+            >
+              {{ deleteError }}
+            </div>
           </div>
           <div class="dialog-footer">
             <button
@@ -1006,51 +925,6 @@ onMounted(async () => {
   color: var(--text-muted);
   font-size: 0.85rem;
   margin: 0;
-}
-
-.tokens-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.tokens-table th {
-  text-align: left;
-  padding: 0.7rem 1rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-}
-
-.tokens-table td {
-  padding: 0.65rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.tokens-table tr:last-child td {
-  border-bottom: none;
-}
-
-.tokens-table tr:hover td {
-  background: var(--bg-hover);
-}
-
-.cell-name {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.cell-date {
-  font-size: 0.8rem;
-  color: var(--text-muted);
 }
 
 .loading {

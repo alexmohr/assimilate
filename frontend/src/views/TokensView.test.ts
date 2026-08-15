@@ -120,6 +120,40 @@ describe('TokensView', () => {
     expect(wrapper.text()).toContain('No API tokens')
   })
 
+  it('opens the create modal from the empty state action', async () => {
+    mockApiGet.mockResolvedValue({ data: { tokens: [] } })
+
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    await wrapper.find('.empty-action').trigger('click')
+
+    expect(wrapper.text()).toContain('Create API Token')
+  })
+
+  it('closes the create modal via the close button and clicking the overlay', async () => {
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    expect(wrapper.text()).toContain('Create API Token')
+
+    await wrapper.find('button.close-btn').trigger('click')
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    expect(wrapper.text()).toContain('Create API Token')
+
+    await wrapper.find('.overlay').trigger('click')
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
   it('creates a token and shows the plaintext once', async () => {
     const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
     mockApiPost.mockResolvedValue({

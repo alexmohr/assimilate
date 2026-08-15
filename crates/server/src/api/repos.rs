@@ -1142,7 +1142,14 @@ pub async fn break_lock(
             op: state.repo_op_tracker.get(repo_id).await,
         });
 
-    let result = run_borg_break_lock(&repo_url, &passphrase, &state.task_registry).await;
+    let result = run_borg_break_lock(
+        repo_id,
+        &repo_url,
+        &passphrase,
+        &state.task_registry,
+        &state.repo_lock,
+    )
+    .await;
 
     state.repo_op_tracker.clear(repo_id).await;
     state
@@ -1687,6 +1694,11 @@ async fn run_borg_info_once(
 /// break-lock` below still targets the repository lock with the normal [`LOCK_WAIT_SECS`]
 /// regardless of what this probe finds.
 const CACHE_LOCK_PROBE_WAIT_SECS: &str = "1";
+/// How long `run_borg_break_lock` waits to acquire `RepoLock` before it will probe for or
+/// clear a stale local cache lock. Deliberately short: this only needs to prove no other
+/// operation from this server is *currently* using the cache, not wait out a hung one (that's
+/// what Break Lock exists to recover from).
+const CACHE_LOCK_SERIALIZATION_WAIT: Duration = Duration::from_secs(2);
 
 /// Probes the repository for a stale local *cache* lock (as opposed to the repository lock
 /// `borg break-lock` already clears) and, if found, attempts to remove it. Returns `None` when
@@ -1750,13 +1762,43 @@ async fn clear_stale_cache_lock_if_present(
 }
 
 async fn run_borg_break_lock(
+    repo_id: i64,
     repo_url: &str,
     passphrase: &str,
     task_registry: &shared::task_registry::TaskRegistry,
+    repo_lock: &RepoLock,
 ) -> Result<String, ApiError> {
     let env = helpers::borg_base_env(passphrase);
 
-    let pre_note = clear_stale_cache_lock_if_present(repo_url, &env, task_registry).await;
+    // Unlike the repository lock (which the unconditional `break-lock` call below has
+    // always broken regardless of whether anything else is using it - a pre-existing,
+    // documented risk this feature doesn't change), clearing the *local cache* lock
+    // deletes files out from under whatever currently holds them, with no equivalent
+    // "borg will just re-acquire it" recovery path. Every other operation that touches
+    // this repo's local cache (backup, delete, import, rescan, reset & sync) serializes
+    // through `repo_lock` first, so successfully acquiring it here proves none of them
+    // is concurrently using the cache - safe to probe and clear. The wait is short and
+    // bounded rather than a blocking `.acquire()`: Break Lock exists specifically to
+    // recover from an operation that's hung and will never release this lock on its
+    // own, so waiting on it indefinitely here would defeat the action's entire purpose.
+    // If the wait times out, skip cache-lock clearing for this call (surfaced as a note
+    // below) - the repository-lock break still proceeds exactly as it always has.
+    let cache_lock_serialization =
+        tokio::time::timeout(CACHE_LOCK_SERIALIZATION_WAIT, repo_lock.acquire(repo_id))
+            .await
+            .ok();
+    let cache_lock_checked = cache_lock_serialization.is_some();
+    let skipped_note = (!cache_lock_checked).then(|| {
+        "skipped local cache-lock check: another operation currently holds this repository's lock \
+         (safe to ignore if it's genuinely running; retry Break Lock once it's confirmed stuck)"
+            .to_string()
+    });
+
+    let pre_note = if cache_lock_checked {
+        clear_stale_cache_lock_if_present(repo_url, &env, task_registry).await
+    } else {
+        None
+    };
 
     let output = Borg::new()
         .with_registry(task_registry.clone())
@@ -1778,7 +1820,9 @@ async fn run_borg_break_lock(
         // mutated the filesystem) regardless of whether break-lock itself goes on to
         // succeed or fail here - surface that in the error too, so a failure doesn't
         // read as a clean no-op when a stale cache lock was in fact found or cleared.
-        let note_prefix = pre_note.map_or_else(String::new, |note| format!("{note}\n"));
+        let note_prefix = skipped_note
+            .or(pre_note)
+            .map_or_else(String::new, |note| format!("{note}\n"));
         return Err(ApiError::BadGateway(format!(
             "{note_prefix}borg break-lock failed (exit {exit_code}): {summary}"
         )));
@@ -1789,8 +1833,10 @@ async fn run_borg_break_lock(
     // lock at all: its `borg info` call timed out on the repository lock first, and the
     // reported path belongs to the repository lock, not the cache lock. Now that break-lock
     // has cleared the repository lock, probe again so a single "Break Lock" invocation still
-    // catches a cache lock left stale by the same crash/OOM/forced-restart.
-    let post_note = if pre_note.is_none() {
+    // catches a cache lock left stale by the same crash/OOM/forced-restart. Only worth
+    // retrying if the pre-probe actually ran and genuinely found nothing (not if it was
+    // skipped above, in which case `repo_lock` is still held by whatever's using it).
+    let post_note = if cache_lock_checked && pre_note.is_none() {
         clear_stale_cache_lock_if_present(repo_url, &env, task_registry).await
     } else {
         None
@@ -1803,11 +1849,12 @@ async fn run_borg_break_lock(
     };
     let combined = combined.trim().to_string();
 
-    let notes: Vec<String> = [pre_note, post_note].into_iter().flatten().collect();
-    Ok(if notes.is_empty() {
-        combined
-    } else {
-        format!("{}\n{combined}", notes.join("\n"))
+    // skipped_note, pre_note, and post_note are mutually exclusive by construction (at
+    // most one of the three is ever `Some`), so picking the first present one is
+    // equivalent to collecting and joining them all.
+    Ok(match skipped_note.or(pre_note).or(post_note) {
+        Some(note) => format!("{note}\n{combined}"),
+        None => combined,
     })
 }
 
@@ -4386,9 +4433,11 @@ mod tests {
         let (_borg_dir, _guard) = install_fake_script(&script).await;
 
         let result = run_borg_break_lock(
+            1,
             "ssh://user@host/repo",
             "hunter2",
             &shared::task_registry::TaskRegistry::default(),
+            &RepoLock::default(),
         )
         .await
         .unwrap();
@@ -4399,6 +4448,54 @@ mod tests {
             !tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
                 .await
                 .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_break_lock_skips_cache_lock_clearing_when_repo_lock_is_held() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("f".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
+            .await
+            .unwrap();
+
+        let script = format!(
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the \
+             lock {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
+             'successfully broke lock'\n    ;;\n  *)\n    exit 1\n    ;;\nesac\n",
+            lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        // Simulate another operation (a running backup, delete, import, ...) already
+        // holding this repo's lock for the whole call, exactly as every genuine
+        // cache-touching operation does.
+        let repo_lock = RepoLock::default();
+        let _held = repo_lock.acquire(1).await;
+
+        let result = run_borg_break_lock(
+            1,
+            "ssh://user@host/repo",
+            "hunter2",
+            &shared::task_registry::TaskRegistry::default(),
+            &repo_lock,
+        )
+        .await
+        .unwrap();
+
+        // The repository lock still gets broken - unchanged, pre-existing behavior...
+        assert!(result.contains("successfully broke lock"));
+        // ...but the cache lock is left untouched, since it can't be proven stale while
+        // something else might genuinely be using it right now.
+        assert!(result.contains("skipped local cache-lock check"));
+        assert!(
+            tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
+                .await
+                .unwrap(),
+            "a cache lock must never be cleared while repo_lock is held by another operation"
         );
     }
 
@@ -4465,9 +4562,11 @@ mod tests {
         let (_borg_dir, _guard) = install_fake_script(&script).await;
 
         let result = run_borg_break_lock(
+            1,
             "ssh://user@host/repo",
             "hunter2",
             &shared::task_registry::TaskRegistry::default(),
+            &RepoLock::default(),
         )
         .await
         .unwrap();
@@ -4507,9 +4606,11 @@ mod tests {
         let (_borg_dir, _guard) = install_fake_script(&script).await;
 
         let err = run_borg_break_lock(
+            1,
             "ssh://user@host/repo",
             "hunter2",
             &shared::task_registry::TaskRegistry::default(),
+            &RepoLock::default(),
         )
         .await
         .unwrap_err();

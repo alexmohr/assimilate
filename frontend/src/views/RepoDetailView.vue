@@ -412,10 +412,13 @@ onMessage('RepoOpChanged', (payload) => {
     // event.
     if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
       const toSweep = new Set(deletingArchiveNames.value)
+      // Nothing to sweep - every op-idle transition fires this event (backups,
+      // prunes, rescans, not just deletes), so skip the refetch entirely rather
+      // than reloading the archive list for no reason.
+      if (toSweep.size === 0) return
       loadArchives(true)
         .catch(logger.error)
         .finally(() => {
-          if (toSweep.size === 0) return
           const next = new Set([...deletingArchiveNames.value].filter((name) => !toSweep.has(name)))
           if (next.size !== deletingArchiveNames.value.size) {
             deletingArchiveNames.value = next
@@ -487,15 +490,12 @@ async function confirmArchiveDeletion(): Promise<void> {
     await refreshRepo()
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
+    // The request never made it (or the server rejected it), so it was
+    // never actually queued - undo the optimistic mark.
     const next = new Set(deletingArchiveNames.value)
     next.delete(archive.name)
     deletingArchiveNames.value = next
     toastError(extractError(e))
-    // The request never made it (or the server rejected it), so it was
-    // never actually queued - undo the optimistic mark.
-    deletingArchiveNames.value = new Set(
-      [...deletingArchiveNames.value].filter((name) => name !== archive.name),
-    )
   } finally {
     archiveDeleteLoading.value = false
   }

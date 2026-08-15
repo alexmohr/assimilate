@@ -252,16 +252,29 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
   // "Loading archives..." placeholder. Used for background refreshes
   // triggered by a DataChanged WebSocket message, where blanking the list
   // the caller didn't ask for would hide other UI state for no reason.
+  //
+  // loadArchives can be triggered by several independent, overlapping
+  // sources (mount, every DataChanged, a manual rescan) whose requests can
+  // resolve out of order. `loadArchivesSeq` guards against an older
+  // request's response landing after a newer one (or after some other
+  // direct mutation like ArchiveDeleted's own splice) and clobbering
+  // fresher state with a stale snapshot - only the response matching the
+  // most recently issued call is ever applied.
+  let loadArchivesSeq = 0
+
   async function loadArchives(silent = false): Promise<void> {
+    const seq = ++loadArchivesSeq
     if (!silent) archivesLoading.value = true
     archivesError.value = null
     try {
       const res = await apiClient.get<ArchiveEntry[]>(`/repos/${repoId.value}/archives`)
+      if (seq !== loadArchivesSeq) return
       archives.value = res.data
     } catch (e: unknown) {
+      if (seq !== loadArchivesSeq) return
       archivesError.value = extractError(e)
     } finally {
-      if (!silent) archivesLoading.value = false
+      if (seq === loadArchivesSeq && !silent) archivesLoading.value = false
     }
   }
 

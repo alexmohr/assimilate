@@ -254,6 +254,40 @@ describe('useArchiveBrowser', () => {
     expect(browser.archivesLoading.value).toBe(false)
   })
 
+  it('loadArchives discards a stale response that resolves after a newer call', async () => {
+    let resolveFirst: (value: { data: ArchiveEntry[] }) => void = () => {}
+    let resolveSecond: (value: { data: ArchiveEntry[] }) => void = () => {}
+    vi.mocked(apiClient.get)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSecond = resolve
+        }),
+      )
+
+    const browser = useArchiveBrowser(ref(5))
+    const firstCall = browser.loadArchives()
+    const secondCall = browser.loadArchives()
+
+    const ARCHIVE_STALE: ArchiveEntry = { ...ARCHIVE, name: 'stale-archive' }
+    const ARCHIVE_FRESH: ArchiveEntry = { ...ARCHIVE, name: 'fresh-archive' }
+
+    // Out-of-order resolution: the newer call's response lands first.
+    resolveSecond({ data: [ARCHIVE_FRESH] })
+    await secondCall
+    expect(browser.archives.value).toEqual([ARCHIVE_FRESH])
+
+    // The older call's response arrives after - it must not clobber the
+    // fresher state already applied above.
+    resolveFirst({ data: [ARCHIVE_STALE] })
+    await firstCall
+    expect(browser.archives.value).toEqual([ARCHIVE_FRESH])
+  })
+
   it('restoreEntry throws when the API reports failure', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       data: { success: false, error_message: 'restore failed' },

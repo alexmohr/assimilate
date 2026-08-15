@@ -566,8 +566,10 @@ pub enum ServerToUi {
         /// The current operation, or `None` if no operation is active.
         op: Option<ActiveRepoOp>,
     },
-    /// Notification that a specific archive was deleted (delete + the
-    /// automatic compact that follows it both finished successfully). Fired
+    /// Notification that a specific archive was deleted (the delete itself
+    /// succeeded - the automatic compact that follows it is best-effort and
+    /// does not gate this event; a compact failure is logged/recorded as a
+    /// system event on its own and never undoes the delete). Fired
     /// alongside the generic `DataChanged` refresh signal so a client
     /// tracking this exact archive can react immediately, without waiting on
     /// a full list refetch to notice it's gone.

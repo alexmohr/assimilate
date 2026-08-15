@@ -409,9 +409,14 @@ async function confirmArchiveDeletion(): Promise<void> {
   const archive = archivePendingDeletion.value
   if (!archive) return
   archiveDeleteLoading.value = true
+  // Mark it deleting before the request goes out, not after it resolves: the
+  // DELETE call itself can take a moment (repo-level lock contention with
+  // another queued operation, network latency), and the row's button must
+  // show "in flight" the instant the user confirms rather than staying
+  // clickable-again until the response comes back.
+  deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
   try {
     await deleteArchiveByName(archive)
-    deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
     archivePendingDeletion.value = null
     if (selectedArchive.value?.name === archive.name) {
       selectedArchive.value = null
@@ -420,6 +425,11 @@ async function confirmArchiveDeletion(): Promise<void> {
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
     toastError(extractError(e))
+    // The request never made it (or the server rejected it), so it was
+    // never actually queued - undo the optimistic mark.
+    deletingArchiveNames.value = new Set(
+      [...deletingArchiveNames.value].filter((name) => name !== archive.name),
+    )
   } finally {
     archiveDeleteLoading.value = false
   }

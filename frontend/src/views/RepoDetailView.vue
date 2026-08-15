@@ -324,14 +324,38 @@ async function acceptHostKey(): Promise<void> {
 
 const { onMessage } = useWebSocket()
 
+onMessage('ArchiveDeleted', (payload) => {
+  if (repo.value && payload.repo_id === repo.value.id) {
+    // Precise and synchronous: the server names exactly which archive
+    // finished deleting, so drop it from the list directly instead of
+    // waiting on DataChanged's full refetch-and-diff below to eventually
+    // notice it's gone.
+    archives.value = archives.value.filter((a) => a.name !== payload.archive_name)
+    if (deletingArchiveNames.value.has(payload.archive_name)) {
+      const next = new Set(deletingArchiveNames.value)
+      next.delete(payload.archive_name)
+      deletingArchiveNames.value = next
+    }
+    if (selectedArchive.value?.name === payload.archive_name) {
+      selectedArchive.value = null
+    }
+  }
+})
+
 onMessage('DataChanged', () => {
   refreshRepo().catch(logger.error)
-  loadArchives()
+  // Silent: this refresh runs in the background on every DataChanged event,
+  // not just ones the user triggered - blanking the whole list to a loading
+  // placeholder while it's in flight would hide unrelated UI state (like an
+  // in-progress delete's row) for no reason.
+  //
+  // A successful delete is already handled directly by ArchiveDeleted above
+  // (fired before this); what's left to prune here is a delete that failed
+  // (the archive never actually left the list, so ArchiveDeleted never
+  // fired for it) - the RepoOpChanged handler below sweeps that stale
+  // marker once the repo's delete queue drains.
+  loadArchives(true)
     .then(() => {
-      // An archive that's gone from the freshly-loaded list was actually
-      // deleted - stop tracking it as in-flight. One still present just
-      // hasn't finished yet (or failed and stayed); the RepoOpChanged
-      // handler above sweeps those once the repo's delete queue drains.
       const stillPresent = new Set(sortedArchives.value.map((a) => a.name))
       const next = new Set([...deletingArchiveNames.value].filter((name) => stillPresent.has(name)))
       if (next.size !== deletingArchiveNames.value.size) {
@@ -364,28 +388,55 @@ onMessage('RepoOpChanged', (payload) => {
     // for it has finished - success or failure - since repo operations run
     // strictly one at a time. Any name still marked "deleting" at that
     // point is stale (a failed delete that the DataChanged-driven prune
-    // above never saw disappear from the list), so sweep it clear rather
-    // than leaving its row disabled forever.
+    // above never saw disappear from the list), so it needs sweeping
+    // rather than leaving its row disabled forever - but clearing
+    // immediately, against whatever `sortedArchives` happens to hold right
+    // now, raced that same DataChanged-driven refresh for a delete that in
+    // fact just succeeded: this event and DataChanged can arrive in either
+    // order, so "not yet in the refreshed list" and "genuinely still there"
+    // were indistinguishable without a fetch of our own. Refetching first
+    // (silently, so the whole panel doesn't flash a loading placeholder)
+    // resolves that: by the time it returns, the delete has already
+    // concluded (the op queue was already idle), so the list is
+    // authoritative either way - present means genuinely stale/failed,
+    // absent means already gone - and it's always correct to clear. Still
+    // clears even if the reload fails, so a marker can never get stuck
+    // forever.
     //
-    // Refresh the archive list first: on a small repo the delete (and any
-    // compact) can finish fast enough that this event and the DataChanged
-    // one race each other, and clearing unconditionally right away can win
-    // that race - showing a row that's about to disappear as briefly idle
-    // instead. Still clears even if the reload fails, so a marker can never
-    // get stuck forever.
+    // Only the names marked deleting *at the moment this event arrived* are
+    // swept, not whatever the set happens to hold once the refetch above
+    // resolves: a delete for a different, unrelated archive can be started
+    // by the user while that refetch is still in flight, and clearing
+    // unconditionally would wipe its just-set marker too, even though it
+    // has nothing to do with the op queue draining that triggered this
+    // event.
     if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
-      loadArchives()
+      const toSweep = new Set(deletingArchiveNames.value)
+      // Nothing to sweep - every op-idle transition fires this event (backups,
+      // prunes, rescans, not just deletes), so skip the refetch entirely rather
+      // than reloading the archive list for no reason.
+      if (toSweep.size === 0) return
+      loadArchives(true)
         .catch(logger.error)
         .finally(() => {
-          deletingArchiveNames.value = new Set()
+          const next = new Set([...deletingArchiveNames.value].filter((name) => !toSweep.has(name)))
+          if (next.size !== deletingArchiveNames.value.size) {
+            deletingArchiveNames.value = next
+          }
         })
     }
   }
 })
 
 // Archive browser
-const { sortedArchives, archivesLoading, archivesError, loadArchives, deleteArchiveByName } =
-  useArchiveBrowser(repoIdRef)
+const {
+  archives,
+  sortedArchives,
+  archivesLoading,
+  archivesError,
+  loadArchives,
+  deleteArchiveByName,
+} = useArchiveBrowser(repoIdRef)
 
 const selectedArchive = ref<ArchiveEntry | null>(null)
 
@@ -420,11 +471,15 @@ async function confirmArchiveDeletion(): Promise<void> {
   const archive = archivePendingDeletion.value
   if (!archive) return
   archiveDeleteLoading.value = true
-  // Mark it deleting before the request goes out, not after it resolves: the
-  // DELETE call itself can take a moment (repo-level lock contention with
-  // another queued operation, network latency), and the row's button must
-  // show "in flight" the instant the user confirms rather than staying
-  // clickable-again until the response comes back.
+  // Mark it as deleting before the request even goes out, not after it
+  // resolves. On a fast demo repo the DELETE's DataChanged notification can
+  // reach the WebSocket handler - and prune this archive from the list -
+  // before the await below would otherwise return, which would mean the
+  // "deleting" state was never observed and the row just vanishes instead
+  // of showing the in-flight state the UI promises. The DELETE call itself
+  // can also take a moment on its own (repo-level lock contention with
+  // another queued operation, network latency), so the button must show
+  // "in flight" the instant the user confirms either way.
   deletingArchiveNames.value = new Set(deletingArchiveNames.value).add(archive.name)
   try {
     await deleteArchiveByName(archive)
@@ -435,12 +490,12 @@ async function confirmArchiveDeletion(): Promise<void> {
     await refreshRepo()
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
-    toastError(extractError(e))
     // The request never made it (or the server rejected it), so it was
     // never actually queued - undo the optimistic mark.
-    deletingArchiveNames.value = new Set(
-      [...deletingArchiveNames.value].filter((name) => name !== archive.name),
-    )
+    const next = new Set(deletingArchiveNames.value)
+    next.delete(archive.name)
+    deletingArchiveNames.value = next
+    toastError(extractError(e))
   } finally {
     archiveDeleteLoading.value = false
   }
@@ -825,7 +880,13 @@ async function confirmBreakLock(): Promise<void> {
     const res = await apiClient.post<{ message: string; borg_output: string }>(
       `/repos/${repoId.value}/break-lock`,
     )
-    breakLockResult.value = res.data.message
+    // borg_output carries the actual detail of what happened - notably
+    // whether a stale local cache lock was found and cleared (or found but
+    // left in place) - which message alone never conveys; it's the static
+    // "lock broken on repository '<name>'" confirmation every time.
+    breakLockResult.value = res.data.borg_output
+      ? `${res.data.message}\n${res.data.borg_output}`
+      : res.data.message
   } catch (e: unknown) {
     breakLockError.value = extractError(e)
   } finally {
@@ -1485,8 +1546,9 @@ async function resetImport(): Promise<void> {
             <div class="danger-info">
               <span class="danger-heading">Break Repository Lock</span>
               <span class="danger-desc">
-                Remove a stale lock from the repository. Using this while a backup is in progress
-                will corrupt the repository.
+                Remove a stale lock from the repository, including a stale local cache lock left
+                behind by a crashed or forcibly killed backup process. Using this while a backup is
+                in progress will corrupt the repository.
               </span>
             </div>
             <div class="danger-action-wrap">
@@ -2240,8 +2302,9 @@ async function resetImport(): Promise<void> {
           </div>
           <div class="dialog-body">
             <p class="break-lock-warning">
-              This will forcibly remove the lock from the repository. Only use this if you are
-              certain no backup is currently running. Breaking a lock during an active backup
+              This will forcibly remove the lock from the repository, and clear any stale local
+              cache lock found for it. Only use this if you are certain no backup is currently
+              running. Breaking a lock during an active backup
               <strong>will corrupt the repository</strong>.
             </p>
             <div
@@ -2797,6 +2860,7 @@ async function resetImport(): Promise<void> {
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   color: var(--success);
+  white-space: pre-line;
 }
 
 .current-op-running {

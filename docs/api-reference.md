@@ -130,7 +130,7 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/{repo_id}/rescan` | Rebuild the searchable archive file index |
 | `POST` | `/api/repos/{repo_id}/reset-and-sync` | Clear cached metadata and re-sync |
 | `POST` | `/api/repos/{repo_id}/reset-import` | Reset an imported repository to unmatched state |
-| `POST` | `/api/repos/{repo_id}/break-lock` | Run `borg break-lock` |
+| `POST` | `/api/repos/{repo_id}/break-lock` | Break a stale repository lock, clearing any stale local cache lock too |
 | `POST` | `/api/repos/{repo_id}/confirm-relocation` | Acknowledge a repository relocation warning |
 | `POST` | `/api/repos/{repo_id}/exec` | Execute an allow-listed borg maintenance command |
 | `POST` | `/api/repos/{repo_id}/dry-run` | Preview which files a schedule would back up |

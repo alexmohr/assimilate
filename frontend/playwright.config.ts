@@ -16,7 +16,13 @@ export default defineConfig({
   timeout: process.env.CI ? 300_000 : 60_000,
   use: {
     baseURL,
-    trace: 'on-first-retry',
+    // 'on-first-retry' deliberately skips the *initial* attempt of a test,
+    // which made an earlier intermittent failure in archive-browsing.spec.ts's
+    // delete test undiagnosable (only the recovering retry was ever traced) -
+    // 'retain-on-failure' traces every attempt but only keeps the ones that
+    // actually failed, so any future reproduction is diagnosable instead of
+    // leaving the attempt that matters untraced.
+    trace: 'retain-on-failure',
     navigationTimeout: process.env.CI ? 120_000 : 30_000,
   },
   projects: [

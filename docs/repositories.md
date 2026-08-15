@@ -58,6 +58,14 @@ Each repository card shows the name, SSH target, encryption type, compression al
 
 The repository detail page shows full connection information, storage statistics (original, compressed, deduplicated sizes), storage quota status with a progress bar, tags, and danger zone actions (Refresh SSH Key, Break Lock, Remove Repository, Delete Repository).
 
+!!! warning "Break Lock"
+    **Break Lock** clears a stale `borg` lock on the repository. It also detects and clears a
+    stale *local cache lock* left behind by a backup process that was crashed, OOM-killed, or
+    forcibly terminated (e.g. a killed container) — something plain `borg break-lock` does not
+    do, since it only ever clears the repository's own lock. Only use Break Lock when you are
+    certain no backup is currently running against the repository; breaking a lock during an
+    active backup will corrupt it.
+
 ## Init New Repository
 
 Use this path when the remote directory is empty or does not exist yet.

@@ -949,6 +949,56 @@ describe('RepoDetailView', () => {
       expect(wrapper.vm.archivePendingDeletion).toBeNull()
     })
 
+    it('marks the row as deleting immediately, before the delete request resolves', async () => {
+      // On a fast demo repo, the DELETE's own DataChanged notification can
+      // reach the WebSocket handler - and prune the archive from the list -
+      // before this request's promise would otherwise resolve. The
+      // in-progress state must be set synchronously on confirm, not after
+      // awaiting deleteArchiveByName, or that race means it's never observed.
+      let resolveDelete: (() => void) | undefined
+      mockDeleteArchiveByName.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveDelete = () => resolve(true)
+          }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      resolveDelete?.()
+      await flushPromises()
+    })
+
+    it('rolls back the in-progress marker when the delete request itself fails', async () => {
+      mockDeleteArchiveByName.mockRejectedValue(new Error('Connection refused'))
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      // The failed request must not leave the row stuck disabled forever -
+      // the optimistic "deleting" marker set before the request went out
+      // has to be rolled back once it's clear the delete never happened.
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+
+      // A failed delete leaves the confirmation modal open (its own,
+      // pre-existing behavior, unchanged here) - its teleported content
+      // otherwise lingers in document.body and breaks other tests' modal
+      // lookups, so tear it down explicitly.
+      wrapper.unmount()
+    })
+
     it('clears the in-progress state once the archive disappears from a DataChanged refresh', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
@@ -967,6 +1017,63 @@ describe('RepoDetailView', () => {
       await flushPromises()
 
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('removes the row and clears its in-progress state directly on ArchiveDeleted, without a DataChanged refresh', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      const row = wrapper
+        .findAll('.archive-row')
+        .find((r) => r.text().includes(deletingArchive.name))
+      expect(row).toBeDefined()
+
+      await row!.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // Row selection isn't disabled while a delete is in flight - re-select
+      // the still-listed (locally not-yet-pruned) archive to reproduce a
+      // user re-opening its file browser mid-delete. ArchiveDeleted must
+      // clear that too, not just the one confirmArchiveDeletion's own
+      // success path already handles when nothing was re-selected since.
+      await row!.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.browser-title').text()).toContain(deletingArchive.name)
+
+      // No further loadArchives call and no DataChanged - ArchiveDeleted
+      // alone must be enough to drop the row. sortedArchives is mocked as
+      // an independent ref here (a real computed in production, derived
+      // from archives), so check the underlying archives list this handler
+      // actually mutates rather than rendered text.
+      const callsBefore = mockLoadArchives.mock.calls.length
+      wsHandlers.ArchiveDeleted({ repo_id: mockRepo.id, archive_name: deletingArchive.name })
+      await flushPromises()
+
+      expect(mockLoadArchives.mock.calls.length).toBe(callsBefore)
+      expect(mockBrowserArchives.value.some((a) => a.name === deletingArchive.name)).toBe(false)
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(wrapper.find('.browser-title').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Select an archive to browse its contents.')
+    })
+
+    it('ignores ArchiveDeleted events for a different repository', async () => {
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      wsHandlers.ArchiveDeleted({ repo_id: mockRepo.id + 1, archive_name: deletingArchive.name })
+      await flushPromises()
+
+      expect(mockBrowserArchives.value.some((a) => a.name === deletingArchive.name)).toBe(true)
+      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
     })
 
     it('clears stale in-progress state once RepoOpChanged reports the repo is no longer deleting', async () => {
@@ -989,13 +1096,12 @@ describe('RepoDetailView', () => {
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
     })
 
-    it('keeps the in-progress state until the archive list reload completes, even once RepoOpChanged clears', async () => {
-      let resolveLoad: (() => void) | undefined
-      mockLoadArchives.mockImplementation(
-        () =>
-          new Promise<void>((resolve) => {
-            resolveLoad = resolve
-          }),
+    it('refetches before clearing on RepoOpChanged, not racing a DataChanged refresh already in flight', async () => {
+      let resolveLoadArchives: () => void = () => {}
+      mockLoadArchives.mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveLoadArchives = resolve
+        }),
       )
 
       const wrapper = await renderRepoDetail()
@@ -1007,18 +1113,76 @@ describe('RepoDetailView', () => {
 
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
 
-      // On a small repo, the delete (and any compact) can finish and this
-      // event can fire before the archive list has actually caught up.
-      // Clearing immediately here would show the row as briefly idle
-      // instead of properly disabled or gone - the marker must survive
-      // until the triggered reload resolves.
+      // RepoOpChanged reports the queue idle while its own refetch is still
+      // outstanding - the marker must survive until that refetch resolves,
+      // not clear immediately against whatever the list held before it.
       wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
       await flushPromises()
+
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
 
-      resolveLoad?.()
+      resolveLoadArchives()
       await flushPromises()
+
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    })
+
+    it('does not sweep a different archive whose delete starts while the RepoOpChanged refetch is in flight', async () => {
+      const otherArchive = {
+        ...deletingArchive,
+        name: 'web-server-01-backup-2026-06-05T02:00:00',
+      }
+      mockBrowserArchives.value = [deletingArchive, otherArchive]
+      mockSortedArchives.value = [deletingArchive, otherArchive]
+
+      let resolveLoadArchives: () => void = () => {}
+      mockLoadArchives.mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveLoadArchives = resolve
+        }),
+      )
+
+      const wrapper = await renderRepoDetail()
+      await openArchivesTab(wrapper)
+
+      const rowFor = (name: string) =>
+        wrapper.findAll('.archive-row').find((r) => r.text().includes(name))!
+
+      await rowFor(deletingArchive.name).find('button[title="Delete archive"]').trigger('click')
+      await flushPromises()
+      await clickModalConfirm()
+
+      expect(
+        rowFor(deletingArchive.name).find('button[title="Deletion in progress"]').exists(),
+      ).toBe(true)
+
+      // The queue drains for deletingArchive's completed delete - the
+      // handler snapshots it as the name to sweep and starts its own
+      // (silent) refetch.
+      wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
+      await flushPromises()
+
+      // While that refetch is still outstanding, the user starts deleting a
+      // wholly unrelated archive. This must be marked immediately and must
+      // not be touched by the sweep once it resolves below.
+      wrapper.vm.requestArchiveDeletion(otherArchive)
+      await wrapper.vm.confirmArchiveDeletion()
+
+      expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
+        true,
+      )
+
+      resolveLoadArchives()
+      await flushPromises()
+
+      // Only the snapshotted (already-resolved) delete is swept...
+      expect(
+        rowFor(deletingArchive.name).find('button[title="Deletion in progress"]').exists(),
+      ).toBe(false)
+      // ...the unrelated, still-in-flight delete must survive the sweep.
+      expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
+        true,
+      )
     })
 
     it('keeps the in-progress state while the automatic post-delete compact is running', async () => {
@@ -1082,6 +1246,85 @@ describe('RepoDetailView', () => {
       // marker must not stick around and leave the row permanently disabled.
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
       expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+
+      // A failed delete leaves the confirmation modal open (its own,
+      // pre-existing behavior, unchanged here) - its teleported content
+      // otherwise lingers in document.body and breaks other tests' modal
+      // lookups, so tear it down explicitly.
+      wrapper.unmount()
+    })
+  })
+
+  describe('Break Lock', () => {
+    async function openBreakLockDialog(
+      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    ): Promise<void> {
+      const breakLockBtn = wrapper.findAll('button').find((b) => b.text() === 'Break Lock')
+      expect(breakLockBtn).toBeDefined()
+      await breakLockBtn!.trigger('click')
+      await flushPromises()
+    }
+
+    async function clickBreakLockConfirm(): Promise<void> {
+      const confirmBtn = document.body.querySelector<HTMLButtonElement>('button.btn-danger')
+      expect(confirmBtn).not.toBeNull()
+      expect(confirmBtn!.textContent).toBe('Yes, Break Lock')
+      confirmBtn!.click()
+      await flushPromises()
+    }
+
+    it('shows borg_output alongside the confirmation message, not just the static message', async () => {
+      setupApiSuccess()
+      vi.mocked(apiClient.post).mockImplementation((url: string) => {
+        if (url === '/repos/1/break-lock') {
+          return Promise.resolve({
+            data: {
+              message: "lock broken on repository 'server-daily'",
+              borg_output: 'cleared stale local cache lock at /cache/borg/abc123',
+            },
+          })
+        }
+        return Promise.resolve({ data: {} })
+      })
+
+      const wrapper = await renderRepoDetail()
+      await openBreakLockDialog(wrapper)
+      await clickBreakLockConfirm()
+
+      const result = document.body.querySelector('.break-lock-success')
+      expect(result).not.toBeNull()
+      expect(result!.textContent).toContain("lock broken on repository 'server-daily'")
+      expect(result!.textContent).toContain('cleared stale local cache lock at /cache/borg/abc123')
+
+      // The dialog stays open after a successful break-lock so the admin can
+      // read the result - its teleported content would otherwise leak into
+      // document.body and break the next test's lookup, so tear it down.
+      wrapper.unmount()
+    })
+
+    it('falls back to the plain message when there is no borg output to show', async () => {
+      setupApiSuccess()
+      vi.mocked(apiClient.post).mockImplementation((url: string) => {
+        if (url === '/repos/1/break-lock') {
+          return Promise.resolve({
+            data: { message: "lock broken on repository 'server-daily'", borg_output: '' },
+          })
+        }
+        return Promise.resolve({ data: {} })
+      })
+
+      const wrapper = await renderRepoDetail()
+      await openBreakLockDialog(wrapper)
+      await clickBreakLockConfirm()
+
+      const result = document.body.querySelector('.break-lock-success')
+      expect(result).not.toBeNull()
+      expect(result!.textContent).toBe("lock broken on repository 'server-daily'")
+
+      // Same as the test above: the dialog stays open, so its teleported
+      // content would otherwise leak into document.body for whatever test
+      // runs next.
+      wrapper.unmount()
     })
   })
 })

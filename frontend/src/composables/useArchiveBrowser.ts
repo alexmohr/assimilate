@@ -69,7 +69,7 @@ interface UseArchiveBrowserReturn {
   breadcrumbs: ComputedRef<BreadcrumbSegment[]>
   dirs: ComputedRef<DirDisplayEntry[]>
   files: ComputedRef<ContentEntry[]>
-  loadArchives: () => Promise<void>
+  loadArchives: (silent?: boolean) => Promise<void>
   selectArchive: (archive: ArchiveEntry) => Promise<void>
   loadContents: (path: string) => Promise<void>
   navigateTo: (path: string) => void
@@ -246,16 +246,51 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     })),
   ])
 
-  async function loadArchives(): Promise<void> {
-    archivesLoading.value = true
+  // `silent` skips the archivesLoading flag - the list stays as-is (including
+  // any in-flight delete's "Deletion in progress" row state) while the
+  // refetch is outstanding, instead of the whole panel flashing to a
+  // "Loading archives..." placeholder. Used for background refreshes
+  // triggered by a DataChanged WebSocket message, where blanking the list
+  // the caller didn't ask for would hide other UI state for no reason.
+  //
+  // loadArchives can be triggered by several independent, overlapping
+  // sources (mount, every DataChanged, a manual rescan) whose requests can
+  // resolve out of order. `loadArchivesSeq` guards against an older
+  // request's response landing after a newer one (or after some other
+  // direct mutation like ArchiveDeleted's own splice) and clobbering
+  // fresher state with a stale snapshot - only the response matching the
+  // most recently issued call is ever applied.
+  let loadArchivesSeq = 0
+  // archivesLoading tracks outstanding *non-silent* calls independently of
+  // loadArchivesSeq: a non-silent call that's superseded by a later silent
+  // one (e.g. mount's own fetch still in flight when a background
+  // DataChanged refresh starts) would otherwise never clear the flag - it's
+  // no longer the latest call, so the seq guard would skip it, and the
+  // silent call that "won" never touches archivesLoading by design. Tracking
+  // how many non-silent calls are still outstanding instead means the flag
+  // clears once every real (non-silent) load has finished, regardless of
+  // which one happened to be latest.
+  let pendingNonSilentLoads = 0
+
+  async function loadArchives(silent = false): Promise<void> {
+    const seq = ++loadArchivesSeq
+    if (!silent) {
+      pendingNonSilentLoads++
+      archivesLoading.value = true
+    }
     archivesError.value = null
     try {
       const res = await apiClient.get<ArchiveEntry[]>(`/repos/${repoId.value}/archives`)
+      if (seq !== loadArchivesSeq) return
       archives.value = res.data
     } catch (e: unknown) {
+      if (seq !== loadArchivesSeq) return
       archivesError.value = extractError(e)
     } finally {
-      archivesLoading.value = false
+      if (!silent) {
+        pendingNonSilentLoads--
+        if (pendingNonSilentLoads === 0) archivesLoading.value = false
+      }
     }
   }
 

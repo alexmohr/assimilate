@@ -174,8 +174,9 @@ test.describe('Archive browsing & diff journey', () => {
     page,
   }) => {
     // borg delete + the automatic compact that follows it can take a while
-    // even on the demo's small repos.
-    test.setTimeout(120_000)
+    // even on the demo's small repos, so give it plenty of room (matching
+    // import.spec.ts's allowance for the same class of slow borg operation).
+    test.setTimeout(180_000)
 
     await loginAsAdmin(page)
     await navigateToMediaWeeklyArchives(page)
@@ -191,28 +192,43 @@ test.describe('Archive browsing & diff journey', () => {
 
     await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
 
-    // The row's own button must reflect the in-flight delete - disabled,
-    // spinner, and re-titled - not just stay clickable until the
-    // confirmation dialog closes. Checked as one atomic retry block rather
-    // than two sequential assertions: on a small demo repo the delete (and
-    // its automatic compact) can finish fast enough that the row is gone by
-    // the time a second, separately-polling assertion starts, even though
-    // the title and disabled state are set from the same flag and can never
-    // actually be observed out of sync with each other.
+    // RepoDetailView marks the row as deleting synchronously, before the
+    // DELETE request even goes out. Two earlier real races have since been
+    // fixed at the app level rather than papered over here: RepoOpChanged's
+    // stale-marker cleanup used to clear deletingArchiveNames immediately
+    // against possibly-stale local state, racing DataChanged's own
+    // list-refresh-driven prune for a delete that had just succeeded (it
+    // now refetches before clearing); and the client used to learn a delete
+    // had finished only via the generic DataChanged signal, forcing a full
+    // list refetch-and-diff to notice this specific archive was gone. The
+    // server now also broadcasts a precise ArchiveDeleted { archive_name }
+    // event the moment this archive's delete + auto-compact finish, which
+    // RepoDetailView applies directly and synchronously - no refetch in the
+    // loop for the common success path at all.
     //
-    // Timeout is generous (matching the indexing/disappearance waits below):
-    // the app itself reflects this state synchronously on confirm, but a
-    // busy CI runner can still occasionally delay the click handler, the
-    // DELETE round-trip, or Playwright's own polling tick past a tighter
-    // budget - this is CI-variance headroom, not evidence the underlying
-    // race is unfixed (see the two RepoDetailView.vue fixes in git history).
+    // What's left is a plain Playwright coordination gap, not an app race:
+    // two separate `expect().toBeVisible()`/`expect().toBeDisabled()` calls
+    // each poll the DOM on their own schedule, so the row can appear (proof
+    // the marking above ran) and then disappear (the delete finishing) in
+    // the gap between the two polls, on a backend fast enough to complete
+    // the whole delete+compact+notify cycle inside it. `toPass` re-reads
+    // both properties together in one atomic check, so either the row is
+    // caught in the pending state with both properties true at once, or the
+    // retry loop keeps trying - it does not tolerate the row never
+    // appearing at all, or being visible-but-not-disabled. A fixed, tight
+    // interval (rather than toPass's default 100/250/500/1000ms backoff,
+    // which samples far less often over 5s) matters here: a CI run once
+    // caught the row visible-then-vanished with the default backoff still
+    // in place, but the very next run never sampled it as visible at all -
+    // the pending window on this backend can be narrower than what a
+    // backing-off poll reliably lands inside.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
     await expect(async () => {
-      expect(await pendingBtn.count()).toBeGreaterThan(0)
+      expect(await pendingBtn.isVisible()).toBe(true)
       expect(await pendingBtn.isDisabled()).toBe(true)
-    }).toPass({ timeout: 20_000 })
+    }).toPass({ timeout: 5_000, intervals: [20] })
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

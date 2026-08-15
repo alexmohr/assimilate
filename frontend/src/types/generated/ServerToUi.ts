@@ -188,6 +188,19 @@ export type ServerToUi =
     };
   }
   | {
+    "type": "ArchiveDeleted";
+    "payload": {
+      /**
+       * The repository the archive was deleted from.
+       */
+      repo_id: number;
+      /**
+       * The name of the deleted archive.
+       */
+      archive_name: string;
+    };
+  }
+  | {
     "type": "BackupLog";
     "payload": {
       /**

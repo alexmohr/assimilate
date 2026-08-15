@@ -101,6 +101,36 @@ test.describe('Repositories management journey', () => {
     await expect(page).toHaveURL(/\/repos\/\d+\?tab=archives/)
   })
 
+  test('breaking a repository lock shows a success result in the confirmation dialog', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos/1')
+    await page.waitForLoadState('networkidle')
+
+    const dangerZone = page.locator('.danger-zone')
+    const breakLockBtn = dangerZone.getByRole('button', { name: 'Break Lock', exact: true })
+    await expect(breakLockBtn).toBeVisible()
+    await breakLockBtn.click()
+
+    await expect(page.locator('.dialog-title')).toHaveText('Break Repository Lock')
+    await expect(page.locator('.break-lock-warning').first()).toContainText(
+      'stale local cache lock',
+    )
+
+    await page.getByRole('button', { name: 'Yes, Break Lock', exact: true }).click()
+
+    // Demo repo has no active lock, so borg break-lock is a safe no-op that
+    // still reports success - the exact wording isn't asserted since it's
+    // borg's own message, just that the dialog reflects a result and not an
+    // error.
+    await expect(page.locator('.break-lock-success')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.form-error')).not.toBeVisible()
+
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(page.locator('.dialog-title')).not.toBeVisible()
+  })
+
   test('grouping by host shows a shared storage pool with per-repo quota slices', async ({
     page,
   }) => {

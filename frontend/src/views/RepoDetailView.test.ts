@@ -1023,11 +1023,25 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
+      const row = wrapper
+        .findAll('.archive-row')
+        .find((r) => r.text().includes(deletingArchive.name))
+      expect(row).toBeDefined()
+
+      await row!.find('button[title="Delete archive"]').trigger('click')
       await flushPromises()
       await clickModalConfirm()
 
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+      // Row selection isn't disabled while a delete is in flight - re-select
+      // the still-listed (locally not-yet-pruned) archive to reproduce a
+      // user re-opening its file browser mid-delete. ArchiveDeleted must
+      // clear that too, not just the one confirmArchiveDeletion's own
+      // success path already handles when nothing was re-selected since.
+      await row!.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.browser-title').text()).toContain(deletingArchive.name)
 
       // No further loadArchives call and no DataChanged - ArchiveDeleted
       // alone must be enough to drop the row. sortedArchives is mocked as
@@ -1041,6 +1055,8 @@ describe('RepoDetailView', () => {
       expect(mockLoadArchives.mock.calls.length).toBe(callsBefore)
       expect(mockBrowserArchives.value.some((a) => a.name === deletingArchive.name)).toBe(false)
       expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(wrapper.find('.browser-title').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Select an archive to browse its contents.')
     })
 
     it('ignores ArchiveDeleted events for a different repository', async () => {

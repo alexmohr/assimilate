@@ -199,13 +199,25 @@ test.describe('Archive browsing & diff journey', () => {
     // stale-marker cleanup used to clear deletingArchiveNames immediately,
     // racing DataChanged's own list-refresh-driven prune for a delete that
     // had just succeeded. It now refetches before clearing (see
-    // RepoDetailView.vue), so the two no longer race - this is a plain,
-    // unconditional assertion again.
+    // RepoDetailView.vue), so the two no longer race.
+    //
+    // What's left is a plain Playwright coordination gap, not an app race:
+    // two separate `expect().toBeVisible()`/`expect().toBeDisabled()` calls
+    // each poll the DOM on their own schedule, so the row can appear (proof
+    // the marking above ran) and then disappear (the delete finishing) in
+    // the gap between the two polls, on a backend fast enough to complete
+    // the whole delete+compact+notify+refetch cycle inside it. `toPass`
+    // re-reads both properties together in one atomic check, so either the
+    // row is caught in the pending state with both properties true at once,
+    // or the retry loop keeps trying - it does not tolerate the row never
+    // appearing at all, or being visible-but-not-disabled.
     const pendingBtn = page
       .locator('.archive-row', { hasText: archiveName })
       .locator('button[title="Deletion in progress"]')
-    await expect(pendingBtn).toBeVisible({ timeout: 5_000 })
-    await expect(pendingBtn).toBeDisabled()
+    await expect(async () => {
+      expect(await pendingBtn.isVisible()).toBe(true)
+      expect(await pendingBtn.isDisabled()).toBe(true)
+    }).toPass({ timeout: 5_000 })
 
     // While the delete (and the compact that automatically follows it) is
     // still running, the Overview tab's "Current Operation" field should

@@ -100,7 +100,7 @@ defineProps<{
   background: var(--accent);
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .work-row {
     grid-template-columns: 10px 1fr auto;
   }

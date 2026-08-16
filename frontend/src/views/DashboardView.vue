@@ -826,7 +826,7 @@ async function fetchOverview(): Promise<void> {
   overflow: hidden;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1024px) {
   .stats-coverage-row {
     grid-template-columns: 1fr 1fr;
   }
@@ -834,9 +834,22 @@ async function fetchOverview(): Promise<void> {
   .calendar-cell {
     grid-column: 1 / -1;
   }
+  .attention-row {
+    grid-template-columns: 1fr;
+  }
+
+  .attention-sidebar-wide {
+    grid-template-columns: 1fr;
+  }
+  .rings-row {
+    grid-template-columns: 1fr;
+  }
+  .trends-row {
+    grid-template-columns: 1fr;
+  }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .stats-coverage-row {
     grid-template-columns: 1fr;
   }
@@ -874,16 +887,6 @@ async function fetchOverview(): Promise<void> {
   grid-template-columns: 1fr 1fr;
 }
 
-@media (max-width: 900px) {
-  .attention-row {
-    grid-template-columns: 1fr;
-  }
-
-  .attention-sidebar-wide {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Section 1: Status Banner */
 .status-banner {
   display: grid;
@@ -891,9 +894,32 @@ async function fetchOverview(): Promise<void> {
   gap: 0.75rem;
 }
 
-@media (max-width: 500px) {
+@media (max-width: 640px) {
   .status-banner {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .trends-controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .trends-select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .panel-timeline {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .health-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -966,12 +992,6 @@ async function fetchOverview(): Promise<void> {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
-}
-
-@media (max-width: 900px) {
-  .rings-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Panel */
@@ -1220,38 +1240,6 @@ async function fetchOverview(): Promise<void> {
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
   align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .trends-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 500px) {
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .trends-controls {
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .trends-select {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .panel-timeline {
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .health-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Active Backups */

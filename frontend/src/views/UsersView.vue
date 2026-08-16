@@ -754,7 +754,7 @@ onMounted(fetchUsers)
 }
 
 .col-date {
-  @media (max-width: 700px) {
+  @media (max-width: 768px) {
     display: none;
   }
 }

@@ -238,7 +238,7 @@ p {
   background: var(--danger-subtle);
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .finding-row {
     grid-template-columns: 8px minmax(0, 1fr) auto;
   }

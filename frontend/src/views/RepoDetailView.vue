@@ -18,25 +18,18 @@ import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import { Trash2, X, ChevronRight, AlertTriangle, CalendarClock } from '@lucide/vue'
+import { Trash2, X, ChevronRight, AlertTriangle } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
-import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
-import {
-  scheduleIssuesFromEntries,
-  withErrorTitles,
-  type ScheduleHealthEntry,
-} from '../utils/scheduleHealth'
 import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
 import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 import BaseTabs from '../components/BaseTabs.vue'
-import EmptyState from '../components/EmptyState.vue'
+import RepoSchedulesTab from '../components/RepoSchedulesTab.vue'
 
 type TabId = 'overview' | 'archives' | 'schedules'
 
@@ -186,63 +179,6 @@ useEscapeKey(showBreakLockDialog, () => {
 useEscapeKey(showResetAndSyncDialog, () => {
   showResetAndSyncDialog.value = false
 })
-
-// Schedules tab
-const repoSchedules = ref<ScheduleRow[]>([])
-const repoSchedulesLoading = ref(false)
-const repoSchedulesError = ref<string | null>(null)
-const scheduleHealth = ref<ScheduleHealthEntry[]>([])
-const scheduleRunNowLoading = ref<number | null>(null)
-const { success: scheduleToastSuccess, error: scheduleToastError } = useToast()
-
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity Check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
-}
-
-function scheduleHealthEntries(s: ScheduleRow): ScheduleHealthEntry[] {
-  return scheduleHealth.value.filter((h) => h.schedule_id === s.id)
-}
-
-function scheduleIssues(s: ScheduleRow): EntityIssue[] {
-  const entries = scheduleHealthEntries(s)
-  return withErrorTitles(scheduleIssuesFromEntries(entries, s.id, router), entries)
-}
-
-async function loadRepoSchedules(): Promise<void> {
-  repoSchedulesLoading.value = true
-  repoSchedulesError.value = null
-  try {
-    const [schRes, healthRes] = await Promise.all([
-      apiClient.get<ScheduleRow[]>(`/repos/${repoId.value}/schedules`),
-      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
-    ])
-    repoSchedules.value = schRes.data
-    scheduleHealth.value = healthRes.data
-  } catch {
-    repoSchedulesError.value = 'Failed to load schedules.'
-  } finally {
-    repoSchedulesLoading.value = false
-  }
-}
-
-async function runScheduleNow(s: ScheduleRow): Promise<void> {
-  scheduleRunNowLoading.value = s.id
-  try {
-    await apiClient.post(`/schedules/${s.id}/run`, {})
-    scheduleToastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
-  } catch (e: unknown) {
-    scheduleToastError(extractError(e))
-  } finally {
-    scheduleRunNowLoading.value = null
-  }
-}
 
 // Confirm Relocation
 const showConfirmRelocationDialog = ref(false)
@@ -923,32 +859,19 @@ watch(
     archiveFilter.value = ''
     expandedGroups.value = new Set()
     selectedArchive.value = null
-    repoSchedules.value = []
     await loadRepo()
     if (repo.value) {
       await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
       selectArchiveFromQuery()
-      if (activeTab.value === 'schedules') {
-        await loadRepoSchedules()
-      }
     }
   },
 )
-
-watch(activeTab, async (tab) => {
-  if (tab === 'schedules' && repoSchedules.value.length === 0 && !repoSchedulesLoading.value) {
-    await loadRepoSchedules()
-  }
-})
 
 onMounted(async () => {
   await loadRepo()
   if (repo.value) {
     await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
     selectArchiveFromQuery()
-    if (activeTab.value === 'schedules') {
-      await loadRepoSchedules()
-    }
   }
 })
 
@@ -1857,87 +1780,12 @@ async function resetImport(): Promise<void> {
         </ArchiveBrowserLayout>
       </div>
 
-      <!-- Schedules Tab -->
+      <!-- Schedules Tab. Self-loads when the tab is first opened. -->
       <div
         v-if="activeTab === 'schedules'"
         class="tab-content"
       >
-        <BaseSpinner
-          v-if="repoSchedulesLoading"
-          size="lg"
-        />
-        <div
-          v-else-if="repoSchedulesError"
-          class="state-msg state-error"
-        >
-          {{ repoSchedulesError }}
-        </div>
-        <EmptyState
-          v-else-if="repoSchedules.length === 0"
-          :icon="CalendarClock"
-          title="No schedules yet"
-          description="Nothing backs up to this repository. Create a schedule to start."
-        />
-        <div
-          v-else
-          class="repo-schedule-grid"
-        >
-          <div
-            v-for="s in repoSchedules"
-            :key="s.id"
-            class="schedule-card"
-            :class="{ 'schedule-card-notable': !s.enabled }"
-            @click="router.push(`/schedules/${s.id}`)"
-          >
-            <span class="card-hostname">{{ s.name || `Schedule #${s.id}` }}</span>
-            <EntityStatusBadges
-              :notable="!s.enabled"
-              notable-label="Disabled"
-              :issues="scheduleIssues(s)"
-            />
-            <div class="card-meta">
-              <span class="host-count">
-                {{ s.target_hostnames.length }}
-                agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
-              </span>
-              <span
-                class="badge badge--neutral"
-                :class="`type-${s.schedule_type ?? 'backup'}`"
-              >
-                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
-              </span>
-            </div>
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{
-                  cronToHuman(s.cron_expression) ?? s.cron_expression
-                }}</span>
-                <span class="stat-label">Schedule</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatDate(s.next_run_at) }}</span>
-                <span class="stat-label">Next run</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatDate(s.last_run_at) }}</span>
-                <span class="stat-label">Last run</span>
-              </div>
-            </div>
-            <div
-              class="card-actions"
-              @click.stop
-            >
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="scheduleRunNowLoading === s.id"
-                :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
-                @click="runScheduleNow(s)"
-              >
-                {{ scheduleRunNowLoading === s.id ? '...' : 'Run' }}
-              </button>
-            </div>
-          </div>
-        </div>
+        <RepoSchedulesTab :repo-id="repoId" />
       </div>
     </template>
 
@@ -2982,107 +2830,5 @@ async function resetImport(): Promise<void> {
   border-radius: 50%;
   color: var(--danger);
   background: var(--danger-subtle);
-}
-
-.repo-schedule-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-  gap: 1rem;
-}
-
-.schedule-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow var(--duration-base),
-    border-color var(--duration-base);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.schedule-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.schedule-card-notable {
-  background: var(--bg-hover);
-}
-
-.card-hostname {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-meta {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.host-count {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-}
-
-.type-backup {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.type-check {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.type-verify {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.stat-value {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: auto;
 }
 </style>

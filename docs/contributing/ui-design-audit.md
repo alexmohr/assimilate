@@ -13,6 +13,20 @@ Counts are occurrences in source, not runtime instances.
 
 Scope: 39 components, 25 views, 1 layout, 37,405 lines.
 
+## Status
+
+Findings F-01 to F-23 and F-25 to F-27 are implemented, guarded by
+`frontend/src/design-tokens.test.ts`, `modal-usage.test.ts`,
+`shared-components.test.ts` and `ui-conventions.test.ts`.
+
+F-24 (splitting the oversized views) is partly done. The shared-component work
+removed 525 lines from `RepoDetailView`, 335 from `AgentDetailView` and 249
+from `ScheduleDetailView`, and the schedules tab is now
+`RepoSchedulesTab.vue` + a shared `ScheduleCard.vue`. The remaining cuts -
+`RepoOverviewTab`, `RepoArchivesTab`, `RepoBorgConsole` and the
+`useRepoDetail` composable, plus the equivalents for the agent and schedule
+views - have not been made. The table below records the original findings.
+
 ## Summary
 
 | Metric | Value |

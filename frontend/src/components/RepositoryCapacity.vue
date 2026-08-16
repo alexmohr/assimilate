@@ -101,7 +101,7 @@ small,
   background: var(--danger);
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .capacity-row {
     grid-template-columns: 10px minmax(0, 1fr) auto;
   }

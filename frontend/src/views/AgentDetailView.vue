@@ -16,7 +16,6 @@ import { formatDate, formatDateShort, formatBytes, relativeTime } from '../utils
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import { cronToHuman } from '../utils/cron'
 import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
@@ -24,11 +23,11 @@ import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
-import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import type { EntityIssue } from '../components/EntityStatusBadges.vue'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleRow } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { TagRow } from '../types/tag'
@@ -39,6 +38,7 @@ import BaseTabs from '../components/BaseTabs.vue'
 import { backupStatusBadgeClass } from '../utils/badge'
 import { X, CalendarClock } from '@lucide/vue'
 import EmptyState from '../components/EmptyState.vue'
+import ScheduleCard from '../components/ScheduleCard.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -663,17 +663,6 @@ function repoNameForSchedule(s: ScheduleRow): string {
     repos.value.find((r) => r.id === s.repo_id)?.name ??
     (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
   )
-}
-
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity Check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
 }
 
 function navigateToSchedule(s: ScheduleRow): void {
@@ -1640,48 +1629,17 @@ watch(wsStatus, (newStatus, oldStatus) => {
           v-else
           class="schedule-grid"
         >
-          <div
+          <ScheduleCard
             v-for="s in agentSchedules"
             :key="s.id"
-            class="schedule-card"
-            :class="{
-              'schedule-card-notable': !s.enabled,
-              'schedule-card-highlighted':
-                overdueHighlighted && scheduleHealthEntries(s).some((h) => h.is_overdue),
-            }"
-            @click="navigateToSchedule(s)"
+            :schedule="s"
+            :issues="scheduleIssues(s)"
+            :format-run="formatDateShort"
+            :highlighted="overdueHighlighted && scheduleHealthEntries(s).some((h) => h.is_overdue)"
+            @select="navigateToSchedule(s)"
           >
-            <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
-            <EntityStatusBadges
-              :notable="!s.enabled"
-              notable-label="Disabled"
-              :issues="scheduleIssues(s)"
-            />
-            <div class="card-meta">
-              <span
-                class="badge badge--neutral"
-                :class="`type-${s.schedule_type ?? 'backup'}`"
-              >
-                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
-              </span>
-            </div>
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{
-                  cronToHuman(s.cron_expression) ?? s.cron_expression
-                }}</span>
-                <span class="stat-label">Schedule</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatDateShort(s.next_run_at) }}</span>
-                <span class="stat-label">Next run</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatDateShort(s.last_run_at) }}</span>
-                <span class="stat-label">Last run</span>
-              </div>
-            </div>
-          </div>
+            <template #title>{{ s.name || repoNameForSchedule(s) }}</template>
+          </ScheduleCard>
         </div>
       </div>
 
@@ -2174,44 +2132,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   gap: 1rem;
 }
 
-.schedule-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow var(--duration-base),
-    border-color var(--duration-base);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.schedule-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.schedule-card-notable {
-  background: var(--bg-hover);
-}
-
-.schedule-card-highlighted {
-  border-color: var(--warning);
-  box-shadow: 0 0 0 3px var(--warning-subtle);
-}
-
-.card-hostname {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .card-repo {
   font-size: var(--fs-xs);
   color: var(--text-muted);
@@ -2219,50 +2139,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.card-meta {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.type-backup {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.type-check {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.type-verify {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.stat-value {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 /* Results list */

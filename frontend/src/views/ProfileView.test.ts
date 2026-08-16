@@ -513,6 +513,21 @@ describe('ProfileView', () => {
       )
     })
 
+    /** Opens the dialog, submits a name, and returns with the reveal shown. */
+    async function createTokenSuccessfully(): Promise<ReturnType<typeof renderWithPlugins>> {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      await findInModal(wrapper, 'Create')!.trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
     async function openCreateTokenModal(wrapper: ReturnType<typeof renderWithPlugins>) {
       await flushPromises()
       await clickApiTokensTab(wrapper)
@@ -561,16 +576,7 @@ describe('ProfileView', () => {
     // The plaintext is shown once and never again, so the dialog swaps to a
     // reveal step rather than closing on success.
     it('reveals the plaintext once, with a copy action', async () => {
-      mockGetTokens()
-      vi.mocked(apiClient.post).mockResolvedValue({
-        data: { token: mockToken, plaintext: 'tok_secret' },
-      } as never)
-
-      const wrapper = renderWithPlugins(ProfileView)
-      await openCreateTokenModal(wrapper)
-      await wrapper.find('.modal-dialog input').setValue('ci-token')
-      await findInModal(wrapper, 'Create')!.trigger('click')
-      await flushPromises()
+      const wrapper = await createTokenSuccessfully()
 
       expect(wrapper.find('.token-value').text()).toBe('tok_secret')
       // Addressed by container: this file's useClipboard mock is always
@@ -582,16 +588,7 @@ describe('ProfileView', () => {
     })
 
     it('clears the revealed token when the dialog is closed', async () => {
-      mockGetTokens()
-      vi.mocked(apiClient.post).mockResolvedValue({
-        data: { token: mockToken, plaintext: 'tok_secret' },
-      } as never)
-
-      const wrapper = renderWithPlugins(ProfileView)
-      await openCreateTokenModal(wrapper)
-      await wrapper.find('.modal-dialog input').setValue('ci-token')
-      await findInModal(wrapper, 'Create')!.trigger('click')
-      await flushPromises()
+      const wrapper = await createTokenSuccessfully()
 
       const close = wrapper.findAll('.modal-dialog button').find((b) => /Done|Close/.test(b.text()))
       await close!.trigger('click')

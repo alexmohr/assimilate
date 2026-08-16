@@ -49,38 +49,54 @@ function onKeydown(e: KeyboardEvent, index: number): void {
 </script>
 
 <template>
-  <div
-    class="tabs"
-    role="tablist"
-    :aria-label="label"
-  >
-    <button
-      v-for="(tab, index) in tabs"
-      :key="tab.id"
-      ref="buttons"
-      type="button"
-      role="tab"
-      class="tab"
-      :class="{ active: tab.id === modelValue }"
-      :aria-selected="tab.id === modelValue"
-      :tabindex="tab.id === modelValue ? 0 : -1"
-      @click="select(tab.id)"
-      @keydown="onKeydown($event, index)"
+  <!--
+    The tablist is nested rather than being the row itself: a `tablist` may
+    only contain `tab` children, and the trailing slot holds things that are
+    not tabs (the schedule strip's "Logs" link, for one). Keeping them
+    siblings of the tablist rather than inside it makes the markup honest
+    while leaving them on the same row.
+  -->
+  <div class="tabs">
+    <div
+      class="tablist"
+      role="tablist"
+      :aria-label="label"
     >
-      <component
-        :is="tab.icon"
-        v-if="tab.icon"
-        :size="14"
-        aria-hidden="true"
-      />
-      {{ tab.label }}
-    </button>
+      <button
+        v-for="(tab, index) in tabs"
+        :key="tab.id"
+        ref="buttons"
+        type="button"
+        role="tab"
+        class="tab"
+        :class="{ active: tab.id === modelValue }"
+        :aria-selected="tab.id === modelValue"
+        :tabindex="tab.id === modelValue ? 0 : -1"
+        @click="select(tab.id)"
+        @keydown="onKeydown($event, index)"
+      >
+        <component
+          :is="tab.icon"
+          v-if="tab.icon"
+          :size="14"
+          aria-hidden="true"
+        />
+        {{ tab.label }}
+      </button>
+    </div>
     <slot name="trailing" />
   </div>
 </template>
 
 <style scoped>
 .tabs {
+  align-items: center;
+}
+
+/* Laid out as its own row so the tabs sit flush against `.tabs`' bottom
+   rule exactly as they did when they were its direct children. */
+.tablist {
+  display: flex;
   align-items: center;
 }
 

@@ -82,6 +82,13 @@ inside a 2,000-line file. They are fixed in the same change:
 - Roughly 200 dead scoped-CSS rules left behind by the extraction were removed
   across nine files.
 
+One defect in the audit's own work was found afterwards and fixed: `BaseTabs`
+rendered its `#trailing` slot inside the element carrying `role="tablist"`, so
+the schedule strip's "Logs" link was announced as a fourth tab. A `tablist` may
+only contain `tab` children, so the tablist is now nested inside the row and
+the trailing content is its sibling. `frontend/src/components/BaseTabs.test.ts`
+guards the roles, the roving focus and that nesting.
+
 ## Summary
 
 | Metric | Value |

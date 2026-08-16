@@ -125,4 +125,64 @@ describe('ChannelConfigFields', () => {
     const vm = wrapper.vm as unknown as { validate: () => Promise<boolean> }
     expect(await vm.validate()).toBe(false)
   })
+
+  describe('field bindings', () => {
+    function fieldByLabel(wrapper: ReturnType<typeof mount>, label: string) {
+      const wrap = wrapper
+        .findAll('.field')
+        .find(
+          (f) => f.find('.field-label').exists() && f.find('.field-label').text().includes(label),
+        )
+      const control = wrap?.find('input, select')
+      if (!control || !control.exists()) throw new Error(`no field labelled "${label}"`)
+      return control
+    }
+
+    // The fields edit the caller's config object in place, so each binding is
+    // asserted against the object that was passed in. A v-model pointed at
+    // the wrong key looks identical in the template and would quietly send
+    // the old value.
+    it('writes each SMTP field back onto the config it was given', async () => {
+      const config = emailConfig()
+      const wrapper = mount({ emailConfig: config })
+
+      await fieldByLabel(wrapper, 'SMTP User').setValue('operator')
+      await fieldByLabel(wrapper, 'Port').setValue('2525')
+      await fieldByLabel(wrapper, 'SMTP Password').setValue('correct horse')
+      await fieldByLabel(wrapper, 'Security').setValue('tls')
+
+      expect(config).toMatchObject({
+        smtp_user: 'operator',
+        smtp_port: 2525,
+        smtp_password: 'correct horse',
+        security: 'tls',
+      })
+    })
+
+    it('keeps the port numeric rather than storing the raw string', async () => {
+      const config = emailConfig()
+      const wrapper = mount({ emailConfig: config })
+      await fieldByLabel(wrapper, 'Port').setValue('465')
+      expect(config.smtp_port).toBe(465)
+    })
+
+    it('writes the webhook URL back onto the webhook config', async () => {
+      const webhook = { url: '', headers: {} } as WebhookConfig
+      const wrapper = mount({ channelType: 'webhook', webhookConfig: webhook })
+
+      await fieldByLabel(wrapper, 'URL').setValue('https://hooks.example.com/notify')
+
+      expect(webhook.url).toBe('https://hooks.example.com/notify')
+    })
+
+    it('shows only the fields for the selected channel type', () => {
+      const email = mount()
+      expect(() => fieldByLabel(email, 'SMTP Host')).not.toThrow()
+      expect(() => fieldByLabel(email, 'URL')).toThrow()
+
+      const webhook = mount({ channelType: 'webhook' })
+      expect(() => fieldByLabel(webhook, 'URL')).not.toThrow()
+      expect(() => fieldByLabel(webhook, 'SMTP Host')).toThrow()
+    })
+  })
 })

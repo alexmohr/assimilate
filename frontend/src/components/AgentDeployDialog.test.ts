@@ -135,4 +135,96 @@ describe('AgentDeployDialog', () => {
     await w.vm.$nextTick()
     expect(w.emitted('close')).toBeTruthy()
   })
+
+  describe('deploy form', () => {
+    /** The dialog teleports, so its fields are queried off the document. */
+    async function setField(label: string, value: string): Promise<void> {
+      const wrap = [...document.querySelectorAll('.field')].find((f) =>
+        f.querySelector('.field-label')?.textContent?.includes(label),
+      )
+      const control = wrap?.querySelector<HTMLInputElement>('input, select, textarea')
+      if (!control) throw new Error(`no field labelled "${label}"`)
+      control.value = value
+      control.dispatchEvent(new Event('input'))
+      control.dispatchEvent(new Event('change'))
+      await flushPromises()
+    }
+
+    async function submit(): Promise<void> {
+      const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+        /Deploy|Install|Upgrade/.test(b.textContent ?? ''),
+      )
+      if (!button) throw new Error('no deploy button')
+      button.click()
+      await flushPromises()
+    }
+
+    it('sends every field it collected', async () => {
+      const post = postMock
+      post.mockResolvedValue({ data: { success: true, skipped: false } })
+
+      mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      await flushPromises()
+      post.mockClear()
+
+      await setField('SSH Host', '10.0.0.5')
+      await setField('SSH User', 'deployer')
+      await setField('SSH Port', '2222')
+      await setField('SSH Password', 'hunter2')
+      await setField('Server URL', 'https://assimilate.example.com')
+      await setField('Install Path', '/opt/assimilate')
+
+      await submit()
+
+      expect(post).toHaveBeenCalledWith(
+        '/agents/web-server-01/deploy',
+        expect.objectContaining({
+          ssh_host: '10.0.0.5',
+          ssh_user: 'deployer',
+          ssh_port: 2222,
+          ssh_password: 'hunter2',
+          server_url: 'https://assimilate.example.com',
+          install_path: '/opt/assimilate',
+        }),
+      )
+    })
+
+    // The optional fields are sent as undefined rather than as empty strings,
+    // so the server applies its own defaults instead of writing blanks.
+    it('omits the optional fields when they are left empty', async () => {
+      const post = postMock
+      post.mockResolvedValue({ data: { success: true, skipped: false } })
+
+      mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      await flushPromises()
+      post.mockClear()
+
+      await setField('SSH Host', '10.0.0.5')
+      await setField('Server URL', 'https://assimilate.example.com')
+      await setField('Install Path', '')
+
+      await submit()
+
+      const body = post.mock.calls[0][1] as Record<string, unknown>
+      expect(body.ssh_password).toBeUndefined()
+      expect(body.install_path).toBeUndefined()
+    })
+
+    it('reports a deploy failure rather than claiming success', async () => {
+      const post = postMock
+      post.mockResolvedValue({ data: {} })
+
+      const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      await flushPromises()
+      post.mockRejectedValueOnce(new Error('ssh refused'))
+
+      await setField('SSH Host', '10.0.0.5')
+      await setField('Server URL', 'https://assimilate.example.com')
+      await submit()
+
+      expect(w.emitted('deployed')).toBeUndefined()
+      // extractError is stubbed to a fixed string in this file's mocks.
+      expect(document.body.textContent).toContain('API error')
+    })
+  })
 })

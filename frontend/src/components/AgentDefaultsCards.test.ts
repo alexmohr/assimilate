@@ -64,6 +64,20 @@ describe('AgentDefaultsCards', () => {
     expect(card(wrapper, 'hooks').text()).toContain('None configured.')
   })
 
+  // Pre- and post-backup are rendered by two separate blocks, so a fixture
+  // with only pre-backup commands leaves half the card unexercised.
+  it('lists both hook command groups when both are configured', () => {
+    const wrapper = mount({
+      agent: { ...AGENT, default_post_backup_commands: ['systemctl start app', 'notify-send ok'] },
+    })
+
+    const commands = card(wrapper, 'hooks')
+      .findAll('code.path-item')
+      .map((c) => c.text())
+    expect(commands).toEqual(['systemctl stop app', 'systemctl start app', 'notify-send ok'])
+    expect(card(wrapper, 'hooks').text()).not.toContain('None configured.')
+  })
+
   it('shows the empty message when a group has no values at all', () => {
     const wrapper = mount({
       agent: { ...AGENT, default_backup_paths: [], default_exclude_patterns: [] },

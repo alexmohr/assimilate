@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import type { ComponentPublicInstance } from 'vue'
 import AgentDeployDialog from './AgentDeployDialog.vue'
+import BaseModal from './BaseModal.vue'
 
 const postMock = vi.fn()
 
@@ -125,15 +126,30 @@ describe('AgentDeployDialog', () => {
     expect(textarea?.value).toBe('user in-progress edit')
   })
 
-  it('emits close when Cancel is clicked', async () => {
+  // Escape and the backdrop reach the dialog as BaseModal's close event, which
+  // is wired separately from the Cancel button and has to behave the same.
+  it.each([
+    [
+      'Cancel is clicked',
+      (w: VueWrapper<ComponentPublicInstance>): void => {
+        void w
+        Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+          .find((b) => b.textContent?.trim() === 'Cancel')
+          ?.click()
+      },
+    ],
+    [
+      'the modal is dismissed',
+      (w: VueWrapper<ComponentPublicInstance>): void => {
+        w.findComponent(BaseModal).vm.$emit('close')
+      },
+    ],
+  ])('emits close when %s', async (_how, dismiss) => {
     const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
     await flushPromises()
-    const cancelBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
-      (b) => b.textContent?.trim() === 'Cancel',
-    )
-    cancelBtn?.click()
+    dismiss(w)
     await w.vm.$nextTick()
-    expect(w.emitted('close')).toBeTruthy()
+    expect(w.emitted('close')).toHaveLength(1)
   })
 
   describe('deploy form', () => {
@@ -208,6 +224,33 @@ describe('AgentDeployDialog', () => {
       const body = post.mock.calls[0][1] as Record<string, unknown>
       expect(body.ssh_password).toBeUndefined()
       expect(body.install_path).toBeUndefined()
+    })
+
+    // After a successful deploy the form is replaced by the one-time token,
+    // and the only way out is Done - Cancel and the deploy button are gone.
+    it('shows the generated token and closes on Done', async () => {
+      postMock.mockResolvedValue({
+        data: { success: true, skipped: false, token: 'tok-abc123', available_version: '1.2.0' },
+      })
+
+      const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      await flushPromises()
+
+      await setField('SSH Host', '10.0.0.5')
+      await setField('Server URL', 'https://assimilate.example.com')
+      await submit()
+
+      expect(w.emitted('deployed')).toEqual([['1.2.0']])
+      expect(document.querySelector('.token-text')?.textContent).toBe('tok-abc123')
+
+      const done = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => b.textContent?.trim() === 'Done',
+      )
+      expect(done).toBeDefined()
+      done!.click()
+      await w.vm.$nextTick()
+
+      expect(w.emitted('close')).toHaveLength(1)
     })
 
     it('reports a deploy failure rather than claiming success', async () => {

@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import UsersView from './UsersView.vue'
 
 vi.mock('../api/client', () => ({
@@ -55,9 +55,18 @@ const mockUsers: User[] = [
 
 const mockApiGet = apiClient.get as ReturnType<typeof vi.fn>
 
+/**
+ * A fresh copy per call: the view replaces rows in the array it got back when
+ * a role is saved, so handing out the shared fixture would let one test's edit
+ * show up as another test's starting state.
+ */
+function userRows(): User[] {
+  return mockUsers.map((u) => ({ ...u }))
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  mockApiGet.mockResolvedValue({ data: mockUsers })
+  mockApiGet.mockImplementation(() => Promise.resolve({ data: userRows() }))
 })
 
 describe('UsersView', () => {
@@ -141,7 +150,7 @@ describe('UsersView', () => {
       if (url === '/users/1/permissions') {
         return Promise.resolve({ data: [] })
       }
-      return Promise.resolve({ data: mockUsers })
+      return Promise.resolve({ data: userRows() })
     })
 
     const wrapper = renderWithPlugins(UsersView, {
@@ -182,7 +191,7 @@ describe('UsersView', () => {
         if (/\/users\/\d+\/roles$/.test(url)) return Promise.resolve({ data: [ROLES[0]] })
         if (/\/users\/\d+\/groups$/.test(url)) return Promise.resolve({ data: [] })
         if (/\/users\/\d+\/permissions$/.test(url)) return Promise.resolve({ data: [] })
-        return Promise.resolve({ data: mockUsers })
+        return Promise.resolve({ data: userRows() })
       })
     }
 
@@ -443,6 +452,79 @@ describe('UsersView', () => {
       await flushPromises()
 
       expect(del).not.toHaveBeenCalled()
+    })
+
+    // Save Role is gated on the value actually changing, so the select has to
+    // write back through v-model for the button to become usable at all.
+    it('promotes a user to admin from the general tab', async () => {
+      mockEditData()
+      const put = apiClient.put as ReturnType<typeof vi.fn>
+      put.mockResolvedValue({ data: {} })
+
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+
+      const save = () => wrapper.findAll('button').find((b) => b.text().includes('Save Role'))!
+      expect(save().attributes('disabled')).toBeDefined()
+
+      await wrapper.find('#edit-role').setValue('admin')
+      expect(save().attributes('disabled')).toBeUndefined()
+
+      await save().trigger('click')
+      await flushPromises()
+
+      expect(put).toHaveBeenCalledWith('/users/2/role', { role: 'admin' })
+      // The row behind the dialog reflects the new role without a refetch.
+      expect(wrapper.find('#edit-role').exists()).toBe(true)
+      expect(save().attributes('disabled')).toBeDefined()
+    })
+
+    it('reports a failed role change instead of claiming it saved', async () => {
+      mockEditData()
+      const put = apiClient.put as ReturnType<typeof vi.fn>
+      put.mockRejectedValue(new Error('forbidden'))
+
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await wrapper.find('#edit-role').setValue('admin')
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Save Role'))!
+        .trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.form-error').exists()).toBe(true)
+    })
+
+    // Escape and the backdrop close a dialog through BaseModal, wired
+    // separately from each dialog's own Cancel button.
+    it.each([
+      ['create', openCreate],
+      [
+        'edit',
+        async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
+          await openEditFor(w, 1)
+        },
+      ],
+      [
+        'delete',
+        async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
+          await w.findAll('button.btn-danger-text')[0].trigger('click')
+          await flushPromises()
+        },
+      ],
+    ])('closes the %s dialog when it is dismissed', async (_name, open) => {
+      mockEditData()
+      const wrapper = await render()
+      await open(wrapper)
+      expect(openModals(wrapper)).toHaveLength(1)
+
+      await dismissModal(wrapper)
+
+      expect(openModals(wrapper)).toHaveLength(0)
+      expect(apiClient.post).not.toHaveBeenCalled()
+      expect(apiClient.put).not.toHaveBeenCalled()
+      expect(apiClient.delete).not.toHaveBeenCalled()
     })
   })
 })

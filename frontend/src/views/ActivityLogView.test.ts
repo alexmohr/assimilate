@@ -637,28 +637,28 @@ describe('ActivityLogView', () => {
   })
 
   describe('system event badges', () => {
-    it('colors non-error system events without using the failed badge', async () => {
+    // One event per arm of the classifier, including an event type it has
+    // never seen: an unclassified event must not borrow the success colour.
+    const SYSTEM_EVENTS = [
+      { type: 'repo_sync', label: 'repo sync', badge: 'badge--success' },
+      { type: 'repo_sync_slow', label: 'repo sync slow', badge: 'badge--warning' },
+      { type: 'repo_sync_failed', label: 'repo sync failed', badge: 'badge--danger' },
+      { type: 'quota_exceeded', label: 'quota exceeded', badge: 'badge--info' },
+    ]
+
+    it('colors each system event by what it means', async () => {
       mockGet.mockImplementation((url: string) => {
         if (url === '/agents') return Promise.resolve({ data: AGENTS })
         if (url === '/stats/activity') return Promise.resolve({ data: [] })
         if (url === '/stats/system-events')
           return Promise.resolve({
-            data: [
-              {
-                id: 1,
-                created_at: '2026-01-01T07:00:00Z',
-                event_type: 'repo_sync',
-                hostname: null,
-                message: 'repo sync completed: imported 14, removed 0 archives in 0s',
-              },
-              {
-                id: 2,
-                created_at: '2026-01-01T06:00:00Z',
-                event_type: 'repo_sync_failed',
-                hostname: null,
-                message: 'repo sync failed',
-              },
-            ],
+            data: SYSTEM_EVENTS.map((e, i) => ({
+              id: i + 1,
+              created_at: `2026-01-01T0${7 - i}:00:00Z`,
+              event_type: e.type,
+              hostname: null,
+              message: e.label,
+            })),
           })
         return Promise.resolve({ data: [] })
       })
@@ -671,11 +671,13 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       const badges = wrapper.findAll('.run-card .badge')
-      const successBadge = badges.find((b) => b.text() === 'repo sync')
-      const failedBadge = badges.find((b) => b.text() === 'repo sync failed')
-      expect(successBadge?.classes()).toContain('badge--success')
-      expect(successBadge?.classes()).not.toContain('badge--danger')
-      expect(failedBadge?.classes()).toContain('badge--danger')
+      for (const { label, badge } of SYSTEM_EVENTS) {
+        const found = badges.find((b) => b.text() === label)
+        expect(found, `no badge for ${label}`).toBeDefined()
+        expect(found!.classes()).toContain(badge)
+      }
+      // A failure must never be reachable by any other arm.
+      expect(badges.filter((b) => b.classes().includes('badge--danger'))).toHaveLength(1)
     })
   })
 

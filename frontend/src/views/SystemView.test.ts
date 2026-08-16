@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import SystemView from './SystemView.vue'
 
 vi.mock('../api/client', () => ({
@@ -512,20 +512,29 @@ describe('SystemView', () => {
       expect(mockPost).not.toHaveBeenCalled()
     })
 
-    it.each([['Regenerate'], ['Reset']])(
-      'does nothing when the %s dialog is cancelled',
-      async (trigger) => {
-        const wrapper = await render()
-        await button(wrapper, trigger).trigger('click')
-        await flushPromises()
-        mockPost.mockClear()
+    // Backing out has to be a genuine no-op by either route: the Cancel button
+    // and BaseModal's own close event (Escape, backdrop) are wired separately.
+    it.each([
+      ['Regenerate', 'Cancel'],
+      ['Reset', 'Cancel'],
+      ['Regenerate', 'dismissal'],
+      ['Reset', 'dismissal'],
+    ])('does nothing when the %s dialog is closed by %s', async (trigger, how) => {
+      const wrapper = await render()
+      await button(wrapper, trigger).trigger('click')
+      await flushPromises()
+      mockPost.mockClear()
 
+      if (how === 'Cancel') {
         await button(wrapper, 'Cancel').trigger('click')
         await flushPromises()
+      } else {
+        await dismissModal(wrapper)
+      }
 
-        expect(mockPost).not.toHaveBeenCalled()
-      },
-    )
+      expect(mockPost).not.toHaveBeenCalled()
+      expect(openModals(wrapper)).toHaveLength(0)
+    })
 
     it('spells out what a system reset will do before asking to confirm it', async () => {
       const wrapper = await render()

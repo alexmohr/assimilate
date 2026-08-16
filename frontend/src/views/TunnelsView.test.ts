@@ -53,7 +53,13 @@ vi.mock('../components/EmptyState.vue', () => ({
 
 import { apiClient } from '../api/client'
 import { listTunnels } from '../api/tunnels'
-import { fieldByLabel, renderWithPlugins, setFieldByLabel } from '../test-utils'
+import {
+  dismissModal,
+  fieldByLabel,
+  openModals,
+  renderWithPlugins,
+  setFieldByLabel,
+} from '../test-utils'
 import TunnelsView from './TunnelsView.vue'
 
 const mockApiClient = apiClient as {
@@ -476,6 +482,41 @@ describe('TunnelsView', () => {
       expect(wrapper.find('.form-error').exists()).toBe(true)
       expect(wrapper.findAll('tbody tr')).toHaveLength(3)
     })
+
+    // Escape and a backdrop click close a dialog through BaseModal, which each
+    // dialog wires separately from its own Cancel button.
+    it.each([
+      ['add', openAdd],
+      [
+        'edit',
+        async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
+          await w
+            .findAll('button')
+            .find((b) => b.text() === 'Edit')!
+            .trigger('click')
+          await flushPromises()
+        },
+      ],
+      [
+        'delete',
+        async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
+          await w.findAll('tbody button.btn-danger-text')[0].trigger('click')
+          await flushPromises()
+        },
+      ],
+    ])('closes the %s dialog when it is dismissed', async (_name, open) => {
+      const { createTunnel, updateTunnel, deleteTunnel } = await import('../api/tunnels')
+      const wrapper = await render([...mockAgents, SPARE_AGENT])
+      await open(wrapper)
+      expect(openModals(wrapper)).toHaveLength(1)
+
+      await dismissModal(wrapper)
+
+      expect(openModals(wrapper)).toHaveLength(0)
+      expect(vi.mocked(createTunnel)).not.toHaveBeenCalled()
+      expect(vi.mocked(updateTunnel)).not.toHaveBeenCalled()
+      expect(vi.mocked(deleteTunnel)).not.toHaveBeenCalled()
+    })
   })
 
   // An unknown status must not read as healthy: anything that is not one of
@@ -491,5 +532,45 @@ describe('TunnelsView', () => {
 
     expect(wrapper.find('.badge--danger').exists()).toBe(true)
     expect(wrapper.text()).toContain('Error')
+  })
+
+  // The full SSH error is too long for the table cell, so the status badge
+  // opens it in a dialog.
+  it('opens the full error from the status badge and closes it again', async () => {
+    mockListTunnels.mockResolvedValue([
+      { ...mockTunnels[0], status: { error: { message: 'handshake failed: no matching key' } } },
+    ])
+    mockApiClient.get.mockResolvedValue({ data: mockAgents })
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    await wrapper.find('.badge--danger').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.error-pre').text()).toBe('handshake failed: no matching key')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Close')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('closes the error dialog when it is dismissed', async () => {
+    mockListTunnels.mockResolvedValue([
+      { ...mockTunnels[0], status: { error: { message: 'handshake failed' } } },
+    ])
+    mockApiClient.get.mockResolvedValue({ data: mockAgents })
+
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+    await wrapper.find('.badge--danger').trigger('click')
+    await flushPromises()
+
+    await dismissModal(wrapper)
+
+    expect(openModals(wrapper)).toHaveLength(0)
   })
 })

@@ -35,6 +35,7 @@ vi.mock('@primevue/core/api', () => ({
 
 import { apiClient } from '../api/client'
 import ArchivesView from './ArchivesView.vue'
+import { dismissModal, openModals } from '../test-utils'
 
 const mockGet = apiClient.get as MockInstance
 
@@ -234,6 +235,21 @@ describe('ArchivesView', () => {
       await flushPromises()
 
       expect(wrapper.find('.passphrase-text').exists()).toBe(false)
+    })
+
+    // Escape and the backdrop close the dialog through BaseModal rather than
+    // through Done, and a passphrase left on screen is the failure mode.
+    it('clears the secret when the dialog is dismissed', async () => {
+      const wrapper = await mountWithRepo()
+
+      await revealButton(wrapper).trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.passphrase-text').exists()).toBe(true)
+
+      await dismissModal(wrapper)
+
+      expect(wrapper.find('.passphrase-text').exists()).toBe(false)
+      expect(openModals(wrapper)).toHaveLength(0)
     })
 
     // The dialog opens either way: a refusal has to be shown, not swallowed.

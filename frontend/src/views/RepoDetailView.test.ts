@@ -96,6 +96,7 @@ vi.mock('../components/QuotaPanel.vue', () => ({
 
 import { apiClient } from '../api/client'
 import RepoArchivesTab from '../components/RepoArchivesTab.vue'
+import RepoDangerZone from '../components/RepoDangerZone.vue'
 
 interface RepoWithStats {
   id: number
@@ -697,6 +698,22 @@ describe('RepoDetailView', () => {
 
     expect(wrapper.text()).toContain('Danger Zone')
     expect(wrapper.text()).toContain('Delete Repository')
+  })
+
+  // The danger zone renames and resets the repository, which changes the
+  // header and the stat cards above it - so its `changed` has to refetch,
+  // not just close the dialog.
+  it('refreshes the repository when the danger zone reports a change', async () => {
+    setupApiSuccess()
+    const wrapper = await renderRepoDetail()
+    const repoFetches = (): number =>
+      vi.mocked(apiClient.get).mock.calls.filter((c) => String(c[0]) === '/repos/1').length
+    const before = repoFetches()
+
+    wrapper.findComponent(RepoDangerZone).vm.$emit('changed')
+    await flushPromises()
+
+    expect(repoFetches()).toBe(before + 1)
   })
 
   it('hides danger zone for non-admin users', async () => {

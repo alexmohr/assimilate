@@ -6,6 +6,7 @@ import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
 import AgentDangerZone from './AgentDangerZone.vue'
+import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
 
 vi.mock('../api/client', () => ({
@@ -133,27 +134,42 @@ describe('AgentDangerZone', () => {
   })
 
   // Both dialogs guard something irreversible, so backing out has to be a
-  // genuine no-op rather than a dismissal that still fired the request.
-  it('does nothing when the delete-agent dialog is cancelled', async () => {
-    const wrapper = mount()
+  // genuine no-op rather than a dismissal that still fired the request - by
+  // the footer button and by Escape/backdrop, which arrive as BaseModal's
+  // close event on a separate handler.
+  const DIALOGS = [
+    ['delete-agent', AGENT, 0],
+    ['delete-archives', IMPORTED, 1],
+  ] as const
+  const DISMISSALS = [
+    [
+      'the Cancel button',
+      (_w: ReturnType<typeof mount>, _i: number): void => dialogButton('Cancel').click(),
+    ],
+    [
+      'a modal dismissal',
+      (w: ReturnType<typeof mount>, i: number): void => {
+        w.findAllComponents(BaseModal)[i].vm.$emit('close')
+      },
+    ],
+  ] as const
+
+  it.each(
+    DIALOGS.flatMap(([name, agent, index]) =>
+      DISMISSALS.map(
+        ([how, dismiss]) => [`${name} dialog by ${how}`, agent, index, dismiss] as const,
+      ),
+    ),
+  )('backs out of the %s without acting', async (_name, agent, index, dismiss) => {
+    const wrapper = mount(agent)
     await wrapper.find('.btn-danger').trigger('click')
     await flushPromises()
+    expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
 
-    dialogButton('Cancel').click()
+    dismiss(wrapper, index)
     await flushPromises()
 
     expect(apiClient.delete).not.toHaveBeenCalled()
-    expect(document.body.querySelector('.modal-dialog')).toBeNull()
-  })
-
-  it('does nothing when the delete-archives dialog is cancelled', async () => {
-    const wrapper = mount(IMPORTED)
-    await wrapper.find('.btn-danger').trigger('click')
-    await flushPromises()
-
-    dialogButton('Cancel').click()
-    await flushPromises()
-
     expect(apiClient.post).not.toHaveBeenCalled()
     expect(document.body.querySelector('.modal-dialog')).toBeNull()
   })

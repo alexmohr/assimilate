@@ -6,9 +6,16 @@ import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
 import RepoArchivesTab from './RepoArchivesTab.vue'
+import BaseModal from './BaseModal.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+}))
+
+const toastError = vi.fn()
+
+vi.mock('../composables/useToast', () => ({
+  useToast: () => ({ success: vi.fn(), error: toastError }),
 }))
 
 const ARCHIVES = [
@@ -111,6 +118,49 @@ describe('RepoArchivesTab', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos/12/rescan')
     expect(apiClient.get).toHaveBeenCalled()
+  })
+
+  // A re-scan walks the whole repository, so a failure has to say so rather
+  // than leave the banner looking like nothing happened.
+  it('reports a failed re-scan', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('repository locked'))
+    const wrapper = mount()
+    await flushPromises()
+
+    await wrapper.find('.unmatched-banner button').trigger('click')
+    await flushPromises()
+
+    expect(toastError).toHaveBeenCalledWith(expect.stringContaining('repository locked'))
+    // The button is released so the operator can retry.
+    expect(wrapper.find('.unmatched-banner button').attributes('disabled')).toBeUndefined()
+  })
+
+  // Deleting an archive destroys backup data, so both ways out of the
+  // confirmation have to leave the archive alone.
+  it.each([
+    [
+      'the Cancel button',
+      async (w: ReturnType<typeof mount>) => w.find('.modal-footer .btn-ghost').trigger('click'),
+    ],
+    [
+      'a modal dismissal',
+      async (w: ReturnType<typeof mount>) => {
+        w.findComponent(BaseModal).vm.$emit('close')
+      },
+    ],
+  ])('backs out of an archive deletion via %s', async (_how, dismiss) => {
+    const wrapper = mount()
+    await flushPromises()
+
+    await wrapper.find('.archive-row-delete').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('cannot be recovered')
+
+    await dismiss(wrapper)
+    await flushPromises()
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('cannot be recovered')
   })
 
   it('asks the view to clear the ?archive= filter rather than touching the route', async () => {

@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import MergeAgentDialog from './MergeAgentDialog.vue'
+import { apiClient } from '../api/client'
+import BaseModal from './BaseModal.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -44,9 +46,24 @@ function mountDialog(): ReturnType<typeof mount> {
   })
 }
 
+// The source hostname is rendered with the same `input.mono` classes as the
+// pattern field, so the pattern field is addressed by its placeholder.
+function patternField(wrapper: VueWrapper): DOMWrapper<Element> {
+  return wrapper.find('input[placeholder="e.g. myhost*"]')
+}
+
+function mergeButton(wrapper: VueWrapper): DOMWrapper<Element> {
+  return wrapper.findAll('button').find((b) => b.text().includes('Merge'))!
+}
+
+async function clickMerge(wrapper: VueWrapper): Promise<void> {
+  await mergeButton(wrapper).trigger('click')
+}
+
 describe('MergeAgentDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { merged: true } } as never)
   })
 
   it('renders dialog with source hostname', () => {
@@ -99,5 +116,76 @@ describe('MergeAgentDialog', () => {
     const select = wrapper.find('select')
     const texts = select.findAll('option').map((o) => o.text())
     expect(texts.some((t) => t.includes('Web Server'))).toBe(true)
+  })
+
+  // The pattern is what stops the same imported host being re-adopted as a
+  // separate agent next time it appears, so it defaults on and is prefilled
+  // from the source hostname.
+  it('offers to save a pattern by default, prefilled from the source', () => {
+    const wrapper = mountDialog()
+    const checkbox = wrapper.find('input[type="checkbox"]')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+    expect((patternField(wrapper).element as HTMLInputElement).value).toBe('old-webserver*')
+  })
+
+  it('hides the pattern field when the operator declines to save one', async () => {
+    const wrapper = mountDialog()
+    await wrapper.find('input[type="checkbox"]').setValue(false)
+    expect(patternField(wrapper).exists()).toBe(false)
+  })
+
+  it('sends the edited pattern with the merge', async () => {
+    const wrapper = mountDialog()
+
+    await wrapper.find('select').setValue('web-server-01')
+    await patternField(wrapper).setValue('  legacy-*  ')
+    await clickMerge(wrapper)
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-server-01/merge-from/10', {
+      create_pattern: 'legacy-*',
+    })
+  })
+
+  // A blank pattern is the same request as an unchecked box: the merge still
+  // goes through, it just leaves no alias behind.
+  it.each([
+    [
+      'the box is unchecked',
+      async (w: VueWrapper) => w.find('input[type="checkbox"]').setValue(false),
+    ],
+    ['the pattern is blanked', async (w: VueWrapper) => patternField(w).setValue('   ')],
+  ])('sends no pattern when %s', async (_name, decline) => {
+    const wrapper = mountDialog()
+
+    await wrapper.find('select').setValue('web-server-01')
+    await decline(wrapper)
+    await clickMerge(wrapper)
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-server-01/merge-from/10', {})
+  })
+
+  // Escape and the backdrop reach the dialog through BaseModal's close event,
+  // which has to land on the same cancel path as the footer button.
+  it('treats a modal dismissal as a cancel', async () => {
+    const wrapper = mountDialog()
+    wrapper.findComponent(BaseModal).vm.$emit('close')
+    await flushPromises()
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+
+  it('surfaces a failed merge and stays open', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('target busy'))
+    const wrapper = mountDialog()
+
+    await wrapper.find('select').setValue('web-server-01')
+    await clickMerge(wrapper)
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').text()).toBe('API error')
+    expect(wrapper.emitted('merged')).toBeUndefined()
+    // The button is usable again so the operator can retry.
+    expect(mergeButton(wrapper).attributes('disabled')).toBeUndefined()
   })
 })

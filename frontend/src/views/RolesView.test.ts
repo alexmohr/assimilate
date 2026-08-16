@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { clickButtonWithText, renderWithPlugins } from '../test-utils'
+import { clickButtonWithText, openModals, renderWithPlugins } from '../test-utils'
 import RolesView from './RolesView.vue'
 
 vi.mock('../api/client', () => ({
@@ -259,6 +259,20 @@ describe('RolesView', () => {
     await flushPromises()
 
     expect(mockApiDelete).toHaveBeenCalledWith('/roles/4')
+  })
+
+  // A fresh install has no custom roles, so the empty state's own button is
+  // the only way into the create dialog from that screen.
+  it('opens the create dialog from the empty state', async () => {
+    mockApiGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    expect(wrapper.find('table').exists()).toBe(false)
+    await clickButtonWithText(wrapper, 'Create Role')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
   })
 
   it('cancels the delete confirm dialog without deleting', async () => {

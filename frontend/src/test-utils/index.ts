@@ -13,6 +13,7 @@ import { createPinia, type Pinia } from 'pinia'
 import { vi, expect } from 'vitest'
 import type { Component } from 'vue'
 import { router as appRouter } from '../router'
+import BaseModal from '../components/BaseModal.vue'
 
 export interface RenderWithPluginsOptions {
   props?: Record<string, unknown>
@@ -165,6 +166,41 @@ export async function cancelThenConfirmDelete(
   await wrapper.find('button.btn-danger').trigger('click')
   await flushPromises()
   expect(mockDelete).toHaveBeenCalledWith(expectedArg)
+}
+
+/**
+ * Every `BaseModal` currently open.
+ *
+ * Views declare all the dialogs they own side by side and switch them with
+ * `:open`, so addressing "the open one" is stable where an index into
+ * `findAllComponents` moves whenever a dialog is added.
+ */
+export function openModals(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+): VueWrapper<ComponentPublicInstance>[] {
+  return wrapper
+    .findAllComponents(BaseModal)
+    .filter((m) => m.props('open') === true) as unknown as VueWrapper<ComponentPublicInstance>[]
+}
+
+/** The single open modal; throws if the view has none or several. */
+export function openModal(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+): VueWrapper<ComponentPublicInstance> {
+  const open = openModals(wrapper)
+  if (open.length !== 1) throw new Error(`expected exactly one open modal, found ${open.length}`)
+  return open[0]
+}
+
+/**
+ * Dismisses the open modal the way Escape and a backdrop click do.
+ *
+ * That path is wired separately from the dialog's own Cancel button, so a
+ * dialog can close cleanly one way and leak state the other.
+ */
+export async function dismissModal(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+  openModal(wrapper).vm.$emit('close')
+  await flushPromises()
 }
 
 export function renderWithPlugins(

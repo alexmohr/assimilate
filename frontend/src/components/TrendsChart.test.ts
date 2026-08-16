@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import TrendsChart from './TrendsChart.vue'
+import { apiClient } from '../api/client'
 
 vi.mock('vue-chartjs', () => ({
   Line: { template: '<canvas data-testid="line-chart" />' },
@@ -79,5 +81,23 @@ describe('TrendsChart', () => {
     expect(wrapper.text()).toContain('30d')
     expect(wrapper.text()).toContain('90d')
     expect(wrapper.text()).toContain('1y')
+  })
+
+  // The range buttons drive the query, so a click has to reach the fetch -
+  // a control that only repaints itself looks like it worked and does not.
+  it('refetches the trend over the chosen range', async () => {
+    const mockGet = vi.mocked(apiClient.get)
+    mockGet.mockResolvedValue({ data: [] } as never)
+    const wrapper = renderWithPlugins(TrendsChart, { props: { repos: [] } })
+    await flushPromises()
+    expect(mockGet).toHaveBeenCalledWith(expect.stringContaining('days=30'))
+
+    await wrapper
+      .findAll('.segmented-option')
+      .find((b) => b.text() === '1y')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenLastCalledWith(expect.stringContaining('days=365'))
   })
 })

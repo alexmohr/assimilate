@@ -3,7 +3,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { cancelThenConfirmDelete, clickButtonWithText, renderWithPlugins } from '../test-utils'
+import {
+  cancelThenConfirmDelete,
+  clickButtonWithText,
+  dismissModal,
+  openModals,
+  renderWithPlugins,
+} from '../test-utils'
 import GroupsView from './GroupsView.vue'
 
 vi.mock('../api/client', () => ({
@@ -244,7 +250,18 @@ describe('GroupsView', () => {
     )
   })
 
-  it('cancels the members modal without saving', async () => {
+  // The Cancel button and BaseModal's close event (Escape, backdrop) are wired
+  // separately, and either has to drop the pending selection unsaved.
+  it.each([
+    [
+      'Cancel',
+      async (w: ReturnType<typeof renderWithPlugins>): Promise<void> => {
+        await clickButtonWithText(w, 'Cancel')
+        await flushPromises()
+      },
+    ],
+    ['a dismissal', dismissModal],
+  ])('closes the members modal on %s without saving', async (_how, close) => {
     const wrapper = renderWithPlugins(GroupsView)
     await flushPromises()
 
@@ -252,10 +269,10 @@ describe('GroupsView', () => {
     await membersButton!.trigger('click')
     await flushPromises()
 
-    await clickButtonWithText(wrapper, 'Cancel')
-    await flushPromises()
+    await close(wrapper)
 
     expect(wrapper.find('.members-list').exists()).toBe(false)
+    expect(openModals(wrapper)).toHaveLength(0)
     expect(apiClient.put).not.toHaveBeenCalled()
   })
 })

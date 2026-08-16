@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { useArchiveList, ARCHIVE_SORT_OPTIONS } from './useArchiveList'
 import type { ArchiveEntry } from './useArchiveBrowser'
 
@@ -95,6 +95,15 @@ describe('useArchiveList', () => {
 
     l.sortMode.value = 'dedup-asc'
     expect(l.ordered.value.map((a) => a.deduplicated_size)).toEqual([10, 20, 25, 30])
+  })
+
+  // The default arm is the safety net for a value the union does not cover -
+  // a sort persisted by an older build, or an option added to the picker
+  // without a case here. It has to leave the list intact, not empty it.
+  it('leaves the order alone for a sort mode it does not know', () => {
+    const l = list()
+    ;(l.sortMode as unknown as Ref<string>).value = 'colour-asc'
+    expect(l.ordered.value.map((a) => a.name)).toEqual(ARCHIVES.map((a) => a.name))
   })
 
   it('filters case-insensitively on the archive name', () => {

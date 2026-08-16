@@ -86,4 +86,20 @@ describe('StorageTrendWidget', () => {
     await flushPromises()
     expect(wrapper.find('canvas').exists()).toBe(true)
   })
+  // The range buttons drive the query, so a click has to reach the fetch -
+  // a control that only repaints itself looks like it worked and does not.
+  it('refetches the trend over the chosen range', async () => {
+    mockGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(StorageTrendWidget, { props: { repos: [] } })
+    await flushPromises()
+    expect(mockGet).toHaveBeenCalledWith(expect.stringContaining('days=30'))
+
+    await wrapper
+      .findAll('.segmented-option')
+      .find((b) => b.text() === '90d')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenLastCalledWith(expect.stringContaining('days=90'))
+  })
 })

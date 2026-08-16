@@ -116,6 +116,23 @@ describe('BackupStatsWidget', () => {
     expect(wrapper.text()).toContain('2')
   })
 
+  // The range buttons drive the query, so a click has to reach the fetch -
+  // a control that only repaints itself looks like it worked and does not.
+  it('refetches over the chosen range', async () => {
+    mockGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(BackupStatsWidget, { props: { repos: [] } })
+    await flushPromises()
+    expect(mockGet).toHaveBeenCalledWith(expect.stringContaining('days=30'))
+
+    await wrapper
+      .findAll('.segmented-option')
+      .find((b) => b.text() === '7d')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenLastCalledWith(expect.stringContaining('days=7'))
+  })
+
   it('shows 0% when no backups have run', async () => {
     mockGet.mockResolvedValue({ data: [] })
     const wrapper = renderWithPlugins(BackupStatsWidget, {

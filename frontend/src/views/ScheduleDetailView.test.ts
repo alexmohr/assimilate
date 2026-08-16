@@ -10,6 +10,7 @@ vi.mock('../api/client', () => ({
     get: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
+    delete: vi.fn(),
   },
 }))
 
@@ -64,13 +65,14 @@ vi.mock('../composables/useWebSocket', () => ({
 }))
 
 import { apiClient } from '../api/client'
-import { renderWithPlugins } from '../test-utils'
+import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import ScheduleDetailView from './ScheduleDetailView.vue'
 
 const mockApiClient = apiClient as {
   get: ReturnType<typeof vi.fn>
   post: ReturnType<typeof vi.fn>
   put: ReturnType<typeof vi.fn>
+  delete: ReturnType<typeof vi.fn>
 }
 
 const mockSchedule = {
@@ -968,5 +970,224 @@ describe('ScheduleDetailView - Backups tab', () => {
     await flushPromises()
 
     expect(vm.selectedBackupReport).toBeNull()
+  })
+})
+
+describe('ScheduleDetailView - delete confirmation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function openDeleteDialog(): Promise<ReturnType<typeof renderWithPlugins>> {
+    const wrapper = await createEditWrapper()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().trim() === 'Delete Schedule')!
+      .trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('names what is about to be lost before deleting', async () => {
+    const wrapper = await openDeleteDialog()
+
+    expect(mockApiClient.delete).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('All associated backup reports will also be removed.')
+    expect(wrapper.text()).toContain('This action cannot be undone.')
+  })
+
+  it('deletes the schedule on confirmation', async () => {
+    mockApiClient.delete.mockResolvedValue({ data: {} })
+    const wrapper = await openDeleteDialog()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete Schedule')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.delete).toHaveBeenCalledWith('/schedules/1')
+  })
+
+  it('reports a failed delete and closes the dialog', async () => {
+    mockApiClient.delete.mockRejectedValue(new Error('schedule running'))
+    const wrapper = await openDeleteDialog()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete Schedule')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.state-error, .form-error, .error-banner').exists()).toBe(true)
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  // Deleting takes every backup report with it, so both ways out of the
+  // confirmation have to leave the schedule alone.
+  it.each([
+    [
+      'Cancel',
+      async (w: ReturnType<typeof renderWithPlugins>): Promise<void> => {
+        await w
+          .findAll('.modal-footer button')
+          .find((b) => b.text().trim() === 'Cancel')!
+          .trigger('click')
+        await flushPromises()
+      },
+    ],
+    ['a dismissal', dismissModal],
+  ])('backs out of the delete on %s', async (_how, close) => {
+    const wrapper = await openDeleteDialog()
+
+    await close(wrapper)
+
+    expect(mockApiClient.delete).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+})
+
+describe('ScheduleDetailView - per-agent overrides', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const TWO_TARGETS = [
+    { agent_id: 10, execution_order: 0 },
+    { agent_id: 11, execution_order: 1 },
+  ]
+
+  function setupWithSources(sources: Record<string, unknown>): void {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets') return Promise.resolve({ data: TWO_TARGETS })
+      if (url === '/schedules/1/sources') return Promise.resolve({ data: sources })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+  }
+
+  async function renderAdvanced(
+    sources: Record<string, unknown>,
+  ): Promise<ReturnType<typeof renderWithPlugins>> {
+    setupWithSources(sources)
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text() === 'Advanced')!
+      .trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  async function save(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save Changes')!
+      .trigger('click')
+    await flushPromises()
+  }
+
+  // A schedule saved with per-agent excludes has to come back in per-agent
+  // mode: reopening it in shared mode would silently flatten every host's
+  // list into one on the next save.
+  it('reopens in per-agent mode and sends the excludes back per agent', async () => {
+    const wrapper = await renderAdvanced({
+      backup_sources: [],
+      backup_sources_per_agent: [
+        { agent_id: 10, paths: ['/srv'] },
+        { agent_id: 11, paths: ['/var'] },
+      ],
+      exclude_patterns_per_agent: [
+        { agent_id: 10, raw_text: '*.cache' },
+        { agent_id: 11, raw_text: '*.tmp' },
+      ],
+    })
+
+    await save(wrapper)
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({
+        exclude_patterns_raw: '',
+        exclude_patterns_per_agent: [
+          { agent_id: 10, raw_text: '*.cache' },
+          { agent_id: 11, raw_text: '*.tmp' },
+        ],
+        backup_sources_per_agent: [
+          { agent_id: 10, paths: ['/srv'] },
+          { agent_id: 11, paths: ['/var'] },
+        ],
+      }),
+    )
+  })
+
+  it('reopens in per-agent mode and sends the file change patterns back per agent', async () => {
+    const wrapper = await renderAdvanced({
+      backup_sources: ['/data'],
+      backup_sources_per_agent: [],
+      file_change_patterns_per_agent: [
+        { agent_id: 10, raw_text: '/data/wal/** ignore' },
+        { agent_id: 11, raw_text: '/var/log/** warn' },
+      ],
+    })
+
+    await save(wrapper)
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({
+        file_change_patterns_raw: '',
+        file_change_patterns_per_agent: [
+          { agent_id: 10, raw_text: '/data/wal/** ignore' },
+          { agent_id: 11, raw_text: '/var/log/** warn' },
+        ],
+      }),
+    )
+  })
+
+  it('reopens in per-agent mode and sends both hook command lists back per agent', async () => {
+    const wrapper = await renderAdvanced({
+      backup_sources: ['/data'],
+      backup_sources_per_agent: [],
+      commands_per_agent: [
+        { agent_id: 10, pre_backup_commands: ['stop-app'], post_backup_commands: ['start-app'] },
+        { agent_id: 11, pre_backup_commands: [], post_backup_commands: [] },
+      ],
+    })
+
+    await save(wrapper)
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({
+        commands_per_agent: [
+          { agent_id: 10, pre_backup_commands: ['stop-app'], post_backup_commands: ['start-app'] },
+          { agent_id: 11, pre_backup_commands: [], post_backup_commands: [] },
+        ],
+      }),
+    )
+  })
+
+  // The shared fields stay in charge when the server sent no per-agent rows,
+  // so an empty list must not flip the schedule into per-agent mode.
+  it('stays in shared mode when no per-agent rows come back', async () => {
+    const wrapper = await renderAdvanced({
+      backup_sources: ['/data'],
+      backup_sources_per_agent: [],
+      exclude_patterns_per_agent: [],
+      file_change_patterns_per_agent: [],
+      commands_per_agent: [],
+    })
+
+    await save(wrapper)
+
+    const payload = mockApiClient.put.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.exclude_patterns_per_agent).toBeUndefined()
+    expect(payload.file_change_patterns_per_agent).toBeUndefined()
+    expect(payload.commands_per_agent).toBeUndefined()
   })
 })

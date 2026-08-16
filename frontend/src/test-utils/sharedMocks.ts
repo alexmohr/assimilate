@@ -55,11 +55,11 @@ export function dataTableStubs(): {
 
   const DataTable = defineComponent({
     name: 'DataTableStub',
-    props: { value: { type: Array as () => unknown[], default: (): unknown[] => [] } },
+    props: { value: { type: Array as () => unknown[] } },
     setup(props, { slots }) {
       provide(
         rowsKey,
-        computed(() => props.value),
+        computed(() => props.value ?? []),
       )
       return (): ReturnType<typeof h> =>
         h('div', { class: 'p-datatable' }, [slots.default?.(), slots.empty?.()])
@@ -70,15 +70,12 @@ export function dataTableStubs(): {
     name: 'ColumnStub',
     props: { header: { type: String, default: '' }, field: { type: String, default: '' } },
     setup(props, { slots }) {
-      const rows = inject<ComputedRef<unknown[]>>(
-        rowsKey,
-        computed(() => []),
-      )
+      const rows = inject<ComputedRef<unknown[]> | undefined>(rowsKey, undefined)
       return (): ReturnType<typeof h> =>
         h(
           'div',
           { class: 'p-column', 'data-field': props.field },
-          rows.value.map((row, i) =>
+          (rows?.value ?? []).map((row, i) =>
             h('div', { class: 'p-cell', key: i }, slots.body?.({ data: row })),
           ),
         )

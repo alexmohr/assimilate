@@ -1205,9 +1205,15 @@ watch(activeTab, (tab) => {
         v-if="activeTab === 'advanced' && isBackup"
         class="tab-content"
       >
+        <!--
+          Bound one-way on purpose: ScheduleAdvancedTab edits the fields of
+          these objects in place and never replaces either one, so the tab is
+          writing into this view's own state. v-model would only add an update
+          handler that never fires.
+        -->
         <ScheduleAdvancedTab
-          v-model:form="form"
-          v-model:overrides="agentOverrides"
+          :form="form"
+          :overrides="agentOverrides"
           :agent-ids="selectedAgentIds"
           :agent-label="agentLabel"
         />

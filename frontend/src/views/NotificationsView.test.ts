@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import NotificationsView from './NotificationsView.vue'
 
 vi.mock('../api/notifications', () => ({
@@ -983,6 +983,55 @@ describe('NotificationsView', () => {
       await flushPromises()
 
       expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    })
+
+    // Escape and the backdrop close a dialog through BaseModal, which every
+    // dialog in this view wires separately from its own footer button. Nothing
+    // may be written on the way out.
+    it.each([
+      [
+        'new channel',
+        async (w: ReturnType<typeof renderWithPlugins>): Promise<void> => openWizard(w),
+      ],
+      [
+        'edit channel',
+        async (w: ReturnType<typeof renderWithPlugins>): Promise<void> => {
+          await w
+            .findAll('button')
+            .find((b) => b.text() === 'Edit')!
+            .trigger('click')
+          await flushPromises()
+        },
+      ],
+      [
+        'delete channel',
+        async (w: ReturnType<typeof renderWithPlugins>): Promise<void> => {
+          await w.findAll('button.btn-danger-text')[0].trigger('click')
+          await flushPromises()
+        },
+      ],
+      [
+        'events',
+        async (w: ReturnType<typeof renderWithPlugins>): Promise<void> =>
+          clickByTitle(w, 'Edit events'),
+      ],
+      [
+        'scope',
+        async (w: ReturnType<typeof renderWithPlugins>): Promise<void> =>
+          clickByTitle(w, 'Edit scope'),
+      ],
+    ])('closes the %s dialog when it is dismissed', async (_name, open) => {
+      const { createChannel, updateChannel, deleteChannel } = await import('../api/notifications')
+      const wrapper = await render()
+      await open(wrapper)
+      expect(openModals(wrapper)).toHaveLength(1)
+
+      await dismissModal(wrapper)
+
+      expect(openModals(wrapper)).toHaveLength(0)
+      expect(vi.mocked(createChannel)).not.toHaveBeenCalled()
+      expect(vi.mocked(updateChannel)).not.toHaveBeenCalled()
+      expect(vi.mocked(deleteChannel)).not.toHaveBeenCalled()
     })
   })
 })

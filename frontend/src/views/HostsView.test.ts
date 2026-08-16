@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { flushPromises, mount } from '@vue/test-utils'
-import { defineComponent, ref } from 'vue'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { defineComponent, ref, type ComponentPublicInstance } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,9 @@ import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import type { AuthUser } from '../stores/auth'
 import HostsView from './HostsView.vue'
+import AgentDeployDialog from '../components/AgentDeployDialog.vue'
+import MergeAgentDialog from '../components/MergeAgentDialog.vue'
+import { dismissModal } from '../test-utils'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -610,6 +613,111 @@ describe('HostsView deploy button label', () => {
 
       expect(document.querySelector('.token-text')).toBeNull()
       expect(document.querySelector('.form-error')).not.toBeNull()
+    })
+
+    async function adopt(wrapper: Awaited<ReturnType<typeof mountWithAgent>>): Promise<void> {
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Adopt')!
+        .trigger('click')
+      await flushPromises()
+    }
+
+    // Adopting drops the "(imported)" suffix borg's import added and mints a
+    // token, which is shown once - so the token has to reach the dialog and
+    // the row has to stop being imported.
+    it('adopts an imported agent and reveals its new token once', async () => {
+      vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { agent: { id: 99, hostname: 'test-agent' }, token: 'tok_adopted' },
+      } as never)
+
+      const wrapper = await mountWithAgent(
+        { is_imported: true, display_name: 'Test (imported)' },
+        {},
+      )
+      await adopt(wrapper)
+
+      expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent', { display_name: 'Test' })
+      expect(apiClient.post).toHaveBeenCalledWith('/agents/test-agent/regenerate-token')
+      expect(document.querySelector('.token-text')?.textContent).toBe('tok_adopted')
+      expect(document.body.textContent).toContain('Agent Adopted')
+      // The row is no longer imported, so Adopt is gone from it.
+      expect(wrapper.findAll('button').some((b) => b.text().trim() === 'Adopt')).toBe(false)
+
+      dialogButton('Copy').click()
+      await flushPromises()
+      expect(dialogButton('Copied!')).toBeDefined()
+
+      dialogButton('Done').click()
+      await flushPromises()
+      expect(document.querySelector('.token-text')).toBeNull()
+    })
+
+    it('keeps the agent imported when adopting fails', async () => {
+      vi.mocked(apiClient.put).mockRejectedValue(new Error('agent offline'))
+
+      const wrapper = await mountWithAgent({ is_imported: true }, {})
+      await adopt(wrapper)
+
+      expect(document.querySelector('.token-text')).toBeNull()
+      expect(wrapper.findAll('button').some((b) => b.text().trim() === 'Adopt')).toBe(true)
+    })
+
+    it('closes the adopt dialog when it is dismissed', async () => {
+      vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { agent: { id: 99, hostname: 'test-agent' }, token: 'tok_adopted' },
+      } as never)
+
+      const wrapper = await mountWithAgent({ is_imported: true }, {})
+      await adopt(wrapper)
+      expect(document.querySelector('.token-text')).not.toBeNull()
+
+      await dismissModal(wrapper as VueWrapper<ComponentPublicInstance>)
+
+      expect(document.querySelector('.token-text')).toBeNull()
+    })
+
+    it('opens the merge dialog for an imported agent and closes it on cancel', async () => {
+      const wrapper = await mountWithAgent({ is_imported: true }, {})
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Merge into...')!
+        .trigger('click')
+      await flushPromises()
+
+      const dialog = wrapper.findComponent(MergeAgentDialog)
+      expect(dialog.exists()).toBe(true)
+
+      dialog.vm.$emit('cancel')
+      await flushPromises()
+
+      expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(false)
+    })
+
+    it('opens the deploy dialog for an upgradable agent', async () => {
+      const wrapper = await mountWithAgent(
+        { agent_version: '0.1.0' },
+        { agent_version: '0.2.0', server_commit_count: null },
+      )
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Upgrade')!
+        .trigger('click')
+      await flushPromises()
+
+      const dialog = wrapper.findComponent(AgentDeployDialog)
+      expect(dialog.exists()).toBe(true)
+      expect(dialog.props('hostname')).toBe('test-agent')
+      expect(dialog.props('agentVersion')).toBe('0.1.0')
+
+      dialog.vm.$emit('close')
+      await flushPromises()
+
+      expect(wrapper.findComponent(AgentDeployDialog).exists()).toBe(false)
     })
   })
 })

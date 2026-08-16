@@ -835,11 +835,18 @@ onMounted(() => {
           />
         </div>
 
+        <!--
+          The config objects are bound one-way on purpose: ChannelConfigFields
+          edits their fields in place and never replaces the object, so these
+          are the form's own config, not a copy. Binding them with v-model
+          would install an update handler that writes back to a read-only
+          computed - dead in practice, and a silent no-op if it ever fired.
+        -->
         <ChannelConfigFields
           ref="addConfigFields"
           v-model:to-addresses="toAddressesInput"
-          v-model:email-config="addChannelEmailCfg"
-          v-model:webhook-config="addChannelWebhookCfg"
+          :email-config="addChannelEmailCfg"
+          :webhook-config="addChannelWebhookCfg"
           :channel-type="addChannelForm.channel_type"
           show-required
         />
@@ -1004,12 +1011,13 @@ onMounted(() => {
         />
       </div>
 
+      <!-- One-way for the same reason as the add dialog above. -->
       <ChannelConfigFields
         v-if="editChannelForm.config"
         ref="editConfigFields"
         v-model:to-addresses="editToAddressesInput"
-        v-model:email-config="editChannelEmailCfg"
-        v-model:webhook-config="editChannelWebhookCfg"
+        :email-config="editChannelEmailCfg"
+        :webhook-config="editChannelWebhookCfg"
         :channel-type="editChannelType()"
       />
 

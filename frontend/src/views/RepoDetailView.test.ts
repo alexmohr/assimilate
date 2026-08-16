@@ -716,6 +716,18 @@ describe('RepoDetailView', () => {
     expect(repoFetches()).toBe(before + 1)
   })
 
+  // The danger zone has no banner of its own; it hands failures up so they
+  // land in the page-level error slot next to the repository it names.
+  it('surfaces a danger-zone failure on the page', async () => {
+    setupApiSuccess()
+    const wrapper = await renderRepoDetail()
+
+    wrapper.findComponent(RepoDangerZone).vm.$emit('error', 'repository is locked')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('repository is locked')
+  })
+
   it('hides danger zone for non-admin users', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail({ role: 'viewer' })

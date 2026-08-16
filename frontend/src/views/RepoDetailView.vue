@@ -211,6 +211,18 @@ onMounted(async () => {
     </div>
 
     <template v-else-if="repo">
+      <!--
+        The danger zone reports its failures up here rather than owning a
+        banner. Without this the message was only rendered when the repository
+        itself had failed to load, so a failed lock break or relocation
+        confirm was set and then shown nowhere.
+      -->
+      <div
+        v-if="error"
+        class="state-msg state-error"
+      >
+        {{ error }}
+      </div>
       <BaseTabs
         v-model="activeTab"
         :tabs="tabs"

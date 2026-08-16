@@ -17,10 +17,10 @@ deduplicated total, since `/agents/{hostname}/repos` returns `RepoResponse`,
 which carries no size; and the run strip draws 20 runs rather than 30, to
 match the dashboard's existing run-count sampling convention.
 
-An interactive mockup, rendered with the tokens from `frontend/src/style.css`
-in both themes, lives at
-[`assets/agent-detail-redesign.html`](../assets/agent-detail-redesign.html).
-Open it in a browser.
+The exploration that produced this layout -- an interactive mockup rendered
+with the tokens from `frontend/src/style.css`, with each decision drawn both
+ways -- is not kept in the repository now that the design is built. The page
+itself is the reference; this document is the reasoning.
 
 ## The problem
 

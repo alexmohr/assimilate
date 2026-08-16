@@ -106,22 +106,3 @@ const lastRun = computed(() => {
     </div>
   </div>
 </template>
-
-<style scoped>
-.agent-row-name {
-  font: inherit;
-  font-family: var(--mono);
-  font-weight: 500;
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text-primary);
-  cursor: pointer;
-  text-align: left;
-}
-
-.agent-row-name:hover {
-  color: var(--accent);
-  text-decoration: underline;
-}
-</style>

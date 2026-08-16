@@ -190,10 +190,10 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
 
     <div class="tiles">
       <div class="tile">
-        <span class="tile-label">Last backup</span>
+        <span class="stat-label">Last backup</span>
         <span
           v-if="lastBackup"
-          class="tile-value"
+          class="stat-value"
         >
           {{ relativeTime(lastBackup.finished_at) }}
           <span
@@ -204,32 +204,32 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
         </span>
         <span
           v-else
-          class="tile-value tile-value--empty"
+          class="stat-value stat-value--empty"
           >Never</span
         >
         <span
           v-if="lastBackup"
-          class="tile-sub"
+          class="stat-sub"
         >
           {{ lastBackup.repo_name }} &middot; {{ formatDuration(lastBackup.duration_secs) }}
         </span>
       </div>
 
       <div class="tile">
-        <span class="tile-label">Next run</span>
+        <span class="stat-label">Next run</span>
         <span
           v-if="nextRun"
-          class="tile-value"
+          class="stat-value"
           >{{ formatDateShort(nextRun.schedule.next_run_at) }}</span
         >
         <span
           v-else
-          class="tile-value tile-value--empty"
+          class="stat-value stat-value--empty"
           >None scheduled</span
         >
         <span
           v-if="nextRun"
-          class="tile-sub"
+          class="stat-sub"
         >
           {{ nextRun.schedule.name || repoNameFor(nextRun.schedule) }} &middot;
           {{ nextRun.schedule.cron_expression }}
@@ -237,18 +237,18 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
       </div>
 
       <div class="tile">
-        <span class="tile-label">Repositories</span>
-        <span class="tile-value">{{ repos.length }}</span>
+        <span class="stat-label">Repositories</span>
+        <span class="stat-value">{{ repos.length }}</span>
         <span
           v-if="repoNames"
-          class="tile-sub tile-sub--truncate"
+          class="stat-sub stat-sub--truncate"
           :title="repoNames"
           >{{ repoNames }}</span
         >
       </div>
 
       <div class="tile">
-        <span class="tile-label">Recent runs</span>
+        <span class="stat-label">Recent runs</span>
         <AgentRunStrip :reports="reports" />
       </div>
     </div>
@@ -353,7 +353,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
   min-width: 0;
 }
 
-.tile-label {
+.stat-label {
   font-size: var(--fs-2xs);
   font-family: var(--mono);
   letter-spacing: 0.07em;
@@ -361,7 +361,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
   color: var(--text-muted);
 }
 
-.tile-value {
+.stat-value {
   font-size: var(--fs-lg);
   font-weight: 650;
   letter-spacing: -0.015em;
@@ -372,17 +372,17 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
   flex-wrap: wrap;
 }
 
-.tile-value--empty {
+.stat-value--empty {
   color: var(--text-muted);
   font-weight: 500;
 }
 
-.tile-sub {
+.stat-sub {
   font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
-.tile-sub--truncate {
+.stat-sub--truncate {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

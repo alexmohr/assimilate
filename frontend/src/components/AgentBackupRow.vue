@@ -138,26 +138,6 @@ const hasDetail = computed(
 </template>
 
 <style scoped>
-.agent-row-name {
-  font: inherit;
-  font-family: var(--mono);
-  font-weight: 500;
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text-primary);
-  text-align: left;
-}
-
-button.agent-row-name {
-  cursor: pointer;
-}
-
-button.agent-row-name:hover {
-  color: var(--accent);
-  text-decoration: underline;
-}
-
 .row-schedule-link {
   color: var(--text-muted);
 }

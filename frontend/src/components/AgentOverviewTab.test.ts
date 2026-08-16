@@ -83,7 +83,7 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 function tile(wrapper: ReturnType<typeof mount>, label: string) {
-  const found = wrapper.findAll('.tile').find((t) => t.find('.tile-label').text() === label)
+  const found = wrapper.findAll('.tile').find((t) => t.find('.stat-label').text() === label)
   if (!found) throw new Error(`no tile labelled "${label}"`)
   return found
 }
@@ -91,7 +91,7 @@ function tile(wrapper: ReturnType<typeof mount>, label: string) {
 describe('AgentOverviewTab', () => {
   it('answers the four questions the page is opened for', () => {
     const wrapper = mount()
-    expect(wrapper.findAll('.tile-label').map((l) => l.text())).toEqual([
+    expect(wrapper.findAll('.stat-label').map((l) => l.text())).toEqual([
       'Last backup',
       'Next run',
       'Repositories',
@@ -102,7 +102,7 @@ describe('AgentOverviewTab', () => {
   it('reports the last backup and its outcome', () => {
     const last = tile(mount(), 'Last backup')
     expect(last.find('.badge').text()).toBe('success')
-    expect(last.find('.tile-sub').text()).toContain('server-daily')
+    expect(last.find('.stat-sub').text()).toContain('server-daily')
   })
 
   it('says so when the agent has never run a backup', () => {
@@ -123,7 +123,7 @@ describe('AgentOverviewTab', () => {
         schedule({ id: 2, name: 'sooner', next_run_at: '2026-06-02T02:00:00Z' }),
       ],
     })
-    expect(tile(wrapper, 'Next run').find('.tile-sub').text()).toContain('sooner')
+    expect(tile(wrapper, 'Next run').find('.stat-sub').text()).toContain('sooner')
   })
 
   it('counts the repositories the agent backs up to', () => {
@@ -134,8 +134,8 @@ describe('AgentOverviewTab', () => {
       ],
     })
     const repos = tile(wrapper, 'Repositories')
-    expect(repos.find('.tile-value').text()).toBe('2')
-    expect(repos.find('.tile-sub').text()).toBe('server-daily, media')
+    expect(repos.find('.stat-value').text()).toBe('2')
+    expect(repos.find('.stat-sub').text()).toBe('server-daily, media')
   })
 
   describe('needs-attention strip', () => {

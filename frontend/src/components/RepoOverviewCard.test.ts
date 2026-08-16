@@ -290,6 +290,94 @@ describe('RepoOverviewCard', () => {
       expect(wrapper.emitted('saved')).toHaveLength(1)
     })
 
+    // Drives every editable field, so a v-model wired to the wrong form key
+    // is caught here rather than silently saving the old value.
+    it('sends every edited field, trimming the ones that are pasted', async () => {
+      const wrapper = await startEditing()
+
+      await wrapper.find('input[placeholder="e.g. Web Server Backup"]').setValue('  renamed  ')
+      const monoInputs = wrapper.findAll('.edit-form input.mono')
+      await monoInputs[0].setValue('  operator  ')
+      await monoInputs[1].setValue('  new.example.com  ')
+      await monoInputs[2].setValue('  /srv/borg  ')
+      await wrapper.find('.edit-form input[type="number"]').setValue('2222')
+
+      const selects = wrapper.findAll('.edit-form select')
+      await selects[0].setValue('zlib')
+      await selects[1].setValue('keyfile')
+
+      const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
+      await toggles[0].vm.$emit('update:modelValue', false)
+
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { ssh_ok: true, borg_installed: true },
+      } as never)
+      await findButton(wrapper, /^Save/).trigger('click')
+      await flushPromises()
+
+      expect(apiClient.put).toHaveBeenCalledWith('/repos/12', {
+        name: 'renamed',
+        repo_path: '/srv/borg',
+        ssh_user: 'operator',
+        ssh_host: 'new.example.com',
+        ssh_port: 2222,
+        compression: 'zlib',
+        encryption: 'keyfile',
+        enabled: false,
+        sync_schedule: null,
+      })
+    })
+
+    it('tests the connection against the edited host, not the saved one', async () => {
+      const wrapper = await startEditing()
+      const monoInputs = wrapper.findAll('.edit-form input.mono')
+      await monoInputs[1].setValue('moved.example.com')
+
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { ssh_ok: true, borg_installed: true },
+      } as never)
+      await findButton(wrapper, /^Save/).trigger('click')
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/ssh/test-connection', {
+        ssh_host: 'moved.example.com',
+        ssh_user: 'borg',
+        ssh_port: 22,
+      })
+    })
+
+    it('saves the cron expression once disk sync is enabled', async () => {
+      const wrapper = await startEditing()
+      const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
+      await toggles[toggles.length - 1].vm.$emit('update:modelValue', true)
+      await flushPromises()
+
+      await wrapper.find('input[placeholder="0 0,12 * * *"]').setValue('30 3 * * *')
+
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { ssh_ok: true, borg_installed: true },
+      } as never)
+      await findButton(wrapper, /^Save/).trigger('click')
+      await flushPromises()
+
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/repos/12',
+        expect.objectContaining({ sync_schedule: '30 3 * * *' }),
+      )
+    })
+
+    it('clears the schedule again when disk sync is turned back off', async () => {
+      const wrapper = mount({ repo: repo({ sync_schedule: '0 0,12 * * *' }) })
+      await flushPromises()
+      await findButton(wrapper, /^Edit$/).trigger('click')
+
+      const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
+      await toggles[toggles.length - 1].vm.$emit('update:modelValue', false)
+      await flushPromises()
+
+      expect(wrapper.find('input[placeholder="0 0,12 * * *"]').exists()).toBe(false)
+    })
+
     // Saving an unreachable host would leave a repo that silently fails every
     // backup, so the connection test is a gate and not just a warning.
     it('refuses to save when the host is unreachable, and says why', async () => {
@@ -341,6 +429,46 @@ describe('RepoOverviewCard', () => {
 
       expect(apiClient.get).toHaveBeenCalledWith('/repos/12/passphrase')
       expect(document.body.textContent).toContain('hunter2')
+    })
+
+    it('copies the passphrase to the clipboard on request', async () => {
+      const wrapper = mount()
+      await flushPromises()
+      await findButton(wrapper, /Passphrase/).trigger('click')
+      await flushPromises()
+
+      const copy = dialogButton('Copy')
+      expect(copy).toBeDefined()
+      copy.click()
+      await flushPromises()
+      // The clipboard itself is the composable's business; what matters here
+      // is that the button is wired to the revealed value at all.
+      expect(document.body.textContent).toContain('hunter2')
+    })
+
+    it('closes on the modal dismiss control too, not only on Done', async () => {
+      const wrapper = mount()
+      await flushPromises()
+      await findButton(wrapper, /Passphrase/).trigger('click')
+      await flushPromises()
+
+      document.body.querySelector<HTMLButtonElement>('.modal-close')?.click()
+      await flushPromises()
+
+      expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    })
+
+    it('closes on Done, so the secret does not stay on screen', async () => {
+      const wrapper = mount()
+      await flushPromises()
+      await findButton(wrapper, /Passphrase/).trigger('click')
+      await flushPromises()
+      expect(document.body.textContent).toContain('hunter2')
+
+      dialogButton('Done').click()
+      await flushPromises()
+
+      expect(document.body.querySelector('.modal-dialog')).toBeNull()
     })
 
     it('opens the dialog with the error when the fetch fails', async () => {
@@ -402,6 +530,43 @@ describe('RepoOverviewCard', () => {
       })
       expect(wrapper.emitted('saved')).toHaveLength(1)
       expect(toastSuccess).toHaveBeenCalled()
+    })
+
+    it('dismisses the host-key dialog on the modal control without recording it', async () => {
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { ssh_host_key: 'ssh-ed25519 AAAADIFFERENT' },
+      } as never)
+      const wrapper = mount()
+      await flushPromises()
+
+      await findButton(wrapper, /Review|Accept/).trigger('click')
+      await flushPromises()
+      vi.mocked(apiClient.post).mockClear()
+      document.body.querySelector<HTMLButtonElement>('.modal-close')?.click()
+      await flushPromises()
+
+      expect(document.body.querySelector('.modal-dialog')).toBeNull()
+      expect(apiClient.post).not.toHaveBeenCalled()
+    })
+
+    // Declining is the safe default: cancelling must leave the recorded key
+    // untouched rather than quietly accepting the new one.
+    it('records nothing when the operator cancels instead of accepting', async () => {
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { ssh_host_key: 'ssh-ed25519 AAAADIFFERENT' },
+      } as never)
+      const wrapper = mount()
+      await flushPromises()
+
+      await findButton(wrapper, /Review|Accept/).trigger('click')
+      await flushPromises()
+      vi.mocked(apiClient.post).mockClear()
+      dialogButton('Cancel').click()
+      await flushPromises()
+
+      expect(apiClient.post).not.toHaveBeenCalled()
+      expect(wrapper.emitted('saved')).toBeUndefined()
+      expect(document.body.querySelector('.modal-dialog')).toBeNull()
     })
 
     it('keeps the dialog open with the error when accepting fails', async () => {

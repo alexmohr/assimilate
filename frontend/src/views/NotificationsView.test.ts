@@ -747,4 +747,242 @@ describe('NotificationsView', () => {
       expect(wrapper.text()).toContain('Ops Webhook')
     })
   })
+
+  describe('scope and event toggles', () => {
+    const SCOPE_REPOS = [{ id: 7, name: 'server-daily' }]
+    const SCOPE_AGENTS = [{ id: 3, hostname: 'web-01', display_name: null }]
+    const SCOPE_SCHEDULES = [{ id: 5, agent_id: 3, repo_id: 7 }]
+
+    async function render() {
+      setupDefaultMocks()
+      mockApiGet.mockImplementation((url: string) => {
+        if (url === '/repos') return Promise.resolve({ data: SCOPE_REPOS })
+        if (url === '/agents') return Promise.resolve({ data: SCOPE_AGENTS })
+        if (url === '/schedules') return Promise.resolve({ data: SCOPE_SCHEDULES })
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = renderWithPlugins(NotificationsView)
+      await flushPromises()
+      return wrapper
+    }
+
+    async function clickByTitle(wrapper: ReturnType<typeof renderWithPlugins>, title: string) {
+      const btn = wrapper.findAll('button').find((b) => b.attributes('title') === title)
+      if (!btn) throw new Error(`no button titled "${title}"`)
+      await btn.trigger('click')
+      await flushPromises()
+    }
+
+    async function fillStepOne(): Promise<void> {
+      await setByLabel('Name', 'Scoped')
+      await setByLabel('SMTP Host', 'smtp.example.com')
+      await setByLabel('From Address', 'noreply@example.com')
+      await setByLabel('To Addresses', 'admin@example.com')
+    }
+
+    async function openWizard(wrapper: ReturnType<typeof renderWithPlugins>) {
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('New'))!
+        .trigger('click')
+      await flushPromises()
+    }
+
+    // Scope is optional and additive: ticking a repository must narrow the
+    // channel to it without dropping the agent or schedule selections.
+    it('carries every scope kind through to the created channel', async () => {
+      const { createChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockResolvedValue({} as never)
+      vi.mocked(createChannel).mockResolvedValue({ id: 42, scope: {} } as never)
+
+      const wrapper = await render()
+      await openWizard(wrapper)
+      await fillStepOne()
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Next').click()
+      await flushPromises()
+
+      const boxes = document.body.querySelectorAll<HTMLInputElement>(
+        '.scope-item input[type="checkbox"]',
+      )
+      expect(boxes.length).toBe(3)
+      for (const box of boxes) box.click()
+      await flushPromises()
+
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(vi.mocked(createChannel)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: { repo_ids: [7], agent_ids: [3], schedule_ids: [5] },
+        }),
+      )
+    })
+
+    it('creates a disabled channel when the enable switch is turned off', async () => {
+      const { createChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockResolvedValue({} as never)
+      vi.mocked(createChannel).mockResolvedValue({ id: 42, scope: {} } as never)
+
+      const wrapper = await render()
+      await openWizard(wrapper)
+      await fillStepOne()
+
+      // The enable switch is the only ToggleSwitch on step 1 of the wizard.
+      const toggle = wrapper
+        .findAllComponents({ name: 'ToggleSwitch' })
+        .find((t) => t.text().includes('Enable immediately'))
+      expect(toggle).toBeDefined()
+      await toggle!.vm.$emit('update:modelValue', false)
+      await flushPromises()
+
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(vi.mocked(createChannel)).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: false }),
+      )
+    })
+
+    it('filters the wizard scope list as you search', async () => {
+      const wrapper = await render()
+      await openWizard(wrapper)
+      await fillStepOne()
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Next').click()
+      await flushPromises()
+
+      const before = document.body.querySelectorAll('.scope-item').length
+      const search = document.body.querySelector<HTMLInputElement>('.scope-search')!
+      search.value = 'server-daily'
+      search.dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      expect(document.body.querySelectorAll('.scope-item').length).toBeLessThan(before)
+    })
+
+    // A rule is a row, not a flag: enabling an event creates one and
+    // disabling it deletes the existing row.
+    it('creates a rule for an event that had none', async () => {
+      const { createRule } = await import('../api/notifications')
+      vi.mocked(createRule).mockResolvedValue({ id: 99 } as never)
+
+      const wrapper = await render()
+      await clickByTitle(wrapper, 'Edit events')
+
+      const items = document.body.querySelectorAll('.event-item')
+      expect(items.length).toBeGreaterThan(0)
+      ;(items[0].querySelector('input, button') as HTMLElement | null)?.click()
+      await flushPromises()
+
+      expect(vi.mocked(createRule)).toHaveBeenCalled()
+    })
+
+    it('deletes the rule when its event is switched off', async () => {
+      const { deleteRule } = await import('../api/notifications')
+      vi.mocked(deleteRule).mockResolvedValue(undefined as never)
+
+      const wrapper = await render()
+      await clickByTitle(wrapper, 'Edit events')
+
+      // MOCK_RULES already has backup_failed enabled for this channel.
+      const item = [...document.body.querySelectorAll('.event-item')].find((el) =>
+        el.textContent?.includes('Failed'),
+      )
+      expect(item).toBeDefined()
+      ;(item!.querySelector('input, button') as HTMLElement | null)?.click()
+      await flushPromises()
+
+      expect(vi.mocked(deleteRule)).toHaveBeenCalledWith(1)
+    })
+
+    it('narrows an existing channel from the scope editor', async () => {
+      const { updateChannel } = await import('../api/notifications')
+      vi.mocked(updateChannel).mockResolvedValue({ id: 1, scope: { repo_ids: [7] } } as never)
+
+      const wrapper = await render()
+      await clickByTitle(wrapper, 'Edit scope')
+
+      const box = document.body.querySelector<HTMLInputElement>(
+        '.scope-item input[type="checkbox"]',
+      )
+      expect(box).not.toBeNull()
+      box!.click()
+      await flushPromises()
+
+      expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ scope: expect.objectContaining({ repo_ids: [7] }) }),
+      )
+    })
+
+    it('narrows an existing channel by agent and schedule too', async () => {
+      const { updateChannel } = await import('../api/notifications')
+      vi.mocked(updateChannel).mockImplementation(
+        async (id: number, body: { scope?: unknown }) => ({ id, scope: body.scope ?? {} }) as never,
+      )
+
+      const wrapper = await render()
+      await clickByTitle(wrapper, 'Edit scope')
+
+      const boxes = [
+        ...document.body.querySelectorAll<HTMLInputElement>('.scope-item input[type="checkbox"]'),
+      ]
+      expect(boxes).toHaveLength(3)
+      for (const box of boxes) {
+        box.click()
+        await flushPromises()
+      }
+
+      const kinds = vi
+        .mocked(updateChannel)
+        .mock.calls.map((c) => Object.keys((c[1] as { scope: object }).scope).at(-1))
+      expect(kinds).toEqual(['repo_ids', 'agent_ids', 'schedule_ids'])
+    })
+
+    it('disables an existing channel from the edit dialog', async () => {
+      const { updateChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockResolvedValue({} as never)
+      vi.mocked(updateChannel).mockResolvedValue(EMAIL_CHANNEL as never)
+
+      const wrapper = await render()
+      await wrapper
+        .findAll('button')
+        .filter((b) => b.text() === 'Edit')[1]
+        .trigger('click')
+      await flushPromises()
+
+      const toggle = wrapper
+        .findAllComponents({ name: 'ToggleSwitch' })
+        .find((t) => t.text().includes('Enabled'))
+      expect(toggle).toBeDefined()
+      await toggle!.vm.$emit('update:modelValue', false)
+      await flushPromises()
+
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ enabled: false }),
+      )
+    })
+
+    it.each([['Edit events'], ['Edit scope']])('closes the %s editor again', async (title) => {
+      const wrapper = await render()
+      await clickByTitle(wrapper, title)
+      expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
+
+      dialogButton('Done').click()
+      await flushPromises()
+
+      expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    })
+  })
 })

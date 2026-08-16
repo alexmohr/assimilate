@@ -23,15 +23,24 @@ test('logout redirects to login', async ({ page }) => {
   await loginAsAdmin(page)
   // Trigger logout via the API directly so we don't depend on nav UI details
   await page.request.post('/api/auth/logout')
-  // waitUntil: 'commit' resolves on response headers; without it Playwright
-  // throws ERR_ABORTED when the SPA route guard fires a client-side redirect
-  // before the page finishes loading.
+  // Racing this goto against the route guard is the whole point of the test:
+  // the guard notices the session is gone and redirects to /login, which
+  // aborts or supersedes the navigation we just started. Playwright reports
+  // that as ERR_ABORTED or "interrupted by another navigation", so both are
+  // expected outcomes here rather than failures - the redirect happening is
+  // what we came to see. Retrying instead (as this used to) just re-runs the
+  // same race, which is why it went flaky roughly one run in ten.
+  //
+  // Only navigation-interruption errors are swallowed; anything else still
+  // fails the test, and the toHaveURL assertion below is untouched and
+  // remains the only thing that decides whether this passes.
   try {
     await page.goto('/', { waitUntil: 'commit', timeout: 10_000 })
-  } catch {
-    // ERR_ABORTED is expected when the SPA route guard fires before
-    // the page finishes loading - retry once.
-    await page.goto('/', { waitUntil: 'commit', timeout: 10_000 })
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e)
+    const interrupted =
+      message.includes('interrupted by another navigation') || message.includes('ERR_ABORTED')
+    if (!interrupted) throw e
   }
   await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
 })

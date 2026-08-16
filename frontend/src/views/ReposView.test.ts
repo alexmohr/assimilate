@@ -416,6 +416,106 @@ describe('ReposView', () => {
     expect(wrapper.text()).toContain('Indexing 10/50')
     expect(wrapper.text()).not.toContain('Importing')
   })
+
+  it('sorts by size, ascending then descending, when the Size sort button is clicked', async () => {
+    const repos: RepoWithStats[] = [
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'small',
+        repo_path: '/backup/small',
+        total_deduplicated_size: 100,
+      },
+      {
+        ...baseRepo,
+        id: 2,
+        name: 'large',
+        repo_path: '/backup/large',
+        total_deduplicated_size: 300,
+      },
+      {
+        ...baseRepo,
+        id: 3,
+        name: 'medium',
+        repo_path: '/backup/medium',
+        total_deduplicated_size: 200,
+      },
+    ]
+    setupApiSuccess(repos)
+    const wrapper = await mountAsAdmin()
+    // Sort only applies to the flat list - a host group orders its own cards by size.
+    await clickGroupByHost(wrapper)
+    await clickButton(wrapper, (t) => t.startsWith('Size'))
+
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'small',
+      'medium',
+      'large',
+    ])
+
+    await clickButton(wrapper, (t) => t.startsWith('Size'))
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'large',
+      'medium',
+      'small',
+    ])
+  })
+
+  it('sorts by last backup time, oldest (or never) first, when the Last Backup sort button is clicked', async () => {
+    const repos: RepoWithStats[] = [
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'oldest',
+        repo_path: '/backup/oldest',
+        last_backup_at: new Date(Date.now() - 10_000_000).toISOString(),
+      },
+      {
+        ...baseRepo,
+        id: 2,
+        name: 'newest',
+        repo_path: '/backup/newest',
+        last_backup_at: new Date(Date.now() - 1_000).toISOString(),
+      },
+      { ...baseRepo, id: 3, name: 'never', repo_path: '/backup/never', last_backup_at: null },
+    ]
+    setupApiSuccess(repos)
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+    await clickButton(wrapper, (t) => t.startsWith('Last Backup'))
+
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'never',
+      'oldest',
+      'newest',
+    ])
+  })
+
+  it('filters repos by tag when a tag checkbox is toggled', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
+      if (url === '/repo-tags') {
+        return Promise.resolve({
+          data: [{ repo_id: 1, tag_name: 'critical', tag_color: '#ff0000' }],
+        })
+      }
+      if (String(url).startsWith('/tags')) {
+        return Promise.resolve({ data: [{ id: 1, name: 'critical', color: '#ff0000' }] })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+
+    await clickButton(wrapper, (t) => t.startsWith('Tags'))
+    await wrapper.find('.tag-dropdown-item input[type="checkbox"]').setValue(true)
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('server-daily')
+    expect(text).not.toContain('database-hourly')
+    expect(text).not.toContain('media-weekly')
+  })
 })
 
 describe('ReposView quota filter chips', () => {

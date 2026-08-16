@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { fieldByLabel, renderWithPlugins } from '../test-utils'
 import { validateSmtp } from '../api/notifications'
 import ChannelConfigFields from './ChannelConfigFields.vue'
 import type { EmailConfig, WebhookConfig } from '../types/notifications'
@@ -127,17 +127,6 @@ describe('ChannelConfigFields', () => {
   })
 
   describe('field bindings', () => {
-    function fieldByLabel(wrapper: ReturnType<typeof mount>, label: string) {
-      const wrap = wrapper
-        .findAll('.field')
-        .find(
-          (f) => f.find('.field-label').exists() && f.find('.field-label').text().includes(label),
-        )
-      const control = wrap?.find('input, select')
-      if (!control || !control.exists()) throw new Error(`no field labelled "${label}"`)
-      return control
-    }
-
     // The fields edit the caller's config object in place, so each binding is
     // asserted against the object that was passed in. A v-model pointed at
     // the wrong key looks identical in the template and would quietly send

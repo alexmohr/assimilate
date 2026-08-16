@@ -103,6 +103,34 @@ export function createMockRouter(): ReturnType<typeof createRouter> {
   })
 }
 
+/**
+ * Finds the control inside the `.field` whose `.field-label` contains `label`.
+ *
+ * Forms across this app share the `.field` / `.field-label` shape, so tests
+ * address inputs by the label the user actually reads rather than by an index
+ * or a CSS hook that a template edit would silently move.
+ */
+export function fieldByLabel(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  label: string,
+): ReturnType<VueWrapper<ComponentPublicInstance>['find']> {
+  const field = wrapper
+    .findAll('.field')
+    .find((f) => f.find('.field-label').exists() && f.find('.field-label').text().includes(label))
+  const control = field?.find('input, select, textarea')
+  if (!control || !control.exists()) throw new Error(`no field labelled "${label}"`)
+  return control
+}
+
+/** Sets the value of the control found by {@link fieldByLabel}. */
+export async function setFieldByLabel(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  label: string,
+  value: string,
+): Promise<void> {
+  await fieldByLabel(wrapper, label).setValue(value)
+}
+
 /** Finds a `<button>` by its visible text and clicks it - shared by tests that open a modal via a toolbar action button. */
 export async function clickButtonWithText(
   wrapper: VueWrapper<ComponentPublicInstance>,

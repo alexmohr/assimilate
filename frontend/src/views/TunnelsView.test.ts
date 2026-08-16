@@ -53,7 +53,7 @@ vi.mock('../components/EmptyState.vue', () => ({
 
 import { apiClient } from '../api/client'
 import { listTunnels } from '../api/tunnels'
-import { renderWithPlugins } from '../test-utils'
+import { fieldByLabel, renderWithPlugins, setFieldByLabel } from '../test-utils'
 import TunnelsView from './TunnelsView.vue'
 
 const mockApiClient = apiClient as {
@@ -175,19 +175,8 @@ describe('TunnelsView', () => {
       await flushPromises()
     }
 
-    function fieldByLabel(wrapper: View, label: string) {
-      const wrap = wrapper
-        .findAll('.field')
-        .find(
-          (f) => f.find('.field-label').exists() && f.find('.field-label').text().includes(label),
-        )
-      const control = wrap?.find('input, select')
-      if (!control || !control.exists()) throw new Error(`no field labelled "${label}"`)
-      return control
-    }
-
     async function setByLabel(wrapper: View, label: string, value: string): Promise<void> {
-      await fieldByLabel(wrapper, label).setValue(value)
+      await setFieldByLabel(wrapper, label, value)
       await flushPromises()
     }
 

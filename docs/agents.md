@@ -87,7 +87,7 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
 
 **Steps:**
 
-1. Open the agent detail page and click **Deploy Agent**.
+1. Open the agent detail page and click **Deploy agent** in the header.
 2. Fill in the SSH connection fields:
 
     | Field | Description |
@@ -118,7 +118,7 @@ Each agent has exactly one active token. Tokens are stored as bcrypt hashes — 
 To regenerate a token:
 
 1. Open the agent detail page.
-2. Click **Regenerate Token**.
+2. Choose **Regenerate token** from the header's **...** menu, or open **Settings > Identity** and click **Regenerate token**.
 3. Copy the new token immediately.
 
 !!! warning
@@ -138,9 +138,9 @@ The dashboard can send a remote restart command to a connected agent.
 To restart:
 
 1. Open the agent detail page.
-2. Click **Restart Agent**.
+2. Choose **Restart agent** from the header's **...** menu.
 
-If restart is not supported, the button is disabled and a reason is shown (e.g., "not running under systemd"). The server returns HTTP 400 in this case.
+If restart is not supported, the menu item is replaced by the reason (e.g., "not running under systemd") instead of offering an action that cannot succeed. The server returns HTTP 400 if the call is made anyway.
 
 ## Agent Status
 
@@ -159,16 +159,65 @@ While a backup is running for an agent, its card on the Agents list shows a **Ru
 
 ## Agent Detail View
 
-The agent detail page shows:
-
-- **Connection status** and last seen timestamp
-- **Agent version** (populated after the first connection or SSH deploy)
-- **Hostname Aliases** — glob patterns for archive matching (see below)
-- **Repositories** associated with this agent — see [Repositories](repositories.md)
-- **Backup reports** — recent backup run history and warnings
-- **Schedules** — schedules whose target list includes this agent — see [Scheduling](scheduling.md)
+The agent detail page opens on a persistent header — hostname, connection status, and a meta strip carrying the agent version, revision, build time, registration date and last-seen time — followed by four tabs.
 
 ![Agent Detail](assets/screenshots/host-detail.png)
+
+### Header actions
+
+Actions are graded by how often and how safely they are used:
+
+| Placement | Actions |
+|-----------|---------|
+| Primary button | **Deploy agent** / **Upgrade agent**, when a newer build is available. On an imported host, **Adopt** and **Merge into...** instead |
+| Secondary button | **Activity log** |
+| Overflow menu (**...**) | **Edit identity**, **Deploy SSH key**, **Regenerate token**, **Restart agent** |
+
+Edit identity and Deploy SSH key open dialogs rather than expanding inline, so the page below them does not move.
+
+### Overview
+
+The landing tab answers the questions an agent page is usually opened for — is it up, did the last backup work, when does the next one run, and is anything overdue:
+
+- A **progress card** for each backup currently running on this agent.
+- A **needs-attention** strip, shown only when there is something to report: an overdue schedule, a failed last run, or an offline agent.
+- Four tiles: **Last backup** with its outcome, **Next run** across every enabled schedule, **Repositories**, and **Recent runs**.
+- Previews of this agent's schedules and its most recent backups, each linking through to the full tab.
+
+### Recent runs
+
+The **Recent runs** tile draws the last 20 backups as one cell per run — green for success, amber for a warning, red for a failure — oldest on the left. Its headline is the number of failures in that window, or "All 20 clean" when there are none, and the line underneath names how far back those 20 runs actually reach.
+
+This is a count of runs, not a span of days, because a fixed calendar window means something different at every backup cadence: 30 days is four samples for a weekly schedule, where a single miss reads as 75%, and over 700 for an hourly one, where a whole night's outage rounds away to nothing.
+
+When every failure in the window is consecutive, the tile adds an **Incident** chip. Three failures in a row that then recovered and three scattered across the month are the same number and a different situation; the strip shows which one you have.
+
+!!! note
+    Fleet-wide success *rates* over a selectable window live on the [Dashboard](dashboard.md), where every agent shares one window and the comparison is meaningful.
+
+### Schedules and Backups
+
+Both tabs render one line per entry: a status stripe, a name, a time, and stats aligned to the right. Schedule rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets. Backup rows link to their archive when the run succeeded, and expand their warning or error output in place when it did not.
+
+Each tab label carries a count, including zero.
+
+### Settings
+
+Everything that configures the agent lives here, behind a sub-nav:
+
+| Section | Contents |
+|---------|----------|
+| **Identity** | Hostname, display name, agent build details, registration and last-seen times, and token regeneration |
+| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request |
+| **Hostname aliases** | Glob patterns for archive matching (see below) |
+| **Tags** | Agent tags, for filtering the Agents list |
+| **Danger zone** | Deleting the agent (admins only) |
+
+The chosen tab and section are both recorded in the URL (`?tab=settings&section=defaults`), so a specific section can be linked to directly.
+
+### Imported hosts
+
+An imported host keeps all four tabs. It has archives but no agent, so its Schedules tab is empty — and explains why, offering **Adopt** and **Merge into...** rather than leaving you to work it out. The header omits the agent version, revision and build time, since there is no agent to report them, and the Settings tab hides the sections that need one.
 
 ## Hostname Aliases (Glob Patterns)
 
@@ -177,7 +226,7 @@ When importing an existing borg repository, archives may have hostnames that don
 ### Adding a Pattern
 
 1. Open the agent detail page.
-2. Scroll to the **Hostname Aliases** section.
+2. Open **Settings > Hostname aliases**.
 3. Enter a glob pattern (e.g. `webserver-*`, `prod-web-??.example.com`).
 4. Click **Add**.
 
@@ -227,7 +276,7 @@ Tags let you organize agents for filtering on the Agents list page.
 ## Deleting an Agent
 
 1. Open the agent detail page.
-2. In the **Danger Zone** section, click **Delete Agent** and confirm in the dialog.
+2. Open **Settings > Danger zone**, click **Delete Agent** and confirm in the dialog.
 
 **What is removed:**
 

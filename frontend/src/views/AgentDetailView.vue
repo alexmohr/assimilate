@@ -12,7 +12,6 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
 import { useElapsedClock } from '../composables/useElapsedTimer'
-import { formatDate, formatDateShort, formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
@@ -20,27 +19,38 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
-import BackupProgressCard from '../components/BackupProgressCard.vue'
-import type { EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/scheduleHealth'
+import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
+import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
 import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
-import BaseTabs from '../components/BaseTabs.vue'
-import { backupStatusBadgeClass } from '../utils/badge'
-import { X, CalendarClock } from '@lucide/vue'
-import EmptyState from '../components/EmptyState.vue'
-import ScheduleCard from '../components/ScheduleCard.vue'
-import EntityTags from '../components/EntityTags.vue'
-import AgentDefaultsCards from '../components/AgentDefaultsCards.vue'
-import AgentHostnameAliases from '../components/AgentHostnameAliases.vue'
-import AgentDangerZone from '../components/AgentDangerZone.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
+import AgentHeader from '../components/AgentHeader.vue'
+import AgentOverviewTab, { type LiveBackup } from '../components/AgentOverviewTab.vue'
+import AgentSchedulesTab from '../components/AgentSchedulesTab.vue'
+import AgentBackupsTab, { type BackupFilter } from '../components/AgentBackupsTab.vue'
+import AgentSettingsTab from '../components/AgentSettingsTab.vue'
 
-type TabId = 'overview' | 'schedules' | 'backups'
+/**
+ * An agent's detail page: a persistent header, then four tabs.
+ *
+ * Settings is a tab rather than a separate route because every other detail
+ * view in the app drives its sections off `route.query.tab`, and a route
+ * would put a third button back in the header's action row - the row this
+ * layout exists to shrink. Settings is self-contained either way, so
+ * promoting it later is a router change and nothing else.
+ */
+type TabId = 'overview' | 'schedules' | 'backups' | 'settings'
+
+function isTabId(value: unknown): value is TabId {
+  return (
+    value === 'overview' || value === 'schedules' || value === 'backups' || value === 'settings'
+  )
+}
 
 const props = defineProps<{ hostname: string }>()
 const route = useRoute()
@@ -49,20 +59,21 @@ const authStore = useAuthStore()
 
 const activeTab = computed<TabId>({
   get() {
-    const t = route.query.tab as string | undefined
-    if (t === 'schedules' || t === 'backups') return t
-    return 'overview'
+    return isTabId(route.query.tab) ? route.query.tab : 'overview'
   },
   set(val: TabId) {
     router.replace({ query: { ...route.query, tab: val } })
   },
 })
 
-const tabs: { id: TabId; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'schedules', label: 'Schedules' },
-  { id: 'backups', label: 'Backups' },
-]
+const settingsSection = computed<SettingsSection>({
+  get() {
+    return isSettingsSection(route.query.section) ? route.query.section : 'identity'
+  },
+  set(val: SettingsSection) {
+    router.replace({ query: { ...route.query, section: val } })
+  },
+})
 
 const agent = ref<AgentRow | null>(null)
 const repos = ref<Repo[]>([])
@@ -72,11 +83,28 @@ const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const { loading, error, run } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
 
+const agentSchedules = computed(() => {
+  const hostname = agent.value?.hostname
+  return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
+})
+
+/**
+ * Every tab carries its tally, including zero. On an imported host the empty
+ * Schedules tab is the point: it says why there is nothing there and how to
+ * change that, which a hidden tab cannot.
+ */
+const tabs = computed<TabOption<TabId>[]>(() => [
+  { id: 'overview', label: 'Overview' },
+  { id: 'schedules', label: 'Schedules', count: agentSchedules.value.length },
+  { id: 'backups', label: 'Backups', count: reports.value.length },
+  { id: 'settings', label: 'Settings' },
+])
+
 // Backup filter / sort
 function isRunStatusFilter(value: unknown): value is 'success' | 'warning' | 'failed' {
   return value === 'success' || value === 'warning' || value === 'failed'
 }
-const filterStatus = ref<'all' | 'success' | 'warning' | 'failed'>(
+const filterStatus = ref<BackupFilter>(
   isRunStatusFilter(route.query.status) ? route.query.status : 'all',
 )
 const sortAscending = ref(false)
@@ -97,19 +125,6 @@ function isOverdueQuery(value: unknown): value is 'overdue' {
   return value === 'overdue'
 }
 const overdueHighlighted = computed(() => isOverdueQuery(route.query.health))
-
-const filteredSortedReports = computed(() => {
-  let result = reports.value
-  if (filterStatus.value !== 'all') {
-    result = result.filter((r) => normalizeBackupStatus(r.status) === filterStatus.value)
-  }
-  return [...result].sort((a, b) => {
-    const diff = new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime()
-    return sortAscending.value ? -diff : diff
-  })
-})
-
-// Tags
 
 const isAdmin = computed(() => authStore.isAdmin)
 const isImported = computed(() => agent.value?.is_imported ?? false)
@@ -146,6 +161,10 @@ const showDeployDialog = ref(false)
 // Deploy SSH key
 const showDeploySshKey = ref(false)
 
+useEscapeKey(showDeploySshKey, () => {
+  showDeploySshKey.value = false
+})
+
 function deployButtonLabel(): string | null {
   if (!agent.value) return null
   if (!agent.value.agent_version) return 'Deploy'
@@ -157,7 +176,14 @@ function deployButtonLabel(): string | null {
   return agent.value.agent_version === availableAgentVersion.value ? null : 'Upgrade'
 }
 
-// Hostname & display name editing
+/** Suppressed where it cannot be acted on, so the accented slot stays honest. */
+const headerDeployLabel = computed(() =>
+  !isImported.value && authStore.canUpgradeAgent ? deployButtonLabel() : null,
+)
+
+// Hostname & display name editing. A dialog rather than the inline panel this
+// used to be: the panel appeared mid-page and pushed six cards down, while
+// every other form in the app opens through BaseModal.
 const editingIdentity = ref(false)
 const identityHostname = ref('')
 const identityDisplayName = ref('')
@@ -209,7 +235,7 @@ async function saveIdentity(): Promise<void> {
 }
 
 // Hostname alias confirmation
-const aliasesPanel = ref<InstanceType<typeof AgentHostnameAliases> | null>(null)
+const settingsTab = ref<InstanceType<typeof AgentSettingsTab> | null>(null)
 const showAliasConfirm = ref(false)
 const pendingAliasOldHostname = ref('')
 const pendingAliasNewHostname = ref('')
@@ -222,13 +248,16 @@ async function confirmAddAlias(): Promise<void> {
   await apiClient.post(`/agents/${pendingAliasNewHostname.value}/hostname-patterns`, {
     pattern: pendingAliasOldHostname.value,
   })
-  await aliasesPanel.value?.reload(pendingAliasNewHostname.value)
+  // Only mounted while the Settings tab is showing its aliases section; when
+  // it is not, the list reloads from scratch the next time it is opened.
+  await settingsTab.value?.reloadAliases(pendingAliasNewHostname.value)
   showAliasConfirm.value = false
 }
 
 function declineAlias(): void {
   showAliasConfirm.value = false
 }
+
 async function adoptHost(): Promise<void> {
   if (!agent.value) return
   try {
@@ -268,20 +297,16 @@ useEscapeKey(showTokenDialog, () => {
   showTokenDialog.value = false
 })
 
-function isOnline(agent: AgentRow): boolean {
-  return agent.is_connected ?? false
+function openReport(r: ReportRow): void {
+  const query: Record<string, string> = { tab: 'archives' }
+  if (r.archive_name) {
+    query.archive = r.archive_name
+  }
+  router.push({ path: `/repos/${r.repo_id}`, query })
 }
 
-function handleResultClick(r: ReportRow): void {
-  if (normalizeBackupStatus(r.status) === 'success') {
-    const query: Record<string, string> = { tab: 'archives' }
-    if (r.archive_name) {
-      query.archive = r.archive_name
-    }
-    router.push({ path: `/repos/${r.repo_id}`, query })
-  } else {
-    expandedReportId.value = expandedReportId.value === r.id ? null : r.id
-  }
+function toggleReport(r: ReportRow): void {
+  expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
 
 async function loadAgent(): Promise<void> {
@@ -332,6 +357,10 @@ async function loadTabData(): Promise<void> {
   }
 }
 
+/**
+ * Arriving from a status link (`?status=failed`) opens the newest matching
+ * run on the Backups tab, where the rows live.
+ */
 watch(
   [reports, pinnedStatus],
   ([, status]) => {
@@ -375,19 +404,6 @@ watch(
   },
   { immediate: true },
 )
-
-const agentSchedules = computed(() => {
-  const hostname = agent.value?.hostname
-  return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
-})
-
-function scheduleHealthEntries(s: ScheduleRow): ScheduleHealthEntry[] {
-  return scheduleHealth.value.filter((h) => h.schedule_id === s.id)
-}
-
-function scheduleIssues(s: ScheduleRow): EntityIssue[] {
-  return scheduleIssuesFromEntries(scheduleHealthEntries(s), s.id, router)
-}
 
 function repoNameForSchedule(s: ScheduleRow): string {
   return (
@@ -476,9 +492,15 @@ const activeBackups = ref<ActiveBackup[]>([])
 const hasActiveBackups = computed(() => activeBackups.value.length > 0)
 const { now } = useElapsedClock(hasActiveBackups)
 
-function elapsedSecsFor(backup: ActiveBackup): number {
-  return Math.max(0, Math.floor((now.value - backup.startedAt) / 1000))
-}
+/** The clock lives here, so the Overview tab is handed plain numbers. */
+const liveBackups = computed<LiveBackup[]>(() =>
+  activeBackups.value.map((b) => ({
+    targetName: b.targetName,
+    archiveName: b.archiveName,
+    elapsedSecs: Math.max(0, Math.floor((now.value - b.startedAt) / 1000)),
+    progress: b.progress,
+  })),
+)
 
 interface BorgArchiveProgress {
   type: 'archive_progress'
@@ -543,7 +565,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 <template>
   <div class="host-detail">
-    <!-- Breadcrumb -->
     <nav class="breadcrumb">
       <RouterLink
         to="/agents"
@@ -567,380 +588,158 @@ watch(wsStatus, (newStatus, oldStatus) => {
     </div>
 
     <template v-else-if="agent">
-      <!-- Tab bar -->
+      <AgentHeader
+        :agent="agent"
+        :deploy-label="headerDeployLabel"
+        :restart-loading="restartLoading"
+        :regen-loading="regenLoading"
+        :restart-error="restartError"
+        @adopt="adoptHost"
+        @merge="openMergeDialog"
+        @deploy="showDeployDialog = true"
+        @activity-log="goToActivityLog"
+        @edit-identity="startEditIdentity"
+        @deploy-ssh-key="showDeploySshKey = true"
+        @regenerate-token="regenerateToken"
+        @restart="restartAgent"
+      />
+
       <BaseTabs
         v-model="activeTab"
         :tabs="tabs"
         label="Agent sections"
       />
 
-      <!-- Overview Tab -->
-      <div
-        v-if="activeTab === 'overview'"
-        class="tab-content"
-      >
-        <div class="info-card">
-          <h3 class="info-title">Agent Information</h3>
-          <dl class="info-grid">
-            <dt>Hostname</dt>
-            <dd class="mono">
-              {{ agent.hostname }}
-            </dd>
-            <dt>Display Name</dt>
-            <dd>{{ agent.display_name ?? '—' }}</dd>
-            <dt>Status</dt>
-            <dd>
-              <span
-                class="badge"
-                :class="isOnline(agent) ? 'badge--success' : 'badge--neutral'"
-              >
-                {{ isOnline(agent) ? 'Online' : 'Offline' }}
-              </span>
-            </dd>
-            <dt>Agent Version</dt>
-            <dd class="mono">
-              {{ agent.agent_version ?? '—' }}
-            </dd>
-            <dt>Revision</dt>
-            <dd class="mono">
-              {{ agent.agent_git_sha ?? '—' }}
-            </dd>
-            <dt>Built</dt>
-            <dd class="mono">
-              {{ agent.agent_build_time ?? '—' }}
-            </dd>
-            <dt>Created</dt>
-            <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
-            <dt>Last Seen</dt>
-            <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
-            <dt>Repositories</dt>
-            <dd>{{ repos.length }}</dd>
-          </dl>
-          <BackupProgressCard
-            v-for="b in activeBackups"
-            :key="b.targetName"
-            :badge="b.targetName"
-            :archive-name="b.archiveName"
-            :elapsed-secs="elapsedSecsFor(b)"
-            :estimated-remaining-secs="null"
-            :progress="b.progress"
-          />
-          <div class="info-actions">
-            <button
-              v-if="isImported"
-              class="btn btn-sm btn-primary"
-              @click="openMergeDialog"
-            >
-              Merge into...
-            </button>
-            <button
-              v-if="isImported"
-              class="btn btn-sm btn-primary"
-              @click="adoptHost"
-            >
-              Adopt
-            </button>
-            <button
-              v-if="!isImported"
-              class="btn btn-sm btn-ghost"
-              @click="goToActivityLog"
-            >
-              Activity Log
-            </button>
-            <button
-              v-if="!isImported"
-              class="btn btn-sm btn-ghost"
-              @click="startEditIdentity"
-            >
-              Edit
-            </button>
-            <button
-              v-if="!isImported"
-              class="btn btn-sm btn-ghost"
-              :disabled="regenLoading"
-              @click="regenerateToken"
-            >
-              {{ regenLoading ? 'Regenerating...' : 'Regenerate Token' }}
-            </button>
-            <button
-              v-if="agent.supports_restart && !isImported"
-              class="btn btn-sm btn-ghost btn-danger-text"
-              :disabled="restartLoading || !isOnline(agent)"
-              @click="restartAgent"
-            >
-              {{ restartLoading ? 'Restarting...' : 'Restart Agent' }}
-            </button>
-            <span
-              v-else-if="isOnline(agent) && agent.restart_unavailable_reason"
-              class="restart-hint"
-            >
-              {{ agent.restart_unavailable_reason }}
-            </span>
-            <button
-              v-if="deployButtonLabel() && !isImported && authStore.canUpgradeAgent"
-              class="btn btn-sm btn-ghost"
-              @click="showDeployDialog = true"
-            >
-              {{ deployButtonLabel() }}
-            </button>
-            <button
-              v-if="!isImported"
-              class="btn btn-sm btn-ghost"
-              @click="showDeploySshKey = true"
-            >
-              Deploy SSH Key
-            </button>
-            <div
-              v-if="restartError"
-              class="form-error"
-            >
-              {{ restartError }}
-            </div>
-          </div>
-        </div>
-
-        <!-- Deploy SSH Key -->
-        <div
-          v-if="showDeploySshKey && !isImported"
-          class="info-card"
-        >
-          <div class="info-title-row">
-            <h3 class="info-title">Deploy SSH Key</h3>
-            <button
-              class="btn btn-sm btn-ghost"
-              aria-label="Close"
-              @click="showDeploySshKey = false"
-            >
-              <X :size="14" />
-            </button>
-          </div>
-          <SshKeyDeployPanel
-            :ssh-host="agent.hostname"
-            show-credentials
-          />
-        </div>
-
-        <!-- Edit Identity -->
-        <div
-          v-if="editingIdentity"
-          class="info-card"
-        >
-          <h3 class="info-title">Edit Agent Identity</h3>
-          <div class="field">
-            <label class="field-label">Hostname</label>
-            <input
-              v-model="identityHostname"
-              class="input"
-              placeholder="hostname"
-              @keyup.enter="saveIdentity"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">Display Name</label>
-            <input
-              v-model="identityDisplayName"
-              class="input"
-              placeholder="Optional friendly name"
-              @keyup.enter="saveIdentity"
-            />
-          </div>
-          <div
-            v-if="identityError"
-            class="form-error"
-          >
-            {{ identityError }}
-          </div>
-          <div class="info-actions">
-            <button
-              class="btn btn-ghost"
-              @click="cancelEditIdentity"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-primary"
-              :disabled="identitySaving"
-              @click="saveIdentity"
-            >
-              {{ identitySaving ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Tags -->
-        <EntityTags
-          v-if="isAdmin"
-          scope="host"
-          :entity-path="`/agents/${props.hostname}`"
+      <div class="tab-content">
+        <AgentOverviewTab
+          v-if="activeTab === 'overview'"
+          :agent="agent"
+          :repos="repos"
+          :schedules="agentSchedules"
+          :health="scheduleHealth"
+          :reports="reports"
+          :live-backups="liveBackups"
+          :repo-name-for="repoNameForSchedule"
+          @open-schedule="navigateToSchedule"
+          @open-report="openReport"
+          @show-tab="activeTab = $event"
         />
 
-        <AgentDefaultsCards
+        <AgentSchedulesTab
+          v-else-if="activeTab === 'schedules'"
           :agent="agent"
-          :can-edit="!isImported"
+          :schedules="agentSchedules"
+          :health="scheduleHealth"
+          :highlight-overdue="overdueHighlighted"
+          :repo-name-for="repoNameForSchedule"
+          @open="navigateToSchedule"
+        />
+
+        <AgentBackupsTab
+          v-else-if="activeTab === 'backups'"
+          v-model:filter="filterStatus"
+          v-model:sort-ascending="sortAscending"
+          :reports="reports"
+          :expanded-report-id="expandedReportId"
+          :highlighted-archive-name="highlightedArchiveName"
+          :pinned-report-id="pinnedReportId"
+          @toggle="toggleReport"
+          @open="openReport"
+        />
+
+        <AgentSettingsTab
+          v-else-if="activeTab === 'settings'"
+          ref="settingsTab"
+          v-model:section="settingsSection"
+          :agent="agent"
+          :is-admin="isAdmin"
+          :regen-loading="regenLoading"
+          @edit-identity="startEditIdentity"
+          @regenerate-token="regenerateToken"
           @saved="onDefaultsSaved"
         />
-
-        <AgentHostnameAliases
-          ref="aliasesPanel"
-          :hostname="agent.hostname"
-          :can-edit="!isImported"
-        />
-
-        <AgentDangerZone
-          v-if="isAdmin"
-          :agent="agent"
-        />
-      </div>
-
-      <!-- Schedules Tab -->
-      <div
-        v-if="activeTab === 'schedules'"
-        class="tab-content"
-      >
-        <div class="tab-header">
-          <h3 class="tab-title">Schedules</h3>
-          <RouterLink
-            :to="{ name: 'schedule-create', query: { agent_id: agent?.id } }"
-            class="btn btn-primary btn-sm"
-          >
-            + Add Schedule
-          </RouterLink>
-        </div>
-        <EmptyState
-          v-if="agentSchedules.length === 0"
-          :icon="CalendarClock"
-          title="No schedules yet"
-          description="This agent has no backup schedules. Create one to start backing it up."
-        />
-        <div
-          v-else
-          class="schedule-grid"
-        >
-          <ScheduleCard
-            v-for="s in agentSchedules"
-            :key="s.id"
-            :schedule="s"
-            :issues="scheduleIssues(s)"
-            :format-run="formatDateShort"
-            :highlighted="overdueHighlighted && scheduleHealthEntries(s).some((h) => h.is_overdue)"
-            @select="navigateToSchedule(s)"
-          >
-            <template #title>{{ s.name || repoNameForSchedule(s) }}</template>
-          </ScheduleCard>
-        </div>
-      </div>
-
-      <!-- Backups Tab -->
-      <div
-        v-if="activeTab === 'backups'"
-        class="tab-content"
-      >
-        <div class="tab-header">
-          <h3 class="tab-title">Backup History</h3>
-          <div class="backup-controls">
-            <div class="filter-group">
-              <button
-                v-for="s in ['all', 'success', 'warning', 'failed'] as const"
-                :key="s"
-                class="btn btn-sm"
-                :class="filterStatus === s ? 'btn-primary' : 'btn-ghost'"
-                @click="filterStatus = s"
-              >
-                {{ s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1) }}
-              </button>
-            </div>
-            <button
-              class="btn btn-sm btn-ghost"
-              @click="sortAscending = !sortAscending"
-            >
-              {{ sortAscending ? '↑ Oldest' : '↓ Newest' }}
-            </button>
-          </div>
-        </div>
-        <div
-          v-if="filteredSortedReports.length === 0"
-          class="state-msg"
-        >
-          {{
-            reports.length === 0
-              ? 'No backup reports available.'
-              : 'No backups match the current filter.'
-          }}
-        </div>
-        <div
-          v-else
-          class="results-list"
-        >
-          <div
-            v-for="r in filteredSortedReports"
-            :id="`report-${r.id}`"
-            :key="r.id"
-            class="result-card"
-            :class="[
-              `result-${r.status}`,
-              {
-                'result-card-link': r.status === 'success',
-                'result-card-highlighted':
-                  r.archive_name === highlightedArchiveName || r.id === pinnedReportId,
-              },
-            ]"
-            @click="handleResultClick(r)"
-          >
-            <div class="result-header">
-              <span
-                class="badge"
-                :class="backupStatusBadgeClass(r.status)"
-                >{{ r.status }}</span
-              >
-              <span class="result-date">{{ relativeTime(r.finished_at) }}</span>
-              <span class="result-duration">{{ r.duration_secs }}s</span>
-            </div>
-            <div class="result-meta">
-              <span class="result-repo">{{ r.repo_name }}</span>
-              <RouterLink
-                v-if="r.schedule_id && r.schedule_name && r.schedule_name !== r.repo_name"
-                :to="`/schedules/${r.schedule_id}`"
-                class="result-schedule-link"
-                @click.stop
-              >
-                {{ r.schedule_name }}
-              </RouterLink>
-            </div>
-            <div class="result-stats">
-              <span>{{ formatBytes(r.original_size) }} original</span>
-              <span>{{ formatBytes(r.deduplicated_size) }} dedup</span>
-              <span>{{ r.files_processed }} files</span>
-            </div>
-            <template v-if="expandedReportId === r.id">
-              <div
-                v-if="(r.warnings ?? []).length > 0"
-                class="result-warnings"
-              >
-                <strong class="result-section-label">Warnings</strong>
-                <pre class="result-output">{{ (r.warnings ?? []).join('\n') }}</pre>
-              </div>
-              <div
-                v-if="r.error_message && normalizeBackupStatus(r.status) !== 'warning'"
-                class="result-error"
-              >
-                <strong class="result-section-label">Error</strong>
-                <pre class="result-output">{{ r.error_message }}</pre>
-              </div>
-            </template>
-            <span
-              v-if="r.status === 'success'"
-              class="result-link-hint"
-              >View archives →</span
-            >
-            <span
-              v-else-if="r.error_message || (r.warnings ?? []).length > 0"
-              class="result-expand-hint"
-              >{{ expandedReportId === r.id ? 'Click to collapse' : 'Click to expand' }}</span
-            >
-          </div>
-        </div>
       </div>
     </template>
+
+    <!-- Edit Identity -->
+    <BaseModal
+      :open="editingIdentity"
+      title="Edit agent identity"
+      @close="cancelEditIdentity"
+    >
+      <div class="field">
+        <label
+          class="field-label"
+          for="identity-hostname"
+          >Hostname</label
+        >
+        <input
+          id="identity-hostname"
+          v-model="identityHostname"
+          class="input"
+          placeholder="hostname"
+          @keyup.enter="saveIdentity"
+        />
+      </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="identity-display-name"
+          >Display name</label
+        >
+        <input
+          id="identity-display-name"
+          v-model="identityDisplayName"
+          class="input"
+          placeholder="Optional friendly name"
+          @keyup.enter="saveIdentity"
+        />
+      </div>
+      <div
+        v-if="identityError"
+        class="form-error"
+      >
+        {{ identityError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="cancelEditIdentity"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          :disabled="identitySaving"
+          @click="saveIdentity"
+        >
+          {{ identitySaving ? 'Saving...' : 'Save' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Deploy SSH Key -->
+    <BaseModal
+      v-if="agent"
+      :open="showDeploySshKey"
+      title="Deploy SSH key"
+      @close="showDeploySshKey = false"
+    >
+      <SshKeyDeployPanel
+        :ssh-host="agent.hostname"
+        show-credentials
+      />
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeploySshKey = false"
+        >
+          Close
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Token Dialog -->
     <BaseModal
@@ -1072,10 +871,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
   color: var(--danger);
 }
 
-/* Tab bar */
-
 .tab-content {
-  animation: fadeIn 0.15s ease;
+  animation: fadeIn var(--duration-base) ease;
+  margin-top: 1rem;
 }
 
 @keyframes fadeIn {
@@ -1085,197 +883,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   to {
     opacity: 1;
   }
-}
-
-.tab-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.25rem;
-}
-
-.tab-title {
-  font-size: var(--fs-lg);
-  font-weight: 600;
-}
-
-/* Info card (Overview) */
-.restart-hint {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-/* Tags */
-
-/* Repos grid */
-
-/* Schedule cards */
-.schedule-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-  gap: 1rem;
-}
-
-/* Results list */
-.results-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.result-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem 1rem;
-  background: var(--bg-card);
-}
-
-.result-card.result-failed {
-  border-left: 3px solid var(--danger);
-}
-
-.result-card.result-warning {
-  border-left: 3px solid var(--warning);
-}
-
-.result-card.result-success {
-  border-left: 3px solid var(--success);
-}
-
-.result-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.result-date {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
-.result-duration {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  margin-left: auto;
-}
-
-.result-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  margin-bottom: 0.35rem;
-}
-
-.result-schedule-link {
-  color: var(--text-muted);
-}
-
-.result-schedule-link:hover {
-  color: var(--accent);
-  text-decoration: underline;
-}
-
-.result-stats {
-  display: flex;
-  gap: 1rem;
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-}
-
-.result-warnings,
-.result-error {
-  margin-top: 0.5rem;
-}
-
-.result-output {
-  font-size: var(--fs-2xs);
-  background: var(--bg-code);
-  border-radius: var(--radius-sm);
-  padding: 0.5rem;
-  margin-top: 0.25rem;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 12rem;
-}
-
-.result-error .result-output {
-  color: var(--danger);
-}
-
-.result-card-link {
-  cursor: pointer;
-}
-
-.result-card-link:hover {
-  background: var(--bg-hover);
-}
-
-.result-card:not(.result-card-link) {
-  cursor: pointer;
-}
-
-.result-card:not(.result-card-link):hover {
-  background: var(--bg-hover);
-}
-
-.result-link-hint {
-  font-size: var(--fs-2xs);
-  color: var(--accent);
-  margin-top: 0.4rem;
-  display: block;
-}
-
-.result-expand-hint {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  margin-top: 0.4rem;
-  display: block;
-}
-
-.result-section-label {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  display: block;
-  margin-bottom: 0.25rem;
-}
-
-.result-warnings .result-section-label {
-  color: var(--warning);
-}
-
-.result-error .result-section-label {
-  color: var(--danger);
-}
-
-.result-card-highlighted {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.backup-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.filter-group {
-  display: flex;
-  gap: 0.25rem;
-}
-
-/* Overlay & Dialog */
-
-/* Form */
-
-.input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .token-warning {
@@ -1303,18 +910,5 @@ watch(wsStatus, (newStatus, oldStatus) => {
   word-break: break-all;
   background: transparent;
   padding: 0;
-}
-
-/* Danger zone */
-
-.info-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-}
-
-.info-title-row .info-title {
-  margin-bottom: 0;
 }
 </style>

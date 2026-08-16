@@ -5,9 +5,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Agent Detail Redesign
 
-A proposal for `frontend/src/views/AgentDetailView.vue`. Nothing here is
-implemented; this document and the mockup beside it describe what the page
-should become and what it would cost.
+The design record for `frontend/src/views/AgentDetailView.vue`. It began as a
+proposal; the layout described here, and all three decisions at the bottom,
+are now implemented. User-facing documentation lives in
+[`agents.md`](../agents.md) -- this page keeps the reasoning, so a later
+change can tell which parts of the layout are load-bearing.
+
+Two details changed between the mockup and the build, both because the data
+was not there: the Repositories tile lists repository names rather than a
+deduplicated total, since `/agents/{hostname}/repos` returns `RepoResponse`,
+which carries no size; and the run strip draws 20 runs rather than 30, to
+match the dashboard's existing run-count sampling convention.
 
 An interactive mockup, rendered with the tokens from `frontend/src/style.css`
 in both themes, lives at
@@ -214,11 +222,11 @@ Still open: whether 30 is the right count. Twenty covers three weeks of daily
 backups and renders comfortably; fifty is the endpoint's free ceiling but
 draws as hairlines. The strip should probably size itself to the tile.
 
-## If this is accepted
+## What shipped with it
 
-Implementation is a user-facing change, so it needs the usual companions:
-a `docs/agents.md` update describing the new tab layout, a
-`.devcontainer/demo/seed-demo.sh` state that exercises the needs-attention
-strip, and component tests for each new unit. See
-[`../../skills/documentation/SKILL.md`](../../skills/documentation/SKILL.md)
-and [`../../skills/testing/SKILL.md`](../../skills/testing/SKILL.md).
+The implementation carried the usual companions: a `docs/agents.md` rewrite
+of the Agent Detail View section, a `.devcontainer/demo/seed-demo.sh` step
+seeding three consecutive failures on `db-server-01` so the run strip's
+Incident chip is covered by the demo, component tests for each new unit, and
+`frontend/e2e/agent-detail.spec.ts`. See `skills/documentation/SKILL.md` and `skills/testing/SKILL.md` in the
+repository root.

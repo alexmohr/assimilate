@@ -60,7 +60,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     await gotoBackupsTab(page)
 
     // The backups layout should be rendered (either with data or empty)
-    const backupsLayout = page.locator('.backups-layout')
+    const backupsLayout = page.locator('.archive-browser-layout')
     const tabContent = page
       .locator('.tab-content')
       .filter({ hasText: /Archives|No backup archives/ })

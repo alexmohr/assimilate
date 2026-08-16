@@ -274,12 +274,14 @@ test('status badge transitions to importing class when resync starts', async ({ 
 
   await resyncBtn.click()
 
-  // Badge must acquire status-importing class while the sync runs
-  await expect(statusBadge).toHaveClass(/status-importing/, { timeout: 30_000 })
+  // Badge must show the importing state while the sync runs. The pulse
+  // modifier is what marks "in progress"; the warning tone carries the colour.
+  await expect(statusBadge).toHaveClass(/badge--pulse/, { timeout: 30_000 })
+  await expect(statusBadge).toHaveClass(/badge--warning/)
 
-  // After sync completes badge must return to status-online
-  await expect(statusBadge).toHaveClass(/status-online/, { timeout: 120_000 })
-  await expect(statusBadge).not.toHaveClass(/status-importing/)
+  // After sync completes badge must return to the enabled (success) state
+  await expect(statusBadge).toHaveClass(/badge--success/, { timeout: 120_000 })
+  await expect(statusBadge).not.toHaveClass(/badge--pulse/)
 })
 
 test('status badge text shows importing phase verb during resync', async ({ page }) => {
@@ -366,8 +368,8 @@ test('status badge shows Enabled and no importing elements after resync complete
 
   // Wait for the importing phase to begin then complete
   const statusBadge = page.locator('.repo-status-badge')
-  await expect(statusBadge).toHaveClass(/status-importing/, { timeout: 30_000 })
-  await expect(statusBadge).toHaveClass(/status-online/, { timeout: 120_000 })
+  await expect(statusBadge).toHaveClass(/badge--pulse/, { timeout: 30_000 })
+  await expect(statusBadge).toHaveClass(/badge--success/, { timeout: 120_000 })
 
   // All importing UI elements must be gone after completion
   await expect(page.locator('.import-status-msg')).not.toBeVisible()

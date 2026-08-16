@@ -127,7 +127,10 @@ test.describe('Repositories management journey', () => {
     await expect(page.locator('.break-lock-success')).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('.form-error')).not.toBeVisible()
 
-    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    // Scoped to the footer: BaseModal's own dismiss control also exposes the
+    // accessible name "Close" (F-22 gave it one), so an unscoped lookup is
+    // ambiguous. This targets the same footer button the test always meant.
+    await page.locator('.modal-footer').getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.locator('.modal-title')).not.toBeVisible()
   })
 

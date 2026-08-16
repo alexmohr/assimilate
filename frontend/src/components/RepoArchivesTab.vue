@@ -117,6 +117,11 @@ async function rescan(): Promise<void> {
 
 watch(() => props.filterName, selectArchiveFromQuery)
 
+// `immediate` because this component is mounted lazily, when the user opens
+// the Archives tab: without it nothing fetches the list on that first mount
+// and the tab sits empty until an unrelated DataChanged event happens to
+// arrive. The repository can also change under a mounted tab, which is the
+// same work, so both cases share one path.
 watch(
   () => props.repoId,
   async () => {
@@ -125,6 +130,7 @@ watch(
     await loadArchives()
     selectArchiveFromQuery()
   },
+  { immediate: true },
 )
 
 /**

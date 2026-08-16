@@ -11,14 +11,11 @@ import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { useMobile } from '../composables/useMobile'
 import { useWebSocket } from '../composables/useWebSocket'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
-
-const { isMobile } = useMobile()
 
 function statusFor(quota: ServerQuotaResponse): 'ok' | 'warning' | 'critical' {
   if (!quota.configured || !quota.enabled) return 'ok'
@@ -145,7 +142,7 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
     </div>
 
     <div
-      v-else-if="isMobile"
+      v-else
       class="quota-card-list"
     >
       <div
@@ -218,80 +215,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
           </button>
         </div>
       </div>
-    </div>
-
-    <div
-      v-else
-      class="table-wrap"
-    >
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>SSH Host</th>
-            <th>Repos</th>
-            <th>Usage</th>
-            <th>Warning</th>
-            <th>Critical</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="quota in quotas"
-            :key="quota.ssh_host"
-          >
-            <td class="name-cell">{{ quota.ssh_host }}</td>
-            <td>{{ quota.repo_count }}</td>
-            <td>{{ formatBytes(quota.total_deduplicated_size) }}</td>
-            <td>
-              <template v-if="quota.configured && quota.warn_bytes !== null">
-                {{ formatBytes(quota.warn_bytes) }} &middot; {{ actionLabel(quota.warn_action) }}
-              </template>
-              <span
-                v-else
-                class="muted"
-                >Not set</span
-              >
-            </td>
-            <td>
-              <template v-if="quota.configured && quota.critical_bytes !== null">
-                {{ formatBytes(quota.critical_bytes) }} &middot;
-                {{ actionLabel(quota.critical_action) }}
-              </template>
-              <span
-                v-else
-                class="muted"
-                >Not set</span
-              >
-            </td>
-            <td>
-              <span
-                class="status-badge"
-                :class="`badge-${statusFor(quota)}`"
-              >
-                {{ statusLabel(quota) }}
-              </span>
-            </td>
-            <td class="actions-cell">
-              <button
-                class="btn btn-sm btn-ghost"
-                @click="startEdit(quota)"
-              >
-                {{ quota.configured ? 'Edit' : 'Configure' }}
-              </button>
-              <button
-                v-if="quota.configured"
-                class="btn btn-sm btn-ghost btn-danger-text"
-                :disabled="deleteLoading === quota.ssh_host"
-                @click="removeQuota(quota)"
-              >
-                Remove
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
     </div>
 
     <div
@@ -396,12 +319,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
   max-width: 1000px;
 }
 
-.table-wrap {
-  overflow-x: auto;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-}
-
 .quota-card-list {
   display: flex;
   flex-direction: column;
@@ -484,10 +401,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
   display: flex;
   justify-content: flex-end;
   gap: 0.375rem;
-}
-
-.data-table {
-  min-width: 640px;
 }
 
 .muted {

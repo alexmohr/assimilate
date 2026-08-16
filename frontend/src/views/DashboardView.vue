@@ -24,7 +24,8 @@ import UpcomingWork from '../components/UpcomingWork.vue'
 import RepositoryCapacity from '../components/RepositoryCapacity.vue'
 import type { DashboardOperation, DashboardOverview } from '../types/dashboard'
 import type { Repo } from '../types/repo'
-import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
+import { type SegmentedOption } from '../components/BaseSegmented.vue'
+import ChartRangeControls from '../components/ChartRangeControls.vue'
 import { ChevronRight } from '@lucide/vue'
 
 const rangeOptions: SegmentedOption<number>[] = [
@@ -648,26 +649,13 @@ async function fetchOverview(): Promise<void> {
           <section class="panel">
             <div class="panel-header">
               <h2 class="panel-title">Success Rate</h2>
-              <div class="trends-controls">
-                <select
-                  v-model="successRepoFilter"
-                  class="input trends-select"
-                >
-                  <option :value="undefined">All Repos</option>
-                  <option
-                    v-for="repo in repoOptions"
-                    :key="repo.id"
-                    :value="repo.id"
-                  >
-                    {{ repo.name }}
-                  </option>
-                </select>
-                <BaseSegmented
-                  v-model="successDaysFilter"
-                  :options="rangeOptions"
-                  label="Success rate range"
-                />
-              </div>
+              <ChartRangeControls
+                v-model:repo-id="successRepoFilter"
+                v-model:days="successDaysFilter"
+                :repos="repoOptions"
+                :options="rangeOptions"
+                label="Success rate range"
+              />
             </div>
             <p class="chart-desc">
               Proportion of scheduled backup runs that completed without errors over the selected
@@ -884,16 +872,6 @@ async function fetchOverview(): Promise<void> {
     align-items: flex-start;
   }
 
-  .trends-controls {
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .trends-select {
-    flex: 1;
-    min-width: 0;
-  }
-
   .panel-timeline {
     min-width: 0;
     overflow: hidden;
@@ -980,22 +958,6 @@ async function fetchOverview(): Promise<void> {
 .panel-header .panel-title {
   margin: 0;
   white-space: nowrap;
-}
-
-.trends-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.trends-select {
-  width: auto;
-  padding: 0.25rem 0.5rem;
-  font-size: var(--fs-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-base);
-  color: var(--text-primary);
 }
 
 .chart-desc {

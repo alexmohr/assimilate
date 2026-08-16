@@ -4,43 +4,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed, onBeforeUnmount } from 'vue'
-import { Line } from 'vue-chartjs'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js'
+import { ref, computed } from 'vue'
+import '../chartSetup'
 import type { TooltipItem } from 'chart.js'
-import { apiClient } from '../api/client'
-import { formatBytes } from '../utils/format'
-import { logger } from '../utils/logger'
 import type { Repo } from '../types/repo'
-import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
-
-const rangeOptions: SegmentedOption<number>[] = [
-  { value: 14, label: '14d' },
-  { value: 30, label: '30d' },
-  { value: 90, label: '90d' },
-  { value: 365, label: '1y' },
-]
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-)
+import ChartRangeControls from './ChartRangeControls.vue'
+import MetricLineChart from './MetricLineChart.vue'
+import { useBytesLineChartOptions } from '../composables/useBytesLineChartOptions'
+import { useChartTheme } from '../composables/useChartTheme'
+import { useRangeFilteredFetch } from '../composables/useRangeFilteredFetch'
+import { STORAGE_TREND_RANGE_OPTIONS } from '../utils/chartRangeOptions'
 
 interface TrendEntry {
   date: string
@@ -56,53 +29,13 @@ const props = defineProps<{
   repos: Repo[]
 }>()
 
-function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-}
-
-const themeGeneration = ref(0)
-let themeObserver: MutationObserver | null = null
-
-onMounted(() => {
-  themeObserver = new MutationObserver(() => {
-    themeGeneration.value++
-  })
-  themeObserver.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['class'],
-  })
-})
-
-onBeforeUnmount(() => {
-  themeObserver?.disconnect()
-})
-
 const selectedRepoId = ref<number | undefined>(undefined)
 const selectedDays = ref<number>(30)
-const trends = ref<TrendEntry[]>([])
-const loading = ref(true)
-
-async function fetchTrends(): Promise<void> {
-  loading.value = true
-  try {
-    const params = new URLSearchParams({ days: String(selectedDays.value) })
-    if (selectedRepoId.value !== undefined) {
-      params.set('repo_id', String(selectedRepoId.value))
-    }
-    const response = await apiClient.get<TrendEntry[]>(`/stats/trends?${params.toString()}`)
-    trends.value = response.data
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(() => {
-  fetchTrends().catch(logger.error)
-})
-
-watch([selectedRepoId, selectedDays], () => {
-  fetchTrends().catch(logger.error)
-})
+const { entries: trends, loading } = useRangeFilteredFetch<TrendEntry>(
+  '/stats/trends',
+  selectedDays,
+  selectedRepoId,
+)
 
 const combinedSizeData = computed(() => ({
   labels: trends.value.map((t) => t.date.slice(5)),
@@ -140,86 +73,9 @@ const deduplicatedData = computed(() => ({
   ],
 }))
 
-const combinedOptions = computed(() => {
-  void themeGeneration.value
-  const textMuted = cssVar('--text-muted')
-  const border = cssVar('--border')
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: {
-      intersect: false,
-      mode: 'index' as const,
-    },
-    plugins: {
-      legend: {
-        display: true,
-        labels: { color: textMuted, boxWidth: 12, font: { size: 10 } },
-      },
-      tooltip: {
-        callbacks: {
-          label: (context: TooltipItem<'line'>): string => {
-            return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
-          },
-        },
-      },
-    },
-    scales: {
-      x: {
-        grid: { display: false },
-        ticks: { color: textMuted, font: { size: 10 } },
-      },
-      y: {
-        grace: '10%',
-        grid: { color: border },
-        ticks: {
-          color: textMuted,
-          font: { size: 10 },
-          callback: (value: string | number): string => formatBytes(Number(value)),
-        },
-      },
-    },
-  }
-})
-
-const chartOptions = computed(() => {
-  void themeGeneration.value
-  const textMuted = cssVar('--text-muted')
-  const border = cssVar('--border')
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: {
-      intersect: false,
-      mode: 'index' as const,
-    },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: (context: TooltipItem<'line'>): string => {
-            return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
-          },
-        },
-      },
-    },
-    scales: {
-      x: {
-        grid: { display: false },
-        ticks: { color: textMuted, font: { size: 10 } },
-      },
-      y: {
-        grace: '10%',
-        grid: { color: border },
-        ticks: {
-          color: textMuted,
-          font: { size: 10 },
-          callback: (value: string | number): string => formatBytes(Number(value)),
-        },
-      },
-    },
-  }
-})
+const { bytesLineOptions } = useBytesLineChartOptions()
+const combinedOptions = computed(() => bytesLineOptions(true))
+const chartOptions = computed(() => bytesLineOptions(false))
 
 const dedupRatioData = computed(
   (): {
@@ -249,10 +105,9 @@ const dedupRatioData = computed(
   },
 )
 
+const { textMuted, border } = useChartTheme()
+
 const dedupOptions = computed(() => {
-  void themeGeneration.value
-  const textMuted = cssVar('--text-muted')
-  const border = cssVar('--border')
   const values = trends.value.map((t) => t.dedup_ratio)
   const dataMin = values.length > 0 ? Math.min(...values) : 0
   const dataMax = values.length > 0 ? Math.max(...values) : 100
@@ -271,12 +126,12 @@ const dedupOptions = computed(() => {
     scales: {
       x: {
         grid: { display: false },
-        ticks: { color: textMuted, font: { size: 10 } },
+        ticks: { color: textMuted.value, font: { size: 10 } },
       },
       y: {
-        grid: { color: border },
+        grid: { color: border.value },
         ticks: {
-          color: textMuted,
+          color: textMuted.value,
           font: { size: 10 },
           callback: (value: string | number): string => `${Number(value).toFixed(0)}%`,
         },
@@ -292,26 +147,13 @@ const dedupOptions = computed(() => {
   <section class="panel">
     <div class="panel-header">
       <h2 class="panel-title">Backup Size Trends (Deduplicated)</h2>
-      <div class="trends-controls">
-        <select
-          v-model="selectedRepoId"
-          class="input trends-select"
-        >
-          <option :value="undefined">All Repos</option>
-          <option
-            v-for="repo in props.repos"
-            :key="repo.id"
-            :value="repo.id"
-          >
-            {{ repo.name }}
-          </option>
-        </select>
-        <BaseSegmented
-          v-model="selectedDays"
-          :options="rangeOptions"
-          label="Trend range"
-        />
-      </div>
+      <ChartRangeControls
+        v-model:repo-id="selectedRepoId"
+        v-model:days="selectedDays"
+        :repos="props.repos"
+        :options="STORAGE_TREND_RANGE_OPTIONS"
+        label="Trend range"
+      />
     </div>
     <p class="chart-desc">
       Size of each backup run over the selected period. <strong>Deduplicated</strong> = new unique
@@ -333,33 +175,21 @@ const dedupOptions = computed(() => {
       v-else
       class="charts-row"
     >
-      <div class="chart-cell">
-        <span class="metric-label">Original &amp; Compressed</span>
-        <div class="chart-container">
-          <Line
-            :data="combinedSizeData"
-            :options="combinedOptions"
-          />
-        </div>
-      </div>
-      <div class="chart-cell">
-        <span class="metric-label">Deduplicated</span>
-        <div class="chart-container">
-          <Line
-            :data="deduplicatedData"
-            :options="chartOptions"
-          />
-        </div>
-      </div>
-      <div class="chart-cell">
-        <span class="metric-label">Dedup Ratio</span>
-        <div class="chart-container">
-          <Line
-            :data="dedupRatioData"
-            :options="dedupOptions"
-          />
-        </div>
-      </div>
+      <MetricLineChart
+        label="Original & Compressed"
+        :data="combinedSizeData"
+        :options="combinedOptions"
+      />
+      <MetricLineChart
+        label="Deduplicated"
+        :data="deduplicatedData"
+        :options="chartOptions"
+      />
+      <MetricLineChart
+        label="Dedup Ratio"
+        :data="dedupRatioData"
+        :options="dedupOptions"
+      />
     </div>
   </section>
 </template>
@@ -370,45 +200,10 @@ const dedupOptions = computed(() => {
   white-space: nowrap;
 }
 
-.trends-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.trends-select {
-  width: auto;
-  padding: 0.25rem 0.5rem;
-  font-size: var(--fs-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-base);
-  color: var(--text-primary);
-}
-
 .charts-row {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
-}
-
-.chart-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.metric-label {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.chart-container {
-  height: 220px;
-  position: relative;
 }
 
 .chart-desc {

@@ -4,14 +4,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
 import { formatDuration } from '../utils/format'
-import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { Repo } from '../types/repo'
-import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+import { type SegmentedOption } from './BaseSegmented.vue'
+import ChartRangeControls from './ChartRangeControls.vue'
+import { useRangeFilteredFetch } from '../composables/useRangeFilteredFetch'
 
 const rangeOptions: SegmentedOption<number>[] = [
   { value: 7, label: '7d' },
@@ -35,30 +35,11 @@ const router = useRouter()
 
 const selectedDays = ref<number>(30)
 const selectedRepoId = ref<number | undefined>(undefined)
-const entries = ref<ActivityEntry[]>([])
-const loading = ref(true)
-
-async function fetchStats(): Promise<void> {
-  loading.value = true
-  try {
-    const params = new URLSearchParams({ days: String(selectedDays.value) })
-    if (selectedRepoId.value !== undefined) {
-      params.set('repo_id', String(selectedRepoId.value))
-    }
-    const response = await apiClient.get<ActivityEntry[]>(`/stats/activity?${params.toString()}`)
-    entries.value = response.data
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(() => {
-  fetchStats().catch(logger.error)
-})
-
-watch([selectedDays, selectedRepoId], () => {
-  fetchStats().catch(logger.error)
-})
+const { entries, loading } = useRangeFilteredFetch<ActivityEntry>(
+  '/stats/activity',
+  selectedDays,
+  selectedRepoId,
+)
 
 const totalCount = computed((): number => entries.value.length)
 const successCount = computed(
@@ -90,26 +71,13 @@ function navigateToActivity(status?: string): void {
   <section class="panel">
     <div class="panel-header">
       <h2 class="panel-title">Backup Stats</h2>
-      <div class="controls">
-        <select
-          v-model="selectedRepoId"
-          class="input stats-select"
-        >
-          <option :value="undefined">All Repos</option>
-          <option
-            v-for="repo in props.repos"
-            :key="repo.id"
-            :value="repo.id"
-          >
-            {{ repo.name }}
-          </option>
-        </select>
-        <BaseSegmented
-          v-model="selectedDays"
-          :options="rangeOptions"
-          label="Backup statistics range"
-        />
-      </div>
+      <ChartRangeControls
+        v-model:repo-id="selectedRepoId"
+        v-model:days="selectedDays"
+        :repos="props.repos"
+        :options="rangeOptions"
+        label="Backup statistics range"
+      />
     </div>
     <div
       v-if="loading"
@@ -167,22 +135,6 @@ function navigateToActivity(status?: string): void {
 </template>
 
 <style scoped>
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.stats-select {
-  width: auto;
-  padding: 0.25rem 0.5rem;
-  font-size: var(--fs-xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-base);
-  color: var(--text-primary);
-}
-
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

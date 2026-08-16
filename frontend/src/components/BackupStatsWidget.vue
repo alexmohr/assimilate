@@ -174,6 +174,7 @@ function navigateToActivity(status?: string): void {
 }
 
 .stats-select {
+  width: auto;
   padding: 0.25rem 0.5rem;
   font-size: var(--fs-xs);
   border: 1px solid var(--border);

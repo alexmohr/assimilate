@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
@@ -240,5 +240,459 @@ describe('RepoCreateDialog', () => {
     ;(wrapper.vm as unknown as { reset: () => void }).reset()
     await flushPromises()
     expect((field('Name') as HTMLInputElement).value).toBe('')
+  })
+
+  describe('remote directory browser', () => {
+    const DIRS = [
+      { name: 'repos', is_dir: true },
+      { name: 'notes.txt', is_dir: false },
+      { name: 'archive', is_dir: true },
+    ]
+
+    function listDir(path: string, entries = DIRS) {
+      return { data: { path, entries } }
+    }
+
+    async function openBrowser(path = '/backup'): Promise<void> {
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValueOnce(listDir(path) as never)
+      dialogButton('Browse').click()
+      await flushPromises()
+    }
+
+    it('will not browse before an SSH host is known', () => {
+      mount()
+      expect(dialogButton('Browse').disabled).toBe(true)
+    })
+
+    it('lists the remote directory over the entered SSH target', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH User', 'operator')
+      await setField('SSH Port', '2222')
+
+      vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/') as never)
+      dialogButton('Browse').click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/ssh/list-dir', {
+        ssh_host: 'backup.example.com',
+        ssh_user: 'operator',
+        ssh_port: 2222,
+        path: '/',
+      })
+    })
+
+    // It is a directory picker: listing files would offer paths that cannot
+    // hold a repository.
+    it('shows only directories', async () => {
+      mount()
+      await openBrowser()
+      const names = [...document.body.querySelectorAll('.entry-name')].map((e) => e.textContent)
+      expect(names).toContain('repos')
+      expect(names).toContain('archive')
+      expect(names).not.toContain('notes.txt')
+    })
+
+    it('adopts the browsed directory as the repo path', async () => {
+      mount()
+      await openBrowser('/backup')
+      expect((field('Repo Path') as HTMLInputElement).value).toBe('/backup')
+    })
+
+    it('descends into a directory on click', async () => {
+      mount()
+      await openBrowser('/backup')
+
+      vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/backup/repos', []) as never)
+      const entry = [...document.body.querySelectorAll<HTMLElement>('.entry-name')].find(
+        (e) => e.textContent === 'repos',
+      )
+      entry?.parentElement?.click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenLastCalledWith(
+        '/ssh/list-dir',
+        expect.objectContaining({ path: '/backup/repos' }),
+      )
+    })
+
+    it('climbs to the parent on the .. entry', async () => {
+      mount()
+      await openBrowser('/backup/repos')
+
+      vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/backup') as never)
+      const up = [...document.body.querySelectorAll<HTMLElement>('.entry-name')].find(
+        (e) => e.textContent === '..',
+      )
+      up?.parentElement?.click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenLastCalledWith(
+        '/ssh/list-dir',
+        expect.objectContaining({ path: '/backup' }),
+      )
+    })
+
+    it('jumps to an ancestor from the breadcrumbs', async () => {
+      mount()
+      await openBrowser('/backup/repos')
+
+      vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/backup') as never)
+      const crumbs = [...document.body.querySelectorAll<HTMLElement>('.breadcrumb')]
+      crumbs[1]?.click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenLastCalledWith(
+        '/ssh/list-dir',
+        expect.objectContaining({ path: expect.stringContaining('/backup') }),
+      )
+    })
+
+    it('reports a listing error from the server rather than showing an empty directory', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { path: '/root', entries: [], error: 'Permission denied' },
+      } as never)
+      dialogButton('Browse').click()
+      await flushPromises()
+
+      expect(document.body.textContent).toContain('Permission denied')
+    })
+
+    it('reports a failed listing request', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('ssh timeout'))
+      dialogButton('Browse').click()
+      await flushPromises()
+
+      expect(document.body.querySelector('.browser-panel')?.textContent).toBeTruthy()
+    })
+  })
+
+  describe('new folder', () => {
+    async function openFolderDialog(): Promise<void> {
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: { path: '/backup', entries: [] },
+      } as never)
+      dialogButton('Browse').click()
+      await flushPromises()
+      dialogButton('New Folder').click()
+      await flushPromises()
+    }
+
+    it('refuses an empty name instead of creating one remotely', async () => {
+      mount({ mode: 'create' })
+      await openFolderDialog()
+      vi.mocked(apiClient.post).mockClear()
+
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(apiClient.post).not.toHaveBeenCalled()
+      expect(document.body.textContent).toContain('Folder name is required')
+    })
+
+    /**
+     * The folder prompt is a second BaseModal stacked on the create dialog,
+     * so the last `.modal-dialog` is the one that owns the name field - the
+     * first is still the repository form behind it.
+     */
+    async function typeFolderName(name: string): Promise<void> {
+      const dialogs = [...document.body.querySelectorAll('.modal-dialog')]
+      const input = dialogs[dialogs.length - 1]!.querySelector<HTMLInputElement>('input')!
+      input.value = name
+      input.dispatchEvent(new Event('input'))
+      await flushPromises()
+    }
+
+    it('creates the folder under the browsed directory and opens it', async () => {
+      mount({ mode: 'create' })
+      await openFolderDialog()
+      await typeFolderName('nightly')
+      vi.mocked(apiClient.post).mockClear()
+
+      vi.mocked(apiClient.post)
+        .mockResolvedValueOnce({} as never)
+        .mockResolvedValueOnce({ data: { path: '/backup/nightly', entries: [] } } as never)
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenNthCalledWith(1, '/ssh/mkdir', {
+        ssh_host: 'backup.example.com',
+        ssh_user: 'borg',
+        ssh_port: 22,
+        path: '/backup/nightly',
+      })
+      // Creating it is only half the job - the browser should land in it.
+      expect(apiClient.post).toHaveBeenNthCalledWith(
+        2,
+        '/ssh/list-dir',
+        expect.objectContaining({ path: '/backup/nightly' }),
+      )
+    })
+
+    it('keeps the dialog open with the error when the folder cannot be created', async () => {
+      mount({ mode: 'create' })
+      await openFolderDialog()
+      await typeFolderName('nightly')
+
+      vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('Read-only file system'))
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(document.body.textContent).toContain('Read-only file system')
+    })
+  })
+
+  describe('path autocomplete', () => {
+    const ENTRIES = [
+      { name: 'repos', is_dir: true },
+      { name: 'reports', is_dir: true },
+      { name: 'archive', is_dir: true },
+      { name: 'readme.txt', is_dir: false },
+    ]
+
+    /** Types into the repo path field and lets the 300ms debounce elapse. */
+    async function typePath(value: string): Promise<void> {
+      const input = field('Repo Path') as HTMLInputElement
+      input.value = value
+      input.dispatchEvent(new Event('input'))
+      await vi.advanceTimersByTimeAsync(350)
+      await flushPromises()
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('suggests nothing until an SSH host is known', async () => {
+      mount()
+      await typePath('/backup/re')
+      expect(apiClient.post).not.toHaveBeenCalled()
+      expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
+    })
+
+    it('lists the parent directory and filters by the typed prefix', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { path: '/backup', entries: ENTRIES },
+      } as never)
+
+      await typePath('/backup/re')
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/ssh/list-dir',
+        expect.objectContaining({ path: '/backup' }),
+      )
+      const shown = [...document.body.querySelectorAll('.autocomplete-item')].map((i) =>
+        i.textContent?.trim(),
+      )
+      // Prefix-matched and directories only: "archive" fails the prefix and
+      // "readme.txt" is not a directory.
+      expect(shown).toEqual(['repos', 'reports'])
+    })
+
+    it('completes the last path segment rather than appending to it', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { path: '/backup', entries: ENTRIES },
+      } as never)
+      await typePath('/backup/re')
+
+      const item = [...document.body.querySelectorAll<HTMLElement>('.autocomplete-item')].find(
+        (i) => i.textContent?.trim() === 'reports',
+      )
+      item?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      await flushPromises()
+
+      expect((field('Repo Path') as HTMLInputElement).value).toBe('/backup/reports')
+      expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
+    })
+
+    it('offers nothing when the directory has no matching child', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { path: '/backup', entries: ENTRIES },
+      } as never)
+
+      await typePath('/backup/zzz')
+
+      expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
+    })
+
+    it('stays quiet when the listing reports an error', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { path: '/backup', entries: [], error: 'Permission denied' },
+      } as never)
+
+      await typePath('/backup/re')
+
+      expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
+    })
+
+    it('stays quiet when the listing request fails outright', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('ssh timeout'))
+
+      await typePath('/backup/re')
+
+      expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
+    })
+
+    it('clears the suggestions once the field is emptied', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { path: '/backup', entries: ENTRIES },
+      } as never)
+      await typePath('/backup/re')
+      expect(document.body.querySelector('.autocomplete-dropdown')).not.toBeNull()
+
+      await typePath('')
+
+      expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
+    })
+
+    it('dismisses the suggestions shortly after the field loses focus', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { path: '/backup', entries: ENTRIES },
+      } as never)
+      await typePath('/backup/re')
+      ;(field('Repo Path') as HTMLInputElement).dispatchEvent(new Event('blur'))
+      await vi.advanceTimersByTimeAsync(250)
+      await flushPromises()
+
+      expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
+    })
+
+    // Typing a trailing slash means "show me inside this directory", so an
+    // open browser panel should follow the field rather than go stale.
+    it('walks an open browser panel to a directory typed with a trailing slash', async () => {
+      mount()
+      await setField('SSH Host', 'backup.example.com')
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { path: '/backup', entries: ENTRIES },
+      } as never)
+      dialogButton('Browse').click()
+      await flushPromises()
+
+      vi.mocked(apiClient.post).mockClear()
+      await typePath('/backup/repos/')
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/ssh/list-dir',
+        expect.objectContaining({ path: '/backup/repos' }),
+      )
+    })
+  })
+
+  it('reports a connection test that throws', async () => {
+    mount()
+    await setField('SSH Host', 'backup.example.com')
+    vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('no route to host'))
+
+    dialogButton('Test Connection').click()
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('no route to host')
+  })
+
+  it('sends the chosen encryption and compression', async () => {
+    const wrapper = mount({ mode: 'create' })
+    await fillValidForm()
+    await setField('Encryption', 'keyfile')
+    await setField('Compression', 'zstd')
+
+    dialogButton('Create Repo').click()
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ encryption: 'keyfile', compression: 'zstd' }),
+    )
+    expect(wrapper.exists()).toBe(true)
+  })
+
+  it('toggles the deploy key panel', async () => {
+    mount()
+    await setField('SSH Host', 'backup.example.com')
+    const before = document.body.textContent ?? ''
+    dialogButton('+ Deploy Key').click()
+    await flushPromises()
+    expect(document.body.textContent).not.toBe(before)
+  })
+
+  it('closes the new-folder prompt on its Cancel without creating anything', async () => {
+    mount({ mode: 'create' })
+    await setField('SSH Host', 'backup.example.com')
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      data: { path: '/backup', entries: [] },
+    } as never)
+    dialogButton('Browse').click()
+    await flushPromises()
+    dialogButton('New Folder').click()
+    await flushPromises()
+    vi.mocked(apiClient.post).mockClear()
+
+    const dialogs = [...document.body.querySelectorAll('.modal-dialog')]
+    const cancel = [
+      ...dialogs[dialogs.length - 1]!.querySelectorAll<HTMLButtonElement>('button'),
+    ].find((b) => b.textContent?.trim() === 'Cancel')
+    cancel?.click()
+    await flushPromises()
+
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('closes on the footer Cancel', async () => {
+    const wrapper = mount()
+    dialogButton('Cancel').click()
+    await flushPromises()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('closes on the modal dismiss control as well as the footer', async () => {
+    const wrapper = mount()
+    document.body.querySelector<HTMLButtonElement>('.modal-close')?.click()
+    await flushPromises()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('dismisses the new-folder prompt on its own modal control, leaving the form open', async () => {
+    const wrapper = mount({ mode: 'create' })
+    await setField('SSH Host', 'backup.example.com')
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      data: { path: '/backup', entries: [] },
+    } as never)
+    dialogButton('Browse').click()
+    await flushPromises()
+    dialogButton('New Folder').click()
+    await flushPromises()
+    expect(document.body.querySelectorAll('.modal-dialog')).toHaveLength(2)
+
+    const closes = [...document.body.querySelectorAll<HTMLButtonElement>('.modal-close')]
+    closes[closes.length - 1]?.click()
+    await flushPromises()
+
+    // Only the inner prompt goes away; dismissing it must not take the
+    // half-filled repository form with it.
+    expect(document.body.querySelectorAll('.modal-dialog')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toBeUndefined()
   })
 })

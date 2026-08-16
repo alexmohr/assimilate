@@ -512,5 +512,106 @@ describe('ProfileView', () => {
         'Failed to delete token: network error',
       )
     })
+
+    async function openCreateTokenModal(wrapper: ReturnType<typeof renderWithPlugins>) {
+      await flushPromises()
+      await clickApiTokensTab(wrapper)
+      const createBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'Create Token')
+      expect(createBtn).toBeDefined()
+      await createBtn!.trigger('click')
+      await flushPromises()
+    }
+
+    it('creates a token from the name typed in the dialog', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      const submit = findInModal(wrapper, 'Create')
+      await submit!.trigger('click')
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/tokens', { name: 'ci-token' })
+    })
+
+    // Enter is a real submit path here, not decoration - the dialog is a
+    // single field and typing then pressing Enter is the obvious gesture.
+    it('creates the token on Enter as well as the button', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+
+      const input = wrapper.find('.modal-dialog input')
+      await input.setValue('ci-token')
+      await input.trigger('keydown.enter')
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/tokens', { name: 'ci-token' })
+    })
+
+    // The plaintext is shown once and never again, so the dialog swaps to a
+    // reveal step rather than closing on success.
+    it('reveals the plaintext once, with a copy action', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      await findInModal(wrapper, 'Create')!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.token-value').text()).toBe('tok_secret')
+      // Addressed by container: this file's useClipboard mock is always
+      // truthy, so the button reads "Copied" rather than "Copy" here.
+      const copy = wrapper.find('.token-display button')
+      expect(copy.exists()).toBe(true)
+      await copy.trigger('click')
+      await flushPromises()
+    })
+
+    it('clears the revealed token when the dialog is closed', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      await findInModal(wrapper, 'Create')!.trigger('click')
+      await flushPromises()
+
+      const close = wrapper.findAll('.modal-dialog button').find((b) => /Done|Close/.test(b.text()))
+      await close!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.token-value').exists()).toBe(false)
+    })
+
+    it('reports a create failure without revealing a token', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('name taken'))
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      await findInModal(wrapper, 'Create')!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.token-value').exists()).toBe(false)
+      expect(wrapper.find('.modal-dialog').text()).toContain('Failed to create token')
+    })
   })
 })

@@ -54,13 +54,6 @@ defineProps<{ repositories: DashboardRepositoryCapacity[] }>()
 </template>
 
 <style scoped>
-.panel-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.75rem;
-}
-
 .capacity-row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto auto;
@@ -83,7 +76,7 @@ small,
 .history-value,
 .empty-state {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
 }
 
 .quota-dot {
@@ -108,7 +101,7 @@ small,
   background: var(--danger);
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .capacity-row {
     grid-template-columns: 10px minmax(0, 1fr) auto;
   }

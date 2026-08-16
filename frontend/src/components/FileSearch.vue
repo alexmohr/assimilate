@@ -13,6 +13,7 @@ import { formatBytes, formatDate } from '../utils/format'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 
 interface ArchiveOption {
   name: string
@@ -40,7 +41,14 @@ interface Props {
 
 const props = defineProps<Props>()
 
-const searchMode = ref<'single' | 'cross'>('cross')
+type SearchMode = 'single' | 'cross'
+
+const modeOptions: SegmentedOption<SearchMode>[] = [
+  { value: 'cross', label: 'All archives' },
+  { value: 'single', label: 'Single archive' },
+]
+
+const searchMode = ref<SearchMode>('cross')
 const selectedArchiveName = ref<string | null>(null)
 const pattern = ref('')
 const maxArchives = ref(20)
@@ -93,22 +101,11 @@ function handleKeydown(event: KeyboardEvent): void {
     </div>
 
     <div class="search-controls">
-      <div class="mode-toggle">
-        <button
-          class="mode-btn"
-          :class="{ active: searchMode === 'cross' }"
-          @click="searchMode = 'cross'"
-        >
-          All archives
-        </button>
-        <button
-          class="mode-btn"
-          :class="{ active: searchMode === 'single' }"
-          @click="searchMode = 'single'"
-        >
-          Single archive
-        </button>
-      </div>
+      <BaseSegmented
+        v-model="searchMode"
+        :options="modeOptions"
+        label="Search scope"
+      />
 
       <div
         v-if="searchMode === 'single'"
@@ -117,7 +114,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <label class="field-label">Archive</label>
         <select
           v-model="selectedArchiveName"
-          class="select-input"
+          class="input select-input"
         >
           <option
             :value="null"
@@ -176,7 +173,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
       <div
         v-else-if="error"
-        class="state-msg state-error"
+        class="state-msg state-msg--inline state-error"
       >
         {{ error }}
       </div>
@@ -263,7 +260,7 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .search-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -277,36 +274,6 @@ function handleKeydown(event: KeyboardEvent): void {
   gap: 0.75rem;
 }
 
-.mode-toggle {
-  display: flex;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  width: fit-content;
-}
-
-.mode-btn {
-  background: var(--bg-base);
-  border: none;
-  padding: 0.4rem 0.85rem;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
-}
-
-.mode-btn:not(:last-child) {
-  border-right: 1px solid var(--border);
-}
-
-.mode-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent);
-}
-
 .archive-select-row,
 .max-archives-row,
 .pattern-row {
@@ -316,9 +283,6 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .field-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
   white-space: nowrap;
   min-width: 90px;
 }
@@ -329,7 +293,7 @@ function handleKeydown(event: KeyboardEvent): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.45rem 0.65rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   min-width: 220px;
 }
 
@@ -350,29 +314,23 @@ function handleKeydown(event: KeyboardEvent): void {
   padding: 0 1.25rem 1.25rem;
 }
 
-.state-msg {
-  padding: 1rem 0;
-  font-size: 0.875rem;
-  color: var(--text-muted);
-}
-
 .state-error {
   color: var(--danger);
 }
 
 .cell-mono {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .cell-muted {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .results-summary {
   margin-top: 0.75rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 </style>

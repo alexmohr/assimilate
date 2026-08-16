@@ -11,6 +11,14 @@ import { formatDuration } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { Repo } from '../types/repo'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+
+const rangeOptions: SegmentedOption<number>[] = [
+  { value: 7, label: '7d' },
+  { value: 14, label: '14d' },
+  { value: 30, label: '30d' },
+  { value: 90, label: '90d' },
+]
 
 interface ActivityEntry {
   id: number
@@ -85,7 +93,7 @@ function navigateToActivity(status?: string): void {
       <div class="controls">
         <select
           v-model="selectedRepoId"
-          class="stats-select"
+          class="input stats-select"
         >
           <option :value="undefined">All Repos</option>
           <option
@@ -96,43 +104,18 @@ function navigateToActivity(status?: string): void {
             {{ repo.name }}
           </option>
         </select>
-        <div class="view-toggle">
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 7 }"
-            @click="selectedDays = 7"
-          >
-            7d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 14 }"
-            @click="selectedDays = 14"
-          >
-            14d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 30 }"
-            @click="selectedDays = 30"
-          >
-            30d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 90 }"
-            @click="selectedDays = 90"
-          >
-            90d
-          </button>
-        </div>
+        <BaseSegmented
+          v-model="selectedDays"
+          :options="rangeOptions"
+          label="Backup statistics range"
+        />
       </div>
     </div>
     <div
       v-if="loading"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
-      Loading…
+      Loading...
     </div>
     <div
       v-else
@@ -184,29 +167,6 @@ function navigateToActivity(status?: string): void {
 </template>
 
 <style scoped>
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-
-.panel-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
 .controls {
   display: flex;
   align-items: center;
@@ -215,52 +175,11 @@ function navigateToActivity(status?: string): void {
 
 .stats-select {
   padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text-primary);
-}
-
-.view-toggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.toggle-btn {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
-}
-
-.toggle-btn:not(:last-child) {
-  border-right: 1px solid var(--border);
-}
-
-.toggle-btn:hover {
-  background: var(--bg-hover);
-}
-
-.toggle-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent, #fff);
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  padding: 0.5rem 0;
 }
 
 .stats-grid {
@@ -282,8 +201,8 @@ function navigateToActivity(status?: string): void {
 .mini-stat-link {
   cursor: pointer;
   transition:
-    background 0.15s,
-    border-color 0.15s;
+    background var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .mini-stat-link:hover {
@@ -291,17 +210,17 @@ function navigateToActivity(status?: string): void {
 }
 
 .mini-stat-value {
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .mini-stat-value-sm {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 .mini-stat-label {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);

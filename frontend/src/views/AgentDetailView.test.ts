@@ -4,8 +4,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { ref, nextTick, type ComponentPublicInstance } from 'vue'
-import { renderWithPlugins } from '../test-utils'
+import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import AgentDetailView from './AgentDetailView.vue'
+import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -19,11 +20,17 @@ vi.mock('../api/client', () => ({
 // Captured WebSocket message handlers - populated during component setup().
 const wsHandlers: Record<string, (payload: unknown) => void> = {}
 
+// `status` is a real ref: the view watches it to refetch on reconnect, and
+// leaving it undefined made Vue warn about an invalid watch source on every
+// mount in this file.
+const wsStatus = ref<'connected' | 'disconnected'>('connected')
+
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: () => ({
     onMessage: (type: string, cb: (p: unknown) => void) => {
       wsHandlers[type] = cb
     },
+    status: wsStatus,
   }),
 }))
 
@@ -529,7 +536,30 @@ describe('AgentDetailView — schedules tab', () => {
     await flushPromises()
     await openSchedulesTab(wrapper)
 
-    expect(wrapper.text()).toContain('No schedules for this agent.')
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.find('.empty-title').text()).toBe('No schedules yet')
+  })
+
+  it('opens the schedule when its card is selected', async () => {
+    const wrapper = await mountSchedulesTab([
+      {
+        id: 42,
+        repo_id: 10,
+        name: 'Nightly Backup',
+        target_hostnames: ['test-host'],
+        schedule_type: 'backup',
+        cron_expression: '0 2 * * *',
+        enabled: true,
+        next_run_at: null,
+      },
+    ])
+
+    await wrapper.find('.schedule-card').trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe('/schedules/42')
   })
 
   it('shows a Disabled pill and tints the card for a disabled schedule', async () => {
@@ -841,5 +871,209 @@ describe('AgentDetailView — deploy/upgrade button permission gate', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('Upgrade')
+  })
+})
+
+describe('AgentDetailView - identity, token and merge', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function render(
+    agentOverrides: Record<string, unknown> = {},
+  ): Promise<VueWrapper<ComponentPublicInstance>> {
+    const agent = { ...mockAgent, ...agentOverrides }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  async function clickButton(
+    wrapper: VueWrapper<ComponentPublicInstance>,
+    label: string,
+  ): Promise<void> {
+    const match = wrapper.findAll('button').find((b) => b.text().trim() === label)
+    if (!match) throw new Error(`no button labelled "${label}"`)
+    await match.trigger('click')
+    await flushPromises()
+  }
+
+  /**
+   * Scoped to the open dialog: the page behind it has its own Add Pattern
+   * button in the alias panel, which an unscoped search finds first.
+   */
+  async function clickDialogButton(
+    wrapper: VueWrapper<ComponentPublicInstance>,
+    label: string,
+  ): Promise<void> {
+    const match = wrapper.findAll('.modal-footer button').find((b) => b.text().trim() === label)
+    if (!match) throw new Error(`no dialog button labelled "${label}"`)
+    await match.trigger('click')
+    await flushPromises()
+  }
+
+  // The token is shown once and never again, so it has to reach the dialog
+  // and be gone from the page as soon as the dialog is closed.
+  it('reveals a regenerated token once and clears it on Done', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { agent: { ...mockAgent }, token: 'tok_regenerated' },
+    } as never)
+
+    await clickButton(wrapper, 'Regenerate Token')
+
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/regenerate-token')
+    expect(wrapper.find('.token-text').text()).toBe('tok_regenerated')
+
+    await clickButton(wrapper, 'Copy')
+    await clickDialogButton(wrapper, 'Done')
+
+    expect(wrapper.find('.token-text').exists()).toBe(false)
+  })
+
+  it('opens the dialog with the error when regenerating fails', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('agent offline'))
+
+    await clickButton(wrapper, 'Regenerate Token')
+
+    expect(wrapper.find('.token-text').exists()).toBe(false)
+    expect(openModals(wrapper)).toHaveLength(1)
+    // extractError is stubbed to a fixed string in this file's mocks.
+    expect(wrapper.text()).toContain('Unknown error')
+  })
+
+  it('clears the token when the dialog is dismissed rather than closed', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { agent: { ...mockAgent }, token: 'tok_regenerated' },
+    } as never)
+    await clickButton(wrapper, 'Regenerate Token')
+
+    await dismissModal(wrapper)
+
+    expect(wrapper.find('.token-text').exists()).toBe(false)
+  })
+
+  // Renaming a host breaks every archive borg already wrote under the old
+  // name, so the old name is offered as an alias rather than assumed.
+  it('offers the old hostname as an alias after a rename and saves it', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.put).mockResolvedValue({
+      data: { ...mockAgent, hostname: 'renamed-host' },
+    } as never)
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} } as never)
+
+    await clickButton(wrapper, 'Edit')
+    await wrapper.find('input[placeholder="hostname"]').setValue('renamed-host')
+    await clickButton(wrapper, 'Save')
+
+    expect(wrapper.text()).toContain('Hostname changed from')
+    expect(wrapper.text()).toContain('renamed-host')
+
+    await clickDialogButton(wrapper, 'Add Pattern')
+
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/renamed-host/hostname-patterns', {
+      pattern: 'test-host',
+    })
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('writes no alias when the offer is declined', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.put).mockResolvedValue({
+      data: { ...mockAgent, hostname: 'renamed-host' },
+    } as never)
+
+    await clickButton(wrapper, 'Edit')
+    await wrapper.find('input[placeholder="hostname"]').setValue('renamed-host')
+    await clickButton(wrapper, 'Save')
+    await clickDialogButton(wrapper, 'No')
+
+    expect(apiClient.post).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('does not offer an alias when only the display name changed', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.put).mockResolvedValue({ data: { ...mockAgent } } as never)
+
+    await clickButton(wrapper, 'Edit')
+    await wrapper.find('input[placeholder="Optional friendly name"]').setValue('Test Box')
+    await clickButton(wrapper, 'Save')
+
+    expect(wrapper.text()).not.toContain('Hostname changed from')
+  })
+
+  it('closes the merge dialog for an imported agent on cancel', async () => {
+    const wrapper = await render({ is_imported: true })
+
+    await clickButton(wrapper, 'Merge into...')
+    const dialog = wrapper.findComponent(MergeAgentDialog)
+    expect(dialog.exists()).toBe(true)
+
+    dialog.vm.$emit('cancel')
+    await flushPromises()
+
+    expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(false)
+  })
+})
+
+describe('AgentDetailView - tab bar and list controls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // The tabs are also reachable by ?tab=, which is how the rest of this file
+  // drives them - so clicking one is the only thing that exercises the tab
+  // bar's own binding.
+  it('switches tabs by clicking the tab bar', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const backupsTab = wrapper.findAll('button.tab').find((t) => t.text().includes('Backups'))
+    expect(backupsTab).toBeDefined()
+    await backupsTab!.trigger('click')
+    await flushPromises()
+
+    expect(backupsTab!.classes()).toContain('active')
+    expect(wrapper.findAll('button').some((b) => b.text().trim() === 'Warning')).toBe(true)
+  })
+
+  // Newest first is the default; the toggle is what an operator uses to walk
+  // a failure back to when it started.
+  it('reverses the backup list order from the sort toggle', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openBackupsTab(wrapper)
+
+    const reports = (): string[] =>
+      wrapper.findAll('.result-card').map((r) => r.attributes('id') ?? '')
+    const before = reports()
+    expect(before.length).toBeGreaterThan(1)
+
+    const sortBtn = wrapper.findAll('button').find((b) => /Newest|Oldest/.test(b.text()))
+    expect(sortBtn).toBeDefined()
+    await sortBtn!.trigger('click')
+    await flushPromises()
+
+    expect(reports()).toEqual([...before].reverse())
   })
 })

@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useTheme } from '../composables/useTheme'
@@ -13,7 +13,7 @@ import { useApiTokens } from '../composables/useApiTokens'
 import { formatDate } from '../utils/format'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
-import { Trash2 } from '@lucide/vue'
+import { Trash2, Monitor, Sun, Moon } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type {
@@ -22,11 +22,21 @@ import type {
   TotpSetupResponse,
   TotpVerifyResponse,
 } from '../types/generated'
+import BaseModal from '../components/BaseModal.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 
 const authStore = useAuthStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
+const tabs: TabOption<TabId>[] = [
+  { id: 'password', label: 'Change Password' },
+  { id: 'tokens', label: 'API Tokens' },
+  { id: 'totp', label: 'Two-Factor Auth' },
+  { id: 'sessions', label: 'Sessions' },
+  { id: 'appearance', label: 'Appearance' },
+]
+
 const activeTab = ref<TabId>('password')
 
 const newPassword = ref('')
@@ -204,10 +214,9 @@ function cancelRevokeSession(): void {
   revokeError.value = ''
 }
 
-function handleSessionsTab(): void {
-  activeTab.value = 'sessions'
-  fetchSessions()
-}
+watch(activeTab, (tab: TabId) => {
+  if (tab === 'sessions') fetchSessions()
+})
 
 onMounted(async () => {
   fetchTokens()
@@ -226,43 +235,11 @@ onMounted(async () => {
       {{ authStore.user?.username }}
     </p>
 
-    <div class="tabs">
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'password' }"
-        @click="activeTab = 'password'"
-      >
-        Change Password
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'tokens' }"
-        @click="activeTab = 'tokens'"
-      >
-        API Tokens
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'totp' }"
-        @click="activeTab = 'totp'"
-      >
-        Two-Factor Auth
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'sessions' }"
-        @click="handleSessionsTab"
-      >
-        Sessions
-      </button>
-      <button
-        class="tab"
-        :class="{ active: activeTab === 'appearance' }"
-        @click="activeTab = 'appearance'"
-      >
-        Appearance
-      </button>
-    </div>
+    <BaseTabs
+      v-model="activeTab"
+      :tabs="tabs"
+      label="Profile sections"
+    />
 
     <!-- Password Tab -->
     <div
@@ -273,9 +250,9 @@ onMounted(async () => {
         class="password-form"
         @submit.prevent="handlePasswordSubmit"
       >
-        <div class="form-group">
+        <div class="field">
           <label
-            class="form-label"
+            class="field-label"
             for="profile-new-pw"
             >New Password</label
           >
@@ -283,16 +260,16 @@ onMounted(async () => {
             id="profile-new-pw"
             v-model="newPassword"
             type="password"
-            class="form-input"
+            class="input"
             autocomplete="new-password"
             placeholder="Minimum 8 characters"
             :disabled="passwordSubmitting"
           />
         </div>
 
-        <div class="form-group">
+        <div class="field">
           <label
-            class="form-label"
+            class="field-label"
             for="profile-confirm-pw"
             >Confirm Password</label
           >
@@ -300,7 +277,7 @@ onMounted(async () => {
             id="profile-confirm-pw"
             v-model="confirmPassword"
             type="password"
-            class="form-input"
+            class="input"
             autocomplete="new-password"
             :disabled="passwordSubmitting"
           />
@@ -308,13 +285,13 @@ onMounted(async () => {
 
         <div
           v-if="passwordError"
-          class="msg msg-error"
+          class="form-error"
         >
           {{ passwordError }}
         </div>
         <div
           v-if="passwordSuccess"
-          class="msg msg-success"
+          class="form-success"
         >
           {{ passwordSuccess }}
         </div>
@@ -412,21 +389,21 @@ onMounted(async () => {
             <code class="totp-secret">{{ totpSetupData.secret }}</code>
           </p>
 
-          <div class="form-group">
-            <label class="form-label">Verify the code from your authenticator app</label>
+          <div class="field">
+            <label class="field-label">Verify the code from your authenticator app</label>
             <input
               v-model="totpVerifyCode"
               type="text"
               inputmode="numeric"
               maxlength="6"
               placeholder="000000"
-              class="form-input"
+              class="input"
               :disabled="totpVerifying"
             />
           </div>
           <div
             v-if="totpVerifyError"
-            class="msg msg-error"
+            class="form-error"
           >
             {{ totpVerifyError }}
           </div>
@@ -455,20 +432,20 @@ onMounted(async () => {
         >
           <div class="totp-status-badge totp-enabled">Two-factor authentication is enabled</div>
 
-          <div class="form-group">
-            <label class="form-label">Enter your password to disable 2FA</label>
+          <div class="field">
+            <label class="field-label">Enter your password to disable 2FA</label>
             <input
               v-model="totpDisablePassword"
               type="password"
               autocomplete="current-password"
-              class="form-input"
+              class="input"
               placeholder="Current password"
               :disabled="totpDisabling"
             />
           </div>
           <div
             v-if="totpDisableError"
-            class="msg msg-error"
+            class="form-error"
           >
             {{ totpDisableError }}
           </div>
@@ -501,7 +478,7 @@ onMounted(async () => {
           </button>
           <div
             v-if="totpError"
-            class="msg msg-error"
+            class="form-error"
           >
             {{ totpError }}
           </div>
@@ -525,14 +502,14 @@ onMounted(async () => {
 
       <div
         v-else-if="sessionsError"
-        class="msg msg-error"
+        class="form-error"
       >
         {{ sessionsError }}
       </div>
 
       <table
         v-else-if="sessions.length"
-        class="sessions-table"
+        class="data-table"
       >
         <thead>
           <tr>
@@ -564,12 +541,12 @@ onMounted(async () => {
             <td>
               <span
                 v-if="session.current"
-                class="badge badge-current"
+                class="badge badge--success"
                 >Current</span
               >
               <span
                 v-else
-                class="badge badge-other"
+                class="badge badge--neutral"
                 >Active</span
               >
             </td>
@@ -611,7 +588,10 @@ onMounted(async () => {
             :class="{ active: theme === 'auto' }"
             @click="setTheme('auto')"
           >
-            <span class="theme-icon">&#9881;</span>
+            <Monitor
+              class="theme-icon"
+              :size="16"
+            />
             Auto
           </button>
           <button
@@ -619,7 +599,10 @@ onMounted(async () => {
             :class="{ active: theme === 'light' }"
             @click="setTheme('light')"
           >
-            <span class="theme-icon">&#9788;</span>
+            <Sun
+              class="theme-icon"
+              :size="16"
+            />
             Light
           </button>
           <button
@@ -627,7 +610,10 @@ onMounted(async () => {
             :class="{ active: theme === 'dark' }"
             @click="setTheme('dark')"
           >
-            <span class="theme-icon">&#9789;</span>
+            <Moon
+              class="theme-icon"
+              :size="16"
+            />
             Dark
           </button>
         </div>
@@ -635,168 +621,124 @@ onMounted(async () => {
     </div>
 
     <!-- Create Token Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showCreateModal"
-        class="overlay"
-        @click.self="closeCreateModal"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ newTokenPlaintext ? 'Token Created' : 'Create API Token' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="closeCreateModal"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <template v-if="!newTokenPlaintext">
-              <div class="form-group">
-                <label class="form-label">Token Name</label>
-                <input
-                  v-model="createName"
-                  class="form-input"
-                  placeholder="e.g. CI pipeline"
-                  :disabled="createSubmitting"
-                  @keydown.enter.prevent="submitCreateToken"
-                />
-              </div>
-              <div
-                v-if="createError"
-                class="msg msg-error"
-              >
-                {{ createError }}
-              </div>
-            </template>
-            <template v-else>
-              <p class="token-warning">Copy this token now. It will not be shown again.</p>
-              <div class="token-display">
-                <code class="token-value">{{ newTokenPlaintext }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="copyToClipboard(newTokenPlaintext)"
-                >
-                  {{ tokenCopied ? 'Copied' : 'Copy' }}
-                </button>
-              </div>
-            </template>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="closeCreateModal"
-            >
-              {{ newTokenPlaintext ? 'Done' : 'Cancel' }}
-            </button>
-            <button
-              v-if="!newTokenPlaintext"
-              class="btn btn-primary"
-              :disabled="createSubmitting || !createName.trim()"
-              @click="submitCreateToken"
-            >
-              {{ createSubmitting ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+    <BaseModal
+      :open="showCreateModal"
+      :title="newTokenPlaintext ? 'Token Created' : 'Create API Token'"
+      @close="closeCreateModal"
+    >
+      <template v-if="!newTokenPlaintext">
+        <div class="field">
+          <label class="field-label">Token Name</label>
+          <input
+            v-model="createName"
+            class="input"
+            placeholder="e.g. CI pipeline"
+            :disabled="createSubmitting"
+            @keydown.enter.prevent="submitCreateToken"
+          />
         </div>
-      </div>
-    </Teleport>
+        <div
+          v-if="createError"
+          class="form-error"
+        >
+          {{ createError }}
+        </div>
+      </template>
+      <template v-else>
+        <p class="token-warning">Copy this token now. It will not be shown again.</p>
+        <div class="token-display">
+          <code class="token-value">{{ newTokenPlaintext }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(newTokenPlaintext)"
+          >
+            {{ tokenCopied ? 'Copied' : 'Copy' }}
+          </button>
+        </div>
+      </template>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="closeCreateModal"
+        >
+          {{ newTokenPlaintext ? 'Done' : 'Cancel' }}
+        </button>
+        <button
+          v-if="!newTokenPlaintext"
+          class="btn btn-primary"
+          :disabled="createSubmitting || !createName.trim()"
+          @click="submitCreateToken"
+        >
+          {{ createSubmitting ? 'Creating...' : 'Create' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Delete Token Modal -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showDeleteModal"
+      title="Delete Token"
+      @close="showDeleteModal = false"
+    >
+      <p>
+        Delete token <strong>{{ deleteTarget?.name }}</strong
+        >? Any integrations using this token will stop working.
+      </p>
       <div
-        v-if="showDeleteModal"
-        class="overlay"
-        @click.self="showDeleteModal = false"
+        v-if="deleteError"
+        class="form-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Token</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteModal = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Delete token <strong>{{ deleteTarget?.name }}</strong
-              >? Any integrations using this token will stop working.
-            </p>
-            <div
-              v-if="deleteError"
-              class="msg msg-error"
-            >
-              {{ deleteError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteSubmitting"
-              @click="confirmDeleteToken"
-            >
-              {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-            </button>
-          </div>
-        </div>
+        {{ deleteError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteModal = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteSubmitting"
+          @click="confirmDeleteToken"
+        >
+          {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Revoke Session Modal -->
-    <Teleport to="body">
+    <BaseModal
+      :open="revokeSessionId !== null"
+      title="Revoke Session"
+      @close="cancelRevokeSession"
+    >
+      <p>Revoke this session? The device will be signed out immediately.</p>
       <div
-        v-if="revokeSessionId"
-        class="overlay"
-        @click.self="cancelRevokeSession"
+        v-if="revokeError"
+        class="form-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Revoke Session</h2>
-            <button
-              class="close-btn"
-              @click="cancelRevokeSession"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>Revoke this session? The device will be signed out immediately.</p>
-            <div
-              v-if="revokeError"
-              class="msg msg-error"
-            >
-              {{ revokeError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="cancelRevokeSession"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="revokeSubmitting"
-              @click="doRevokeSession"
-            >
-              {{ revokeSubmitting ? 'Revoking...' : 'Revoke' }}
-            </button>
-          </div>
-        </div>
+        {{ revokeError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="cancelRevokeSession"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="revokeSubmitting"
+          @click="doRevokeSession"
+        >
+          {{ revokeSubmitting ? 'Revoking...' : 'Revoke' }}
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -807,39 +749,8 @@ onMounted(async () => {
 
 .page-subtitle {
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   margin-bottom: 1.5rem;
-}
-
-.tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.tab {
-  padding: 0.6rem 1.25rem;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    border-color 0.15s;
-}
-
-.tab:hover {
-  color: var(--text-primary);
-}
-
-.tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 
 .tab-content {
@@ -859,61 +770,6 @@ onMounted(async () => {
   max-width: 380px;
 }
 
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-label {
-  display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 0.35rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.form-input {
-  width: 100%;
-  padding: 0.55rem 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-  box-sizing: border-box;
-  transition: border-color 0.15s;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.form-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.msg {
-  padding: 0.6rem 0.875rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem;
-  margin-bottom: 1rem;
-}
-
-.msg-error {
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  color: var(--danger);
-}
-
-.msg-success {
-  background: var(--success-subtle);
-  border: 1px solid var(--success);
-  color: var(--success);
-}
-
 .tokens-header {
   display: flex;
   align-items: center;
@@ -923,7 +779,7 @@ onMounted(async () => {
 
 .tokens-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin: 0;
 }
 
@@ -937,12 +793,12 @@ onMounted(async () => {
   color: var(--text-muted);
   padding: 2rem;
   text-align: center;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .token-warning {
   color: var(--warning);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   margin-bottom: 0.75rem;
 }
@@ -959,7 +815,7 @@ onMounted(async () => {
 
 .token-value {
   flex: 1;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   word-break: break-all;
   color: var(--text-primary);
@@ -984,11 +840,11 @@ onMounted(async () => {
 
 .setting-label {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .setting-desc {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -1006,12 +862,12 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    color 0.15s,
-    background 0.15s;
+    border-color var(--duration-base),
+    color var(--duration-base),
+    background var(--duration-base);
 }
 
 .theme-option:hover {
@@ -1026,7 +882,7 @@ onMounted(async () => {
 }
 
 .theme-icon {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 /* TOTP Styles */
@@ -1040,7 +896,7 @@ onMounted(async () => {
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .totp-enabled {
@@ -1057,7 +913,7 @@ onMounted(async () => {
 
 .totp-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin: 0;
 }
 
@@ -1068,14 +924,14 @@ onMounted(async () => {
 }
 
 .section-title {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
   font-weight: 600;
   margin: 0;
 }
 
 .totp-setup-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin: 0;
 }
 
@@ -1095,14 +951,14 @@ onMounted(async () => {
 }
 
 .totp-secret-text {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   text-align: center;
 }
 
 .totp-secret {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   word-break: break-all;
 }
 
@@ -1119,7 +975,7 @@ onMounted(async () => {
 
 .recovery-codes-warning {
   color: var(--warning);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   margin: 0;
 }
@@ -1136,7 +992,7 @@ onMounted(async () => {
 
 .recovery-code {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   padding: 0.25rem 0.5rem;
   background: var(--bg-card);
@@ -1146,66 +1002,20 @@ onMounted(async () => {
 /* Sessions Styles */
 .sessions-desc {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   margin-bottom: 1rem;
 }
 
-.sessions-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.sessions-table th {
-  text-align: left;
-  padding: 0.7rem 1rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-}
-
-.sessions-table td {
-  padding: 0.65rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.sessions-table tr:last-child td {
+.data-table tr:last-child td {
   border-bottom: none;
 }
 
-.sessions-table tr:hover td {
+.data-table tr:hover td {
   background: var(--bg-hover);
 }
 
 .cell-type {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.badge-current {
-  background: var(--accent-subtle, rgba(59, 130, 246, 0.1));
-  color: var(--accent);
-}
-
-.badge-other {
-  background: var(--bg-card);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
 }
 </style>

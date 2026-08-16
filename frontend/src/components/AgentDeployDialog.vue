@@ -8,6 +8,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
+import BaseModal from './BaseModal.vue'
 
 const props = defineProps<{
   hostname: string
@@ -147,205 +148,195 @@ async function submitDeploy(): Promise<void> {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      class="overlay"
-      @click.self="emit('close')"
-    >
-      <div class="dialog">
-        <div class="dialog-header">
-          <h2 class="dialog-title">
-            {{ dialogTitle() }} Agent &mdash;
-            {{ hostname }}
-          </h2>
+  <BaseModal
+    :open="true"
+    @close="emit('close')"
+  >
+    <template #header="{ titleId }">
+      <h2
+        :id="titleId"
+        class="modal-title"
+      >
+        {{ dialogTitle() }} Agent &mdash; {{ hostname }}
+      </h2>
+    </template>
+    <template v-if="!deployResult?.success">
+      <p class="deploy-info">
+        Upload and install the agent binary on the target machine via SSH. Sudo is used
+        automatically if available; if you provide an SSH password it is also used for sudo.
+      </p>
+      <p class="deploy-note">
+        This will also install and enable the <code>assimilate-agent</code> systemd service on the
+        target machine. You can customize the service unit below.
+      </p>
+      <div class="field">
+        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <input
+          v-model="deployForm.ssh_host"
+          class="input mono"
+          placeholder="e.g. 192.168.1.10"
+        />
+      </div>
+      <div class="deploy-row-fields">
+        <div class="field">
+          <label class="field-label">SSH User</label>
+          <input
+            v-model="deployForm.ssh_user"
+            class="input mono"
+            placeholder="root"
+          />
+        </div>
+        <div class="field field-narrow">
+          <label class="field-label">SSH Port</label>
+          <input
+            v-model.number="deployForm.ssh_port"
+            class="input"
+            type="number"
+            min="1"
+            max="65535"
+          />
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label">SSH Password</label>
+        <input
+          v-model="deployForm.ssh_password"
+          class="input mono"
+          type="password"
+          placeholder="Leave empty to use SSH key"
+        />
+        <span class="field-hint"
+          >Optional — authenticate with password instead of the server's SSH key</span
+        >
+      </div>
+      <div class="field">
+        <label class="field-label">Server URL <span class="required">*</span></label>
+        <input
+          v-model="deployForm.server_url"
+          class="input mono"
+          placeholder="http://your-server:8080"
+        />
+        <span class="field-hint">The URL the agent will connect to</span>
+        <span class="field-hint">
+          Hosts with an enabled SSH tunnel automatically use that tunnel instead.
+        </span>
+      </div>
+      <div class="field">
+        <label class="field-label">Install Path</label>
+        <input
+          v-model="deployForm.install_path"
+          class="input mono"
+          placeholder="/usr/local/bin/assimilate-agent"
+        />
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
+          <label class="field-label">Systemd Service Unit</label>
           <button
-            class="close-btn"
-            @click="emit('close')"
+            class="btn btn-sm btn-ghost"
+            type="button"
+            :disabled="fetchServiceLoading || !deployForm.ssh_host"
+            @click="loadExistingServiceUnit()"
           >
-            &times;
+            {{ fetchServiceLoading ? 'Loading...' : 'Load from remote' }}
           </button>
         </div>
+        <textarea
+          v-model="deployForm.systemd_service_content"
+          class="input mono service-textarea"
+          rows="12"
+          spellcheck="false"
+          @input="serviceContentTouched = true"
+        />
+        <span class="field-hint">
+          The <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code> environment variables
+          will be injected automatically if not present in custom content. When loaded from a remote
+          host, an existing token is shown as <code>[REDACTED]</code> and replaced with a newly
+          generated one on deploy.
+        </span>
+        <span
+          v-if="fetchServiceError"
+          class="field-hint field-hint-error"
+        >
+          {{ fetchServiceError }}
+        </span>
+      </div>
+      <div
+        v-if="deployError"
+        class="form-error"
+      >
+        {{ deployError }}
+      </div>
+      <div
+        v-if="deployResult && !deployResult.success"
+        class="form-error"
+      >
+        {{ deployResult.error }}
+      </div>
+    </template>
 
-        <template v-if="!deployResult?.success">
-          <div class="dialog-body">
-            <p class="deploy-info">
-              Upload and install the agent binary on the target machine via SSH. Sudo is used
-              automatically if available; if you provide an SSH password it is also used for sudo.
-            </p>
-            <p class="deploy-note">
-              This will also install and enable the <code>assimilate-agent</code> systemd service on
-              the target machine. You can customize the service unit below.
-            </p>
-            <div class="field">
-              <label class="field-label">SSH Host <span class="required">*</span></label>
-              <input
-                v-model="deployForm.ssh_host"
-                class="input mono"
-                placeholder="e.g. 192.168.1.10"
-              />
-            </div>
-            <div class="deploy-row-fields">
-              <div class="field">
-                <label class="field-label">SSH User</label>
-                <input
-                  v-model="deployForm.ssh_user"
-                  class="input mono"
-                  placeholder="root"
-                />
-              </div>
-              <div class="field field-narrow">
-                <label class="field-label">SSH Port</label>
-                <input
-                  v-model.number="deployForm.ssh_port"
-                  class="input"
-                  type="number"
-                  min="1"
-                  max="65535"
-                />
-              </div>
-            </div>
-            <div class="field">
-              <label class="field-label">SSH Password</label>
-              <input
-                v-model="deployForm.ssh_password"
-                class="input mono"
-                type="password"
-                placeholder="Leave empty to use SSH key"
-              />
-              <span class="field-hint"
-                >Optional — authenticate with password instead of the server's SSH key</span
-              >
-            </div>
-            <div class="field">
-              <label class="field-label">Server URL <span class="required">*</span></label>
-              <input
-                v-model="deployForm.server_url"
-                class="input mono"
-                placeholder="http://your-server:8080"
-              />
-              <span class="field-hint">The URL the agent will connect to</span>
-              <span class="field-hint">
-                Hosts with an enabled SSH tunnel automatically use that tunnel instead.
-              </span>
-            </div>
-            <div class="field">
-              <label class="field-label">Install Path</label>
-              <input
-                v-model="deployForm.install_path"
-                class="input mono"
-                placeholder="/usr/local/bin/assimilate-agent"
-              />
-            </div>
-
-            <div class="field">
-              <div class="field-label-row">
-                <label class="field-label">Systemd Service Unit</label>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  type="button"
-                  :disabled="fetchServiceLoading || !deployForm.ssh_host"
-                  @click="loadExistingServiceUnit()"
-                >
-                  {{ fetchServiceLoading ? 'Loading…' : 'Load from remote' }}
-                </button>
-              </div>
-              <textarea
-                v-model="deployForm.systemd_service_content"
-                class="input mono service-textarea"
-                rows="12"
-                spellcheck="false"
-                @input="serviceContentTouched = true"
-              />
-              <span class="field-hint">
-                The <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code> environment
-                variables will be injected automatically if not present in custom content. When
-                loaded from a remote host, an existing token is shown as <code>[REDACTED]</code> and
-                replaced with a newly generated one on deploy.
-              </span>
-              <span
-                v-if="fetchServiceError"
-                class="field-hint field-hint-error"
-              >
-                {{ fetchServiceError }}
-              </span>
-            </div>
-            <div
-              v-if="deployError"
-              class="form-error"
-            >
-              {{ deployError }}
-            </div>
-            <div
-              v-if="deployResult && !deployResult.success"
-              class="form-error"
-            >
-              {{ deployResult.error }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="emit('close')"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-primary"
-              :disabled="deployLoading || !deployForm.ssh_host || !deployForm.server_url"
-              @click="submitDeploy"
-            >
-              {{ submitLabel() }}
-            </button>
-          </div>
+    <template v-else>
+      <div class="token-notice">
+        <template v-if="deployResult.skipped">
+          <p class="deploy-skipped-msg">
+            Agent is already at the latest version ({{ deployResult.available_version }}).
+            Deployment skipped.
+          </p>
         </template>
-
         <template v-else>
-          <div class="dialog-body">
-            <div class="token-notice">
-              <template v-if="deployResult.skipped">
-                <p class="deploy-skipped-msg">
-                  Agent is already at the latest version ({{ deployResult.available_version }}).
-                  Deployment skipped.
-                </p>
-              </template>
-              <template v-else>
-                <p class="deploy-success-msg">Agent deployed and service started successfully.</p>
-                <p
-                  v-if="deployResult.available_version"
-                  class="deploy-version-info"
-                >
-                  Deployed version: {{ deployResult.available_version }}
-                </p>
-                <p class="token-warning">A new agent token was generated for this deployment:</p>
-                <div class="token-box">
-                  <code class="token-text">{{ deployResult.token }}</code>
-                </div>
-              </template>
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="emit('close')"
-            >
-              Done
-            </button>
+          <p class="deploy-success-msg">Agent deployed and service started successfully.</p>
+          <p
+            v-if="deployResult.available_version"
+            class="deploy-version-info"
+          >
+            Deployed version: {{ deployResult.available_version }}
+          </p>
+          <p class="token-warning">A new agent token was generated for this deployment:</p>
+          <div class="token-box">
+            <code class="token-text">{{ deployResult.token }}</code>
           </div>
         </template>
       </div>
-    </div>
-  </Teleport>
+    </template>
+
+    <template #footer>
+      <template v-if="!deployResult?.success">
+        <button
+          class="btn btn-ghost"
+          @click="emit('close')"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          :disabled="deployLoading || !deployForm.ssh_host || !deployForm.server_url"
+          @click="submitDeploy"
+        >
+          {{ submitLabel() }}
+        </button>
+      </template>
+      <template v-else>
+        <button
+          class="btn btn-primary"
+          @click="emit('close')"
+        >
+          Done
+        </button>
+      </template>
+    </template>
+  </BaseModal>
 </template>
 
 <style scoped>
 .deploy-info {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   margin-bottom: 0.5rem;
 }
 
 .deploy-note {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -355,10 +346,10 @@ async function submitDeploy(): Promise<void> {
 }
 
 .deploy-note code {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   background: var(--bg-card);
   padding: 0.1rem 0.3rem;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .deploy-row-fields {
@@ -376,9 +367,6 @@ async function submitDeploy(): Promise<void> {
 }
 
 .field-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin-bottom: 0.3rem;
 }
 
@@ -391,7 +379,7 @@ async function submitDeploy(): Promise<void> {
 }
 
 .service-textarea {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   resize: vertical;
   min-height: 180px;
@@ -411,7 +399,7 @@ async function submitDeploy(): Promise<void> {
 }
 
 .deploy-version-info {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   font-family: var(--mono);
 }
@@ -424,7 +412,7 @@ async function submitDeploy(): Promise<void> {
 
 .token-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
 }
 
@@ -441,7 +429,7 @@ async function submitDeploy(): Promise<void> {
 .token-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--success);
   word-break: break-all;
   background: transparent;

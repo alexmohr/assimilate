@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { X } from '@lucide/vue'
 import {
   FileChangeAction,
   parseFileChangePatterns,
@@ -67,7 +68,7 @@ function removeRow(index: number): void {
       <input
         v-model="row.path"
         type="text"
-        class="fcp-input"
+        class="input fcp-input"
         :placeholder="
           props.placeholder ?? 'Glob against warning text, e.g. */etc/config* or /data/wal/**'
         "
@@ -75,7 +76,7 @@ function removeRow(index: number): void {
       />
       <select
         v-model="row.action"
-        class="fcp-input fcp-select"
+        class="input fcp-input fcp-select"
       >
         <option :value="FileChangeAction.Warn">warn</option>
         <option :value="FileChangeAction.Ignore">ignore</option>
@@ -84,9 +85,10 @@ function removeRow(index: number): void {
       <button
         class="btn btn-sm btn-danger"
         title="Remove"
+        aria-label="Remove pattern"
         @click="removeRow(index)"
       >
-        &times;
+        <X :size="14" />
       </button>
     </div>
     <button
@@ -127,9 +129,9 @@ function removeRow(index: number): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
 }
 

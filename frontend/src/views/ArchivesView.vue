@@ -8,7 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download } from '@lucide/vue'
+import { Folder, File, Download, RefreshCw, Check, AlertTriangle } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
@@ -21,6 +21,7 @@ import FileSearch from '../components/FileSearch.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
 import type { ContentsResponse, ContentEntryResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
+import BaseModal from '../components/BaseModal.vue'
 
 interface ArchiveEntry {
   name: string
@@ -356,7 +357,7 @@ onMounted(loadRepos)
 
     <div
       v-if="reposLoading"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       Loading repositories...
     </div>
@@ -371,7 +372,7 @@ onMounted(loadRepos)
         <label class="selector-label">Repository</label>
         <select
           v-model="selectedRepoId"
-          class="select-input"
+          class="input select-input"
           @change="onRepoChange"
         >
           <option
@@ -408,7 +409,7 @@ onMounted(loadRepos)
         class="main-layout"
       >
         <!-- Archive list -->
-        <div class="panel archives-panel">
+        <div class="panel panel--sectioned archives-panel">
           <div class="panel-header">
             <span class="panel-title">Archives</span>
             <div class="panel-actions">
@@ -429,16 +430,20 @@ onMounted(loadRepos)
               <button
                 class="btn btn-sm btn-ghost"
                 :disabled="archivesLoading"
+                aria-label="Refresh archives"
                 @click="loadArchives"
               >
-                {{ archivesLoading ? '...' : '&#8635;' }}
+                <RefreshCw
+                  :size="14"
+                  :class="{ spinning: archivesLoading }"
+                />
               </button>
             </div>
           </div>
 
           <div
             v-if="archivesLoading"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             <span class="spinner" />
             Loading archives...
@@ -451,7 +456,7 @@ onMounted(loadRepos)
           </div>
           <div
             v-else-if="archives.length === 0"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             No archives found.
           </div>
@@ -476,7 +481,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -495,7 +500,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -514,7 +519,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -550,14 +555,16 @@ onMounted(loadRepos)
                   v-if="data.matched === true"
                   class="match-icon match-ok"
                   title="Matched"
-                  >&#10003;</span
                 >
+                  <Check :size="14" />
+                </span>
                 <span
                   v-else-if="data.matched !== true"
                   class="match-icon match-warn"
                   title="Unmatched"
-                  >&#9888;</span
                 >
+                  <AlertTriangle :size="14" />
+                </span>
               </template>
             </Column>
             <Column
@@ -569,7 +576,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -585,7 +592,7 @@ onMounted(loadRepos)
         <!-- File browser -->
         <div
           v-if="selectedArchive"
-          class="panel browser-panel"
+          class="panel panel--sectioned browser-panel"
         >
           <div class="panel-header">
             <span class="panel-title">Files — {{ selectedArchive.name }}</span>
@@ -609,10 +616,10 @@ onMounted(loadRepos)
           />
           <div
             v-else-if="indexing"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             <BaseSpinner size="sm" />
-            Indexing archive contents — this only happens once…
+            Indexing archive contents — this only happens once...
           </div>
           <div
             v-else-if="contentsError"
@@ -622,7 +629,7 @@ onMounted(loadRepos)
           </div>
           <div
             v-else-if="contents.length === 0"
-            class="state-msg"
+            class="state-msg state-msg--inline"
           >
             Empty directory.
           </div>
@@ -647,7 +654,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter name..."
                   @input="filterCallback()"
@@ -682,7 +689,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter size..."
                   @input="filterCallback()"
@@ -702,7 +709,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter date..."
                   @input="filterCallback()"
@@ -733,7 +740,7 @@ onMounted(loadRepos)
 
         <div
           v-else
-          class="panel browser-panel empty-browser"
+          class="panel panel--sectioned browser-panel empty-browser"
         >
           <span class="muted">Select an archive to browse its contents.</span>
         </div>
@@ -746,55 +753,39 @@ onMounted(loadRepos)
     </template>
 
     <!-- Passphrase Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showPassphraseDialog"
-        class="overlay"
-        @click.self="showPassphraseDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ passphrase ? 'Repository Passphrase' : 'Error' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="showPassphraseDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <template v-if="passphrase">
-              <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
-              <div class="passphrase-box">
-                <code class="passphrase-text">{{ passphrase }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="passphrase && copyToClipboard(passphrase)"
-                >
-                  {{ passphraseCopied ? 'Copied!' : 'Copy' }}
-                </button>
-              </div>
-            </template>
-            <div
-              v-else-if="passphraseError"
-              class="form-error"
-            >
-              {{ passphraseError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showPassphraseDialog = false"
-            >
-              Done
-            </button>
-          </div>
+    <BaseModal
+      :open="showPassphraseDialog"
+      :title="passphrase ? 'Repository Passphrase' : 'Error'"
+      @close="showPassphraseDialog = false"
+    >
+      <template v-if="passphrase">
+        <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
+        <div class="passphrase-box">
+          <code class="passphrase-text">{{ passphrase }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="passphrase && copyToClipboard(passphrase)"
+          >
+            {{ passphraseCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
+      </template>
+      <div
+        v-else-if="passphraseError"
+        class="form-error"
+      >
+        {{ passphraseError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showPassphraseDialog = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
     <!-- Restore Wizard -->
     <RestoreWizard
       :open="showRestoreWizard"
@@ -814,18 +805,21 @@ onMounted(loadRepos)
 </template>
 
 <style scoped>
+/* The refresh control spins while the request is in flight, replacing the
+   old "..." text swap. */
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .archives-view {
   max-width: 1300px;
   color: var(--text-primary);
-}
-
-.state-msg {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1.5rem;
-  color: var(--text-muted);
-  font-size: 0.875rem;
 }
 
 .state-error {
@@ -844,7 +838,7 @@ onMounted(loadRepos)
 }
 
 .selector-label {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -858,9 +852,9 @@ onMounted(loadRepos)
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   min-width: 280px;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .select-input:focus {
@@ -869,7 +863,7 @@ onMounted(loadRepos)
 }
 
 .muted-hint {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -880,38 +874,9 @@ onMounted(loadRepos)
   align-items: start;
 }
 
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-}
-
 .panel-actions {
   display: flex;
   gap: 0.25rem;
-}
-
-.panel-title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
 }
 
 .data-table th {
@@ -919,7 +884,7 @@ onMounted(loadRepos)
   padding: 0.5rem 1rem;
   color: var(--text-muted);
   font-weight: 600;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border);
@@ -937,7 +902,7 @@ onMounted(loadRepos)
 
 .data-table tr.clickable {
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .data-table tr.clickable:hover {
@@ -951,7 +916,7 @@ onMounted(loadRepos)
 
 .td-mono {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -959,18 +924,18 @@ onMounted(loadRepos)
 }
 
 .td-date {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .td-host {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .host-link {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--accent);
   text-decoration: none;
 }
@@ -980,7 +945,7 @@ onMounted(loadRepos)
 }
 
 .unmatched-host-link {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--warning);
   text-decoration: none;
 }
@@ -990,11 +955,11 @@ onMounted(loadRepos)
 }
 
 .match-icon {
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
 }
 
 .match-ok {
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 .match-warn {
@@ -1011,7 +976,7 @@ onMounted(loadRepos)
   gap: 0.5rem;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 
 .name-text {
@@ -1022,7 +987,7 @@ onMounted(loadRepos)
 }
 
 .td-size {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -1033,12 +998,12 @@ onMounted(loadRepos)
 
 .filter-input {
   width: 100%;
-  background: var(--bg-input, var(--bg-card));
+  background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.35rem 0.5rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .filter-input:focus {
@@ -1066,13 +1031,13 @@ onMounted(loadRepos)
   border: none;
   color: var(--accent);
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   padding: 0.15rem 0.3rem;
   border-radius: var(--radius-sm);
   transition:
-    background 0.1s,
-    color 0.1s;
+    background var(--duration-fast),
+    color var(--duration-fast);
 }
 
 .crumb:hover {
@@ -1101,7 +1066,7 @@ onMounted(loadRepos)
   align-items: center;
   justify-content: center;
   min-height: 200px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .spinner {
@@ -1128,7 +1093,7 @@ onMounted(loadRepos)
 
 .passphrase-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   margin-bottom: 0.75rem;
 }
@@ -1146,7 +1111,7 @@ onMounted(loadRepos)
 .passphrase-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   word-break: break-all;
   background: transparent;

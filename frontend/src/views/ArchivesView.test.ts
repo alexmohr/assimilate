@@ -35,6 +35,7 @@ vi.mock('@primevue/core/api', () => ({
 
 import { apiClient } from '../api/client'
 import ArchivesView from './ArchivesView.vue'
+import { dismissModal, openModals } from '../test-utils'
 
 const mockGet = apiClient.get as MockInstance
 
@@ -183,5 +184,91 @@ describe('ArchivesView', () => {
     await flushPromises()
 
     expect(wrapper.find('.state-error').exists()).toBe(true)
+  })
+
+  describe('repository passphrase', () => {
+    /**
+     * The reveal button only exists once a repository is chosen, so the
+     * selector has to be driven first - mounting alone is not enough.
+     */
+    async function mountWithRepo() {
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.find('.repo-selector select').setValue('1')
+      await flushPromises()
+      return wrapper
+    }
+
+    function revealButton(wrapper: ReturnType<typeof mountView>) {
+      const match = wrapper.findAll('button').find((b) => b.text().includes('Show Passphrase'))
+      if (!match) throw new Error('no Show Passphrase button - is a repository selected?')
+      return match
+    }
+
+    beforeEach(() => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/repos') return Promise.resolve({ data: REPOS })
+        if (url.endsWith('/passphrase')) return Promise.resolve({ data: { passphrase: 'hunter2' } })
+        return Promise.resolve({ data: ARCHIVES })
+      })
+    })
+
+    it('fetches the passphrase for the selected repository', async () => {
+      const wrapper = await mountWithRepo()
+
+      await revealButton(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalledWith('/repos/1/passphrase')
+      expect(wrapper.find('.passphrase-text').text()).toBe('hunter2')
+    })
+
+    it('closes the dialog again, so the secret does not stay on screen', async () => {
+      const wrapper = await mountWithRepo()
+
+      await revealButton(wrapper).trigger('click')
+      await flushPromises()
+      await wrapper.find('.passphrase-box button').trigger('click')
+
+      const done = wrapper.findAll('button').find((b) => b.text().trim() === 'Done')
+      await done!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.passphrase-text').exists()).toBe(false)
+    })
+
+    // Escape and the backdrop close the dialog through BaseModal rather than
+    // through Done, and a passphrase left on screen is the failure mode.
+    it('clears the secret when the dialog is dismissed', async () => {
+      const wrapper = await mountWithRepo()
+
+      await revealButton(wrapper).trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.passphrase-text').exists()).toBe(true)
+
+      await dismissModal(wrapper)
+
+      expect(wrapper.find('.passphrase-text').exists()).toBe(false)
+      expect(openModals(wrapper)).toHaveLength(0)
+    })
+
+    // The dialog opens either way: a refusal has to be shown, not swallowed.
+    it('opens with the error when the fetch is refused', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/repos') return Promise.resolve({ data: REPOS })
+        if (url.endsWith('/passphrase')) return Promise.reject(new Error('forbidden'))
+        return Promise.resolve({ data: ARCHIVES })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.find('.repo-selector select').setValue('1')
+      await flushPromises()
+
+      await revealButton(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.form-error').exists()).toBe(true)
+      expect(wrapper.find('.passphrase-text').exists()).toBe(false)
+    })
   })
 })

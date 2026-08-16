@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import ProfileView from './ProfileView.vue'
 import { apiClient } from '../api/client'
@@ -408,10 +408,11 @@ describe('ProfileView', () => {
       await wrapper.vm.$nextTick()
     }
 
-    function findInBody(text: string): HTMLElement | undefined {
-      return Array.from(document.body.querySelectorAll('*')).find(
-        (el) => el.textContent?.trim() === text,
-      ) as HTMLElement | undefined
+    function findInModal(
+      wrapper: ReturnType<typeof renderWithPlugins>,
+      text: string,
+    ): DOMWrapper<Element> | undefined {
+      return wrapper.findAll('.modal-dialog *').find((el) => el.text().trim() === text)
     }
 
     async function openDeleteTokenModal(wrapper: ReturnType<typeof renderWithPlugins>) {
@@ -433,13 +434,13 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const dialogTitle = findInBody('Delete Token')
-      expect(dialogTitle).toBeDefined()
+      expect(wrapper.find('.modal-title').text()).toBe('Delete Token')
 
-      const overlay = document.querySelector('.overlay') as HTMLElement
-      expect(overlay).not.toBeNull()
-      overlay.click()
+      const overlay = wrapper.find('.modal-backdrop')
+      expect(overlay.exists()).toBe(true)
+      await overlay.trigger('mousedown')
       await flushPromises()
+      expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     })
 
     it('closes delete token modal via close button', async () => {
@@ -451,10 +452,11 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const closeBtns = document.body.querySelectorAll('button.close-btn')
-      expect(closeBtns.length).toBeGreaterThanOrEqual(1)
-      closeBtns[0].click()
+      const closeBtn = wrapper.find('button.modal-close')
+      expect(closeBtn.exists()).toBe(true)
+      await closeBtn.trigger('click')
       await flushPromises()
+      expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     })
 
     it('closes delete token modal via Cancel button', async () => {
@@ -466,10 +468,11 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const cancelBtn = findInBody('Cancel')
+      const cancelBtn = findInModal(wrapper, 'Cancel')
       expect(cancelBtn).toBeDefined()
-      cancelBtn!.click()
+      await cancelBtn!.trigger('click')
       await flushPromises()
+      expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     })
 
     it('deletes a token from the modal', async () => {
@@ -482,9 +485,9 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const confirmDeleteBtn = findInBody('Delete')
+      const confirmDeleteBtn = findInModal(wrapper, 'Delete')
       expect(confirmDeleteBtn).toBeDefined()
-      confirmDeleteBtn!.click()
+      await confirmDeleteBtn!.trigger('click')
       await flushPromises()
 
       expect(vi.mocked(apiClient.delete)).toHaveBeenCalledWith('/tokens/1')
@@ -500,12 +503,112 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      const confirmDeleteBtn = findInBody('Delete')
+      const confirmDeleteBtn = findInModal(wrapper, 'Delete')
       expect(confirmDeleteBtn).toBeDefined()
-      confirmDeleteBtn!.click()
+      await confirmDeleteBtn!.trigger('click')
       await flushPromises()
 
-      expect(findInBody('Failed to delete token: network error')).toBeDefined()
+      expect(wrapper.find('.modal-dialog').text()).toContain(
+        'Failed to delete token: network error',
+      )
+    })
+
+    /** Opens the dialog, submits a name, and returns with the reveal shown. */
+    async function createTokenSuccessfully(): Promise<ReturnType<typeof renderWithPlugins>> {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      await findInModal(wrapper, 'Create')!.trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    async function openCreateTokenModal(wrapper: ReturnType<typeof renderWithPlugins>) {
+      await flushPromises()
+      await clickApiTokensTab(wrapper)
+      const createBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'Create Token')
+      expect(createBtn).toBeDefined()
+      await createBtn!.trigger('click')
+      await flushPromises()
+    }
+
+    it('creates a token from the name typed in the dialog', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      const submit = findInModal(wrapper, 'Create')
+      await submit!.trigger('click')
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/tokens', { name: 'ci-token' })
+    })
+
+    // Enter is a real submit path here, not decoration - the dialog is a
+    // single field and typing then pressing Enter is the obvious gesture.
+    it('creates the token on Enter as well as the button', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+
+      const input = wrapper.find('.modal-dialog input')
+      await input.setValue('ci-token')
+      await input.trigger('keydown.enter')
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/tokens', { name: 'ci-token' })
+    })
+
+    // The plaintext is shown once and never again, so the dialog swaps to a
+    // reveal step rather than closing on success.
+    it('reveals the plaintext once, with a copy action', async () => {
+      const wrapper = await createTokenSuccessfully()
+
+      expect(wrapper.find('.token-value').text()).toBe('tok_secret')
+      // Addressed by container: this file's useClipboard mock is always
+      // truthy, so the button reads "Copied" rather than "Copy" here.
+      const copy = wrapper.find('.token-display button')
+      expect(copy.exists()).toBe(true)
+      await copy.trigger('click')
+      await flushPromises()
+    })
+
+    it('clears the revealed token when the dialog is closed', async () => {
+      const wrapper = await createTokenSuccessfully()
+
+      const close = wrapper.findAll('.modal-dialog button').find((b) => /Done|Close/.test(b.text()))
+      await close!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.token-value').exists()).toBe(false)
+    })
+
+    it('reports a create failure without revealing a token', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('name taken'))
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      await findInModal(wrapper, 'Create')!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.token-value').exists()).toBe(false)
+      expect(wrapper.find('.modal-dialog').text()).toContain('Failed to create token')
     })
   })
 })

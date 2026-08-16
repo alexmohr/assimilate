@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import SystemView from './SystemView.vue'
 
 vi.mock('../api/client', () => ({
@@ -480,6 +480,72 @@ describe('SystemView', () => {
       await selectAndImport(wrapper)
       await flushPromises()
       expect(wrapper.text()).toContain('Import failed')
+    })
+  })
+
+  describe('destructive confirmations', () => {
+    async function render() {
+      const wrapper = renderWithPlugins(SystemView)
+      await flushPromises()
+      return wrapper
+    }
+
+    function button(wrapper: ReturnType<typeof renderWithPlugins>, label: string) {
+      const match = wrapper.findAll('button').find((b) => b.text().trim() === label)
+      if (!match) throw new Error(`no button labelled "${label}"`)
+      return match
+    }
+
+    // Both actions are irreversible from the UI's point of view, so the row
+    // button only opens a dialog - it must never fire the request itself.
+    it.each([
+      ['Regenerate', 'Regenerate SSH Key'],
+      ['Reset', 'Reset System State'],
+    ])('opens a confirmation for %s rather than acting immediately', async (trigger, title) => {
+      const wrapper = await render()
+      mockPost.mockClear()
+
+      await button(wrapper, trigger).trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(title)
+      expect(mockPost).not.toHaveBeenCalled()
+    })
+
+    // Backing out has to be a genuine no-op by either route: the Cancel button
+    // and BaseModal's own close event (Escape, backdrop) are wired separately.
+    it.each([
+      ['Regenerate', 'Cancel'],
+      ['Reset', 'Cancel'],
+      ['Regenerate', 'dismissal'],
+      ['Reset', 'dismissal'],
+    ])('does nothing when the %s dialog is closed by %s', async (trigger, how) => {
+      const wrapper = await render()
+      await button(wrapper, trigger).trigger('click')
+      await flushPromises()
+      mockPost.mockClear()
+
+      if (how === 'Cancel') {
+        await button(wrapper, 'Cancel').trigger('click')
+        await flushPromises()
+      } else {
+        await dismissModal(wrapper)
+      }
+
+      expect(mockPost).not.toHaveBeenCalled()
+      expect(openModals(wrapper)).toHaveLength(0)
+    })
+
+    it('spells out what a system reset will do before asking to confirm it', async () => {
+      const wrapper = await render()
+      await button(wrapper, 'Reset').trigger('click')
+      await flushPromises()
+
+      const text = wrapper.text()
+      expect(text).toContain('Cancel all running and pending backup operations')
+      // The reassurance matters as much as the warning: an operator needs to
+      // know this is not going to unschedule their backups.
+      expect(text).toContain('Schedules are left unchanged.')
     })
   })
 })

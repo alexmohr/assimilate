@@ -22,6 +22,14 @@ import { apiClient } from '../api/client'
 import { formatBytes } from '../utils/format'
 import { logger } from '../utils/logger'
 import type { Repo } from '../types/repo'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+
+const rangeOptions: SegmentedOption<number>[] = [
+  { value: 14, label: '14d' },
+  { value: 30, label: '30d' },
+  { value: 90, label: '90d' },
+  { value: 365, label: '1y' },
+]
 
 ChartJS.register(
   CategoryScale,
@@ -204,7 +212,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
       <div class="controls">
         <select
           v-model="selectedRepoId"
-          class="stats-select"
+          class="input stats-select"
         >
           <option :value="undefined">All Repos</option>
           <option
@@ -215,36 +223,11 @@ const hasData = computed((): boolean => entries.value.length >= 2)
             {{ repo.name }}
           </option>
         </select>
-        <div class="view-toggle">
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 14 }"
-            @click="selectedDays = 14"
-          >
-            14d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 30 }"
-            @click="selectedDays = 30"
-          >
-            30d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 90 }"
-            @click="selectedDays = 90"
-          >
-            90d
-          </button>
-          <button
-            class="toggle-btn"
-            :class="{ active: selectedDays === 365 }"
-            @click="selectedDays = 365"
-          >
-            1y
-          </button>
-        </div>
+        <BaseSegmented
+          v-model="selectedDays"
+          :options="rangeOptions"
+          label="Storage trend range"
+        />
       </div>
     </div>
     <p class="chart-desc">
@@ -253,13 +236,13 @@ const hasData = computed((): boolean => entries.value.length >= 2)
     </p>
     <div
       v-if="loading"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
-      Loading…
+      Loading...
     </div>
     <div
       v-else-if="!hasData"
-      class="state-msg"
+      class="state-msg state-msg--inline"
     >
       Not enough data.
     </div>
@@ -290,27 +273,8 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 </template>
 
 <style scoped>
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
+/* The range selector shares the header row; keep the heading on one line. */
 .panel-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
   white-space: nowrap;
 }
 
@@ -322,57 +286,16 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 
 .stats-select {
   padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text-primary);
 }
 
-.view-toggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.toggle-btn {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
-}
-
-.toggle-btn:not(:last-child) {
-  border-right: 1px solid var(--border);
-}
-
-.toggle-btn:hover {
-  background: var(--bg-hover);
-}
-
-.toggle-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent, #fff);
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  padding: 1rem 0;
-}
-
 .chart-desc {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }
@@ -390,7 +313,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 }
 
 .metric-label {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;

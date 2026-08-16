@@ -136,7 +136,7 @@ const displayValue = computed((): string => {
       ref="inputRef"
       :value="displayValue"
       type="text"
-      class="form-input"
+      class="input"
       :placeholder="placeholder ?? 'Search timezone...'"
       autocomplete="off"
       @focus="onInputFocus"
@@ -197,7 +197,7 @@ const displayValue = computed((): string => {
 
 .tz-option {
   padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -208,12 +208,12 @@ const displayValue = computed((): string => {
 
 .tz-option.selected {
   font-weight: 600;
-  color: var(--primary);
+  color: var(--accent);
 }
 
 .tz-no-results {
   padding: 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   text-align: center;
 }

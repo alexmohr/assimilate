@@ -11,7 +11,7 @@ test('repo archives grouped by host shows the hostname link, not just the count'
   await page.getByText('server-daily').click()
   await page.waitForURL(/\/repos\/\d+/)
 
-  await page.getByRole('button', { name: 'Archives' }).click()
+  await page.getByRole('tab', { name: 'Archives' }).click()
   await page.waitForURL(/tab=archives/)
 
   const group = page.locator('.archive-group').first()

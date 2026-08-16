@@ -139,7 +139,7 @@ test.describe('backup progress card', () => {
     ws = await wsReady
 
     await page.goto(`/schedules/${SCHEDULE_ID}`)
-    await page.locator('.tab-bar').waitFor({ timeout: 10_000 })
+    await page.locator('.tabs').waitFor({ timeout: 10_000 })
   })
 
   test('card appears when BackupStarted arrives', async ({ page }) => {
@@ -301,7 +301,7 @@ test.describe('backup progress card — mid-backup page load', () => {
     ws = await wsReady
 
     await page.goto(`/schedules/${SCHEDULE_ID}`)
-    await page.locator('.tab-bar').waitFor({ timeout: 10_000 })
+    await page.locator('.tabs').waitFor({ timeout: 10_000 })
   })
 
   test('card and hostname are shown from DB report state without a WS BackupStarted', async ({

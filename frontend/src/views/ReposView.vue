@@ -4,23 +4,19 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
-import { useEscapeKey } from '../composables/useEscapeKey'
 import { useMobile } from '../composables/useMobile'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
 import { formatBytes, relativeTime } from '../utils/format'
-import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import ToggleSwitch from '../components/ToggleSwitch.vue'
-import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
-import BaseModal from '../components/BaseModal.vue'
+import { Plus, Download, SlidersHorizontal, Database } from '@lucide/vue'
+import RepoCreateDialog from '../components/RepoCreateDialog.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import RepoQuotaMeter from '../components/RepoQuotaMeter.vue'
 import RepoQuotaSlice from '../components/RepoQuotaSlice.vue'
@@ -36,15 +32,6 @@ import {
   quotaHealth,
 } from '../utils/quota'
 
-type CompressionType = 'lz4' | 'zstd' | 'none'
-type EncryptionType =
-  | 'repokey'
-  | 'repokey-blake2'
-  | 'keyfile'
-  | 'keyfile-blake2'
-  | 'authenticated'
-  | 'authenticated-blake2'
-  | 'none'
 type AddTab = 'import' | 'create'
 type SortField = 'name' | 'size' | 'last_backup' | 'quota'
 type SortDir = 'asc' | 'desc'
@@ -78,45 +65,6 @@ interface HostGroup {
   visibleCount: number
 }
 
-interface RepoForm {
-  name: string
-  repo_path: string
-  ssh_user: string
-  ssh_host: string
-  ssh_port: number
-  passphrase: string
-  compression: CompressionType
-  encryption: EncryptionType
-  enabled: boolean
-}
-
-interface SshTarget {
-  label: string
-  ssh_user: string
-  ssh_host: string
-  ssh_port: number
-}
-
-interface TestConnState {
-  loading: boolean
-  result: { ssh_ok: boolean; borg_installed: boolean; borg_version?: string; error?: string } | null
-}
-
-const ROOT_PATH = '/'
-
-interface DirEntry {
-  name: string
-  is_dir: boolean
-}
-
-interface BrowserState {
-  path: string
-  entries: DirEntry[]
-  loading: boolean
-  error: string | null
-  showBrowser: boolean
-}
-
 const router = useRouter()
 const authStore = useAuthStore()
 const repos = ref<RepoWithStats[]>([])
@@ -138,36 +86,9 @@ const showMobileFilters = ref(false)
 const allRepoTags = ref<TagRow[]>([])
 const repoTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
 
+const repoDialog = ref<InstanceType<typeof RepoCreateDialog> | null>(null)
 const showRepoDialog = ref(false)
-const repoMode = ref<'create' | 'edit'>('create')
 const addTab = ref<AddTab>('import')
-const repoLoading = ref(false)
-const repoError = ref<string | null>(null)
-const editingRepo = ref<RepoWithStats | null>(null)
-const showDeployKey = ref(false)
-
-const testConn = reactive<TestConnState>({
-  loading: false,
-  result: null,
-})
-
-const browser = reactive<BrowserState>({
-  path: '/',
-  entries: [],
-  loading: false,
-  error: null,
-  showBrowser: false,
-})
-
-const folderModal = reactive({
-  open: false,
-  name: '',
-  error: null as string | null,
-})
-
-useEscapeKey(showRepoDialog, () => {
-  showRepoDialog.value = false
-})
 
 function repoOwnHealth(repo: RepoWithStats): ReturnType<typeof quotaHealth> {
   return quotaHealth(repo.quota, repo.total_deduplicated_size)
@@ -408,160 +329,6 @@ function repoImportPhaseVerb(repo: RepoWithStats): string {
   return (repo.import_status_message ?? '').startsWith('Indexing') ? 'Indexing' : 'Importing'
 }
 
-const defaultRepoForm = (): RepoForm => ({
-  name: '',
-  repo_path: '',
-  ssh_user: 'borg',
-  ssh_host: '',
-  ssh_port: 22,
-  passphrase: '',
-  compression: 'lz4',
-  encryption: 'repokey-blake2',
-  enabled: true,
-})
-
-const repoForm = reactive<RepoForm>(defaultRepoForm())
-
-const sshTargets = computed<SshTarget[]>(() => {
-  const seen = new Set<string>()
-  const targets: SshTarget[] = []
-  for (const repo of repos.value) {
-    const label = `${repo.ssh_user}@${repo.ssh_host}:${repo.ssh_port}`
-    if (!seen.has(label)) {
-      seen.add(label)
-      targets.push({
-        label,
-        ssh_user: repo.ssh_user,
-        ssh_host: repo.ssh_host,
-        ssh_port: repo.ssh_port,
-      })
-    }
-  }
-  return targets
-})
-
-const breadcrumbs = computed(() => {
-  const parts = browser.path.split('/').filter(Boolean)
-  const crumbs = [{ label: '/', path: '/' }]
-  let acc = ''
-  for (const part of parts) {
-    acc += `/${part}`
-    crumbs.push({ label: part, path: acc })
-  }
-  return crumbs
-})
-
-const sshReady = computed(() => repoForm.ssh_host.trim().length > 0)
-
-const formValid = computed(() => {
-  const hasHost = repoForm.ssh_host.trim().length > 0
-  const hasPath = repoForm.repo_path.trim().length > 0
-  if (repoMode.value === 'edit') return hasHost && hasPath
-  const hasName = repoForm.name.trim().length > 0
-  const hasPassphrase = repoForm.passphrase.length > 0
-  return hasName && hasHost && hasPath && hasPassphrase
-})
-
-const autocompleteEntries = ref<DirEntry[]>([])
-const showAutocomplete = ref(false)
-let autocompleteTimer: ReturnType<typeof setTimeout> | null = null
-
-function onPathInput(): void {
-  if (autocompleteTimer) clearTimeout(autocompleteTimer)
-  autocompleteTimer = setTimeout(() => {
-    fetchAutocomplete()
-    syncBrowserToPath()
-  }, 300)
-}
-
-function syncBrowserToPath(): void {
-  if (!browser.showBrowser || !sshReady.value) return
-  const pathValue = repoForm.repo_path.trim()
-  if (pathValue.endsWith('/') || pathValue === ROOT_PATH) {
-    const dir = pathValue === ROOT_PATH ? ROOT_PATH : pathValue.replace(/\/+$/, '')
-    if (dir !== browser.path) {
-      browseDir(dir || '/')
-    }
-  }
-}
-
-async function fetchAutocomplete(): Promise<void> {
-  if (!sshReady.value || !repoForm.repo_path.trim()) {
-    autocompleteEntries.value = []
-    showAutocomplete.value = false
-    return
-  }
-  const pathValue = repoForm.repo_path.trim()
-  const parentDir = pathValue.includes('/')
-    ? pathValue.substring(0, pathValue.lastIndexOf('/')) || '/'
-    : '/'
-  try {
-    const res = await apiClient.post<{ path: string; entries: DirEntry[]; error?: string }>(
-      '/ssh/list-dir',
-      {
-        ssh_host: repoForm.ssh_host.trim(),
-        ssh_user: repoForm.ssh_user.trim(),
-        ssh_port: repoForm.ssh_port,
-        path: parentDir,
-      },
-    )
-    if (!res.data.error && res.data.entries) {
-      const prefix = pathValue.substring(pathValue.lastIndexOf('/') + 1).toLowerCase()
-      autocompleteEntries.value = res.data.entries.filter(
-        (e) => e.is_dir && e.name.toLowerCase().startsWith(prefix),
-      )
-      showAutocomplete.value = autocompleteEntries.value.length > 0
-    } else {
-      autocompleteEntries.value = []
-      showAutocomplete.value = false
-    }
-  } catch {
-    autocompleteEntries.value = []
-    showAutocomplete.value = false
-  }
-}
-
-function selectAutocomplete(entry: DirEntry): void {
-  const pathValue = repoForm.repo_path.trim()
-  const parentDir = pathValue.substring(0, pathValue.lastIndexOf('/')) || ''
-  repoForm.repo_path = parentDir === ROOT_PATH ? `/${entry.name}` : `${parentDir}/${entry.name}`
-  showAutocomplete.value = false
-  autocompleteEntries.value = []
-}
-
-function hideAutocomplete(): void {
-  setTimeout(() => {
-    showAutocomplete.value = false
-  }, 200)
-}
-
-function createFolder(): void {
-  folderModal.name = ''
-  folderModal.error = null
-  folderModal.open = true
-}
-
-async function confirmCreateFolder(): Promise<void> {
-  const name = folderModal.name.trim()
-  if (!name) {
-    folderModal.error = 'Folder name is required.'
-    return
-  }
-  const newPath = browser.path === ROOT_PATH ? `/${name}` : `${browser.path}/${name}`
-  try {
-    await apiClient.post('/ssh/mkdir', {
-      ssh_host: repoForm.ssh_host.trim(),
-      ssh_user: repoForm.ssh_user.trim(),
-      ssh_port: repoForm.ssh_port,
-      path: newPath,
-    })
-    folderModal.open = false
-    await browseDir(newPath)
-  } catch (e: unknown) {
-    folderModal.error = extractError(e)
-  }
-}
-
 async function loadRepos(): Promise<void> {
   await run(async () => {
     const [reposRes, repoTagAssocRes, repoTagsRes, serverQuotasRes] = await Promise.all([
@@ -612,199 +379,55 @@ function repoIssues(repo: RepoWithStats): EntityIssue[] {
   ]
 }
 
-function openCreateRepo(): void {
-  repoMode.value = 'create'
-  addTab.value = 'create'
-  editingRepo.value = null
-  repoError.value = null
-  showDeployKey.value = false
-  testConn.result = null
-  browser.path = '/'
-  browser.entries = []
-  browser.error = null
-  browser.showBrowser = false
-  Object.assign(repoForm, defaultRepoForm())
+/** Opens the create/import dialog in `mode`, clearing whatever it last held. */
+function openRepoDialog(mode: AddTab): void {
+  addTab.value = mode
+  repoDialog.value?.reset()
   showRepoDialog.value = true
 }
 
-function openImportRepo(): void {
-  repoMode.value = 'create'
-  addTab.value = 'import'
-  editingRepo.value = null
-  repoError.value = null
-  showDeployKey.value = false
-  testConn.result = null
-  browser.path = '/'
-  browser.entries = []
-  browser.error = null
-  browser.showBrowser = false
-  Object.assign(repoForm, defaultRepoForm())
-  showRepoDialog.value = true
-}
-
-function applySshTarget(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value
-  if (!value) return
-  const target = sshTargets.value.find((t) => t.label === value)
-  if (target) {
-    repoForm.ssh_user = target.ssh_user
-    repoForm.ssh_host = target.ssh_host
-    repoForm.ssh_port = target.ssh_port
-  }
-}
-
-async function browseDir(path: string): Promise<void> {
-  if (!sshReady.value) return
-  browser.loading = true
-  browser.error = null
-  browser.showBrowser = true
-  try {
-    const res = await apiClient.post<{ path: string; entries: DirEntry[]; error?: string }>(
-      '/ssh/list-dir',
-      {
-        ssh_host: repoForm.ssh_host.trim(),
-        ssh_user: repoForm.ssh_user.trim(),
-        ssh_port: repoForm.ssh_port,
-        path,
-      },
-    )
-    if (res.data.error) {
-      browser.error = res.data.error
-    } else {
-      browser.path = res.data.path
-      browser.entries = res.data.entries.filter((e) => e.is_dir)
-      repoForm.repo_path = res.data.path
-    }
-  } catch (e: unknown) {
-    browser.error = extractError(e)
-  } finally {
-    browser.loading = false
-  }
-}
-
-function navigateTo(path: string): void {
-  browseDir(path)
-}
-
-function navigateUp(): void {
-  const parent = browser.path.replace(/\/[^/]+\/?$/, '') || '/'
-  browseDir(parent)
-}
-
-function selectDir(entry: DirEntry): void {
-  if (entry.is_dir) {
-    const base = browser.path.endsWith('/') ? browser.path.slice(0, -1) : browser.path
-    const next = base === '' ? `/${entry.name}` : `${base}/${entry.name}`
-    browseDir(next)
-  }
-}
-
-async function submitRepo(): Promise<void> {
-  repoLoading.value = true
-  repoError.value = null
-  try {
-    if (repoMode.value === 'create') {
-      if (addTab.value === 'import') {
-        const res = await apiClient.post<Repo>('/repos', {
-          name: repoForm.name.trim(),
-          repo_path: repoForm.repo_path.trim(),
-          ssh_user: repoForm.ssh_user.trim(),
-          ssh_host: repoForm.ssh_host.trim(),
-          ssh_port: repoForm.ssh_port,
-          passphrase: repoForm.passphrase,
-          compression: repoForm.compression,
-        })
-        showRepoDialog.value = false
-        repos.value = [
-          ...repos.value,
-          {
-            id: res.data.id,
-            name: res.data.name,
-            repo_path: res.data.repo_path,
-            ssh_user: res.data.ssh_user,
-            ssh_host: res.data.ssh_host,
-            ssh_port: res.data.ssh_port,
-            ssh_host_key: null,
-            compression: res.data.compression,
-            encryption: res.data.encryption,
-            enabled: res.data.enabled,
-            importing: true,
-            import_error: null,
-            import_progress: 0,
-            import_total: 0,
-            import_status_message: null,
-            archive_count: 0,
-            last_backup_at: null,
-            total_original_size: 0,
-            total_compressed_size: 0,
-            total_deduplicated_size: 0,
-            agent_count: 0,
-            unmatched_count: 0,
-            visibility: 'private',
-            owner_id: null,
-            sync_schedule: null,
-            last_synced_at: null,
-            relocation_pending: false,
-            last_op_kind: null,
-            last_op_at: null,
-            last_op_by: null,
-            current_op: null,
-            quota: null,
-          },
-        ]
-        return
-      } else {
-        await apiClient.post('/repos/init', {
-          name: repoForm.name.trim(),
-          repo_path: repoForm.repo_path.trim(),
-          ssh_user: repoForm.ssh_user.trim(),
-          ssh_host: repoForm.ssh_host.trim(),
-          ssh_port: repoForm.ssh_port,
-          passphrase: repoForm.passphrase,
-          encryption: repoForm.encryption,
-          compression: repoForm.compression,
-        })
-      }
-    } else if (editingRepo.value) {
-      await apiClient.put(`/repos/${editingRepo.value.id}`, {
-        repo_path: repoForm.repo_path.trim(),
-        ssh_user: repoForm.ssh_user.trim(),
-        ssh_host: repoForm.ssh_host.trim(),
-        ssh_port: repoForm.ssh_port,
-        compression: repoForm.compression,
-        encryption: repoForm.encryption,
-        enabled: repoForm.enabled,
-      })
-    }
-    showRepoDialog.value = false
-    await loadRepos()
-  } catch (e: unknown) {
-    repoError.value = extractError(e)
-  } finally {
-    repoLoading.value = false
-  }
-}
-
-async function testConnection(): Promise<void> {
-  testConn.loading = true
-  testConn.result = null
-  try {
-    const res = await apiClient.post<{
-      ssh_ok: boolean
-      borg_installed: boolean
-      borg_version?: string
-      error?: string
-    }>('/ssh/test-connection', {
-      ssh_host: repoForm.ssh_host.trim(),
-      ssh_user: repoForm.ssh_user.trim(),
-      ssh_port: repoForm.ssh_port,
-    })
-    testConn.result = res.data
-  } catch (e: unknown) {
-    testConn.result = { ssh_ok: false, borg_installed: false, error: extractError(e) }
-  } finally {
-    testConn.loading = false
-  }
+/**
+ * An import only enqueues the scan, so the repository is added to the list
+ * straight away in its importing state rather than waiting for a refetch.
+ */
+function onRepoImported(created: Repo): void {
+  repos.value = [
+    ...repos.value,
+    {
+      id: created.id,
+      name: created.name,
+      repo_path: created.repo_path,
+      ssh_user: created.ssh_user,
+      ssh_host: created.ssh_host,
+      ssh_port: created.ssh_port,
+      ssh_host_key: null,
+      compression: created.compression,
+      encryption: created.encryption,
+      enabled: created.enabled,
+      importing: true,
+      import_error: null,
+      import_progress: 0,
+      import_total: 0,
+      import_status_message: null,
+      archive_count: 0,
+      last_backup_at: null,
+      total_original_size: 0,
+      total_compressed_size: 0,
+      total_deduplicated_size: 0,
+      agent_count: 0,
+      unmatched_count: 0,
+      visibility: 'private',
+      owner_id: null,
+      sync_schedule: null,
+      last_synced_at: null,
+      relocation_pending: false,
+      last_op_kind: null,
+      last_op_at: null,
+      last_op_by: null,
+      current_op: null,
+      quota: null,
+    },
+  ]
 }
 
 const { onMessage } = useWebSocket()
@@ -835,14 +458,14 @@ onMounted(loadRepos)
       >
         <button
           class="btn btn-ghost"
-          @click="openImportRepo"
+          @click="() => openRepoDialog('import')"
         >
           <Download :size="14" />
           Import
         </button>
         <button
           class="btn btn-primary"
-          @click="openCreateRepo"
+          @click="() => openRepoDialog('create')"
         >
           <Plus :size="14" />
           New
@@ -1078,8 +701,8 @@ onMounted(loadRepos)
               <div class="card-badges">
                 <span
                   v-if="entry.repo.import_error || entry.repo.importing"
-                  class="status-badge"
-                  :class="entry.repo.import_error ? 'status-error' : 'status-importing'"
+                  class="badge"
+                  :class="entry.repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
                   :title="entry.repo.import_error ?? undefined"
                 >
                   {{
@@ -1087,7 +710,7 @@ onMounted(loadRepos)
                       ? 'Import Failed'
                       : entry.repo.import_total > 0
                         ? `${repoImportPhaseVerb(entry.repo)} ${entry.repo.import_progress}/${entry.repo.import_total}`
-                        : `${repoImportPhaseVerb(entry.repo)}…`
+                        : `${repoImportPhaseVerb(entry.repo)}...`
                   }}
                 </span>
               </div>
@@ -1150,8 +773,8 @@ onMounted(loadRepos)
           <div class="card-badges">
             <span
               v-if="repo.import_error || repo.importing"
-              class="status-badge"
-              :class="repo.import_error ? 'status-error' : 'status-importing'"
+              class="badge"
+              :class="repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
               :title="repo.import_error ?? undefined"
             >
               {{
@@ -1262,8 +885,8 @@ onMounted(loadRepos)
               <div class="card-badges">
                 <span
                   v-if="repo.import_error || repo.importing"
-                  class="status-badge"
-                  :class="repo.import_error ? 'status-error' : 'status-importing'"
+                  class="badge"
+                  :class="repo.import_error ? 'badge--danger' : 'badge--warning badge--pulse'"
                   :title="repo.import_error ?? undefined"
                 >
                   {{
@@ -1342,381 +965,16 @@ onMounted(loadRepos)
       </div>
     </div>
 
-    <!-- Repo Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showRepoDialog"
-        class="overlay"
-        @click.self="showRepoDialog = false"
-      >
-        <div class="dialog dialog-lg">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              <template v-if="repoMode === 'edit'">Edit Repository</template>
-              <template v-else-if="addTab === 'create'">Create Repository</template>
-              <template v-else>Import Repository</template>
-            </h2>
-            <button
-              class="close-btn"
-              @click="showRepoDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-
-          <div class="dialog-body">
-            <div class="form-grid">
-              <!-- Name field -->
-              <div
-                v-if="repoMode === 'create'"
-                class="field field-full"
-              >
-                <label class="field-label">Name <span class="required">*</span></label>
-                <input
-                  v-model="repoForm.name"
-                  class="input"
-                  placeholder="e.g. inhouse-backups"
-                />
-                <span class="field-hint">A short identifier for this storage target</span>
-              </div>
-              <div
-                v-else
-                class="field field-full"
-              >
-                <label class="field-label">Name</label>
-                <input
-                  :value="repoForm.name"
-                  class="input"
-                  disabled
-                />
-              </div>
-
-              <!-- SSH params -->
-              <div
-                v-if="repoMode === 'create' && sshTargets.length > 0"
-                class="field field-full"
-              >
-                <label class="field-label">Fill SSH from existing</label>
-                <select
-                  class="input"
-                  @change="applySshTarget"
-                >
-                  <option value="">-- Select to auto-fill --</option>
-                  <option
-                    v-for="t in sshTargets"
-                    :key="t.label"
-                    :value="t.label"
-                  >
-                    {{ t.label }}
-                  </option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="field-label">SSH User</label>
-                <input
-                  v-model="repoForm.ssh_user"
-                  class="input mono"
-                  placeholder="borg"
-                />
-              </div>
-              <div class="field">
-                <label class="field-label">SSH Host <span class="required">*</span></label>
-                <input
-                  v-model="repoForm.ssh_host"
-                  class="input mono"
-                  placeholder="backup.example.com"
-                />
-              </div>
-              <div class="field field-narrow">
-                <label class="field-label">SSH Port</label>
-                <input
-                  v-model.number="repoForm.ssh_port"
-                  class="input"
-                  type="number"
-                  min="1"
-                  max="65535"
-                />
-              </div>
-
-              <!-- Test & Deploy SSH Key (create mode) -->
-              <div
-                v-if="repoMode === 'create'"
-                class="field field-full"
-              >
-                <div class="ssh-actions">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    :disabled="testConn.loading || !sshReady"
-                    @click="testConnection"
-                  >
-                    {{ testConn.loading ? 'Testing...' : 'Test Connection' }}
-                  </button>
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    :disabled="!sshReady"
-                    @click="showDeployKey = !showDeployKey"
-                  >
-                    {{ showDeployKey ? '\u2212 Deploy Key' : '+ Deploy Key' }}
-                  </button>
-                  <span
-                    v-if="testConn.result"
-                    class="deploy-result"
-                    :class="testConn.result.ssh_ok ? 'result-ok' : 'result-warn'"
-                  >
-                    <template v-if="testConn.result.ssh_ok && testConn.result.borg_installed"
-                      >SSH OK, borg {{ testConn.result.borg_version }}</template
-                    >
-                    <template v-else-if="testConn.result.ssh_ok">SSH OK, borg not found</template>
-                    <template v-else>{{ testConn.result.error ?? 'Connection failed' }}</template>
-                  </span>
-                </div>
-
-                <SshKeyDeployPanel
-                  v-if="showDeployKey"
-                  :ssh-host="repoForm.ssh_host"
-                  :ssh-user="repoForm.ssh_user"
-                  :ssh-port="repoForm.ssh_port"
-                />
-              </div>
-            </div>
-
-            <!-- Folder Browser / Repo Path -->
-            <div class="browser-section">
-              <div class="browser-header">
-                <label class="field-label">Repo Path <span class="required">*</span></label>
-                <div class="browser-path-row">
-                  <div class="path-autocomplete-wrapper">
-                    <input
-                      v-model="repoForm.repo_path"
-                      class="input mono"
-                      placeholder="/backup/repos/myhost"
-                      @input="onPathInput"
-                      @blur="hideAutocomplete"
-                    />
-                    <div
-                      v-if="showAutocomplete"
-                      class="autocomplete-dropdown"
-                    >
-                      <div
-                        v-for="entry in autocompleteEntries"
-                        :key="entry.name"
-                        class="autocomplete-item"
-                        @mousedown.prevent="selectAutocomplete(entry)"
-                      >
-                        <Folder :size="14" />
-                        <span>{{ entry.name }}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    v-if="repoMode === 'create'"
-                    class="btn btn-sm btn-ghost"
-                    :disabled="!sshReady || browser.loading"
-                    @click="browseDir(repoForm.repo_path || '/')"
-                  >
-                    {{ browser.loading ? 'Loading...' : 'Browse' }}
-                  </button>
-                </div>
-              </div>
-
-              <div
-                v-if="browser.showBrowser"
-                class="browser-panel"
-              >
-                <!-- Breadcrumbs -->
-                <div class="browser-breadcrumbs">
-                  <span
-                    v-for="(crumb, i) in breadcrumbs"
-                    :key="crumb.path"
-                    class="breadcrumb"
-                    :class="{ 'breadcrumb-last': i === breadcrumbs.length - 1 }"
-                    @click="i < breadcrumbs.length - 1 && navigateTo(crumb.path)"
-                  >
-                    {{ crumb.label
-                    }}<span
-                      v-if="i > 0 && i < breadcrumbs.length - 1"
-                      class="breadcrumb-sep"
-                      >/</span
-                    >
-                  </span>
-                  <button
-                    v-if="addTab === 'create'"
-                    class="btn btn-xs btn-ghost browser-mkdir-btn"
-                    :disabled="!sshReady"
-                    @click="createFolder"
-                  >
-                    <FolderPlus :size="14" />
-                    New Folder
-                  </button>
-                </div>
-
-                <div
-                  v-if="browser.error"
-                  class="browser-error"
-                >
-                  {{ browser.error }}
-                </div>
-
-                <div
-                  v-else
-                  class="browser-list"
-                >
-                  <!-- Parent directory -->
-                  <div
-                    v-if="browser.path !== '/'"
-                    class="browser-entry browser-entry-dir"
-                    @click="navigateUp"
-                  >
-                    <Folder :size="14" />
-                    <span class="entry-name">..</span>
-                  </div>
-                  <!-- Entries (directories only) -->
-                  <div
-                    v-for="entry in browser.entries"
-                    :key="entry.name"
-                    class="browser-entry browser-entry-dir"
-                    @click="selectDir(entry)"
-                  >
-                    <Folder :size="14" />
-                    <span class="entry-name">{{ entry.name }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Remaining form fields -->
-            <div class="form-grid form-grid-below">
-              <div
-                v-if="repoMode === 'create'"
-                class="field field-full"
-              >
-                <label class="field-label">Passphrase <span class="required">*</span></label>
-                <input
-                  v-model="repoForm.passphrase"
-                  class="input"
-                  type="password"
-                  placeholder="Repository encryption passphrase"
-                />
-              </div>
-
-              <div
-                v-if="repoMode === 'create' && addTab === 'create'"
-                class="field"
-              >
-                <label class="field-label">Encryption <span class="required">*</span></label>
-                <select
-                  v-model="repoForm.encryption"
-                  class="input"
-                >
-                  <option value="repokey">repokey</option>
-                  <option value="repokey-blake2">repokey-blake2</option>
-                  <option value="keyfile">keyfile</option>
-                  <option value="keyfile-blake2">keyfile-blake2</option>
-                  <option value="authenticated">authenticated</option>
-                  <option value="authenticated-blake2">authenticated-blake2</option>
-                  <option value="none">none</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="field-label">Compression</label>
-                <select
-                  v-model="repoForm.compression"
-                  class="input"
-                >
-                  <option value="lz4">lz4</option>
-                  <option value="zstd">zstd</option>
-                  <option value="none">none</option>
-                </select>
-              </div>
-
-              <div
-                v-if="repoMode === 'edit'"
-                class="field field-full toggle-row"
-              >
-                <span class="toggle-row-label">Repo enabled</span>
-                <ToggleSwitch v-model="repoForm.enabled" />
-              </div>
-            </div>
-
-            <div
-              v-if="repoError"
-              class="form-error"
-            >
-              {{ repoError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showRepoDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-primary"
-              :disabled="repoLoading || !formValid"
-              @click="submitRepo"
-            >
-              <template v-if="repoLoading"> Saving... </template>
-              <template v-else-if="repoMode === 'edit'"> Save </template>
-              <template v-else-if="addTab === 'create'"> Create Repo </template>
-              <template v-else> Import Repo </template>
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <RepoCreateDialog
+      ref="repoDialog"
+      :open="showRepoDialog"
+      :mode="addTab"
+      :repos="repos"
+      @close="showRepoDialog = false"
+      @imported="onRepoImported"
+      @created="loadRepos"
+    />
   </div>
-
-  <BaseModal
-    :open="folderModal.open"
-    title="New Folder"
-    size="sm"
-    @close="folderModal.open = false"
-  >
-    <form
-      class="folder-modal-form"
-      @submit.prevent="confirmCreateFolder"
-    >
-      <label
-        for="folder-name-input"
-        class="form-label"
-        >Folder name</label
-      >
-      <input
-        id="folder-name-input"
-        v-model="folderModal.name"
-        class="form-control"
-        type="text"
-        placeholder="my-backups"
-        autofocus
-      />
-      <p
-        v-if="folderModal.error"
-        class="folder-modal-error"
-      >
-        {{ folderModal.error }}
-      </p>
-    </form>
-    <template #footer>
-      <button
-        class="btn btn-ghost"
-        type="button"
-        @click="folderModal.open = false"
-      >
-        Cancel
-      </button>
-      <button
-        class="btn btn-primary"
-        type="button"
-        @click="confirmCreateFolder"
-      >
-        Create
-      </button>
-    </template>
-  </BaseModal>
 </template>
 
 <style scoped>
@@ -1725,10 +983,6 @@ onMounted(loadRepos)
 }
 
 .toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
 
@@ -1745,12 +999,12 @@ onMounted(loadRepos)
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   position: relative;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .btn-filter-toggle:hover {
@@ -1781,7 +1035,7 @@ onMounted(loadRepos)
 }
 
 .sort-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1792,12 +1046,6 @@ onMounted(loadRepos)
   background: var(--bg-hover);
   color: var(--text-primary);
   font-weight: 600;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
 }
 
 .state-error {
@@ -1817,8 +1065,8 @@ onMounted(loadRepos)
   padding: 1.25rem;
   cursor: pointer;
   transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+    box-shadow var(--duration-base),
+    border-color var(--duration-base);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -1843,25 +1091,25 @@ onMounted(loadRepos)
   flex: 1;
   height: 6px;
   background: var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .import-progress-bar {
   height: 100%;
   background: var(--accent);
-  border-radius: 3px;
-  transition: width 0.4s ease;
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-value) ease;
 }
 
 .import-progress-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .import-status-inline {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin: 0;
   white-space: nowrap;
@@ -1893,7 +1141,7 @@ onMounted(loadRepos)
 .card-name {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -1901,7 +1149,7 @@ onMounted(loadRepos)
 }
 
 .card-ssh {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   font-family: var(--mono);
   white-space: nowrap;
@@ -1917,8 +1165,8 @@ onMounted(loadRepos)
 .meta-pill {
   display: inline-block;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 500;
   background: var(--bg-card);
   color: var(--text-muted);
@@ -1937,282 +1185,34 @@ onMounted(loadRepos)
 }
 
 .stat-value {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: auto;
-}
-
 /* Overlay & Dialog */
-
-.dialog-lg {
-  width: 680px;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 1rem;
-}
-
-.field-full {
-  grid-column: 1 / -1;
-}
-
-.field-narrow {
-  max-width: 120px;
-}
 
 .input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.toggle-row {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: center;
-  margin-top: 0.5rem;
-}
-
-.toggle-row-label {
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-}
-
-.ssh-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.deploy-result {
-  font-size: 0.8rem;
-  font-weight: 500;
-}
-
-.result-ok {
-  color: var(--success);
-}
-
-.result-warn {
-  color: var(--text-muted);
-}
-
-.browser-section {
-  margin-top: 1.25rem;
-  border-top: 1px solid var(--border);
-  padding-top: 1rem;
-}
-
-.browser-header {
-  margin-bottom: 0.75rem;
-}
-
-.browser-path-row {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.4rem;
-}
-
-.browser-path-row .path-autocomplete-wrapper {
-  flex: 1;
-}
-
 .browser-path-row .path-autocomplete-wrapper .input {
   width: 100%;
 }
 
-.browser-panel {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.browser-breadcrumbs {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  font-size: 0.8rem;
-  font-family: var(--mono);
-}
-
-.breadcrumb {
-  cursor: pointer;
-  color: var(--accent);
-  transition: color 0.15s;
-}
-
-.breadcrumb:hover {
-  text-decoration: underline;
-}
-
-.breadcrumb-last {
-  color: var(--text-primary);
-  cursor: default;
-  font-weight: 600;
-}
-
-.breadcrumb-last:hover {
-  text-decoration: none;
-}
-
-.breadcrumb-sep {
-  color: var(--text-muted);
-  margin: 0 0.15rem;
-}
-
-.browser-error {
-  padding: 0.75rem;
-  color: var(--danger);
-  font-size: 0.82rem;
-}
-
-.browser-list {
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.browser-entry {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border-subtle);
-  cursor: default;
-}
-
-.browser-entry:last-child {
-  border-bottom: none;
-}
-
-.browser-entry-dir {
-  cursor: pointer;
-  color: var(--text-secondary);
-}
-
-.browser-entry-dir:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.entry-name {
-  font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.path-autocomplete-wrapper {
-  position: relative;
-  flex: 1;
-}
-
-.autocomplete-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 60;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  max-height: 160px;
-  overflow-y: auto;
-  margin-top: 2px;
-}
-
-.autocomplete-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.82rem;
-  font-family: var(--mono);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.autocomplete-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.browser-mkdir-btn {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-}
-
-.btn-xs {
-  padding: 0.2rem 0.5rem;
-  font-size: 0.75rem;
-}
-
 /* Tag filter dropdown */
-.tag-filter-wrapper {
-  position: relative;
-}
 
 .dropdown-arrow {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   margin-left: 0.15rem;
-}
-
-.tag-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 0.35rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  padding: 0.5rem;
-  min-width: 160px;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.tag-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.4rem;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  transition: background 0.1s;
-}
-
-.tag-dropdown-item:hover {
-  background: var(--bg-hover);
 }
 
 .tag-dropdown-item input[type='checkbox'] {
@@ -2222,27 +1222,7 @@ onMounted(loadRepos)
   cursor: pointer;
 }
 
-.tag-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.tag-dropdown-name {
-  white-space: nowrap;
-}
-
 /* Tag pills on cards */
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 500;
-  border: 1px solid;
-}
 
 /* Grouped view */
 .repo-grouped {
@@ -2266,17 +1246,17 @@ onMounted(loadRepos)
 }
 
 .tag-group-title {
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .tag-group-count {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   background: var(--bg-hover);
   padding: 0.1rem 0.4rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 /* Quota filter chips */
@@ -2291,9 +1271,9 @@ onMounted(loadRepos)
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   padding: 0.25rem 0.65rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-secondary);
@@ -2341,7 +1321,7 @@ onMounted(loadRepos)
 .pool-header {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius, 0.625rem);
+  border-radius: var(--radius);
   padding: 0.85rem 1rem;
   display: flex;
   flex-direction: column;
@@ -2361,14 +1341,14 @@ onMounted(loadRepos)
 
 .pool-host {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   font-weight: 600;
 }
 
 .pool-total {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
   flex-shrink: 0;
@@ -2377,7 +1357,7 @@ onMounted(loadRepos)
 .pool-track {
   position: relative;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
   background: var(--border);
 }
 
@@ -2385,7 +1365,7 @@ onMounted(loadRepos)
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
 }
 
 .pool-seg-step-0 {
@@ -2405,30 +1385,12 @@ onMounted(loadRepos)
   top: -2px;
   bottom: -2px;
   width: 2px;
-  border-radius: 1px;
+  border-radius: var(--radius-pill);
   background: var(--text-secondary);
 }
 
 .pool-note {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
-}
-
-.form-grid-below {
-  margin-top: 1.25rem;
-  border-top: 1px solid var(--border);
-  padding-top: 1rem;
-}
-
-.folder-modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.folder-modal-error {
-  font-size: 0.85rem;
-  color: var(--danger);
-  margin: 0;
 }
 </style>

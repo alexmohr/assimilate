@@ -17,6 +17,7 @@ import type {
   SettingsResponse,
   SystemResetResponse,
 } from '../types/generated'
+import BaseModal from '../components/BaseModal.vue'
 
 interface VersionInfo {
   server_version: string
@@ -278,7 +279,7 @@ async function resetSystem(): Promise<void> {
       />
       <div
         v-else-if="versionError"
-        class="state-msg error"
+        class="state-msg state-msg--inline state-error"
       >
         {{ versionError }}
       </div>
@@ -324,7 +325,7 @@ async function resetSystem(): Promise<void> {
       />
       <div
         v-else-if="error"
-        class="state-msg error"
+        class="state-msg state-msg--inline state-error"
       >
         {{ error }}
       </div>
@@ -354,7 +355,7 @@ async function resetSystem(): Promise<void> {
       <template v-else>
         <div
           v-if="settingsError"
-          class="state-msg error"
+          class="state-msg state-msg--inline state-error"
         >
           {{ settingsError }}
         </div>
@@ -397,7 +398,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint">Number of days to keep backup job history.</span>
             </div>
@@ -417,7 +418,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Days to keep successful/archived reports. 0 = keep forever.</span
@@ -439,7 +440,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Days to keep failed/archive-less reports. 0 = keep forever.</span
@@ -461,7 +462,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
             </div>
@@ -481,7 +482,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Days to keep notification delivery-attempt history. 0 = keep forever.</span
@@ -503,7 +504,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="1"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Maximum seconds to wait for a single <code>borg list</code> or
@@ -525,7 +526,7 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.session_idle_timeout_minutes"
                 type="number"
                 min="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
@@ -574,7 +575,7 @@ async function resetSystem(): Promise<void> {
       />
       <div
         v-else-if="databaseStorageError"
-        class="state-msg error"
+        class="state-msg state-msg--inline state-error"
       >
         {{ databaseStorageError }}
       </div>
@@ -583,8 +584,8 @@ async function resetSystem(): Promise<void> {
           <span>Total database size</span>
           <strong>{{ formatBytes(databaseStorage.database_bytes) }}</strong>
         </div>
-        <div class="storage-table-wrap">
-          <table class="storage-table">
+        <div class="table-wrap">
+          <table class="data-table data-table--compact">
             <thead>
               <tr>
                 <th>Table</th>
@@ -771,122 +772,83 @@ async function resetSystem(): Promise<void> {
     </div>
 
     <!-- Regenerate Confirmation -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showRegenConfirm"
+      title="Regenerate SSH Key"
+      @close="showRegenConfirm = false"
+    >
+      <p class="warning-text">
+        This will generate a new SSH keypair and invalidate the current key. All borg repository
+        hosts will need to be updated with the new public key.
+      </p>
+      <p class="warning-text warning-bold">
+        Existing SSH connections using the old key will stop working immediately.
+      </p>
       <div
-        v-if="showRegenConfirm"
-        class="overlay"
-        @click.self="showRegenConfirm = false"
+        v-if="regenError"
+        class="form-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Regenerate SSH Key</h2>
-            <button
-              class="close-btn"
-              @click="showRegenConfirm = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="warning-text">
-              This will generate a new SSH keypair and invalidate the current key. All borg
-              repository hosts will need to be updated with the new public key.
-            </p>
-            <p class="warning-text warning-bold">
-              Existing SSH connections using the old key will stop working immediately.
-            </p>
-            <div
-              v-if="regenError"
-              class="form-error"
-            >
-              {{ regenError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showRegenConfirm = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="regenerating"
-              @click="regenerateKey"
-            >
-              {{ regenerating ? 'Regenerating...' : 'Regenerate Key' }}
-            </button>
-          </div>
-        </div>
+        {{ regenError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showRegenConfirm = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="regenerating"
+          @click="regenerateKey"
+        >
+          {{ regenerating ? 'Regenerating...' : 'Regenerate Key' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Reset Confirmation -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showResetConfirm"
+      title="Reset System State"
+      @close="showResetConfirm = false"
+    >
+      <p class="warning-text">This will immediately:</p>
+      <ul class="reset-list">
+        <li>Cancel all running and pending backup operations in the database</li>
+        <li>Send abort signals to all currently connected agents</li>
+      </ul>
+      <p class="warning-text warning-bold">Schedules are left unchanged.</p>
       <div
-        v-if="showResetConfirm"
-        class="overlay"
-        @click.self="showResetConfirm = false"
+        v-if="resetError"
+        class="form-error"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Reset System State</h2>
-            <button
-              class="close-btn"
-              @click="showResetConfirm = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="warning-text">This will immediately:</p>
-            <ul class="reset-list">
-              <li>Cancel all running and pending backup operations in the database</li>
-              <li>Send abort signals to all currently connected agents</li>
-            </ul>
-            <p class="warning-text warning-bold">Schedules are left unchanged.</p>
-            <div
-              v-if="resetError"
-              class="form-error"
-            >
-              {{ resetError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showResetConfirm = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="resetting"
-              @click="resetSystem"
-            >
-              {{ resetting ? 'Resetting...' : 'Reset System' }}
-            </button>
-          </div>
-        </div>
+        {{ resetError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showResetConfirm = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="resetting"
+          @click="resetSystem"
+        >
+          {{ resetting ? 'Resetting...' : 'Reset System' }}
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
 <style scoped>
 .page {
   max-width: 800px;
-}
-
-.info-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-
-  & + & {
-    margin-top: 0.75rem;
-  }
 }
 
 .card-header {
@@ -896,33 +858,18 @@ async function resetSystem(): Promise<void> {
   margin-bottom: 0.5rem;
 }
 
-.info-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
 .info-description {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-bottom: 1rem;
 }
 
 .info-description code {
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   background: var(--bg-hover);
   padding: 0.125rem 0.375rem;
   border-radius: var(--radius-sm);
-}
-
-.state-msg {
-  font-size: 0.875rem;
-  color: var(--text-muted);
-}
-
-.state-msg.error {
-  color: var(--danger);
 }
 
 .key-box {
@@ -938,7 +885,7 @@ async function resetSystem(): Promise<void> {
 .key-text {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-primary);
   white-space: pre-wrap;
@@ -947,7 +894,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .warning-text {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-bottom: 0.75rem;
 }
@@ -976,7 +923,7 @@ async function resetSystem(): Promise<void> {
 .setting-label {
   flex-shrink: 0;
   width: 120px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-primary);
   padding-top: 0.5rem;
@@ -998,11 +945,6 @@ async function resetSystem(): Promise<void> {
   max-width: 120px !important;
 }
 
-.field-hint {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
 .settings-actions {
   display: flex;
   align-items: center;
@@ -1011,7 +953,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .save-success {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--success);
   font-weight: 500;
 }
@@ -1023,43 +965,21 @@ async function resetSystem(): Promise<void> {
   gap: 1rem;
   margin-bottom: 1rem;
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .database-total strong {
   color: var(--text-primary);
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
 }
 
-.storage-table-wrap {
-  overflow-x: auto;
-}
-
-.storage-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-.storage-table th,
-.storage-table td {
-  padding: 0.625rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  text-align: right;
-}
-
-.storage-table th {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.storage-table th:first-child,
-.storage-table td:first-child {
+.data-table th,
+.data-table th:first-child,
+.data-table td:first-child {
   text-align: left;
 }
 
-.storage-table tbody tr:last-child td {
+.data-table tbody tr:last-child td {
   border-bottom: 0;
 }
 
@@ -1085,12 +1005,12 @@ async function resetSystem(): Promise<void> {
   height: 4px;
   overflow: hidden;
   background: var(--bg-hover);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .storage-bar-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--accent);
   border-radius: inherit;
 }
 
@@ -1113,13 +1033,13 @@ async function resetSystem(): Promise<void> {
 .version-label {
   flex-shrink: 0;
   width: 80px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-secondary);
 }
 
 .version-value {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
 }
 
@@ -1138,7 +1058,7 @@ async function resetSystem(): Promise<void> {
 .config-io-label {
   flex-shrink: 0;
   width: 60px;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-primary);
   padding-top: 0.375rem;
@@ -1152,7 +1072,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .config-io-error {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--danger);
 }
 
@@ -1168,7 +1088,7 @@ async function resetSystem(): Promise<void> {
 }
 
 .file-name {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -1182,7 +1102,7 @@ async function resetSystem(): Promise<void> {
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .import-stats {
@@ -1195,16 +1115,16 @@ async function resetSystem(): Promise<void> {
 .import-warnings {
   margin: 0.5rem 0 0;
   padding-left: 1.25rem;
-  color: var(--warning, #e6a817);
-  font-size: 0.8125rem;
+  color: var(--warning);
+  font-size: var(--fs-sm);
 }
 
 .danger-zone-card {
-  border-color: var(--danger, #dc2626);
+  border-color: var(--danger);
 }
 
 .danger-title {
-  color: var(--danger, #dc2626);
+  color: var(--danger);
 }
 
 .danger-action {
@@ -1221,13 +1141,13 @@ async function resetSystem(): Promise<void> {
 }
 
 .danger-action-name {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-primary);
 }
 
 .danger-action-desc {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -1239,7 +1159,7 @@ async function resetSystem(): Promise<void> {
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   flex-wrap: wrap;
 }
@@ -1247,7 +1167,7 @@ async function resetSystem(): Promise<void> {
 .reset-list {
   margin: 0.5rem 0;
   padding-left: 1.25rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
 
   & li {

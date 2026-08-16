@@ -67,3 +67,4 @@ nav:
   - Contributing:
       - Development: contributing/development.md
       - Style Guide: contributing/style-guide.md
+      - UI Design Audit: contributing/ui-design-audit.md

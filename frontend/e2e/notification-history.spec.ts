@@ -86,7 +86,7 @@ test('expands a delivery row and shows the full error and payload', async ({
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
 
-  await page.getByRole('button', { name: 'History' }).click()
+  await page.getByRole('tab', { name: 'History' }).click()
 
   const deliveryRow = page.locator('.delivery-row')
   await expect(deliveryRow.first()).toBeVisible({ timeout: 10_000 })
@@ -116,7 +116,7 @@ test('history table switches to a stacked card layout on narrow viewports', asyn
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
-  await page.getByRole('button', { name: 'History' }).click()
+  await page.getByRole('tab', { name: 'History' }).click()
   await expect(page.locator('.delivery-row').first()).toBeVisible({ timeout: 10_000 })
 
   const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)

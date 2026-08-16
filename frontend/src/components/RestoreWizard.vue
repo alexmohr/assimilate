@@ -185,7 +185,7 @@ function cancelDownload(): void {
       <label class="field-label">Select Archive</label>
       <select
         v-model="selectedArchiveName"
-        class="select-input full-width"
+        class="input select-input full-width"
       >
         <option
           :value="null"
@@ -211,7 +211,7 @@ function cancelDownload(): void {
       <label class="field-label">Paths to restore (one per line)</label>
       <textarea
         v-model="pathsInput"
-        class="textarea-input"
+        class="input textarea-input"
         rows="6"
         placeholder="/etc/nginx/nginx.conf&#10;/home/user/documents"
       />
@@ -248,14 +248,14 @@ function cancelDownload(): void {
         <input
           v-model="hostname"
           type="text"
-          class="text-input full-width"
+          class="input text-input full-width"
           placeholder="backup-host-01"
         />
         <label class="field-label mt-1">Target path</label>
         <input
           v-model="targetPath"
           type="text"
-          class="text-input full-width"
+          class="input text-input full-width"
           placeholder="/tmp/restore"
         />
       </template>
@@ -349,7 +349,7 @@ function cancelDownload(): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   background: var(--bg-card);
   border: 2px solid var(--border);
@@ -374,17 +374,10 @@ function cancelDownload(): void {
 
 .field-label {
   display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   margin-bottom: 0.5rem;
 }
 
 .field-hint {
-  font-size: 0.78rem;
-  color: var(--text-muted);
   margin-top: 0.4rem;
 }
 
@@ -394,7 +387,7 @@ function cancelDownload(): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .full-width {
@@ -408,7 +401,7 @@ function cancelDownload(): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-family: var(--mono);
   resize: vertical;
 }
@@ -426,7 +419,7 @@ function cancelDownload(): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .radio-group {
@@ -440,7 +433,7 @@ function cancelDownload(): void {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -453,7 +446,7 @@ function cancelDownload(): void {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 0.4rem 1rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .confirm-list dt {
@@ -472,15 +465,9 @@ function cancelDownload(): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.1rem 0.4rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   margin-right: 0.3rem;
   margin-bottom: 0.2rem;
-}
-
-.form-error {
-  color: var(--danger);
-  font-size: 0.85rem;
-  margin-top: 0.75rem;
 }
 
 .success-msg {

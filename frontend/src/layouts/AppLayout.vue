@@ -353,7 +353,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  transition: width 0.2s ease;
+  transition: width var(--duration-slow) ease;
   overflow: hidden;
   will-change: width;
   position: sticky;
@@ -377,16 +377,16 @@ onMounted(() => {
 
 .brand-icon {
   flex-shrink: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .brand-text {
-  font-size: 1.05rem;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-primary);
   white-space: nowrap;
   opacity: 1;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-base) ease;
 }
 
 .collapsed .brand-text {
@@ -425,8 +425,8 @@ onMounted(() => {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
-    color 0.15s,
-    background 0.15s;
+    color var(--duration-base),
+    background var(--duration-base);
   flex-shrink: 0;
 }
 
@@ -463,7 +463,7 @@ onMounted(() => {
 .nav-label {
   white-space: nowrap;
   opacity: 1;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-base) ease;
 }
 
 .collapsed .nav-label {
@@ -478,11 +478,11 @@ onMounted(() => {
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   text-decoration: none;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
   overflow: hidden;
 }
 
@@ -505,7 +505,7 @@ onMounted(() => {
 
 .nav-link-nested {
   padding-left: 2.25rem;
-  font-size: 0.825rem;
+  font-size: var(--fs-sm);
 }
 
 .collapsed .nav-link-nested {
@@ -526,12 +526,12 @@ onMounted(() => {
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   cursor: pointer;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    color var(--duration-base);
   overflow: hidden;
 }
 
@@ -555,8 +555,8 @@ onMounted(() => {
   height: 14px;
   margin-left: auto;
   transition:
-    transform 0.2s,
-    opacity 0.15s;
+    transform var(--duration-slow),
+    opacity var(--duration-base);
 }
 
 .collapsed .nav-group-chevron {
@@ -575,7 +575,7 @@ onMounted(() => {
 }
 
 .nav-subgroup-label {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -608,14 +608,14 @@ onMounted(() => {
 }
 
 .user-name {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
 }
 
 .user-role {
-  font-size: 0.6875rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   padding: 0.125rem 0.375rem;
@@ -643,7 +643,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-muted);
   background: none;
@@ -652,8 +652,8 @@ onMounted(() => {
   padding: 0.375rem 0.625rem;
   cursor: pointer;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -736,7 +736,7 @@ onMounted(() => {
   }
 
   .mobile-brand {
-    font-size: 1rem;
+    font-size: var(--fs-lg);
     font-weight: 700;
     color: var(--text-primary);
   }
@@ -753,7 +753,7 @@ onMounted(() => {
     z-index: 200;
     width: 250px;
     transform: translateX(-100%);
-    transition: transform 0.25s ease;
+    transition: transform var(--duration-slow) ease;
     will-change: transform;
   }
 
@@ -837,7 +837,7 @@ onMounted(() => {
 
 .page-enter-active,
 .page-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-base) ease;
 }
 
 .page-leave-active {

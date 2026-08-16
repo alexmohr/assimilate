@@ -107,7 +107,8 @@ describe('ServerQuotasView', () => {
     mockList.mockResolvedValue([])
     const wrapper = renderWithPlugins(ServerQuotasView)
     await flushPromises()
-    expect(wrapper.text()).toContain('No repositories are configured yet.')
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.find('.empty-title').text()).toBe('No repositories yet')
   })
 
   it('shows an error message when loading fails', async () => {
@@ -158,10 +159,10 @@ describe('ServerQuotasView', () => {
 
     expect(wrapper.text()).toContain('API error')
 
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await nextTick()
 
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('.modal-dialog').exists()).toBe(false)
   })
 
   it('removes a configured quota', async () => {

@@ -125,18 +125,18 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
 
 h2 {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 p {
   margin: 0.25rem 0 1rem;
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .finding-count {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -157,7 +157,7 @@ p {
 .severity-mark {
   width: 8px;
   height: 32px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
 }
 
 .severity-critical {
@@ -183,7 +183,7 @@ p {
 .finding-reason,
 .finding-time {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 /* A finding reason carries agent-supplied text (borg stderr, import errors).
@@ -210,9 +210,9 @@ p {
 .finding-action {
   font-weight: 600;
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   text-decoration: none;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 .finding-action:hover {
@@ -224,13 +224,13 @@ p {
   border: none;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   padding: 0.15rem 0.35rem;
   border-radius: var(--radius-sm);
   line-height: 1;
   transition:
-    color 0.15s,
-    background 0.15s;
+    color var(--duration-base),
+    background var(--duration-base);
 }
 
 .dismiss-btn:hover {
@@ -238,7 +238,7 @@ p {
   background: var(--danger-subtle);
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .finding-row {
     grid-template-columns: 8px minmax(0, 1fr) auto;
   }

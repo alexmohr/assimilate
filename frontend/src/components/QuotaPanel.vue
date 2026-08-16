@@ -149,7 +149,7 @@ onMounted(loadQuota)
       <div class="info-header-actions">
         <span
           v-if="quota && quota.enabled"
-          class="status-badge"
+          class="badge"
           :class="statusBadgeClass"
         >
           {{ statusLabel }}
@@ -324,35 +324,7 @@ onMounted(loadQuota)
 }
 
 .info-title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   margin: 0;
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.badge-ok {
-  background: var(--success-subtle, oklch(0.95 0.05 145));
-  color: var(--success);
-}
-
-.badge-warn {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-crit {
-  background: var(--danger-subtle);
-  color: var(--danger);
 }
 
 .quota-usage {
@@ -362,7 +334,7 @@ onMounted(loadQuota)
 .usage-labels {
   display: flex;
   justify-content: space-between;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   margin-bottom: 0.4rem;
 }
 
@@ -377,15 +349,15 @@ onMounted(loadQuota)
 
 .progress-bar-track {
   height: 8px;
-  background: var(--bg-input, var(--border));
-  border-radius: 4px;
+  background: var(--bg-input);
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .progress-bar-fill {
   height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s ease;
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-slow) ease;
 }
 
 .bar-ok {
@@ -405,7 +377,7 @@ onMounted(loadQuota)
   grid-template-columns: auto 1fr;
   gap: 0.4rem 1rem;
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .quota-details dt {
@@ -419,18 +391,7 @@ onMounted(loadQuota)
 
 .muted {
   color: var(--text-muted);
-  font-size: 0.875rem;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 1.5rem;
-  color: var(--text-muted);
-}
-
-.state-msg-sm {
-  padding: 1rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .state-error {
@@ -462,7 +423,7 @@ onMounted(loadQuota)
 }
 
 .toggle-row-label {
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
@@ -472,10 +433,5 @@ onMounted(loadQuota)
   gap: 0.75rem;
   padding-top: 0.5rem;
   border-top: 1px solid var(--border);
-}
-
-.form-error {
-  color: var(--danger);
-  font-size: 0.85rem;
 }
 </style>

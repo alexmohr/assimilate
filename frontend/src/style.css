@@ -68,17 +68,46 @@
   --text-on-accent: #ffffff;
   --danger: #dc2626;
   --danger-subtle: rgba(220, 38, 38, 0.08);
+  --danger-hover: #b91c1c;
   --success: #16a34a;
   --success-subtle: rgba(22, 163, 74, 0.08);
   --warning: #d97706;
   --warning-subtle: rgba(217, 119, 6, 0.08);
   --info: #0ea5e9;
   --info-subtle: rgba(14, 165, 233, 0.08);
+  --bg-code: #f1f5f9;
   --overlay: rgba(0, 0, 0, 0.5);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.04);
   --radius: 0.625rem;
   --radius-sm: 0.375rem;
+  --radius-pill: 999px;
+
+  /* Type scale. Every font-size in the app comes from this ladder -
+     see skills/frontend/SKILL.md. Adding a step is a design decision.
+     The two display steps are for decorative numerals only (error codes,
+     score rings), never for running text.
+
+     Deliberately named --fs-* rather than --text-*: Tailwind's own theme
+     defines --text-sm/--text-base/... to drive its text-* utilities, and a
+     same-named token here would resolve to a different value depending on
+     whether it was reached through var() or through a utility class. */
+  --fs-2xs: 0.6875rem;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-base: 0.875rem;
+  --fs-md: 0.9375rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 2rem;
+  --fs-3xl: 4rem;
+
+  --duration-fast: 0.1s;
+  --duration-base: 0.15s;
+  --duration-slow: 0.3s;
+  /* Value sweeps (progress fills, ring charts) read as data moving,
+     not as interaction feedback, so they run on their own step. */
+  --duration-value: 0.4s;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', Consolas, monospace;
@@ -102,12 +131,14 @@
   --text-on-accent: #ffffff;
   --danger: #f87171;
   --danger-subtle: rgba(248, 113, 113, 0.12);
+  --danger-hover: #fca5a5;
   --success: #4ade80;
   --success-subtle: rgba(74, 222, 128, 0.12);
   --warning: #fbbf24;
   --warning-subtle: rgba(251, 191, 36, 0.12);
   --info: #38bdf8;
   --info-subtle: rgba(56, 189, 248, 0.12);
+  --bg-code: #202023;
   --overlay: rgba(0, 0, 0, 0.7);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.4), 0 4px 10px rgba(0, 0, 0, 0.3);
@@ -122,12 +153,12 @@
     border-radius: var(--radius-sm);
     border: none;
     cursor: pointer;
-    font-size: 0.875rem;
+    font-size: var(--fs-base);
     font-weight: 500;
     white-space: nowrap;
     transition:
-      background 0.15s,
-      opacity 0.15s;
+      background var(--duration-base),
+      opacity var(--duration-base);
   }
 
   .btn:disabled {
@@ -175,72 +206,408 @@
 
   .btn-sm {
     padding: 0.3rem 0.65rem;
-    font-size: 0.8rem;
+    font-size: var(--fs-sm);
     min-height: 2rem;
   }
 
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--overlay);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 300;
-    backdrop-filter: blur(2px);
+  .btn-xs {
+    padding: 0.2rem 0.5rem;
+    font-size: var(--fs-xs);
   }
 
-  .dialog {
-    background: var(--bg-elevated);
+  /* --- Panel -------------------------------------------------------------
+     The app's one card surface. `.panel` is padded; `.panel--sectioned`
+     gives it a ruled header with a flush body, which is what the detail
+     views and list panels want. */
+  .panel {
+    background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    width: 460px;
-    max-width: 95vw;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: var(--shadow-lg);
+    padding: 1.25rem;
   }
 
-  .dialog-sm {
-    width: 380px;
+  .panel--sectioned {
+    padding: 0;
+    overflow: hidden;
   }
 
-  .dialog-header {
+  .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1.25rem 1.5rem 0;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
   }
 
-  .dialog-title {
-    font-size: 1.1rem;
-    font-weight: 700;
+  .panel--sectioned > .panel-header {
+    padding: 0.875rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
   }
 
-  .dialog-body {
-    padding: 1.25rem 1.5rem;
+  .panel--sectioned > .panel-body {
+    padding: 1.25rem;
   }
 
-  .dialog-footer {
+  /* Sentence case in primary ink: a panel heading, not a form label.
+     Uppercase-muted is reserved for `.field-label`, so the two roles stay
+     distinguishable when they sit in the same card. */
+  .panel-title {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  /* --- Info card ---------------------------------------------------------
+     The detail views' settings surface: a titled block of key/value rows or
+     an inline edit form, stacked vertically down a column. Distinct from
+     `.panel`, which is a list container with a ruled header.
+
+     `.info-title` is uppercase-muted rather than `.panel-title`'s sentence
+     case because these headings label a settings *group*, the same role
+     `.field-label` plays for a single field. */
+  .info-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+  }
+
+  .info-card + .info-card {
+    margin-top: 0.75rem;
+  }
+
+  .info-title {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 1.25rem;
+  }
+
+  /* Key/value rows: a muted label column sized to its content, values
+     taking the rest. */
+  .info-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.6rem 1.5rem;
+    margin: 0;
+  }
+
+  .info-grid dt {
+    color: var(--text-muted);
+    font-size: var(--fs-base);
+    font-weight: 500;
+  }
+
+  .info-grid dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-base);
+  }
+
+  /* Ruled footer holding the card's buttons. */
+  .info-actions {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 0.75rem;
-    padding: 0 1.5rem 1.25rem;
   }
 
-  .close-btn {
+  /* --- Badge -------------------------------------------------------------
+     One shape, one size, five tones. A leading `.badge-dot` marks live
+     state (Online, Running, Failed); no dot means classification (Manual,
+     Imported, Admin). */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-shrink: 0;
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .badge-dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+
+  .badge--success {
+    background: var(--success-subtle);
+    color: var(--success);
+  }
+
+  .badge--warning {
+    background: var(--warning-subtle);
+    color: var(--warning);
+  }
+
+  .badge--danger {
+    background: var(--danger-subtle);
+    color: var(--danger);
+  }
+
+  .badge--info {
+    background: var(--info-subtle);
+    color: var(--info);
+  }
+
+  .badge--accent {
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+
+  .badge--neutral {
+    background: var(--bg-hover);
+    color: var(--text-muted);
+  }
+
+  /* --- Danger zone --------------------------------------------------------
+     The destructive-actions panel on a detail page. Rows are `.danger-body`;
+     the separator between them comes from here, not from each caller. */
+  .danger-zone {
+    border-color: var(--danger);
+  }
+
+  .danger-zone .info-title {
+    color: var(--danger);
+  }
+
+  .danger-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+  }
+
+  .danger-body + .danger-body {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .danger-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .danger-heading {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .danger-desc {
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+  }
+
+  .danger-action-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 640px) {
+    .danger-body {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .danger-action-wrap {
+      align-items: stretch;
+    }
+  }
+
+  /* --- Tags ---------------------------------------------------------------
+     Two shapes share these rules: the tag filter dropdown on the list views
+     and the tag editor on the detail views. Both were duplicated verbatim in
+     two files each (F-26). */
+
+  .tag-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--fs-2xs);
+    font-weight: 500;
+    border: 1px solid;
+  }
+
+  .tag-filter-wrapper {
+    position: relative;
+  }
+
+  .tag-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 0.35rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    padding: 0.5rem;
+    min-width: 160px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .tag-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.4rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+    transition: background var(--duration-fast);
+  }
+
+  .tag-dropdown-name {
+    white-space: nowrap;
+  }
+
+  .tag-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tags-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .tag-remove {
     background: none;
     border: none;
-    color: var(--text-muted);
+    color: inherit;
     cursor: pointer;
-    font-size: 1.25rem;
-    padding: 0.25rem;
+    font-size: var(--fs-md);
     line-height: 1;
-    transition: color 0.15s;
+    padding: 0;
+    opacity: 0.6;
+    transition: opacity var(--duration-base);
   }
 
-  .close-btn:hover {
+  .tag-add-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .tag-create-inline {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .tag-dropdown-item:hover {
+    background: var(--bg-hover);
+  }
+
+  .tag-remove:hover {
+    opacity: 1;
+  }
+
+  /* --- Segmented control ------------------------------------------------- */
+  .segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .segmented-option {
+    padding: 0.35rem 0.75rem;
+    border: none;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background var(--duration-base),
+      color var(--duration-base);
+  }
+
+  .segmented-option + .segmented-option {
+    border-left: 1px solid var(--border);
+  }
+
+  .segmented-option:hover:not(.active) {
+    background: var(--bg-hover);
     color: var(--text-primary);
+  }
+
+  .segmented-option.active {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+  }
+
+  /* --- Tabs --------------------------------------------------------------- */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    padding: 0.75rem 1.25rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: var(--fs-base);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      color var(--duration-base),
+      border-color var(--duration-base);
+  }
+
+  .tab:hover {
+    color: var(--text-primary);
+  }
+
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
   }
 
   .field {
@@ -255,7 +622,7 @@
   }
 
   .field-label {
-    font-size: 0.8rem;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--text-secondary);
     text-transform: uppercase;
@@ -263,8 +630,26 @@
   }
 
   .field-hint {
-    font-size: 0.75rem;
+    font-size: var(--fs-xs);
     color: var(--text-muted);
+  }
+
+  /* A field whose control sits beside its label rather than under it. Used
+     for toggles, where a full-width column wastes a whole row. */
+  .field-inline {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  /* A label sharing its row with a secondary control, e.g. a "show
+     reference" toggle next to the field it documents. */
+  .field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
   }
 
   .required {
@@ -277,10 +662,10 @@
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     padding: 0.55rem 0.75rem;
-    font-size: 0.875rem;
+    font-size: var(--fs-base);
     width: 100%;
     box-sizing: border-box;
-    transition: border-color 0.15s;
+    transition: border-color var(--duration-base);
   }
 
   .input:focus {
@@ -296,42 +681,16 @@
     border: 1px solid var(--danger);
     border-radius: var(--radius-sm);
     color: var(--danger);
-    font-size: 0.85rem;
+    font-size: var(--fs-base);
     /* Some errors (e.g. Break Lock's cache-lock note prefixed onto a failure
        message) are newline-joined - preserve those breaks instead of
        collapsing them into one run-on line, same as .break-lock-success. */
     white-space: pre-line;
   }
 
-  .status-badge {
-    flex-shrink: 0;
-    padding: 0.2rem 0.6rem;
-    border-radius: 999px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-
-  .status-online {
-    background: var(--success-subtle);
-    color: var(--success);
-  }
-
-  .status-offline {
-    background: var(--bg-hover);
-    color: var(--text-muted);
-  }
-
-  .status-importing {
-    background: var(--warning-subtle, #fef3c7);
-    color: var(--warning, #d97706);
+  /* Layered on a tone to mark work in flight, e.g. an import running. */
+  .badge--pulse {
     animation: pulse-importing 1.5s ease-in-out infinite;
-  }
-
-  .status-error {
-    background: var(--danger-subtle, #fee2e2);
-    color: var(--danger, #dc2626);
   }
 
   @keyframes pulse-importing {
@@ -344,15 +703,27 @@
     }
   }
 
+  /* Counterpart to .form-error, for the same slot in a form. */
+  .form-success {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.875rem;
+    background: var(--success-subtle);
+    border: 1px solid var(--success);
+    border-radius: var(--radius-sm);
+    color: var(--success);
+    font-size: var(--fs-base);
+    white-space: pre-line;
+  }
+
   .mono {
     font-family: var(--mono);
-    font-size: 0.82rem;
+    font-size: var(--fs-sm);
   }
 
   .confirm-text {
     color: var(--text-secondary);
     line-height: 1.6;
-    font-size: 0.875rem;
+    font-size: var(--fs-base);
     margin-bottom: 0.5rem;
   }
 
@@ -365,7 +736,7 @@
   }
 
   .page-title {
-    font-size: 1.5rem;
+    font-size: var(--fs-xl);
     font-weight: 700;
   }
 
@@ -376,7 +747,7 @@
   }
 
   .page-description {
-    font-size: 0.875rem;
+    font-size: var(--fs-base);
     line-height: 1.5;
     color: var(--text-secondary);
     margin-bottom: 1rem;
@@ -393,20 +764,36 @@
     width: 260px;
   }
 
+  /* Block-level "nothing here" message, centred in the space it occupies. */
   .state-msg {
     text-align: center;
     padding: 3rem;
     color: var(--text-muted);
   }
 
+  /* The same message inside a dashboard widget, where 3rem of padding would
+     push the panel out of its grid row. */
+  .state-msg--inline {
+    text-align: left;
+    padding: 0.5rem 0;
+    font-size: var(--fs-base);
+  }
+
   .state-error {
     color: var(--danger);
+  }
+
+  /* --- Table --------------------------------------------------------------
+     One table style. `--compact` is for wide numeric grids (storage rows,
+     permission matrices) that genuinely need the density. */
+  .table-wrap {
+    overflow-x: auto;
   }
 
   .data-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.875rem;
+    font-size: var(--fs-base);
   }
 
   .data-table th {
@@ -421,6 +808,16 @@
     padding: 0.625rem 0.75rem;
     border-bottom: 1px solid var(--border-subtle);
     color: var(--text-primary);
+  }
+
+  .data-table--compact {
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .data-table--compact th,
+  .data-table--compact td {
+    padding: 0.5rem;
   }
 
   .name-cell {
@@ -443,7 +840,7 @@
   body {
     margin: 0;
     font-family: var(--sans);
-    font-size: 0.9375rem;
+    font-size: var(--fs-md);
     line-height: 1.5;
     color: var(--text-primary);
     background: var(--bg-base);
@@ -472,7 +869,7 @@
 
   code {
     font-family: var(--mono);
-    font-size: 0.8rem;
+    font-size: var(--fs-sm);
     padding: 0.15rem 0.4rem;
     background: var(--bg-hover);
     border-radius: var(--radius-sm);
@@ -494,5 +891,26 @@
   button {
     font-family: inherit;
     font-size: inherit;
+  }
+
+  /* Single keyboard focus indicator for the whole app. Wrapped in :where()
+     so it carries zero specificity - component styles still win on colour,
+     and the `outline: none` rules scattered through scoped stylesheets only
+     suppress :focus, never :focus-visible. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

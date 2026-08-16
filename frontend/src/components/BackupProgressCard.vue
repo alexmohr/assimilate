@@ -37,7 +37,7 @@ defineProps<{
         v-if="!progress"
         class="live-log-empty"
       >
-        Waiting for progress&hellip;
+        Waiting for progress...
       </div>
       <template v-else>
         <div class="progress-row">
@@ -97,7 +97,7 @@ defineProps<{
 }
 
 .live-log-title {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -106,7 +106,7 @@ defineProps<{
 
 .live-log-host-badge {
   margin-left: auto;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--accent);
   font-family: var(--mono);
 }
@@ -144,7 +144,7 @@ defineProps<{
   display: flex;
   gap: 1rem;
   padding: 0.2rem 1rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .progress-label {
@@ -163,7 +163,7 @@ defineProps<{
 
 .progress-path {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   word-break: break-all;
   overflow-wrap: break-word;
   white-space: pre-wrap;
@@ -172,6 +172,6 @@ defineProps<{
 
 .progress-mono {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 </style>

@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia } from 'pinia'
-import { mockApiClient, mockTimezone } from '../test-utils/sharedMocks'
+import { dataTableStubs, mockApiClient, mockTimezone } from '../test-utils/sharedMocks'
 
 vi.mock('../composables/useTimezone', () => mockTimezone())
 vi.mock('../api/client', () => mockApiClient())
@@ -93,8 +93,7 @@ function mountView(userRole: 'admin' | 'viewer' | null = 'admin'): ReturnType<ty
     global: {
       plugins: [pinia, createTestRouter()],
       stubs: {
-        DataTable: { template: '<div class="p-datatable"><slot /><slot name="empty" /></div>' },
-        Column: true,
+        ...dataTableStubs(),
         BaseSpinner: { template: '<div class="spinner" />' },
         EmptyState: {
           props: ['title', 'description'],
@@ -196,6 +195,27 @@ describe('AuditLogView', () => {
         '/audit-log',
         expect.objectContaining({ params: expect.any(Object) }),
       )
+    })
+  })
+
+  // The action badge is the only colour in the table, and an operator scans
+  // for the destructive ones - so every arm of the classifier has to be right.
+  describe('action badges', () => {
+    it.each([
+      ['create', 'badge--success'],
+      ['delete', 'badge--danger'],
+      ['update', 'badge--warning'],
+      ['login', 'badge--neutral'],
+    ])('renders %s as %s', async (action, badge) => {
+      mockGet.mockResolvedValue({
+        data: { items: [{ ...AUDIT_ENTRIES[0], action }], total: 1, page: 1, per_page: 25 },
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      const cell = wrapper.find('[data-field="action"] .badge')
+      expect(cell.text()).toBe(action)
+      expect(cell.classes()).toContain(badge)
     })
   })
 

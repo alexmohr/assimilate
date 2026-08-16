@@ -15,6 +15,7 @@ import { formatDateShort } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import type { AuditEntryResponse, AuditLogResponse } from '../types/generated'
+import { badgeClass } from '../utils/badge'
 
 type AuditEntry = AuditEntryResponse
 type AuditResponse = AuditLogResponse
@@ -107,7 +108,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">Action</label>
           <input
             v-model="filters.action"
-            class="filter-input"
+            class="input filter-input"
             type="text"
             placeholder="e.g. create, update, delete"
           />
@@ -116,7 +117,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">User</label>
           <input
             v-model="filters.user"
-            class="filter-input"
+            class="input filter-input"
             type="text"
             placeholder="Username"
           />
@@ -125,7 +126,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">From</label>
           <input
             v-model="filters.from"
-            class="date-input"
+            class="input date-input"
             type="date"
           />
         </div>
@@ -133,7 +134,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">To</label>
           <input
             v-model="filters.to"
-            class="date-input"
+            class="input date-input"
             type="date"
           />
         </div>
@@ -266,7 +267,7 @@ onMounted(fetchAuditLog)
       <label class="filter-label">Rows per page</label>
       <select
         v-model="perPage"
-        class="select-input"
+        class="input select-input"
       >
         <option
           v-for="opt in perPageOptions"
@@ -292,16 +293,7 @@ function classifyAuditAction(action: string): AuditActionCategory {
 }
 
 function actionBadgeClass(action: string): string {
-  switch (classifyAuditAction(action)) {
-    case 'danger':
-      return 'badge-danger'
-    case 'success':
-      return 'badge-success'
-    case 'warning':
-      return 'badge-warning'
-    case 'neutral':
-      return 'badge-neutral'
-  }
+  return badgeClass(classifyAuditAction(action))
 }
 </script>
 
@@ -320,20 +312,11 @@ function actionBadgeClass(action: string): string {
 }
 
 .page-header {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
 }
 
-.page-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
 .row-count {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
 }
 
@@ -358,7 +341,7 @@ function actionBadgeClass(action: string): string {
 }
 
 .filter-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -372,9 +355,9 @@ function actionBadgeClass(action: string): string {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.4rem 0.6rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .filter-input:focus,
@@ -394,7 +377,7 @@ function actionBadgeClass(action: string): string {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.4rem 0.6rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
 }
 
@@ -404,12 +387,6 @@ function actionBadgeClass(action: string): string {
   border: 1px solid var(--border);
 }
 
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
 .state-error {
   color: var(--danger);
 }
@@ -417,7 +394,7 @@ function actionBadgeClass(action: string): string {
 .cell-ts {
   color: var(--text-muted);
   white-space: nowrap;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .cell-user {
@@ -427,45 +404,16 @@ function actionBadgeClass(action: string): string {
 
 .cell-target {
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .cell-ip {
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .mono {
   font-family: var(--mono);
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.badge-danger {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.badge-success {
-  background: var(--success-subtle, oklch(0.95 0.05 145));
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-neutral {
-  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
-  color: var(--text-secondary);
 }
 
 .detail-expansion {
@@ -479,7 +427,7 @@ function actionBadgeClass(action: string): string {
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-family: var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
@@ -488,7 +436,7 @@ function actionBadgeClass(action: string): string {
 
 .muted {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .per-page-selector {

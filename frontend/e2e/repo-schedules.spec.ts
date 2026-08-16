@@ -9,7 +9,7 @@ test('repo schedules tab loads without redirecting to the error page', async ({ 
   await page.getByText('server-daily').click()
   await page.waitForURL(/\/repos\/\d+/)
 
-  await page.getByRole('button', { name: 'Schedules' }).click()
+  await page.getByRole('tab', { name: 'Schedules' }).click()
   await page.waitForURL(/tab=schedules/)
   // Give the schedules/agents/health fetches time to settle and render.
   await page.waitForTimeout(2_000)

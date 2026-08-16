@@ -456,7 +456,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             {{ s.target_hostnames.length }} agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
           </span>
           <span
-            class="type-badge"
+            class="badge badge--neutral"
             :class="`type-${s.schedule_type ?? 'backup'}`"
           >
             {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
@@ -529,14 +529,10 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
   margin-bottom: 1rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
 
@@ -558,12 +554,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   position: relative;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .btn-filter-toggle:hover {
@@ -596,7 +592,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 }
 
 .sort-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -622,8 +618,8 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   padding: 1.25rem;
   cursor: pointer;
   transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+    box-shadow var(--duration-base),
+    border-color var(--duration-base);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -641,7 +637,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 .card-hostname {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -657,21 +653,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 .host-count {
   display: inline-block;
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   background: var(--bg-card);
   color: var(--text-secondary);
-}
-
-.type-badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
 .type-backup {
@@ -701,13 +688,13 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 }
 
 .stat-value {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -728,7 +715,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 }
 
 .schedule-toggle-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
 }

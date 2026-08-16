@@ -65,13 +65,6 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 </template>
 
 <style scoped>
-.panel-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.75rem;
-}
-
 .coverage-score {
   display: flex;
   align-items: baseline;
@@ -87,13 +80,13 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 }
 
 .coverage-score strong {
-  font-size: 2rem;
+  font-size: var(--fs-2xl);
 }
 
 .coverage-score span,
 .coverage-ok {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .coverage-ok {
@@ -122,7 +115,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 dt,
 dd {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 dd {
@@ -138,10 +131,10 @@ dd {
 
 .host-links a {
   padding: 0.25rem 0.5rem;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   background: var(--bg-base);
   color: var(--accent);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   text-decoration: none;
 }
 </style>

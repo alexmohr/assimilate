@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { clickButtonWithText, renderWithPlugins } from '../test-utils'
+import { clickButtonWithText, openModals, renderWithPlugins } from '../test-utils'
 import RolesView from './RolesView.vue'
 
 vi.mock('../api/client', () => ({
@@ -87,7 +87,7 @@ describe('RolesView', () => {
 
     await flushPromises()
 
-    const badges = wrapper.findAll('.seeded-badge')
+    const badges = wrapper.findAll('.badge--neutral')
     expect(badges.length).toBe(3)
     badges.forEach((b) => expect(b.text()).toBe('built-in'))
   })
@@ -157,7 +157,7 @@ describe('RolesView', () => {
     expect(editButtons.length).toBeGreaterThan(0)
     await editButtons[0].trigger('click')
 
-    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(true)
     expect(wrapper.text()).toContain('Edit Role')
     expect(wrapper.text()).toContain('admin')
   })
@@ -213,7 +213,7 @@ describe('RolesView', () => {
     await flushPromises()
 
     await clickButtonWithText(wrapper, 'New')
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
     expect(wrapper.find('#create-role-name').exists()).toBe(false)
 
@@ -231,7 +231,7 @@ describe('RolesView', () => {
     const editButton = wrapper.findAll('button').find((b) => b.text() === 'Edit')
 
     await editButton!.trigger('click')
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
     expect(wrapper.find('.permissions-grid').exists()).toBe(false)
 
@@ -261,6 +261,20 @@ describe('RolesView', () => {
     expect(mockApiDelete).toHaveBeenCalledWith('/roles/4')
   })
 
+  // A fresh install has no custom roles, so the empty state's own button is
+  // the only way into the create dialog from that screen.
+  it('opens the create dialog from the empty state', async () => {
+    mockApiGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    expect(wrapper.find('table').exists()).toBe(false)
+    await clickButtonWithText(wrapper, 'Create Role')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+  })
+
   it('cancels the delete confirm dialog without deleting', async () => {
     const wrapper = renderWithPlugins(RolesView)
     await flushPromises()
@@ -269,10 +283,10 @@ describe('RolesView', () => {
     const enabledDelete = deleteButtons.find((b) => b.attributes('disabled') === undefined)
     await enabledDelete!.trigger('click')
 
-    await wrapper.find('button.close-btn').trigger('click')
+    await wrapper.find('button.modal-close').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     expect(apiClient.delete).not.toHaveBeenCalled()
   })
 })

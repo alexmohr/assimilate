@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { useToast } from '../composables/useToast'
-import { CheckCircle, XCircle, AlertTriangle, Info } from '@lucide/vue'
+import { CheckCircle, XCircle, AlertTriangle, Info, X } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { ToastType } from '../composables/useToast'
 
@@ -46,7 +46,7 @@ const iconMap: Record<ToastType, Component> = {
             aria-label="Dismiss"
             @click="remove(toast.id)"
           >
-            &times;
+            <X :size="14" />
           </button>
         </div>
       </TransitionGroup>
@@ -77,7 +77,7 @@ const iconMap: Record<ToastType, Component> = {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   pointer-events: auto;
 }
 
@@ -129,13 +129,13 @@ const iconMap: Record<ToastType, Component> = {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 1.2rem;
+  font-size: var(--fs-lg);
   line-height: 1;
   padding: 0.125rem 0.25rem;
   border-radius: var(--radius-sm);
   transition:
-    color 0.15s,
-    background 0.15s;
+    color var(--duration-base),
+    background var(--duration-base);
 }
 
 .toast-dismiss:hover {
@@ -145,14 +145,14 @@ const iconMap: Record<ToastType, Component> = {
 
 .toast-enter-active {
   transition:
-    transform 0.3s ease,
-    opacity 0.3s ease;
+    transform var(--duration-slow) ease,
+    opacity var(--duration-slow) ease;
 }
 
 .toast-leave-active {
   transition:
-    transform 0.2s ease,
-    opacity 0.2s ease;
+    transform var(--duration-slow) ease,
+    opacity var(--duration-slow) ease;
 }
 
 .toast-enter-from {
@@ -166,6 +166,6 @@ const iconMap: Record<ToastType, Component> = {
 }
 
 .toast-move {
-  transition: transform 0.3s ease;
+  transition: transform var(--duration-slow) ease;
 }
 </style>

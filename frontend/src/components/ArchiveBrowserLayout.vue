@@ -50,7 +50,7 @@ withDefaults(
   min-width: 0;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1024px) {
   /* Both selectors listed so this still wins over the higher-specificity
      .layout-narrow-list rule above and the narrow variant collapses too. */
   .archive-browser-layout,

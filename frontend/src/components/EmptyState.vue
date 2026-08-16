@@ -68,13 +68,13 @@ defineEmits<{
 }
 
 .empty-title {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .empty-description {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-muted);
   max-width: 320px;
   line-height: 1.5;

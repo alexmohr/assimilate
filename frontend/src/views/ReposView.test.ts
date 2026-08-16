@@ -834,4 +834,106 @@ describe('ReposView quota sort', () => {
     await flushPromises()
     expect(wrapper.findAll('.repo-card')).toHaveLength(3)
   })
+
+  describe('create and import dialog', () => {
+    function dialog(wrapper: VueWrapper<ComponentPublicInstance>) {
+      return wrapper.findComponent({ name: 'RepoCreateDialog' })
+    }
+
+    it('opens the dialog in import mode from the Import action', async () => {
+      setupApiSuccess()
+      const wrapper = await mountAsAdmin()
+
+      await clickButton(wrapper, (t) => t.includes('Import'))
+
+      expect(dialog(wrapper).props('open')).toBe(true)
+      expect(dialog(wrapper).props('mode')).toBe('import')
+    })
+
+    it('opens the dialog in create mode from the New action', async () => {
+      setupApiSuccess()
+      const wrapper = await mountAsAdmin()
+
+      await clickButton(wrapper, (t) => t.includes('New'))
+
+      expect(dialog(wrapper).props('open')).toBe(true)
+      expect(dialog(wrapper).props('mode')).toBe('create')
+    })
+
+    /**
+     * Reopening in the other mode must not show the previous attempt's
+     * values. Asserted through the rendered field rather than by spying on
+     * reset(), so it stays true however the clearing is implemented.
+     */
+    it('clears the dialog when it is reopened in the other mode', async () => {
+      setupApiSuccess()
+      const wrapper = await mountAsAdmin()
+
+      await clickButton(wrapper, (t) => t.includes('Import'))
+      const nameField = (): HTMLInputElement | null =>
+        [...document.body.querySelectorAll('.field')]
+          .find((f) => f.querySelector('.field-label')?.textContent?.includes('Name'))
+          ?.querySelector('input') ?? null
+
+      const typed = nameField()
+      expect(typed).not.toBeNull()
+      typed!.value = 'abandoned'
+      typed!.dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      await dialog(wrapper).vm.$emit('close')
+      await flushPromises()
+      await clickButton(wrapper, (t) => t.includes('New'))
+
+      expect(dialog(wrapper).props('mode')).toBe('create')
+      expect(nameField()?.value).toBe('')
+    })
+
+    it('closes on the dialog request', async () => {
+      setupApiSuccess()
+      const wrapper = await mountAsAdmin()
+      await clickButton(wrapper, (t) => t.includes('New'))
+
+      await dialog(wrapper).vm.$emit('close')
+      await flushPromises()
+
+      expect(dialog(wrapper).props('open')).toBe(false)
+    })
+
+    /**
+     * An import only enqueues the scan, so the row is added straight away in
+     * its importing state rather than waiting for a refetch - otherwise the
+     * repository the operator just added is briefly absent from the list.
+     */
+    it('adds an imported repository to the list immediately', async () => {
+      setupApiSuccess()
+      const wrapper = await mountAsAdmin()
+      const before = wrapper.findAll('.repo-card').length
+
+      await dialog(wrapper).vm.$emit('imported', {
+        id: 99,
+        name: 'freshly-imported',
+        repo_path: '/backup/repos/fresh',
+        ssh_user: 'borg',
+        ssh_host: 'backup.example.com',
+        ssh_port: 22,
+        enabled: true,
+      })
+      await flushPromises()
+
+      expect(wrapper.findAll('.repo-card')).toHaveLength(before + 1)
+      expect(wrapper.text()).toContain('freshly-imported')
+    })
+
+    it('refetches rather than guessing when a repository is created', async () => {
+      setupApiSuccess()
+      const wrapper = await mountAsAdmin()
+      vi.mocked(apiClient.get).mockClear()
+
+      await dialog(wrapper).vm.$emit('created')
+      await flushPromises()
+
+      expect(apiClient.get).toHaveBeenCalled()
+    })
+  })
 })

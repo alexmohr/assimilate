@@ -12,6 +12,8 @@ import { extractError } from '../utils/error'
 import { Plus, Pencil, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type { Repo } from '../types/repo'
+import BaseModal from '../components/BaseModal.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 interface User {
   id: number
@@ -56,7 +58,16 @@ const deleteSubmitting = ref(false)
 
 const showEditModal = ref(false)
 const editUser = ref<User | null>(null)
-const editTab = ref<'general' | 'password' | 'roles' | 'permissions'>('general')
+type EditTab = 'general' | 'password' | 'roles' | 'permissions'
+
+const editTabs: TabOption<EditTab>[] = [
+  { id: 'general', label: 'General' },
+  { id: 'password', label: 'Password' },
+  { id: 'roles', label: 'Roles & Groups' },
+  { id: 'permissions', label: 'Permissions' },
+]
+
+const editTab = ref<EditTab>('general')
 const editRole = ref<'admin' | 'user'>('user')
 const editRoleSubmitting = ref(false)
 const editRoleError = ref('')
@@ -304,7 +315,7 @@ onMounted(fetchUsers)
 
     <table
       v-else
-      class="users-table"
+      class="data-table"
     >
       <thead>
         <tr>
@@ -325,14 +336,14 @@ onMounted(fetchUsers)
               {{ user.username }}
               <span
                 v-if="isSelf(user)"
-                class="you-badge"
+                class="badge badge--accent"
                 >you</span
               >
             </span>
           </td>
           <td>
             <span
-              class="role-badge"
+              class="badge badge--neutral"
               :class="user.role"
               >{{ user.role }}</span
             >
@@ -368,396 +379,340 @@ onMounted(fetchUsers)
     </table>
 
     <!-- Create User Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showCreateModal"
-        class="overlay"
-        @click.self="showCreateModal = false"
-      >
-        <div class="modal">
-          <div class="modal-header">
-            <h2>Add User</h2>
-            <button
-              class="close-btn"
-              @click="showCreateModal = false"
-            >
-              &times;
-            </button>
-          </div>
-          <form
-            class="modal-body"
-            @submit.prevent="submitCreate"
-          >
-            <div class="form-group">
-              <label for="new-username">Username</label>
-              <input
-                id="new-username"
-                v-model="createForm.username"
-                type="text"
-                required
-              />
-            </div>
-            <div class="form-group">
-              <label for="new-password">Password</label>
-              <input
-                id="new-password"
-                v-model="createForm.password"
-                type="password"
-                required
-                minlength="8"
-              />
-            </div>
-            <div class="form-group">
-              <label for="new-role">Role</label>
-              <select
-                id="new-role"
-                v-model="createForm.role"
-              >
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <div
-              v-if="createError"
-              class="modal-error"
-            >
-              {{ createError }}
-            </div>
-            <div class="modal-actions">
-              <button
-                type="button"
-                class="btn btn-ghost"
-                @click="showCreateModal = false"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                class="btn btn-primary"
-                :disabled="createSubmitting || !createForm.username.trim() || !createForm.password"
-              >
-                Create
-              </button>
-            </div>
-          </form>
-        </div>
+    <BaseModal
+      :open="showCreateModal"
+      title="Add User"
+      form
+      @close="showCreateModal = false"
+      @submit="submitCreate"
+    >
+      <div class="field">
+        <label for="new-username">Username</label>
+        <input
+          id="new-username"
+          v-model="createForm.username"
+          class="input"
+          type="text"
+          required
+        />
       </div>
-    </Teleport>
+      <div class="field">
+        <label for="new-password">Password</label>
+        <input
+          id="new-password"
+          v-model="createForm.password"
+          class="input"
+          type="password"
+          required
+          minlength="8"
+        />
+      </div>
+      <div class="field">
+        <label for="new-role">Role</label>
+        <select
+          id="new-role"
+          v-model="createForm.role"
+          class="input"
+        >
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div
+        v-if="createError"
+        class="form-error"
+      >
+        {{ createError }}
+      </div>
+      <div class="modal-actions">
+        <button
+          type="button"
+          class="btn btn-ghost"
+          @click="showCreateModal = false"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="btn btn-primary"
+          :disabled="createSubmitting || !createForm.username.trim() || !createForm.password"
+        >
+          Create
+        </button>
+      </div>
+    </BaseModal>
 
     <!-- Edit User Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showEditModal"
-        class="overlay"
-        @click.self="showEditModal = false"
-      >
-        <div class="modal modal-wide">
-          <div class="modal-header">
-            <h2>Edit User — {{ editUser?.username }}</h2>
-            <button
-              class="close-btn"
-              @click="showEditModal = false"
+    <BaseModal
+      :open="showEditModal"
+      size="lg"
+      @close="showEditModal = false"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Edit User — {{ editUser?.username }}
+        </h2>
+      </template>
+      <BaseTabs
+        v-model="editTab"
+        :tabs="editTabs"
+        label="User settings sections"
+      />
+      <div class="tab-scroll">
+        <!-- General Tab -->
+        <div
+          v-if="editTab === 'general'"
+          class="tab-content"
+        >
+          <div class="field">
+            <label for="edit-role">Role</label>
+            <select
+              id="edit-role"
+              v-model="editRole"
+              class="input"
             >
-              &times;
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div
+            v-if="editRoleError"
+            class="form-error"
+          >
+            {{ editRoleError }}
+          </div>
+          <div class="modal-actions">
+            <button
+              class="btn btn-primary"
+              :disabled="editRoleSubmitting || editRole === editUser?.role"
+              @click="saveRole"
+            >
+              {{ editRoleSubmitting ? 'Saving...' : 'Save Role' }}
             </button>
           </div>
-          <div class="tabs">
+        </div>
+
+        <!-- Password Tab -->
+        <div
+          v-if="editTab === 'password'"
+          class="tab-content"
+        >
+          <div class="field">
+            <label for="edit-password">New Password</label>
+            <input
+              id="edit-password"
+              v-model="editPassword"
+              class="input"
+              type="password"
+              minlength="8"
+              placeholder="Enter new password"
+            />
+          </div>
+          <div
+            v-if="editPasswordError"
+            class="form-error"
+          >
+            {{ editPasswordError }}
+          </div>
+          <div
+            v-if="editPasswordSuccess"
+            class="form-success"
+          >
+            Password updated successfully.
+          </div>
+          <div class="modal-actions">
             <button
-              class="tab"
-              :class="{ active: editTab === 'general' }"
-              @click="editTab = 'general'"
+              class="btn btn-primary"
+              :disabled="editPasswordSubmitting || !editPassword"
+              @click="savePassword"
             >
-              General
-            </button>
-            <button
-              class="tab"
-              :class="{ active: editTab === 'password' }"
-              @click="editTab = 'password'"
-            >
-              Password
-            </button>
-            <button
-              class="tab"
-              :class="{ active: editTab === 'roles' }"
-              @click="editTab = 'roles'"
-            >
-              Roles &amp; Groups
-            </button>
-            <button
-              class="tab"
-              :class="{ active: editTab === 'permissions' }"
-              @click="editTab = 'permissions'"
-            >
-              Permissions
+              {{ editPasswordSubmitting ? 'Resetting...' : 'Reset Password' }}
             </button>
           </div>
-          <div class="modal-body">
-            <!-- General Tab -->
-            <div
-              v-if="editTab === 'general'"
-              class="tab-content"
-            >
-              <div class="form-group">
-                <label for="edit-role">Role</label>
-                <select
-                  id="edit-role"
-                  v-model="editRole"
-                >
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-              <div
-                v-if="editRoleError"
-                class="modal-error"
-              >
-                {{ editRoleError }}
-              </div>
-              <div class="modal-actions">
-                <button
-                  class="btn btn-primary"
-                  :disabled="editRoleSubmitting || editRole === editUser?.role"
-                  @click="saveRole"
-                >
-                  {{ editRoleSubmitting ? 'Saving...' : 'Save Role' }}
-                </button>
-              </div>
-            </div>
+        </div>
 
-            <!-- Password Tab -->
-            <div
-              v-if="editTab === 'password'"
-              class="tab-content"
-            >
-              <div class="form-group">
-                <label for="edit-password">New Password</label>
-                <input
-                  id="edit-password"
-                  v-model="editPassword"
-                  type="password"
-                  minlength="8"
-                  placeholder="Enter new password"
-                />
-              </div>
+        <!-- Roles & Groups Tab -->
+        <div
+          v-if="editTab === 'roles'"
+          class="tab-content"
+        >
+          <BaseSpinner
+            v-if="editRolesLoading"
+            size="sm"
+          />
+          <template v-else>
+            <div class="rg-section">
+              <h3 class="rg-heading">Roles</h3>
               <div
-                v-if="editPasswordError"
-                class="modal-error"
-              >
-                {{ editPasswordError }}
-              </div>
-              <div
-                v-if="editPasswordSuccess"
-                class="modal-success"
-              >
-                Password updated successfully.
-              </div>
-              <div class="modal-actions">
-                <button
-                  class="btn btn-primary"
-                  :disabled="editPasswordSubmitting || !editPassword"
-                  @click="savePassword"
-                >
-                  {{ editPasswordSubmitting ? 'Resetting...' : 'Reset Password' }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Roles & Groups Tab -->
-            <div
-              v-if="editTab === 'roles'"
-              class="tab-content"
-            >
-              <BaseSpinner
-                v-if="editRolesLoading"
-                size="sm"
-              />
-              <template v-else>
-                <div class="rg-section">
-                  <h3 class="rg-heading">Roles</h3>
-                  <div
-                    v-if="allRoles.length === 0"
-                    class="rg-empty"
-                  >
-                    No roles available.
-                  </div>
-                  <div
-                    v-else
-                    class="rg-list"
-                  >
-                    <label
-                      v-for="role in allRoles"
-                      :key="role.id"
-                      class="rg-item"
-                    >
-                      <input
-                        type="checkbox"
-                        :checked="userRoleIds.includes(role.id)"
-                        @change="toggleUserRole(role.id)"
-                      />
-                      <span class="rg-item-name">{{ role.name }}</span>
-                    </label>
-                  </div>
-                </div>
-                <div
-                  v-if="allGroups.length > 0"
-                  class="rg-section"
-                >
-                  <h3 class="rg-heading">Groups</h3>
-                  <div class="rg-list">
-                    <label
-                      v-for="group in allGroups"
-                      :key="group.id"
-                      class="rg-item"
-                    >
-                      <input
-                        type="checkbox"
-                        :checked="userGroupIds.includes(group.id)"
-                        @change="toggleUserGroup(group.id)"
-                      />
-                      <span class="rg-item-name">{{ group.name }}</span>
-                    </label>
-                  </div>
-                </div>
-              </template>
-              <div
-                v-if="editRolesError"
-                class="modal-error"
-              >
-                {{ editRolesError }}
-              </div>
-              <div class="modal-actions">
-                <button
-                  class="btn btn-primary"
-                  :disabled="editRolesSubmitting || editRolesLoading"
-                  @click="saveRolesGroups"
-                >
-                  {{ editRolesSubmitting ? 'Saving...' : 'Save' }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Permissions Tab -->
-            <div
-              v-if="editTab === 'permissions'"
-              class="tab-content"
-            >
-              <BaseSpinner
-                v-if="editPermsLoading"
-                size="sm"
-              />
-              <div
-                v-else-if="permissionsRepos.length === 0"
+                v-if="allRoles.length === 0"
                 class="rg-empty"
               >
-                No repositories configured yet.
+                No roles available.
               </div>
               <div
                 v-else
-                class="permissions-table-wrap"
+                class="rg-list"
               >
-                <table class="permissions-table">
-                  <thead>
-                    <tr>
-                      <th>Repository</th>
-                      <th>View</th>
-                      <th>Backup</th>
-                      <th>Schedules</th>
-                      <th>Extract</th>
-                      <th>Delete</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="repo in permissionsRepos"
-                      :key="repo.id"
-                    >
-                      <td class="perm-repo-cell">{{ repo.name }}</td>
-                      <td class="perm-check-cell">
-                        <input
-                          type="checkbox"
-                          :checked="getPermission(repo.id).can_view"
-                          @change="togglePermission(repo.id, 'can_view')"
-                        />
-                      </td>
-                      <td class="perm-check-cell">
-                        <input
-                          type="checkbox"
-                          :checked="getPermission(repo.id).can_backup"
-                          @change="togglePermission(repo.id, 'can_backup')"
-                        />
-                      </td>
-                      <td class="perm-check-cell">
-                        <input
-                          type="checkbox"
-                          :checked="getPermission(repo.id).can_modify_schedules"
-                          @change="togglePermission(repo.id, 'can_modify_schedules')"
-                        />
-                      </td>
-                      <td class="perm-check-cell">
-                        <input
-                          type="checkbox"
-                          :checked="getPermission(repo.id).can_extract"
-                          @change="togglePermission(repo.id, 'can_extract')"
-                        />
-                      </td>
-                      <td class="perm-check-cell">
-                        <input
-                          type="checkbox"
-                          :checked="getPermission(repo.id).can_delete"
-                          @change="togglePermission(repo.id, 'can_delete')"
-                        />
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+                <label
+                  v-for="role in allRoles"
+                  :key="role.id"
+                  class="rg-item"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="userRoleIds.includes(role.id)"
+                    @change="toggleUserRole(role.id)"
+                  />
+                  <span class="rg-item-name">{{ role.name }}</span>
+                </label>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Delete User Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteModal"
-        class="overlay"
-        @click.self="showDeleteModal = false"
-      >
-        <div class="modal modal-sm">
-          <div class="modal-header">
-            <h2>Delete User</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteModal = false"
+            <div
+              v-if="allGroups.length > 0"
+              class="rg-section"
             >
-              &times;
+              <h3 class="rg-heading">Groups</h3>
+              <div class="rg-list">
+                <label
+                  v-for="group in allGroups"
+                  :key="group.id"
+                  class="rg-item"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="userGroupIds.includes(group.id)"
+                    @change="toggleUserGroup(group.id)"
+                  />
+                  <span class="rg-item-name">{{ group.name }}</span>
+                </label>
+              </div>
+            </div>
+          </template>
+          <div
+            v-if="editRolesError"
+            class="form-error"
+          >
+            {{ editRolesError }}
+          </div>
+          <div class="modal-actions">
+            <button
+              class="btn btn-primary"
+              :disabled="editRolesSubmitting || editRolesLoading"
+              @click="saveRolesGroups"
+            >
+              {{ editRolesSubmitting ? 'Saving...' : 'Save' }}
             </button>
           </div>
-          <div class="modal-body">
-            <p class="confirm-text">
-              Delete <strong>{{ deleteTarget?.username }}</strong
-              >? This action cannot be undone.
-            </p>
-            <div class="modal-actions">
-              <button
-                class="btn btn-ghost"
-                @click="showDeleteModal = false"
-              >
-                Cancel
-              </button>
-              <button
-                class="btn btn-danger"
-                :disabled="deleteSubmitting"
-                @click="confirmDelete"
-              >
-                {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-              </button>
-            </div>
+        </div>
+
+        <!-- Permissions Tab -->
+        <div
+          v-if="editTab === 'permissions'"
+          class="tab-content"
+        >
+          <BaseSpinner
+            v-if="editPermsLoading"
+            size="sm"
+          />
+          <div
+            v-else-if="permissionsRepos.length === 0"
+            class="rg-empty"
+          >
+            No repositories configured yet.
+          </div>
+          <div
+            v-else
+            class="permissions-scroll"
+          >
+            <table class="data-table data-table--compact">
+              <thead>
+                <tr>
+                  <th>Repository</th>
+                  <th>View</th>
+                  <th>Backup</th>
+                  <th>Schedules</th>
+                  <th>Extract</th>
+                  <th>Delete</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="repo in permissionsRepos"
+                  :key="repo.id"
+                >
+                  <td class="perm-repo-cell">{{ repo.name }}</td>
+                  <td class="perm-check-cell">
+                    <input
+                      type="checkbox"
+                      :checked="getPermission(repo.id).can_view"
+                      @change="togglePermission(repo.id, 'can_view')"
+                    />
+                  </td>
+                  <td class="perm-check-cell">
+                    <input
+                      type="checkbox"
+                      :checked="getPermission(repo.id).can_backup"
+                      @change="togglePermission(repo.id, 'can_backup')"
+                    />
+                  </td>
+                  <td class="perm-check-cell">
+                    <input
+                      type="checkbox"
+                      :checked="getPermission(repo.id).can_modify_schedules"
+                      @change="togglePermission(repo.id, 'can_modify_schedules')"
+                    />
+                  </td>
+                  <td class="perm-check-cell">
+                    <input
+                      type="checkbox"
+                      :checked="getPermission(repo.id).can_extract"
+                      @change="togglePermission(repo.id, 'can_extract')"
+                    />
+                  </td>
+                  <td class="perm-check-cell">
+                    <input
+                      type="checkbox"
+                      :checked="getPermission(repo.id).can_delete"
+                      @change="togglePermission(repo.id, 'can_delete')"
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
-    </Teleport>
+    </BaseModal>
+
+    <!-- Delete User Modal -->
+    <BaseModal
+      :open="showDeleteModal"
+      title="Delete User"
+      @close="showDeleteModal = false"
+    >
+      <p class="confirm-text">
+        Delete <strong>{{ deleteTarget?.username }}</strong
+        >? This action cannot be undone.
+      </p>
+      <div class="modal-actions">
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteModal = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteSubmitting"
+          @click="confirmDelete"
+        >
+          {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
+        </button>
+      </div>
+    </BaseModal>
   </div>
 </template>
 
@@ -771,46 +726,10 @@ onMounted(fetchUsers)
   padding: 2rem 0;
 }
 
-.users-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.users-table th {
-  text-align: left;
-  padding: 0.625rem 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.users-table td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
 .user-cell {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-.you-badge {
-  font-size: 0.6875rem;
-  color: var(--text-muted);
-  background: var(--bg-hover);
-  padding: 0.0625rem 0.375rem;
-  border-radius: var(--radius-sm);
-}
-
-.role-badge {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  padding: 0.125rem 0.5rem;
-  border-radius: var(--radius-sm);
 }
 
 .role-badge.admin {
@@ -825,7 +744,7 @@ onMounted(fetchUsers)
 
 .date-cell {
   color: var(--text-secondary);
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
 }
 
 .actions-cell {
@@ -835,79 +754,13 @@ onMounted(fetchUsers)
 }
 
 .col-date {
-  @media (max-width: 700px) {
+  @media (max-width: 768px) {
     display: none;
   }
 }
 
-.modal {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  width: 100%;
-  max-width: 420px;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow-lg);
-}
-
-.modal-wide {
-  max-width: 640px;
-  height: 70vh;
-}
-
-.modal-sm {
-  max-width: 380px;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.25rem 1.5rem 0;
-}
-
-.modal-header h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin: 1rem 1.5rem 0;
-}
-
-.tab {
-  background: none;
-  border: none;
-  padding: 0.6rem 1rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition:
-    color 0.15s,
-    border-color 0.15s;
-}
-
-.tab:hover {
-  color: var(--text-primary);
-}
-
-.tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-.modal-body {
-  padding: 1.25rem 1.5rem 1.5rem;
+.tab-scroll {
+  padding: 0.25rem 0 0;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
@@ -919,48 +772,26 @@ onMounted(fetchUsers)
   gap: 0.75rem;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
+.field label {
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-secondary);
 }
 
-.form-group input,
-.form-group select {
+.field input,
+.field select {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
-.form-group input:focus,
-.form-group select:focus {
+.field input:focus,
+.field select:focus {
   outline: none;
   border-color: var(--accent);
-}
-
-.modal-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-success {
-  font-size: 0.8125rem;
-  color: var(--success);
-  padding: 0.5rem 0.75rem;
-  background: var(--success-subtle);
-  border-radius: var(--radius-sm);
 }
 
 .modal-actions {
@@ -975,7 +806,7 @@ onMounted(fetchUsers)
 }
 
 .rg-heading {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -984,7 +815,7 @@ onMounted(fetchUsers)
 }
 
 .rg-empty {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   padding: 0.5rem 0;
 }
@@ -1007,7 +838,7 @@ onMounted(fetchUsers)
   padding: 0.35rem 0.4rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .rg-item:hover {
@@ -1020,41 +851,19 @@ onMounted(fetchUsers)
 }
 
 .rg-item-name {
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-primary);
 }
 
-.permissions-table-wrap {
+.permissions-scroll {
   max-height: 350px;
   overflow-y: auto;
 }
 
-.permissions-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8125rem;
-}
-
-.permissions-table th {
-  text-align: left;
-  padding: 0.5rem 0.5rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-.permissions-table td {
-  padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
 .perm-repo-cell {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 
 .perm-check-cell {

@@ -95,6 +95,8 @@ vi.mock('../components/QuotaPanel.vue', () => ({
 }))
 
 import { apiClient } from '../api/client'
+import RepoArchivesTab from '../components/RepoArchivesTab.vue'
+import RepoDangerZone from '../components/RepoDangerZone.vue'
 
 interface RepoWithStats {
   id: number
@@ -385,7 +387,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
 
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
     expect(archivesTab).toBeDefined()
     await archivesTab!.trigger('click')
     await flushPromises()
@@ -397,7 +399,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     expect(schedulesTab).toBeDefined()
     await schedulesTab!.trigger('click')
     await flushPromises()
@@ -425,7 +427,7 @@ describe('RepoDetailView', () => {
 
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     await schedulesTab!.trigger('click')
     await flushPromises()
 
@@ -446,7 +448,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess(mockRepo, refreshedHostKey, [{ ...mockRepoSchedule, enabled: false }])
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     await schedulesTab!.trigger('click')
     await flushPromises()
 
@@ -475,7 +477,7 @@ describe('RepoDetailView', () => {
     )
     const wrapper = await renderRepoDetail()
 
-    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    const schedulesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Schedules')
     await schedulesTab!.trigger('click')
     await flushPromises()
 
@@ -511,7 +513,7 @@ describe('RepoDetailView', () => {
 
     const wrapper = await renderRepoDetail()
 
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
     expect(archivesTab).toBeDefined()
     await archivesTab!.trigger('click')
     await flushPromises()
@@ -549,7 +551,7 @@ describe('RepoDetailView', () => {
     })
     await flushPromises()
 
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
     await archivesTab!.trigger('click')
     await flushPromises()
 
@@ -577,7 +579,7 @@ describe('RepoDetailView', () => {
     async function goToArchivesTab(
       wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
     ): Promise<void> {
-      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
       await archivesTab!.trigger('click')
       await flushPromises()
     }
@@ -698,6 +700,34 @@ describe('RepoDetailView', () => {
     expect(wrapper.text()).toContain('Delete Repository')
   })
 
+  // The danger zone renames and resets the repository, which changes the
+  // header and the stat cards above it - so its `changed` has to refetch,
+  // not just close the dialog.
+  it('refreshes the repository when the danger zone reports a change', async () => {
+    setupApiSuccess()
+    const wrapper = await renderRepoDetail()
+    const repoFetches = (): number =>
+      vi.mocked(apiClient.get).mock.calls.filter((c) => String(c[0]) === '/repos/1').length
+    const before = repoFetches()
+
+    wrapper.findComponent(RepoDangerZone).vm.$emit('changed')
+    await flushPromises()
+
+    expect(repoFetches()).toBe(before + 1)
+  })
+
+  // The danger zone has no banner of its own; it hands failures up so they
+  // land in the page-level error slot next to the repository it names.
+  it('surfaces a danger-zone failure on the page', async () => {
+    setupApiSuccess()
+    const wrapper = await renderRepoDetail()
+
+    wrapper.findComponent(RepoDangerZone).vm.$emit('error', 'repository is locked')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('repository is locked')
+  })
+
   it('hides danger zone for non-admin users', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail({ role: 'viewer' })
@@ -775,7 +805,7 @@ describe('RepoDetailView', () => {
 
       expect(wrapper.find('.archive-filter-banner').exists()).toBe(false)
 
-      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
       await archivesTab!.trigger('click')
       await flushPromises()
 
@@ -789,7 +819,6 @@ describe('RepoDetailView', () => {
       await flushPromises()
 
       expect(wrapper.vm.archiveFilterName).toBe(archiveA.name)
-      expect(wrapper.vm.hasArchiveFilter).toBe(true)
     })
 
     it('AC-U3: archive browser and filters are hidden, showing only the filter banner', async () => {
@@ -875,13 +904,11 @@ describe('RepoDetailView', () => {
       await wrapper.vm.$router.replace({ query: { archive: archiveA.name } })
       await flushPromises()
 
-      expect(wrapper.vm.hasArchiveFilter).toBe(true)
       expect(wrapper.vm.archiveFilterName).toBe(archiveA.name)
 
       wrapper.vm.clearArchiveFilter()
       await flushPromises()
 
-      expect(wrapper.vm.hasArchiveFilter).toBe(false)
       expect(wrapper.vm.archiveFilterName).toBeNull()
     })
   })
@@ -907,7 +934,7 @@ describe('RepoDetailView', () => {
     async function openArchivesTab(
       wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
     ): Promise<void> {
-      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
       await archivesTab!.trigger('click')
       await flushPromises()
     }
@@ -917,7 +944,9 @@ describe('RepoDetailView', () => {
     // wrapper.find(); go through the real DOM instead, matching this file's
     // existing document.body-based assertions for teleported content.
     async function clickModalConfirm(): Promise<void> {
-      const confirmBtn = document.body.querySelector<HTMLButtonElement>('button.btn-danger')
+      const confirmBtn = document.body.querySelector<HTMLButtonElement>(
+        '.modal-dialog button.btn-danger',
+      )
       expect(confirmBtn).not.toBeNull()
       expect(confirmBtn!.textContent).toBe('Delete Archive')
       confirmBtn!.click()
@@ -944,9 +973,10 @@ describe('RepoDetailView', () => {
 
       // Re-requesting deletion for the same archive while it's still pending
       // must not reopen the confirmation modal (the actual guard being tested).
-      wrapper.vm.requestArchiveDeletion(deletingArchive)
+      const archivesTab = wrapper.findComponent(RepoArchivesTab).vm
+      archivesTab.requestArchiveDeletion(deletingArchive)
       await flushPromises()
-      expect(wrapper.vm.archivePendingDeletion).toBeNull()
+      expect(archivesTab.archivePendingDeletion).toBeNull()
     })
 
     it('marks the row as deleting immediately, before the delete request resolves', async () => {
@@ -1165,8 +1195,9 @@ describe('RepoDetailView', () => {
       // While that refetch is still outstanding, the user starts deleting a
       // wholly unrelated archive. This must be marked immediately and must
       // not be touched by the sweep once it resolves below.
-      wrapper.vm.requestArchiveDeletion(otherArchive)
-      await wrapper.vm.confirmArchiveDeletion()
+      const archivesTab = wrapper.findComponent(RepoArchivesTab).vm
+      archivesTab.requestArchiveDeletion(otherArchive)
+      await archivesTab.confirmArchiveDeletion()
 
       expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
         true,
@@ -1266,7 +1297,9 @@ describe('RepoDetailView', () => {
     }
 
     async function clickBreakLockConfirm(): Promise<void> {
-      const confirmBtn = document.body.querySelector<HTMLButtonElement>('button.btn-danger')
+      const confirmBtn = document.body.querySelector<HTMLButtonElement>(
+        '.modal-dialog button.btn-danger',
+      )
       expect(confirmBtn).not.toBeNull()
       expect(confirmBtn!.textContent).toBe('Yes, Break Lock')
       confirmBtn!.click()

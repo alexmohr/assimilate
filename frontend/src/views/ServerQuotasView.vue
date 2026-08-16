@@ -17,6 +17,10 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
+import BaseModal from '../components/BaseModal.vue'
+import { badgeClass, thresholdTone } from '../utils/badge'
+import EmptyState from '../components/EmptyState.vue'
+import { HardDrive } from '@lucide/vue'
 
 const { isMobile } = useMobile()
 
@@ -137,12 +141,12 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
     >
       {{ error }}
     </div>
-    <div
+    <EmptyState
       v-else-if="quotas.length === 0"
-      class="state-msg"
-    >
-      No repositories are configured yet.
-    </div>
+      :icon="HardDrive"
+      title="No repositories yet"
+      description="Server quotas apply to repositories on this server. Add one to set a quota."
+    />
 
     <div
       v-else-if="isMobile"
@@ -156,8 +160,8 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
         <div class="quota-card-top">
           <span class="quota-host">{{ quota.ssh_host }}</span>
           <span
-            class="status-badge"
-            :class="`badge-${statusFor(quota)}`"
+            class="badge"
+            :class="badgeClass(thresholdTone(statusFor(quota)))"
           >
             {{ statusLabel(quota) }}
           </span>
@@ -267,8 +271,8 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
             </td>
             <td>
               <span
-                class="status-badge"
-                :class="`badge-${statusFor(quota)}`"
+                class="badge"
+                :class="badgeClass(thresholdTone(statusFor(quota)))"
               >
                 {{ statusLabel(quota) }}
               </span>
@@ -294,100 +298,97 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
       </table>
     </div>
 
-    <div
-      v-if="editingHost"
-      class="overlay"
-      @click.self="cancelEdit"
+    <BaseModal
+      :open="editingHost !== null"
+      form
+      @close="cancelEdit"
+      @submit="saveEdit"
     >
-      <div class="dialog">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Quota for {{ editingHost }}</h2>
-          <button
-            class="close-btn"
-            @click="cancelEdit"
-          >
-            &times;
-          </button>
-        </div>
-        <form @submit.prevent="saveEdit">
-          <div class="dialog-body">
-            <div class="field">
-              <label
-                class="field-label"
-                for="warn-gb"
-                >Warning threshold (GB)</label
-              >
-              <input
-                id="warn-gb"
-                v-model.number="editForm.warn_gb"
-                type="number"
-                class="input"
-                min="0"
-                step="0.1"
-              />
-            </div>
-            <div class="field">
-              <label
-                class="field-label"
-                for="warn-action"
-                >Warning action</label
-              >
-              <select
-                id="warn-action"
-                v-model="editForm.warn_action"
-                class="input"
-              >
-                <option value="notify_only">Notify only</option>
-                <option value="block_backups">Block backups</option>
-                <option value="disable_schedule">Disable schedule</option>
-              </select>
-            </div>
-            <div class="field">
-              <label
-                class="field-label"
-                for="critical-gb"
-                >Critical threshold (GB)</label
-              >
-              <input
-                id="critical-gb"
-                v-model.number="editForm.critical_gb"
-                type="number"
-                class="input"
-                min="0"
-                step="0.1"
-              />
-            </div>
-            <div class="field">
-              <label
-                class="field-label"
-                for="critical-action"
-                >Critical action</label
-              >
-              <select
-                id="critical-action"
-                v-model="editForm.critical_action"
-                class="input"
-              >
-                <option value="notify_only">Notify only</option>
-                <option value="block_backups">Block backups</option>
-                <option value="disable_schedule">Disable schedule</option>
-              </select>
-            </div>
-            <div class="field toggle-row">
-              <span class="field-label">Enabled</span>
-              <ToggleSwitch v-model="editForm.enabled" />
-            </div>
-          </div>
-          <ModalFormActions
-            :submitting="editLoading"
-            :error="editError"
-            submit-label="Save"
-            submitting-label="Saving..."
-            @cancel="cancelEdit"
-          />
-        </form>
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Quota for {{ editingHost }}
+        </h2>
+      </template>
+      <div class="field">
+        <label
+          class="field-label"
+          for="warn-gb"
+          >Warning threshold (GB)</label
+        >
+        <input
+          id="warn-gb"
+          v-model.number="editForm.warn_gb"
+          type="number"
+          class="input"
+          min="0"
+          step="0.1"
+        />
       </div>
-    </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="warn-action"
+          >Warning action</label
+        >
+        <select
+          id="warn-action"
+          v-model="editForm.warn_action"
+          class="input"
+        >
+          <option value="notify_only">Notify only</option>
+          <option value="block_backups">Block backups</option>
+          <option value="disable_schedule">Disable schedule</option>
+        </select>
+      </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="critical-gb"
+          >Critical threshold (GB)</label
+        >
+        <input
+          id="critical-gb"
+          v-model.number="editForm.critical_gb"
+          type="number"
+          class="input"
+          min="0"
+          step="0.1"
+        />
+      </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="critical-action"
+          >Critical action</label
+        >
+        <select
+          id="critical-action"
+          v-model="editForm.critical_action"
+          class="input"
+        >
+          <option value="notify_only">Notify only</option>
+          <option value="block_backups">Block backups</option>
+          <option value="disable_schedule">Disable schedule</option>
+        </select>
+      </div>
+      <div class="field toggle-row">
+        <span class="field-label">Enabled</span>
+        <ToggleSwitch v-model="editForm.enabled" />
+      </div>
+
+      <template #footer>
+        <ModalFormActions
+          :submitting="editLoading"
+          :error="editError"
+          submit-label="Save"
+          submitting-label="Saving..."
+          @cancel="cancelEdit"
+        />
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -442,13 +443,13 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 }
 
 .stat-value {
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -465,11 +466,11 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-  font-size: 0.8125rem;
+  font-size: var(--fs-sm);
 }
 
 .threshold-row dt {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -492,29 +493,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 
 .muted {
   color: var(--text-muted);
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.badge-ok {
-  background: var(--success-subtle, oklch(0.95 0.05 145));
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-critical {
-  background: var(--danger-subtle);
-  color: var(--danger);
 }
 
 .toggle-row {

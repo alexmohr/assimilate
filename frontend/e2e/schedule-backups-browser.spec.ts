@@ -7,7 +7,7 @@ async function gotoBackupsTab(page: Awaited<ReturnType<typeof test.info>['page']
   await loginAsAdmin(page)
   await page.goto('/schedules/1')
   await page.waitForLoadState('networkidle')
-  await page.getByRole('button', { name: 'Backups' }).click()
+  await page.getByRole('tab', { name: 'Backups' }).click()
   await page.waitForTimeout(1000)
 }
 
@@ -28,7 +28,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('button', { name: 'Backups' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Backups' })).toBeVisible()
   })
 
   test('save bar is hidden on Backups tab', async ({ page }) => {
@@ -39,7 +39,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     // Save bar should be visible initially (Settings tab)
     await expect(page.locator('.save-bar')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Backups' }).click()
+    await page.getByRole('tab', { name: 'Backups' }).click()
     await page.waitForTimeout(500)
 
     // Save bar should be hidden
@@ -60,7 +60,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     await gotoBackupsTab(page)
 
     // The backups layout should be rendered (either with data or empty)
-    const backupsLayout = page.locator('.backups-layout')
+    const backupsLayout = page.locator('.archive-browser-layout')
     const tabContent = page
       .locator('.tab-content')
       .filter({ hasText: /Archives|No backup archives/ })

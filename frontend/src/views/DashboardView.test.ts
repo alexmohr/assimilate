@@ -439,6 +439,30 @@ describe('DashboardView success ring', () => {
     expect(wrapper.text()).toContain('67%')
   })
 
+  // The range buttons drive the query, so a click has to reach the fetch - a
+  // control that only repaints itself looks like it worked and does not. The
+  // control is addressed by its group label: BackupStatsWidget sits on the
+  // same page with its own 7d button over the same endpoint, so an unscoped
+  // selector passes this test without the success ring changing at all.
+  it('refetches the success rate over the chosen range', async () => {
+    const wrapper = await renderDashboard()
+    const rangeCalls = (): string[] =>
+      vi
+        .mocked(apiClient.get)
+        .mock.calls.map((c) => String(c[0]))
+        .filter((u) => u.startsWith('/stats/activity?days='))
+    const before = rangeCalls().length
+
+    await wrapper
+      .findAll('[aria-label="Success rate range"] .segmented-option')
+      .find((b) => b.text() === '7d')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(rangeCalls().length).toBe(before + 1)
+    expect(rangeCalls().at(-1)).toContain('days=7')
+  })
+
   // jscpd:ignore-start -- test boilerplate: repeated mock setup patterns
   it('hydrates active backups from running operations after reload', async () => {
     vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())

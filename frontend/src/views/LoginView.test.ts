@@ -76,7 +76,7 @@ describe('LoginView', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    const errorEl = wrapper.find('.login-error')
+    const errorEl = wrapper.find('.form-error')
     expect(errorEl.exists()).toBe(true)
     expect(errorEl.text()).toContain('Invalid credentials')
   })

@@ -27,6 +27,7 @@ import type {
   CreateTunnelRequest,
   UpdateTunnelRequest,
 } from '../types/tunnel'
+import BaseModal from '../components/BaseModal.vue'
 
 interface AgentOption {
   id: number
@@ -226,7 +227,7 @@ function statusClass(status: TunnelStatus): string {
   if (status === 'connected') return 'status-connected'
   if (status === 'disconnected') return 'status-disconnected'
   if (status === 'reconnecting') return 'status-reconnecting'
-  return 'status-error'
+  return 'badge--danger'
 }
 
 function statusErrorMessage(status: TunnelStatus): string | null {
@@ -297,7 +298,7 @@ onMounted(() => {
       v-else
       class="table-wrapper"
     >
-      <table class="tunnels-table">
+      <table class="data-table">
         <thead>
           <tr>
             <th>Agent</th>
@@ -367,303 +368,243 @@ onMounted(() => {
     </div>
 
     <!-- Add Tunnel Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showAddDialog"
-        class="overlay"
-        @click.self="showAddDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Add Tunnel</h2>
-            <button
-              class="close-btn"
-              @click="showAddDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <div class="field">
-              <label class="field-label">Agent <span class="required">*</span></label>
-              <select
-                v-model.number="addForm.agent_id"
-                class="input"
-              >
-                <option
-                  :value="0"
-                  disabled
-                >
-                  Select an agent...
-                </option>
-                <option
-                  v-for="agent in availableAgents()"
-                  :key="agent.id"
-                  :value="agent.id"
-                >
-                  {{ agent.hostname }}
-                </option>
-              </select>
-            </div>
-            <div class="field">
-              <label class="field-label">SSH Host <span class="required">*</span></label>
-              <input
-                v-model="addForm.ssh_host"
-                class="input mono"
-                placeholder="e.g. 192.168.1.10"
-              />
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label class="field-label">SSH User</label>
-                <input
-                  v-model="addForm.ssh_user"
-                  class="input mono"
-                  placeholder="root"
-                />
-              </div>
-              <div class="field field-narrow">
-                <label class="field-label">SSH Port</label>
-                <input
-                  v-model.number="addForm.ssh_port"
-                  class="input"
-                  type="number"
-                  min="1"
-                  max="65535"
-                />
-              </div>
-            </div>
-            <div class="field">
-              <label class="field-label">Tunnel Port <span class="required">*</span></label>
-              <input
-                v-model.number="addForm.tunnel_port"
-                class="input"
-                type="number"
-                min="1"
-                max="65535"
-                placeholder="e.g. 2222"
-              />
-              <span class="field-hint">Local port forwarded through the tunnel</span>
-            </div>
-            <div class="field field-checkbox">
-              <label class="checkbox-label">
-                <input
-                  v-model="addForm.enabled"
-                  type="checkbox"
-                />
-                <span>Enable tunnel immediately</span>
-              </label>
-            </div>
-            <div
-              v-if="addError"
-              class="form-error"
-            >
-              {{ addError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showAddDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-primary"
-              :disabled="
-                addLoading || !addForm.agent_id || !addForm.ssh_host.trim() || !addForm.tunnel_port
-              "
-              @click="submitAdd"
-            >
-              {{ addLoading ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+    <BaseModal
+      :open="showAddDialog"
+      title="Add Tunnel"
+      @close="showAddDialog = false"
+    >
+      <div class="field">
+        <label class="field-label">Agent <span class="required">*</span></label>
+        <select
+          v-model.number="addForm.agent_id"
+          class="input"
+        >
+          <option
+            :value="0"
+            disabled
+          >
+            Select an agent...
+          </option>
+          <option
+            v-for="agent in availableAgents()"
+            :key="agent.id"
+            :value="agent.id"
+          >
+            {{ agent.hostname }}
+          </option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <input
+          v-model="addForm.ssh_host"
+          class="input mono"
+          placeholder="e.g. 192.168.1.10"
+        />
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label">SSH User</label>
+          <input
+            v-model="addForm.ssh_user"
+            class="input mono"
+            placeholder="root"
+          />
+        </div>
+        <div class="field field-narrow">
+          <label class="field-label">SSH Port</label>
+          <input
+            v-model.number="addForm.ssh_port"
+            class="input"
+            type="number"
+            min="1"
+            max="65535"
+          />
         </div>
       </div>
-    </Teleport>
+      <div class="field">
+        <label class="field-label">Tunnel Port <span class="required">*</span></label>
+        <input
+          v-model.number="addForm.tunnel_port"
+          class="input"
+          type="number"
+          min="1"
+          max="65535"
+          placeholder="e.g. 2222"
+        />
+        <span class="field-hint">Local port forwarded through the tunnel</span>
+      </div>
+      <div class="field field-checkbox">
+        <label class="checkbox-label">
+          <input
+            v-model="addForm.enabled"
+            type="checkbox"
+          />
+          <span>Enable tunnel immediately</span>
+        </label>
+      </div>
+      <div
+        v-if="addError"
+        class="form-error"
+      >
+        {{ addError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showAddDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          :disabled="
+            addLoading || !addForm.agent_id || !addForm.ssh_host.trim() || !addForm.tunnel_port
+          "
+          @click="submitAdd"
+        >
+          {{ addLoading ? 'Creating...' : 'Create' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Edit Tunnel Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showEditDialog"
-        class="overlay"
-        @click.self="showEditDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Edit Tunnel</h2>
-            <button
-              class="close-btn"
-              @click="showEditDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <div class="field">
-              <label class="field-label">SSH Host <span class="required">*</span></label>
-              <input
-                v-model="editForm.ssh_host"
-                class="input mono"
-                placeholder="e.g. 192.168.1.10"
-              />
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label class="field-label">SSH User</label>
-                <input
-                  v-model="editForm.ssh_user"
-                  class="input mono"
-                  placeholder="root"
-                />
-              </div>
-              <div class="field field-narrow">
-                <label class="field-label">SSH Port</label>
-                <input
-                  v-model.number="editForm.ssh_port"
-                  class="input"
-                  type="number"
-                  min="1"
-                  max="65535"
-                />
-              </div>
-            </div>
-            <div class="field">
-              <label class="field-label">Tunnel Port <span class="required">*</span></label>
-              <input
-                v-model.number="editForm.tunnel_port"
-                class="input"
-                type="number"
-                min="1"
-                max="65535"
-              />
-            </div>
-            <div class="field field-checkbox">
-              <label class="checkbox-label">
-                <input
-                  v-model="editForm.enabled"
-                  type="checkbox"
-                />
-                <span>Enabled</span>
-              </label>
-            </div>
-            <div
-              v-if="editError"
-              class="form-error"
-            >
-              {{ editError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showEditDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-primary"
-              :disabled="editLoading || !editForm.ssh_host?.trim() || !editForm.tunnel_port"
-              @click="submitEdit"
-            >
-              {{ editLoading ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
+    <BaseModal
+      :open="showEditDialog"
+      title="Edit Tunnel"
+      @close="showEditDialog = false"
+    >
+      <div class="field">
+        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <input
+          v-model="editForm.ssh_host"
+          class="input mono"
+          placeholder="e.g. 192.168.1.10"
+        />
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label">SSH User</label>
+          <input
+            v-model="editForm.ssh_user"
+            class="input mono"
+            placeholder="root"
+          />
+        </div>
+        <div class="field field-narrow">
+          <label class="field-label">SSH Port</label>
+          <input
+            v-model.number="editForm.ssh_port"
+            class="input"
+            type="number"
+            min="1"
+            max="65535"
+          />
         </div>
       </div>
-    </Teleport>
+      <div class="field">
+        <label class="field-label">Tunnel Port <span class="required">*</span></label>
+        <input
+          v-model.number="editForm.tunnel_port"
+          class="input"
+          type="number"
+          min="1"
+          max="65535"
+        />
+      </div>
+      <div class="field field-checkbox">
+        <label class="checkbox-label">
+          <input
+            v-model="editForm.enabled"
+            type="checkbox"
+          />
+          <span>Enabled</span>
+        </label>
+      </div>
+      <div
+        v-if="editError"
+        class="form-error"
+      >
+        {{ editError }}
+      </div>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showEditDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          :disabled="editLoading || !editForm.ssh_host?.trim() || !editForm.tunnel_port"
+          @click="submitEdit"
+        >
+          {{ editLoading ? 'Saving...' : 'Save' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Delete Tunnel Dialog -->
-    <Teleport to="body">
+    <BaseModal
+      :open="showDeleteDialog"
+      title="Delete Tunnel"
+      size="sm"
+      @close="showDeleteDialog = false"
+    >
+      <p class="confirm-text">
+        Delete tunnel for <strong>{{ deleteHostname }}</strong
+        >?
+      </p>
       <div
-        v-if="showDeleteDialog"
-        class="overlay"
-        @click.self="showDeleteDialog = false"
+        v-if="deleteError"
+        class="form-error"
       >
-        <div class="dialog dialog-sm">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Tunnel</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="confirm-text">
-              Delete tunnel for <strong>{{ deleteHostname }}</strong
-              >?
-            </p>
-            <div
-              v-if="deleteError"
-              class="form-error"
-            >
-              {{ deleteError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteLoading"
-              @click="confirmDelete"
-            >
-              {{ deleteLoading ? 'Deleting...' : 'Delete' }}
-            </button>
-          </div>
-        </div>
+        {{ deleteError }}
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteLoading"
+          @click="confirmDelete"
+        >
+          {{ deleteLoading ? 'Deleting...' : 'Delete' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Error Detail Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="expandedErrorId !== null"
-        class="overlay"
-        @click.self="closeErrorDetail"
-      >
-        <div class="dialog dialog-sm">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Tunnel Error</h2>
-            <button
-              class="close-btn"
-              @click="closeErrorDetail"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <pre class="error-pre">{{ errorDetailMessage }}</pre>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="closeErrorDetail"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="expandedErrorId !== null"
+      title="Tunnel Error"
+      size="sm"
+      @close="closeErrorDetail"
+    >
+      <pre class="error-pre">{{ errorDetailMessage }}</pre>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="closeErrorDetail"
+        >
+          Close
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
 <style scoped>
 .tunnels-view {
   max-width: 1100px;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
 }
 
 .state-error {
@@ -676,37 +617,11 @@ onMounted(() => {
   border-radius: var(--radius);
 }
 
-.tunnels-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.tunnels-table th {
-  padding: 0.75rem 1rem;
-  text-align: left;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.tunnels-table td {
-  padding: 0.75rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.tunnels-table tbody tr:last-child td {
+.data-table tbody tr:last-child td {
   border-bottom: none;
 }
 
-.tunnels-table tbody tr:hover td {
+.data-table tbody tr:hover td {
   background: var(--bg-hover);
 }
 
@@ -736,10 +651,6 @@ onMounted(() => {
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-.status-error {
-  background: var(--danger);
-}
-
 @keyframes pulse {
   0%,
   100% {
@@ -751,7 +662,7 @@ onMounted(() => {
 }
 
 .status-text {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -765,7 +676,7 @@ onMounted(() => {
 
 .error-pre {
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
   background: var(--danger-subtle);
   border: 1px solid var(--danger);
@@ -820,7 +731,7 @@ onMounted(() => {
   align-items: center;
   gap: 0.5rem;
   cursor: pointer;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 

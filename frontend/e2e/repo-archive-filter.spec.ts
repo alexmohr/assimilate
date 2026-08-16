@@ -13,7 +13,7 @@ async function goToServerDailyArchives(page: Page): Promise<string> {
   const repoId = new URL(repoUrl).pathname.match(/\/repos\/(\d+)/)?.[1]
   expect(repoId).toBeTruthy()
 
-  await page.getByRole('button', { name: 'Archives' }).click()
+  await page.getByRole('tab', { name: 'Archives' }).click()
   await page.waitForURL(/tab=archives/)
   await expandAllArchiveGroups(page)
 

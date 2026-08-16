@@ -5,12 +5,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Plus, Trash2 } from '@lucide/vue'
+import { Plus, Trash2, ShieldCheck } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
+import BaseModal from '../components/BaseModal.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 interface Role {
   id: number
@@ -251,19 +253,21 @@ onMounted((): void => {
     >
       {{ error }}
     </div>
-    <div
+    <EmptyState
       v-else-if="roles.length === 0"
-      class="state-msg"
-    >
-      No roles configured yet.
-    </div>
+      :icon="ShieldCheck"
+      title="No roles yet"
+      description="Roles bundle permissions so they can be granted to users and groups."
+      action="Create Role"
+      @action="showCreateModal = true"
+    />
 
     <!-- Permission Matrix -->
     <div
       v-else
       class="matrix-wrap"
     >
-      <table class="matrix-table">
+      <table class="data-table data-table--compact">
         <thead>
           <tr>
             <th class="role-name-col">Role</th>
@@ -287,7 +291,7 @@ onMounted((): void => {
               <span class="role-name">{{ role.name }}</span>
               <span
                 v-if="isSeeded(role)"
-                class="seeded-badge"
+                class="badge badge--neutral"
                 >built-in</span
               >
               <span class="perm-count"
@@ -328,105 +332,94 @@ onMounted((): void => {
     </div>
 
     <!-- Create Role Modal -->
-    <div
-      v-if="showCreateModal"
-      class="overlay"
-      @click.self="showCreateModal = false"
+    <BaseModal
+      :open="showCreateModal"
+      size="lg"
+      title="Create Role"
+      form
+      @close="showCreateModal = false"
+      @submit="submitCreate"
     >
-      <div class="dialog dialog-lg">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Create Role</h2>
-          <button
-            class="close-btn"
-            @click="showCreateModal = false"
-          >
-            &times;
-          </button>
-        </div>
-        <form @submit.prevent="submitCreate">
-          <div class="dialog-body">
-            <div class="field">
-              <label
-                class="field-label"
-                for="create-role-name"
-                >Name <span class="required">*</span></label
-              >
-              <input
-                id="create-role-name"
-                v-model="createForm.name"
-                type="text"
-                class="input"
-                required
-              />
-            </div>
-            <div class="permissions-grid">
-              <label
-                v-for="perm in PERMISSION_LABELS"
-                :key="perm.key"
-                class="perm-checkbox"
-              >
-                <input
-                  v-model="createForm[perm.key]"
-                  type="checkbox"
-                />
-                <span>{{ perm.label }}</span>
-              </label>
-            </div>
-          </div>
-          <ModalFormActions
-            :submitting="createSubmitting"
-            :disabled="!createForm.name.trim()"
-            :error="createError"
-            submit-label="Create"
-            submitting-label="Creating..."
-            @cancel="showCreateModal = false"
-          />
-        </form>
+      <div class="field">
+        <label
+          class="field-label"
+          for="create-role-name"
+          >Name <span class="required">*</span></label
+        >
+        <input
+          id="create-role-name"
+          v-model="createForm.name"
+          type="text"
+          class="input"
+          required
+        />
       </div>
-    </div>
+      <div class="permissions-grid">
+        <label
+          v-for="perm in PERMISSION_LABELS"
+          :key="perm.key"
+          class="perm-checkbox"
+        >
+          <input
+            v-model="createForm[perm.key]"
+            type="checkbox"
+          />
+          <span>{{ perm.label }}</span>
+        </label>
+      </div>
+
+      <template #footer>
+        <ModalFormActions
+          :submitting="createSubmitting"
+          :disabled="!createForm.name.trim()"
+          :error="createError"
+          submit-label="Create"
+          submitting-label="Creating..."
+          @cancel="showCreateModal = false"
+        />
+      </template>
+    </BaseModal>
 
     <!-- Edit Role Modal -->
-    <div
-      v-if="showEditModal"
-      class="overlay"
-      @click.self="showEditModal = false"
+    <BaseModal
+      :open="showEditModal"
+      size="lg"
+      form
+      @close="showEditModal = false"
+      @submit="submitEdit"
     >
-      <div class="dialog dialog-lg">
-        <div class="dialog-header">
-          <h2 class="dialog-title">Edit Role &mdash; {{ editTarget?.name }}</h2>
-          <button
-            class="close-btn"
-            @click="showEditModal = false"
-          >
-            &times;
-          </button>
-        </div>
-        <form @submit.prevent="submitEdit">
-          <div class="dialog-body">
-            <div class="permissions-grid">
-              <label
-                v-for="perm in PERMISSION_LABELS"
-                :key="perm.key"
-                class="perm-checkbox"
-              >
-                <input
-                  v-model="editForm[perm.key]"
-                  type="checkbox"
-                />
-                <span>{{ perm.label }}</span>
-              </label>
-            </div>
-          </div>
-          <ModalFormActions
-            :submitting="editSubmitting"
-            :error="editError"
-            submit-label="Save"
-            submitting-label="Saving..."
-            @cancel="showEditModal = false"
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Edit Role &mdash; {{ editTarget?.name }}
+        </h2>
+      </template>
+      <div class="permissions-grid">
+        <label
+          v-for="perm in PERMISSION_LABELS"
+          :key="perm.key"
+          class="perm-checkbox"
+        >
+          <input
+            v-model="editForm[perm.key]"
+            type="checkbox"
           />
-        </form>
+          <span>{{ perm.label }}</span>
+        </label>
       </div>
-    </div>
+
+      <template #footer>
+        <ModalFormActions
+          :submitting="editSubmitting"
+          :error="editError"
+          submit-label="Save"
+          submitting-label="Saving..."
+          @cancel="showEditModal = false"
+        />
+      </template>
+    </BaseModal>
 
     <!-- Delete Role Modal -->
     <ConfirmDeleteDialog
@@ -454,27 +447,8 @@ onMounted((): void => {
   }
 }
 
-.dialog-lg {
-  width: 550px;
-}
-
 .matrix-wrap {
   overflow-x: auto;
-}
-
-.matrix-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8125rem;
-}
-
-.matrix-table th {
-  text-align: center;
-  padding: 0.5rem 0.35rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  font-size: 0.7rem;
 }
 
 .role-name-col {
@@ -501,14 +475,7 @@ onMounted((): void => {
   min-width: 120px;
 }
 
-.matrix-table td {
-  padding: 0.5rem 0.35rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  text-align: center;
-}
-
-.matrix-table tr.seeded {
+.data-table tr.seeded {
   background: var(--bg-hover);
 }
 
@@ -521,21 +488,11 @@ onMounted((): void => {
 
 .role-name {
   font-weight: 600;
-  font-size: 0.85rem;
-}
-
-.seeded-badge {
-  font-size: 0.6rem;
-  color: var(--text-muted);
-  background: var(--bg-input);
-  padding: 0.1rem 0.35rem;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: var(--fs-base);
 }
 
 .perm-count {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -545,7 +502,7 @@ onMounted((): void => {
 }
 
 .perm-indicator {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -576,7 +533,7 @@ onMounted((): void => {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   cursor: pointer;
   color: var(--text-primary);
 }

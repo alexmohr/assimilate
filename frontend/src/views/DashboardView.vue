@@ -24,6 +24,15 @@ import UpcomingWork from '../components/UpcomingWork.vue'
 import RepositoryCapacity from '../components/RepositoryCapacity.vue'
 import type { DashboardOperation, DashboardOverview } from '../types/dashboard'
 import type { Repo } from '../types/repo'
+import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
+import { ChevronRight } from '@lucide/vue'
+
+const rangeOptions: SegmentedOption<number>[] = [
+  { value: 7, label: '7d' },
+  { value: 14, label: '14d' },
+  { value: 30, label: '30d' },
+  { value: 90, label: '90d' },
+]
 
 interface StorageRepoEntry {
   name: string
@@ -561,7 +570,10 @@ async function fetchOverview(): Promise<void> {
             >
               {{ backup.hostname }}
             </RouterLink>
-            <span class="active-backup-sep">&rarr;</span>
+            <ChevronRight
+              class="active-backup-sep"
+              :size="14"
+            />
             <RouterLink
               v-if="backup.repo_id !== null"
               :to="{ name: 'repo-detail', params: { id: String(backup.repo_id) } }"
@@ -639,7 +651,7 @@ async function fetchOverview(): Promise<void> {
               <div class="trends-controls">
                 <select
                   v-model="successRepoFilter"
-                  class="trends-select"
+                  class="input trends-select"
                 >
                   <option :value="undefined">All Repos</option>
                   <option
@@ -650,36 +662,11 @@ async function fetchOverview(): Promise<void> {
                     {{ repo.name }}
                   </option>
                 </select>
-                <div class="view-toggle">
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 7 }"
-                    @click="successDaysFilter = 7"
-                  >
-                    7d
-                  </button>
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 14 }"
-                    @click="successDaysFilter = 14"
-                  >
-                    14d
-                  </button>
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 30 }"
-                    @click="successDaysFilter = 30"
-                  >
-                    30d
-                  </button>
-                  <button
-                    class="toggle-btn"
-                    :class="{ active: successDaysFilter === 90 }"
-                    @click="successDaysFilter = 90"
-                  >
-                    90d
-                  </button>
-                </div>
+                <BaseSegmented
+                  v-model="successDaysFilter"
+                  :options="rangeOptions"
+                  label="Success rate range"
+                />
               </div>
             </div>
             <p class="chart-desc">
@@ -839,7 +826,7 @@ async function fetchOverview(): Promise<void> {
   overflow: hidden;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1024px) {
   .stats-coverage-row {
     grid-template-columns: 1fr 1fr;
   }
@@ -847,9 +834,22 @@ async function fetchOverview(): Promise<void> {
   .calendar-cell {
     grid-column: 1 / -1;
   }
+  .attention-row {
+    grid-template-columns: 1fr;
+  }
+
+  .attention-sidebar-wide {
+    grid-template-columns: 1fr;
+  }
+  .rings-row {
+    grid-template-columns: 1fr;
+  }
+  .trends-row {
+    grid-template-columns: 1fr;
+  }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .stats-coverage-row {
     grid-template-columns: 1fr;
   }
@@ -864,12 +864,6 @@ async function fetchOverview(): Promise<void> {
   grid-template-columns: 3fr 2fr;
   gap: 1.5rem;
   align-items: stretch;
-}
-
-.attention-left {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
 }
 
 .attention-sidebar {
@@ -887,16 +881,6 @@ async function fetchOverview(): Promise<void> {
   grid-template-columns: 1fr 1fr;
 }
 
-@media (max-width: 900px) {
-  .attention-row {
-    grid-template-columns: 1fr;
-  }
-
-  .attention-sidebar-wide {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Section 1: Status Banner */
 .status-banner {
   display: grid;
@@ -904,9 +888,32 @@ async function fetchOverview(): Promise<void> {
   gap: 0.75rem;
 }
 
-@media (max-width: 500px) {
+@media (max-width: 640px) {
   .status-banner {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .trends-controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .trends-select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .panel-timeline {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .health-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -923,8 +930,8 @@ async function fetchOverview(): Promise<void> {
 .stat-card-link {
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    background 0.15s;
+    border-color var(--duration-base),
+    background var(--duration-base);
 }
 
 .stat-card-link:hover {
@@ -933,7 +940,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -941,7 +948,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .stat-value {
-  font-size: 1.5rem;
+  font-size: var(--fs-xl);
   font-weight: 700;
   color: var(--text-primary);
   display: flex;
@@ -950,7 +957,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .stat-value-sm {
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
 }
 
 .stat-danger {
@@ -981,39 +988,7 @@ async function fetchOverview(): Promise<void> {
   gap: 1.5rem;
 }
 
-@media (max-width: 900px) {
-  .rings-row {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Panel */
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.panel-full {
-  flex: 1;
-}
-
-.panel-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
 
 .panel-header .panel-title {
   margin: 0;
@@ -1028,58 +1003,16 @@ async function fetchOverview(): Promise<void> {
 
 .trends-select {
   padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-base);
   color: var(--text-primary);
 }
 
-.view-toggle {
-  display: flex;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.toggle-btn {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
-}
-
-.toggle-btn:not(:last-child) {
-  border-right: 1px solid var(--border);
-}
-
-.toggle-btn:hover {
-  background: var(--bg-hover);
-}
-
-.toggle-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent, #fff);
-}
-
-.state-msg {
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  padding: 1rem 0;
-}
-
 .chart-desc {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }
@@ -1098,7 +1031,7 @@ async function fetchOverview(): Promise<void> {
 }
 
 .ring-progress {
-  transition: stroke-dasharray 0.6s ease;
+  transition: stroke-dasharray var(--duration-value) ease;
 }
 
 .ring-center {
@@ -1111,17 +1044,17 @@ async function fetchOverview(): Promise<void> {
 }
 
 .ring-pct {
-  font-size: 1.75rem;
+  font-size: var(--fs-2xl);
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .ring-pct-sm {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
 }
 
 .ring-sub {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 
@@ -1136,7 +1069,7 @@ async function fetchOverview(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 
@@ -1160,13 +1093,13 @@ async function fetchOverview(): Promise<void> {
 
 .legend-link {
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 2px 6px;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .legend-link:hover {
-  background: var(--hover);
+  background: var(--bg-hover);
   text-decoration: underline;
 }
 
@@ -1181,10 +1114,10 @@ async function fetchOverview(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   cursor: pointer;
   user-select: none;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
 }
 
 .storage-legend-item:hover {
@@ -1202,7 +1135,7 @@ async function fetchOverview(): Promise<void> {
 .legend-color {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: 0;
   flex-shrink: 0;
 }
 
@@ -1221,75 +1154,6 @@ async function fetchOverview(): Promise<void> {
 }
 
 /* Health Cards */
-.health-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 0.75rem;
-}
-
-.health-card {
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.health-card-link {
-  cursor: pointer;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-}
-
-.health-card-link:hover {
-  border-color: var(--accent);
-  background: var(--bg-hover);
-}
-
-.hc-header {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.hc-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.hc-host {
-  font-weight: 600;
-  font-size: 0.85rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.overdue-badge {
-  background: var(--danger-subtle);
-  color: var(--danger);
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.25rem;
-  font-weight: 700;
-  font-size: 0.6rem;
-  flex-shrink: 0;
-}
-
-.hc-target {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
-.hc-time {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-}
 
 /* Trends Row */
 .trends-row {
@@ -1297,38 +1161,6 @@ async function fetchOverview(): Promise<void> {
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
   align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .trends-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 500px) {
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .trends-controls {
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .trends-select {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .panel-timeline {
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .health-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Active Backups */
@@ -1350,7 +1182,7 @@ async function fetchOverview(): Promise<void> {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .active-backup-schedule {
@@ -1369,7 +1201,7 @@ async function fetchOverview(): Promise<void> {
 
 .active-backup-time {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   margin-left: auto;
 }
 
@@ -1399,6 +1231,6 @@ async function fetchOverview(): Promise<void> {
 .active-backup-target {
   color: var(--text-secondary);
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 </style>

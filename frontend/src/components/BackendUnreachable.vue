@@ -18,7 +18,7 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
     >
       <div class="backend-overlay-card">
         <WifiOff
-          :size="48"
+          :size="40"
           class="backend-overlay-icon"
         />
         <h2 class="backend-overlay-title">Trying to reach backend</h2>
@@ -31,7 +31,7 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
           :disabled="checking"
           @click="retryNow()"
         >
-          {{ checking ? 'Checking…' : 'Retry now' }}
+          {{ checking ? 'Checking...' : 'Retry now' }}
         </button>
       </div>
     </div>
@@ -57,7 +57,7 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
   gap: 1rem;
   padding: 2.5rem 3rem;
   background: var(--bg-card);
-  border-radius: var(--radius-lg, 12px);
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   text-align: center;
@@ -65,35 +65,35 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
 }
 
 .backend-overlay-icon {
-  color: var(--warning, #f59e0b);
+  color: var(--warning);
 }
 
 .backend-overlay-title {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .backend-overlay-subtitle {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
 .backend-overlay-btn {
   margin-top: 0.5rem;
   padding: 0.5rem 1.5rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
   border: none;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--accent, #3b82f6);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
   color: #fff;
   cursor: pointer;
   transition:
-    background 0.15s,
-    opacity 0.15s;
+    background var(--duration-base),
+    opacity var(--duration-base);
 }
 
 .backend-overlay-btn:hover:not(:disabled) {
@@ -107,7 +107,7 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-slow) ease;
 }
 
 .fade-enter-from,

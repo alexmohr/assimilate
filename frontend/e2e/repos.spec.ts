@@ -113,7 +113,7 @@ test.describe('Repositories management journey', () => {
     await expect(breakLockBtn).toBeVisible()
     await breakLockBtn.click()
 
-    await expect(page.locator('.dialog-title')).toHaveText('Break Repository Lock')
+    await expect(page.locator('.modal-title')).toHaveText('Break Repository Lock')
     await expect(page.locator('.break-lock-warning').first()).toContainText(
       'stale local cache lock',
     )
@@ -127,8 +127,11 @@ test.describe('Repositories management journey', () => {
     await expect(page.locator('.break-lock-success')).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('.form-error')).not.toBeVisible()
 
-    await page.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(page.locator('.dialog-title')).not.toBeVisible()
+    // Scoped to the footer: BaseModal's own dismiss control also exposes the
+    // accessible name "Close" (F-22 gave it one), so an unscoped lookup is
+    // ambiguous. This targets the same footer button the test always meant.
+    await page.locator('.modal-footer').getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(page.locator('.modal-title')).not.toBeVisible()
   })
 
   test('grouping by host shows a shared storage pool with per-repo quota slices', async ({

@@ -67,14 +67,14 @@ onMounted(loadData)
       :class="{ 'layout-with-ref': refOpen }"
     >
       <div class="panels">
-        <section class="panel">
+        <section class="panel panel--sectioned">
           <div class="panel-header">
             <span class="panel-title">Patterns</span>
             <span class="panel-hint">Applied to all schedules unless overridden</span>
           </div>
           <textarea
             v-model="text"
-            class="pattern-area"
+            class="input pattern-area"
             placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
             spellcheck="false"
           />
@@ -164,15 +164,21 @@ onMounted(loadData)
 </template>
 
 <style scoped>
+.panel {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header carries a label plus inline controls, packed left rather than
+   pushed to the edges. */
+.panel .panel-header {
+  justify-content: flex-start;
+  gap: 0.75rem;
+}
+
 .excludes-view {
   max-width: 1200px;
   color: var(--text-primary);
-}
-
-.state-msg {
-  padding: 2rem;
-  text-align: center;
-  color: var(--text-muted);
 }
 
 .state-error {
@@ -193,34 +199,8 @@ onMounted(loadData)
   min-width: 0;
 }
 
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.875rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
-}
-
-.panel-title {
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
 .panel-hint {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -230,7 +210,7 @@ onMounted(loadData)
   border: none;
   color: var(--text-primary);
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   padding: 0.875rem 1.25rem;
   resize: vertical;
@@ -255,12 +235,12 @@ onMounted(loadData)
 }
 
 .save-ok {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--success);
 }
 
 .save-err {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
   flex: 1;
 }
@@ -280,7 +260,7 @@ onMounted(loadData)
 }
 
 .ref-title {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -296,7 +276,7 @@ onMounted(loadData)
 }
 
 .ref-section-title {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -321,7 +301,7 @@ onMounted(loadData)
 
 .ref-entry code {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-primary);
   background: var(--bg-base);
   padding: 0.15rem 0.4rem;
@@ -330,13 +310,13 @@ onMounted(loadData)
 }
 
 .ref-entry span {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   padding-left: 0.25rem;
 }
 
 .ref-note {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   line-height: 1.5;
   padding-top: 0.5rem;

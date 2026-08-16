@@ -325,7 +325,7 @@ watch(
     <div class="cron-input-row">
       <input
         type="text"
-        class="cron-input"
+        class="input cron-input"
         :value="modelValue"
         placeholder="0 2 * * *"
         spellcheck="false"
@@ -359,7 +359,7 @@ watch(
         <label class="helper-label">Frequency</label>
         <select
           v-model="frequency"
-          class="helper-select"
+          class="input helper-select"
         >
           <option value="hourly">Hourly</option>
           <option value="daily">Daily</option>
@@ -378,7 +378,7 @@ watch(
           type="number"
           min="1"
           max="23"
-          class="helper-input helper-input-narrow"
+          class="input helper-input helper-input-narrow"
         />
         <span class="helper-suffix">hours</span>
       </div>
@@ -389,7 +389,7 @@ watch(
           <div class="time-picker">
             <select
               v-model.number="timeHour"
-              class="helper-select time-select"
+              class="input helper-select time-select"
             >
               <option
                 v-for="h in hourOptions"
@@ -402,7 +402,7 @@ watch(
             <span class="time-sep">:</span>
             <select
               v-model.number="timeMinute"
-              class="helper-select time-select"
+              class="input helper-select time-select"
             >
               <option
                 v-for="m in minuteOptions"
@@ -445,7 +445,7 @@ watch(
           type="number"
           min="1"
           max="31"
-          class="helper-input helper-input-narrow"
+          class="input helper-input helper-input-narrow"
         />
       </div>
 
@@ -505,7 +505,7 @@ watch(
 .cron-input {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   letter-spacing: 0.03em;
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -513,7 +513,7 @@ watch(
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
   box-sizing: border-box;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .cron-input:focus {
@@ -527,14 +527,14 @@ watch(
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.15s,
-    border-color 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    border-color var(--duration-base),
+    color var(--duration-base);
 }
 
 .helper-toggle:hover {
@@ -549,12 +549,12 @@ watch(
 }
 
 .cron-hint {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
 .cron-error {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--danger);
 }
 
@@ -576,7 +576,7 @@ watch(
 }
 
 .helper-label {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
   min-width: 5rem;
@@ -589,7 +589,7 @@ watch(
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.35rem 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .helper-select:focus {
@@ -603,7 +603,7 @@ watch(
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.35rem 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 
 .helper-input:focus {
@@ -616,7 +616,7 @@ watch(
 }
 
 .helper-suffix {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -648,13 +648,13 @@ watch(
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   transition:
-    background 0.15s,
-    border-color 0.15s,
-    color 0.15s;
+    background var(--duration-base),
+    border-color var(--duration-base),
+    color var(--duration-base);
 }
 
 .day-btn.selected {
@@ -678,7 +678,7 @@ watch(
 
 .helper-preview {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--accent);
   background: transparent;
 }
@@ -689,10 +689,10 @@ watch(
   border-radius: var(--radius-sm);
   background: var(--accent);
   color: #fff;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .helper-apply-btn:hover {
@@ -704,14 +704,14 @@ watch(
   padding: 0.4rem 0.65rem;
   background: var(--bg-input);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle, var(--border));
+  border: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
 }
 
 .cron-description {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-primary);
   font-weight: 600;
 }
@@ -721,7 +721,7 @@ watch(
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.25rem;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 

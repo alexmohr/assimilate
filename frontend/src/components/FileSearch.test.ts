@@ -148,7 +148,9 @@ describe('FileSearch', () => {
 
   it('switches to single-archive mode and shows archive selector', async () => {
     const wrapper = mountSearch()
-    const singleBtn = wrapper.findAll('button.mode-btn').find((b) => b.text() === 'Single archive')
+    const singleBtn = wrapper
+      .findAll('button.segmented-option')
+      .find((b) => b.text() === 'Single archive')
     expect(singleBtn).toBeDefined()
     await singleBtn!.trigger('click')
 
@@ -160,7 +162,9 @@ describe('FileSearch', () => {
 
   it('disables Search button in single mode when no archive is selected', async () => {
     const wrapper = mountSearch()
-    const singleBtn = wrapper.findAll('button.mode-btn').find((b) => b.text() === 'Single archive')
+    const singleBtn = wrapper
+      .findAll('button.segmented-option')
+      .find((b) => b.text() === 'Single archive')
     await singleBtn!.trigger('click')
     await wrapper.find('input[placeholder*="*.sql"]').setValue('*.conf')
     const btn = wrapper.find('button.btn-primary')

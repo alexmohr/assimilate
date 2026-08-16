@@ -68,11 +68,12 @@ async function handleSubmit(): Promise<void> {
         class="login-form"
         @submit.prevent="handleSubmit"
       >
-        <div class="form-group">
+        <div class="field">
           <label for="new-password">New Password</label>
           <input
             id="new-password"
             v-model="newPassword"
+            class="input"
             type="password"
             autocomplete="new-password"
             required
@@ -80,11 +81,12 @@ async function handleSubmit(): Promise<void> {
           />
         </div>
 
-        <div class="form-group">
+        <div class="field">
           <label for="confirm-password">Confirm Password</label>
           <input
             id="confirm-password"
             v-model="confirmPassword"
+            class="input"
             type="password"
             autocomplete="new-password"
             required
@@ -94,7 +96,7 @@ async function handleSubmit(): Promise<void> {
 
         <div
           v-if="error"
-          class="login-error"
+          class="form-error"
         >
           {{ error }}
         </div>

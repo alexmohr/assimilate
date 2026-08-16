@@ -132,7 +132,7 @@ const labelLine = computed(() => {
 .slice-track {
   position: relative;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   background: var(--border);
   overflow: visible;
 }
@@ -141,7 +141,7 @@ const labelLine = computed(() => {
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
 }
 
 .slice-fill-step-0 {
@@ -156,7 +156,7 @@ const labelLine = computed(() => {
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
   background: repeating-linear-gradient(
     -45deg,
     var(--danger) 0 5px,
@@ -169,7 +169,7 @@ const labelLine = computed(() => {
   top: -4px;
   height: 14px;
   border: 1.5px solid var(--text-secondary);
-  border-radius: 5px;
+  border-radius: var(--radius-pill);
   pointer-events: none;
 }
 
@@ -184,7 +184,7 @@ const labelLine = computed(() => {
   top: -1px;
   height: 8px;
   width: 2px;
-  border-radius: 1px;
+  border-radius: var(--radius-pill);
   background: var(--text-muted);
 }
 
@@ -197,7 +197,7 @@ const labelLine = computed(() => {
 
 .slice-label,
 .slice-chip {
-  font-size: 0.68rem;
+  font-size: var(--fs-2xs);
   font-family: var(--mono);
   white-space: nowrap;
 }

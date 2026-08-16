@@ -26,6 +26,7 @@ import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
+import BaseModal from '../components/BaseModal.vue'
 
 interface AgentTagRow {
   agent_id: number
@@ -742,13 +743,13 @@ watch(
           <div class="card-top-badges">
             <span
               v-if="agent.is_hidden"
-              class="badge-hidden"
+              class="badge badge--neutral"
             >
               Hidden
             </span>
             <span
               v-if="isImported(agent)"
-              class="badge-imported"
+              class="badge badge--accent"
             >
               Imported
             </span>
@@ -831,142 +832,124 @@ watch(
       </div>
     </div>
 
-    <!-- Add Agent Dialog -->
-    <Teleport to="body">
+    <!-- Add Agent Dialog. One dialog, two states: collect the hostname,
+         then reveal the generated token once. -->
+    <BaseModal
+      :open="showAddDialog"
+      :title="newToken ? 'Agent Created' : 'Add Agent'"
+      @close="closeAddDialog"
+    >
+      <template v-if="!newToken">
+        <div class="field">
+          <label class="field-label">Hostname <span class="required">*</span></label>
+          <input
+            v-model="addForm.hostname"
+            class="input"
+            placeholder="e.g. workstation-01"
+            @keyup.enter="submitAdd"
+          />
+          <span class="field-hint"
+            >Must match the machine's actual hostname (output of <code>hostname</code>).</span
+          >
+        </div>
+        <div class="field">
+          <label class="field-label">Display Name</label>
+          <input
+            v-model="addForm.display_name"
+            class="input"
+            placeholder="Optional friendly name"
+          />
+        </div>
+        <div
+          v-if="addError"
+          class="form-error"
+        >
+          {{ addError }}
+        </div>
+      </template>
+
       <div
-        v-if="showAddDialog"
-        class="overlay"
-        @click.self="closeAddDialog"
+        v-else
+        class="token-notice"
       >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">
-              {{ newToken ? 'Agent Created' : 'Add Agent' }}
-            </h2>
-            <button
-              class="close-btn"
-              @click="closeAddDialog"
-            >
-              &times;
-            </button>
-          </div>
-
-          <template v-if="!newToken">
-            <div class="dialog-body">
-              <div class="field">
-                <label class="field-label">Hostname <span class="required">*</span></label>
-                <input
-                  v-model="addForm.hostname"
-                  class="input"
-                  placeholder="e.g. workstation-01"
-                  @keyup.enter="submitAdd"
-                />
-                <span class="field-hint"
-                  >Must match the machine's actual hostname (output of <code>hostname</code>).</span
-                >
-              </div>
-              <div class="field">
-                <label class="field-label">Display Name</label>
-                <input
-                  v-model="addForm.display_name"
-                  class="input"
-                  placeholder="Optional friendly name"
-                />
-              </div>
-              <div
-                v-if="addError"
-                class="form-error"
-              >
-                {{ addError }}
-              </div>
-            </div>
-            <div class="dialog-footer">
-              <button
-                class="btn btn-ghost"
-                @click="closeAddDialog"
-              >
-                Cancel
-              </button>
-              <button
-                class="btn btn-primary"
-                :disabled="addLoading || !addForm.hostname.trim()"
-                @click="submitAdd"
-              >
-                {{ addLoading ? 'Creating...' : 'Create' }}
-              </button>
-            </div>
-          </template>
-
-          <template v-else>
-            <div class="dialog-body">
-              <div class="token-notice">
-                <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
-                <div class="token-box">
-                  <code class="token-text">{{ newToken }}</code>
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    @click="copyToClipboard(newToken ?? '')"
-                  >
-                    {{ tokenCopied ? 'Copied!' : 'Copy' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div class="dialog-footer">
-              <button
-                class="btn btn-primary"
-                @click="closeAddDialog"
-              >
-                Done
-              </button>
-            </div>
-          </template>
+        <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
+        <div class="token-box">
+          <code class="token-text">{{ newToken }}</code>
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(newToken ?? '')"
+          >
+            {{ tokenCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <template v-if="!newToken">
+          <button
+            type="button"
+            class="btn btn-ghost"
+            @click="closeAddDialog"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="addLoading || !addForm.hostname.trim()"
+            @click="submitAdd"
+          >
+            {{ addLoading ? 'Creating...' : 'Create' }}
+          </button>
+        </template>
+        <button
+          v-else
+          type="button"
+          class="btn btn-primary"
+          @click="closeAddDialog"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Adopt Agent Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showAdoptDialog"
-        class="overlay"
-        @click.self="showAdoptDialog = false"
-      >
-        <div class="dialog dialog-sm">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Agent Adopted &mdash; {{ adoptHostname }}</h2>
-            <button
-              class="close-btn"
-              @click="showAdoptDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <div class="token-notice">
-              <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
-              <div class="token-box">
-                <code class="token-text">{{ adoptToken }}</code>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="copyToClipboard(adoptToken ?? '')"
-                >
-                  {{ tokenCopied ? 'Copied!' : 'Copy' }}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-primary"
-              @click="showAdoptDialog = false"
-            >
-              Done
-            </button>
-          </div>
+    <BaseModal
+      :open="showAdoptDialog"
+      size="sm"
+      @close="showAdoptDialog = false"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Agent Adopted &mdash; {{ adoptHostname }}
+        </h2>
+      </template>
+      <div class="token-notice">
+        <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
+        <div class="token-box">
+          <code class="token-text">{{ adoptToken }}</code>
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="copyToClipboard(adoptToken ?? '')"
+          >
+            {{ tokenCopied ? 'Copied!' : 'Copy' }}
+          </button>
         </div>
       </div>
-    </Teleport>
+
+      <template #footer>
+        <button
+          class="btn btn-primary"
+          @click="showAdoptDialog = false"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Deploy Agent Dialog -->
     <AgentDeployDialog
@@ -988,15 +971,13 @@ watch(
     />
 
     <!-- Merge Agent Dialog -->
-    <Teleport to="body">
-      <MergeAgentDialog
-        v-if="showMergeDialog && mergeSource"
-        :source="mergeSource"
-        :all-agents="agents"
-        @merged="onMerged"
-        @cancel="showMergeDialog = false"
-      />
-    </Teleport>
+    <MergeAgentDialog
+      v-if="showMergeDialog && mergeSource"
+      :source="mergeSource"
+      :all-agents="agents"
+      @merged="onMerged"
+      @cancel="showMergeDialog = false"
+    />
   </div>
 </template>
 
@@ -1008,10 +989,6 @@ watch(
 }
 
 .toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
 
@@ -1033,12 +1010,12 @@ watch(
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   cursor: pointer;
   position: relative;
   transition:
-    color 0.15s,
-    border-color 0.15s;
+    color var(--duration-base),
+    border-color var(--duration-base);
 }
 
 .btn-filter-toggle:hover {
@@ -1071,7 +1048,7 @@ watch(
 }
 
 .sort-label {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1082,12 +1059,6 @@ watch(
   background: var(--bg-hover);
   color: var(--text-primary);
   font-weight: 600;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
 }
 
 .state-error {
@@ -1107,8 +1078,8 @@ watch(
   padding: 1.25rem;
   cursor: pointer;
   transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
+    box-shadow var(--duration-base),
+    border-color var(--duration-base);
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -1140,7 +1111,7 @@ watch(
 .card-hostname {
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: var(--fs-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -1148,7 +1119,7 @@ watch(
 }
 
 .card-display {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -1164,13 +1135,13 @@ watch(
 }
 
 .stat-value {
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1190,57 +1161,11 @@ watch(
   gap: 0.3rem;
 }
 
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 500;
-  border: 1px solid;
-}
-
 /* Tag filter dropdown */
-.tag-filter-wrapper {
-  position: relative;
-}
 
 .dropdown-arrow {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   margin-left: 0.15rem;
-}
-
-.tag-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 0.35rem;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  padding: 0.5rem;
-  min-width: 160px;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.tag-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.4rem;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  transition: background 0.1s;
-}
-
-.tag-dropdown-item:hover {
-  background: var(--bg-hover);
 }
 
 .tag-dropdown-item input[type='checkbox'] {
@@ -1248,17 +1173,6 @@ watch(
   height: 14px;
   margin: 0;
   cursor: pointer;
-}
-
-.tag-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.tag-dropdown-name {
-  white-space: nowrap;
 }
 
 /* Overlay & Dialog */
@@ -1271,7 +1185,7 @@ watch(
 
 .token-warning {
   color: var(--warning);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   font-weight: 500;
 }
 
@@ -1288,19 +1202,11 @@ watch(
 .token-text {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--success);
   word-break: break-all;
   background: transparent;
   padding: 0;
-}
-
-.exclude-area {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: 0.82rem;
-  line-height: 1.5;
 }
 
 .card-top-badges {
@@ -1308,32 +1214,6 @@ watch(
   align-items: center;
   gap: 0.4rem;
   flex-shrink: 0;
-}
-
-.badge-imported {
-  display: inline-block;
-  padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--accent-subtle);
-  color: var(--accent);
-  border: 1px solid var(--accent);
-}
-
-.badge-hidden {
-  display: inline-block;
-  padding: 0.15rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
 }
 
 .host-card-hidden {
@@ -1345,7 +1225,7 @@ watch(
   align-items: center;
   gap: 0.4rem;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   user-select: none;
 }

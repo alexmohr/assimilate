@@ -36,7 +36,7 @@ describe('ChangePasswordView', () => {
 
     await wrapper.vm.$nextTick()
 
-    const errorEl = wrapper.find('.login-error')
+    const errorEl = wrapper.find('.form-error')
     expect(errorEl.exists()).toBe(true)
     expect(errorEl.text()).toContain('do not match')
   })
@@ -50,7 +50,7 @@ describe('ChangePasswordView', () => {
 
     await wrapper.vm.$nextTick()
 
-    const errorEl = wrapper.find('.login-error')
+    const errorEl = wrapper.find('.form-error')
     expect(errorEl.exists()).toBe(true)
     expect(errorEl.text()).toContain('at least 8 characters')
   })
@@ -80,7 +80,7 @@ describe('ChangePasswordView', () => {
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    const errorEl = wrapper.find('.login-error')
+    const errorEl = wrapper.find('.form-error')
     expect(errorEl.exists()).toBe(true)
     expect(errorEl.text()).toContain('Server error')
   })

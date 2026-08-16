@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
-import { formatDateShort, formatDuration, formatBytes } from '../utils/format'
+import { formatDateShort } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -17,21 +17,23 @@ import { useElapsedClock } from '../composables/useElapsedTimer'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
-import { AlertTriangle } from '@lucide/vue'
+import { AlertTriangle, ExternalLink } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
-import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
+import ScheduleAdvancedTab from '../components/ScheduleAdvancedTab.vue'
+import ScheduleLogsTab from '../components/ScheduleLogsTab.vue'
+import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
+import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
-import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
-import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
-import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ScheduleBackupSourcesResponse } from '../types/generated'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { Repo } from '../types/repo'
+import BaseModal from '../components/BaseModal.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
 interface ScheduleTarget {
   agent_id: number
@@ -60,7 +62,6 @@ const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
-const refOpen = ref(false)
 const runNowLoading = ref(false)
 const retryingAgentId = ref<number | null>(null)
 const cancelLoading = ref(false)
@@ -76,14 +77,18 @@ const selectedType = ref<ScheduleType>('backup')
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
-const usePerHostExcludes = ref(false)
-const perHostExcludes = ref<Record<number, string>>({})
-const usePerHostFileChangePatterns = ref(false)
-const perHostFileChangePatterns = ref<Record<number, string>>({})
 
-const usePerAgentCmds = ref(false)
-const perAgentPreCmds = ref<Record<number, string>>({})
-const perAgentPostCmds = ref<Record<number, string>>({})
+// The Advanced tab's per-agent overrides, grouped so the tab component takes
+// one v-model instead of seven.
+const agentOverrides = ref<ScheduleAgentOverrides>({
+  usePerHostExcludes: false,
+  perHostExcludes: {},
+  usePerHostFileChangePatterns: false,
+  perHostFileChangePatterns: {},
+  usePerAgentCmds: false,
+  perAgentPreCmds: {},
+  perAgentPostCmds: {},
+})
 
 const showAgentDropdown = ref(false)
 const agentDropdownRef = ref<HTMLElement | null>(null)
@@ -113,6 +118,8 @@ const lastSuccessfulReport = computed<ReportRow | null>(
     }) ?? null,
 )
 
+const selectedBackupReport = ref<ReportRow | null>(null)
+
 const estimatedRemainingSecs = computed<number | null>(() => {
   const ref = lastSuccessfulReport.value
   if (!ref || !archiveProgress.value || ref.original_size === 0) return null
@@ -121,38 +128,6 @@ const estimatedRemainingSecs = computed<number | null>(() => {
   const estimatedTotal = backupElapsedSecs.value / fraction
   return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
 })
-
-const selectedBackupReport = ref<ReportRow | null>(null)
-
-const scheduleArchives = computed<ReportRow[]>(() =>
-  reports.value
-    .filter((r) => {
-      if (r.archive_name == null) return false
-      const status = normalizeBackupStatus(r.status)
-      return status === 'success' || status === 'warning'
-    })
-    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
-)
-
-const selectedScheduleArchive = computed<ArchiveEntry | null>(() => {
-  const r = selectedBackupReport.value
-  if (!r || r.archive_name == null) return null
-  const hostname = agentMap.value.get(r.agent_id ?? 0)?.hostname ?? r.hostname ?? ''
-  return {
-    name: r.archive_name,
-    start: r.started_at,
-    hostname,
-    comment: '',
-    original_size: r.original_size,
-    deduplicated_size: r.deduplicated_size,
-    matched: true,
-    agent_hostname: hostname,
-  }
-})
-
-function selectScheduleArchive(report: ReportRow): void {
-  selectedBackupReport.value = report
-}
 
 type TabId = 'settings' | 'advanced' | 'logs' | 'backups'
 const activeTab = computed<TabId>({
@@ -178,13 +153,20 @@ const scheduleType = computed(() =>
 )
 const isBackup = computed(() => scheduleType.value === 'backup')
 
+const visibleTabs = computed<TabOption<TabId>[]>(() => {
+  const tabs: TabOption<TabId>[] = [{ id: 'settings', label: 'Settings' }]
+  if (isBackup.value) tabs.push({ id: 'advanced', label: 'Advanced' })
+  if (isBackup.value && !isCreate.value) tabs.push({ id: 'backups', label: 'Backups' })
+  return tabs
+})
+
 const agentMap = computed(() => {
   const m = new Map<number, AgentRow>()
   agents.value.forEach((c) => m.set(c.id, c))
   return m
 })
 
-const form = ref({
+const form = ref<ScheduleFormState>({
   name: '',
   cron_expression: '0 2 * * *',
   enabled: true,
@@ -368,33 +350,33 @@ async function loadData(): Promise<void> {
       }
       const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
       if (perHostExcludeEntries.length > 0) {
-        usePerHostExcludes.value = true
+        agentOverrides.value.usePerHostExcludes = true
         const map: Record<number, string> = {}
         for (const entry of perHostExcludeEntries) {
           map[Number(entry.agent_id)] = entry.raw_text
         }
-        perHostExcludes.value = map
+        agentOverrides.value.perHostExcludes = map
       }
       const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
       if (perHostFileChangePatternsEntries.length > 0) {
-        usePerHostFileChangePatterns.value = true
+        agentOverrides.value.usePerHostFileChangePatterns = true
         const map: Record<number, string> = {}
         for (const entry of perHostFileChangePatternsEntries) {
           map[Number(entry.agent_id)] = entry.raw_text
         }
-        perHostFileChangePatterns.value = map
+        agentOverrides.value.perHostFileChangePatterns = map
       }
       const perAgentCmdEntries = sources.commands_per_agent ?? []
       if (perAgentCmdEntries.length > 0) {
-        usePerAgentCmds.value = true
+        agentOverrides.value.usePerAgentCmds = true
         const preMap: Record<number, string> = {}
         const postMap: Record<number, string> = {}
         for (const entry of perAgentCmdEntries) {
           preMap[Number(entry.agent_id)] = entry.pre_backup_commands.join('\n')
           postMap[Number(entry.agent_id)] = entry.post_backup_commands.join('\n')
         }
-        perAgentPreCmds.value = preMap
-        perAgentPostCmds.value = postMap
+        agentOverrides.value.perAgentPreCmds = preMap
+        agentOverrides.value.perAgentPostCmds = postMap
       }
     }
   })
@@ -437,27 +419,27 @@ async function save(): Promise<void> {
       payload.backup_sources_per_agent = perHost
     }
 
-    if (usePerHostExcludes.value) {
+    if (agentOverrides.value.usePerHostExcludes) {
       payload.exclude_patterns_raw = ''
       const perHost: { agent_id: number; raw_text: string }[] = []
       for (const id of selectedAgentIds.value) {
-        const raw_text = perHostExcludes.value[id] ?? ''
+        const raw_text = agentOverrides.value.perHostExcludes[id] ?? ''
         perHost.push({ agent_id: id, raw_text })
       }
       payload.exclude_patterns_per_agent = perHost
     }
 
-    if (usePerHostFileChangePatterns.value) {
+    if (agentOverrides.value.usePerHostFileChangePatterns) {
       payload.file_change_patterns_raw = ''
       const perHost: { agent_id: number; raw_text: string }[] = []
       for (const id of selectedAgentIds.value) {
-        const raw_text = perHostFileChangePatterns.value[id] ?? ''
+        const raw_text = agentOverrides.value.perHostFileChangePatterns[id] ?? ''
         perHost.push({ agent_id: id, raw_text })
       }
       payload.file_change_patterns_per_agent = perHost
     }
 
-    if (usePerAgentCmds.value) {
+    if (agentOverrides.value.usePerAgentCmds) {
       payload.pre_backup_commands = []
       payload.post_backup_commands = []
       const perAgent: {
@@ -468,8 +450,8 @@ async function save(): Promise<void> {
       for (const id of selectedAgentIds.value) {
         perAgent.push({
           agent_id: id,
-          pre_backup_commands: parseLines(perAgentPreCmds.value[id] ?? ''),
-          post_backup_commands: parseLines(perAgentPostCmds.value[id] ?? ''),
+          pre_backup_commands: parseLines(agentOverrides.value.perAgentPreCmds[id] ?? ''),
+          post_backup_commands: parseLines(agentOverrides.value.perAgentPostCmds[id] ?? ''),
         })
       }
       payload.commands_per_agent = perAgent
@@ -649,23 +631,6 @@ onMessage('DataChanged', () => {
   }
 })
 
-function reportStatusClass(status: string): string {
-  switch (normalizeBackupStatus(status)) {
-    case 'success':
-      return 'badge-success'
-    case 'warning':
-      return 'badge-warning'
-    case 'started':
-      return 'badge-started'
-    case 'cancelled':
-      return 'badge-cancelled'
-    case 'pending':
-      return 'badge-pending'
-    case 'failed':
-      return 'badge-failed'
-  }
-}
-
 watch(
   () => props.id,
   () => {
@@ -743,38 +708,25 @@ watch(activeTab, (tab) => {
     />
 
     <template v-if="schedule || isCreate">
-      <div class="tab-bar">
-        <button
-          class="tab-btn"
-          :class="{ active: activeTab === 'settings' }"
-          @click="activeTab = 'settings'"
-        >
-          Settings
-        </button>
-        <button
-          v-if="isBackup"
-          class="tab-btn"
-          :class="{ active: activeTab === 'advanced' }"
-          @click="activeTab = 'advanced'"
-        >
-          Advanced
-        </button>
-        <button
-          v-if="isBackup && !isCreate"
-          class="tab-btn"
-          :class="{ active: activeTab === 'backups' }"
-          @click="activeTab = 'backups'"
-        >
-          Backups
-        </button>
-        <button
+      <BaseTabs
+        v-model="activeTab"
+        :tabs="visibleTabs"
+        label="Schedule sections"
+      >
+        <template
           v-if="!isCreate"
-          class="tab-btn tab-btn-link"
-          @click="goToLogs"
+          #trailing
         >
-          Logs ↗
-        </button>
-      </div>
+          <button
+            type="button"
+            class="tab tab-link"
+            @click="goToLogs"
+          >
+            Logs
+            <ExternalLink :size="12" />
+          </button>
+        </template>
+      </BaseTabs>
 
       <!-- Settings Tab -->
       <div
@@ -785,12 +737,12 @@ watch(activeTab, (tab) => {
           <!-- Schedule Name -->
           <div class="form-card">
             <h3 class="info-title">General</h3>
-            <div class="form-group">
-              <label class="form-label">Name</label>
+            <div class="field">
+              <label class="field-label">Name</label>
               <input
                 v-model="form.name"
                 type="text"
-                class="form-input"
+                class="input"
                 placeholder="e.g. Daily web server backup"
               />
               <span class="field-hint">Optional display name for this schedule</span>
@@ -805,8 +757,8 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">Target</h3>
 
             <!-- Multi-select for hosts -->
-            <div class="form-group">
-              <label class="form-label">Hosts <span class="required">*</span></label>
+            <div class="field">
+              <label class="field-label">Hosts <span class="required">*</span></label>
               <div
                 ref="agentDropdownRef"
                 class="multi-select-wrapper"
@@ -842,11 +794,11 @@ watch(activeTab, (tab) => {
             </div>
 
             <!-- On Failure -->
-            <div class="form-group">
-              <label class="form-label">On Failure</label>
+            <div class="field">
+              <label class="field-label">On Failure</label>
               <select
                 v-model="onFailure"
-                class="form-select"
+                class="input form-select"
               >
                 <option value="stop">Stop</option>
                 <option value="continue">Continue</option>
@@ -859,9 +811,9 @@ watch(activeTab, (tab) => {
             <!-- Ordering (2+ hosts) -->
             <div
               v-if="selectedAgentIds.length > 1"
-              class="form-group"
+              class="field"
             >
-              <label class="form-label">Execution Order</label>
+              <label class="field-label">Execution Order</label>
               <div class="order-list">
                 <div
                   v-for="(agentId, idx) in selectedAgentIds"
@@ -894,11 +846,11 @@ watch(activeTab, (tab) => {
               </div>
             </div>
 
-            <div class="form-group">
-              <label class="form-label">Repository <span class="required">*</span></label>
+            <div class="field">
+              <label class="field-label">Repository <span class="required">*</span></label>
               <select
                 v-model.number="selectedRepoId"
-                class="form-select"
+                class="input form-select"
               >
                 <option
                   :value="null"
@@ -916,11 +868,11 @@ watch(activeTab, (tab) => {
               </select>
               <span class="field-hint">The borg repository to back up to</span>
             </div>
-            <div class="form-group">
-              <label class="form-label">Schedule Type</label>
+            <div class="field">
+              <label class="field-label">Schedule Type</label>
               <select
                 v-model="selectedType"
-                class="form-select"
+                class="input form-select"
               >
                 <option value="backup">Backup</option>
                 <option value="check">Integrity Check</option>
@@ -1027,8 +979,8 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">Target Settings</h3>
 
             <!-- Multi-select for hosts -->
-            <div class="form-group">
-              <label class="form-label">Hosts</label>
+            <div class="field">
+              <label class="field-label">Hosts</label>
               <div
                 ref="agentDropdownRef"
                 class="multi-select-wrapper"
@@ -1062,11 +1014,11 @@ watch(activeTab, (tab) => {
               </div>
             </div>
 
-            <div class="form-group">
-              <label class="form-label">Repository</label>
+            <div class="field">
+              <label class="field-label">Repository</label>
               <select
                 v-model.number="selectedRepoId"
-                class="form-select"
+                class="input form-select"
               >
                 <option
                   v-for="r in repos"
@@ -1079,11 +1031,11 @@ watch(activeTab, (tab) => {
             </div>
 
             <!-- On Failure -->
-            <div class="form-group">
-              <label class="form-label">On Failure</label>
+            <div class="field">
+              <label class="field-label">On Failure</label>
               <select
                 v-model="onFailure"
-                class="form-select"
+                class="input form-select"
               >
                 <option value="stop">Stop</option>
                 <option value="continue">Continue</option>
@@ -1093,9 +1045,9 @@ watch(activeTab, (tab) => {
             <!-- Ordering (2+ hosts) -->
             <div
               v-if="selectedAgentIds.length > 1"
-              class="form-group"
+              class="field"
             >
-              <label class="form-label">Execution Order</label>
+              <label class="field-label">Execution Order</label>
               <div class="order-list">
                 <div
                   v-for="(agentId, idx) in selectedAgentIds"
@@ -1131,12 +1083,12 @@ watch(activeTab, (tab) => {
 
           <div class="form-card">
             <h3 class="info-title">Timing</h3>
-            <div class="form-group">
-              <label class="form-label">Schedule</label>
+            <div class="field">
+              <label class="field-label">Schedule</label>
               <CronBuilder v-model="form.cron_expression" />
             </div>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Enabled</label>
+            <div class="field field-inline">
+              <label class="field-label">Enabled</label>
               <ToggleSwitch v-model="form.enabled" />
             </div>
           </div>
@@ -1146,19 +1098,19 @@ watch(activeTab, (tab) => {
               <h3 class="info-title">Backup Paths</h3>
               <div
                 v-if="selectedAgentIds.length > 1"
-                class="form-group form-group-inline"
+                class="field field-inline"
               >
-                <label class="form-label">Configure per agent</label>
+                <label class="field-label">Configure per agent</label>
                 <ToggleSwitch v-model="usePerHostPaths" />
               </div>
 
               <div
                 v-if="!usePerHostPaths"
-                class="form-group"
+                class="field"
               >
                 <textarea
                   v-model="form.backup_sources"
-                  class="form-input area-input"
+                  class="input area-input"
                   placeholder="Directories to back up, one per line"
                   spellcheck="false"
                 />
@@ -1176,10 +1128,10 @@ watch(activeTab, (tab) => {
                   :key="agentId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="field-label">{{ agentLabel(agentId) }}</label>
                   <textarea
                     :value="perHostSources[agentId] ?? ''"
-                    class="form-input area-input area-input-sm"
+                    class="input area-input area-input-sm"
                     placeholder="Directories to back up, one per line"
                     spellcheck="false"
                     @input="
@@ -1197,49 +1149,49 @@ watch(activeTab, (tab) => {
             <div class="form-card">
               <h3 class="info-title">Retention</h3>
               <div class="retention-grid">
-                <div class="form-group">
-                  <label class="form-label">Hourly</label>
+                <div class="field">
+                  <label class="field-label">Hourly</label>
                   <input
                     v-model.number="form.keep_hourly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Daily</label>
+                <div class="field">
+                  <label class="field-label">Daily</label>
                   <input
                     v-model.number="form.keep_daily"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Weekly</label>
+                <div class="field">
+                  <label class="field-label">Weekly</label>
                   <input
                     v-model.number="form.keep_weekly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Monthly</label>
+                <div class="field">
+                  <label class="field-label">Monthly</label>
                   <input
                     v-model.number="form.keep_monthly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Yearly</label>
+                <div class="field">
+                  <label class="field-label">Yearly</label>
                   <input
                     v-model.number="form.keep_yearly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
               </div>
@@ -1253,241 +1205,18 @@ watch(activeTab, (tab) => {
         v-if="activeTab === 'advanced' && isBackup"
         class="tab-content"
       >
-        <div class="form-grid">
-          <div class="form-card">
-            <h3 class="info-title">Options</h3>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Canary Verification</label>
-              <ToggleSwitch v-model="form.canary_enabled" />
-            </div>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Ignore Global Excludes</label>
-              <ToggleSwitch v-model="form.ignore_global_excludes" />
-            </div>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Compact after backup</label>
-              <ToggleSwitch v-model="form.compact_enabled" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Remote Rate Limit (kB/s)</label>
-              <input
-                v-model.number="form.rate_limit_kbps"
-                type="number"
-                min="0"
-                class="form-input"
-              />
-              <span class="field-hint">Caps borg's upload bandwidth. Set to 0 for unlimited.</span>
-            </div>
-          </div>
-
-          <div class="form-card">
-            <h3 class="info-title">Exclude Patterns</h3>
-            <div
-              v-if="selectedAgentIds.length > 1"
-              class="form-group form-group-inline"
-            >
-              <label class="form-label">Configure per agent</label>
-              <ToggleSwitch v-model="usePerHostExcludes" />
-            </div>
-            <div class="form-group">
-              <div class="form-label-row">
-                <label class="form-label">Patterns</label>
-                <button
-                  type="button"
-                  class="ref-toggle"
-                  @click="refOpen = !refOpen"
-                >
-                  {{ refOpen ? 'Close Reference' : 'Pattern Reference' }}
-                </button>
-              </div>
-              <textarea
-                v-if="!usePerHostExcludes"
-                v-model="form.exclude_patterns"
-                class="form-input area-input"
-                placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
-                spellcheck="false"
-              />
-              <div
-                v-else
-                class="per-host-paths"
-              >
-                <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
-                  class="per-host-entry"
-                >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
-                  <textarea
-                    :value="perHostExcludes[agentId] ?? ''"
-                    class="form-input area-input area-input-sm"
-                    placeholder="Exclude patterns, one per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perHostExcludes[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                </div>
-                <span class="field-hint">
-                  Leave an agent empty to use only global and agent-level default excludes.
-                </span>
-              </div>
-              <span
-                v-if="!usePerHostExcludes"
-                class="field-hint"
-              >
-                Leave empty to use only global and agent-level default excludes. Lines starting with
-                <code>#</code> are treated as comments.
-              </span>
-              <div
-                v-if="refOpen"
-                class="ref-panel"
-              >
-                <div class="ref-title">Borg Pattern Syntax</div>
-                <div class="ref-section">
-                  <div class="ref-section-title">Shell Patterns (default)</div>
-                  <div class="ref-entry">
-                    <code>*.cache</code> <span>any file ending in .cache</span>
-                  </div>
-                  <div class="ref-entry">
-                    <code>home/*/Downloads</code> <span>Downloads in any home dir</span>
-                  </div>
-                </div>
-                <div class="ref-section">
-                  <div class="ref-section-title">Path Prefix <code>pp:</code></div>
-                  <div class="ref-entry">
-                    <code>pp:__pycache__</code>
-                    <span>any path component named __pycache__</span>
-                  </div>
-                </div>
-                <div class="ref-section">
-                  <div class="ref-section-title">Regex <code>re:</code></div>
-                  <div class="ref-entry">
-                    <code>re:\.git/objects/</code> <span>regex match anywhere in path</span>
-                  </div>
-                </div>
-                <div class="ref-section">
-                  <div class="ref-section-title">Fnmatch <code>fm:</code></div>
-                  <div class="ref-entry">
-                    <code>fm:*.log</code> <span>fnmatch pattern (case-sensitive)</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="form-card">
-            <h3 class="info-title">File Change Patterns</h3>
-            <div
-              v-if="selectedAgentIds.length > 1"
-              class="form-group form-group-inline"
-            >
-              <label class="form-label">Configure per agent</label>
-              <ToggleSwitch v-model="usePerHostFileChangePatterns" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Patterns</label>
-              <FileChangePatternsEditor
-                v-if="!usePerHostFileChangePatterns"
-                v-model="form.file_change_patterns"
-              />
-              <div
-                v-else
-                class="per-host-paths"
-              >
-                <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
-                  class="per-host-entry"
-                >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
-                  <textarea
-                    :value="perHostFileChangePatterns[agentId] ?? ''"
-                    class="form-input area-input area-input-sm"
-                    placeholder="File change patterns, one per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perHostFileChangePatterns[agentId] = (
-                          $event.target as HTMLTextAreaElement
-                        ).value)
-                    "
-                  />
-                </div>
-                <span class="field-hint">
-                  Leave an agent empty to use schedule-level file change patterns.
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div class="form-card">
-            <h3 class="info-title">Commands</h3>
-            <div
-              v-if="selectedAgentIds.length > 1"
-              class="form-group form-group-inline"
-            >
-              <label class="form-label">Configure per agent</label>
-              <ToggleSwitch v-model="usePerAgentCmds" />
-            </div>
-            <template v-if="!usePerAgentCmds">
-              <div class="form-group">
-                <label class="form-label">Pre-backup Commands</label>
-                <textarea
-                  v-model="form.pre_backup_commands"
-                  class="form-input cmd-area"
-                  placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-                  spellcheck="false"
-                />
-              </div>
-              <div class="form-group">
-                <label class="form-label">Post-backup Commands</label>
-                <textarea
-                  v-model="form.post_backup_commands"
-                  class="form-input cmd-area"
-                  placeholder="One command per line (optional)"
-                  spellcheck="false"
-                />
-              </div>
-            </template>
-            <template v-else>
-              <div class="per-host-paths">
-                <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
-                  class="per-host-entry"
-                >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
-                  <label class="form-sublabel">Pre-backup</label>
-                  <textarea
-                    :value="perAgentPreCmds[agentId] ?? ''"
-                    class="form-input cmd-area"
-                    placeholder="One command per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perAgentPreCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                  <label class="form-sublabel">Post-backup</label>
-                  <textarea
-                    :value="perAgentPostCmds[agentId] ?? ''"
-                    class="form-input cmd-area"
-                    placeholder="One command per line (optional)"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perAgentPostCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                </div>
-                <span class="field-hint"
-                  >Leave an agent empty to run no schedule-level commands.</span
-                >
-              </div>
-            </template>
-          </div>
-        </div>
+        <!--
+          Bound one-way on purpose: ScheduleAdvancedTab edits the fields of
+          these objects in place and never replaces either one, so the tab is
+          writing into this view's own state. v-model would only add an update
+          handler that never fires.
+        -->
+        <ScheduleAdvancedTab
+          :form="form"
+          :overrides="agentOverrides"
+          :agent-ids="selectedAgentIds"
+          :agent-label="agentLabel"
+        />
       </div>
 
       <!-- Logs Tab -->
@@ -1495,80 +1224,12 @@ watch(activeTab, (tab) => {
         v-if="activeTab === 'logs'"
         class="tab-content"
       >
-        <div
-          v-if="reportsLoading"
-          class="reports-loading"
-        >
-          <BaseSpinner size="sm" />
-        </div>
-        <div
-          v-else-if="reportsError"
-          class="error-banner"
-        >
-          {{ reportsError }}
-        </div>
-        <div
-          v-else-if="reports.length === 0"
-          class="empty-state"
-        >
-          No backup reports found for this schedule.
-        </div>
-        <div
-          v-else
-          class="reports-table-wrap"
-        >
-          <table class="reports-table">
-            <thead>
-              <tr>
-                <th>Started</th>
-                <th>Host</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Size</th>
-                <th>Error</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="r in reports"
-                :key="r.id"
-                class="report-row"
-              >
-                <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
-                <td class="cell-host">
-                  {{
-                    agentMap.get(r.agent_id ?? 0)?.display_name ??
-                    agentMap.get(r.agent_id ?? 0)?.hostname ??
-                    `#${r.agent_id ?? 0}`
-                  }}
-                </td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="reportStatusClass(r.status)"
-                    >{{ r.status }}</span
-                  >
-                </td>
-                <td class="cell-dur">{{ formatDuration(r.duration_secs) }}</td>
-                <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-                <td class="cell-error">
-                  <span
-                    v-if="r.error_message"
-                    class="error-snippet"
-                    :title="r.error_message"
-                    >{{ r.error_message.slice(0, 80)
-                    }}{{ r.error_message.length > 80 ? '\u2026' : '' }}</span
-                  >
-                  <span
-                    v-else
-                    class="no-error"
-                    >—</span
-                  >
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <ScheduleLogsTab
+          :reports="reports"
+          :loading="reportsLoading"
+          :error="reportsError"
+          :agents="agentMap"
+        />
       </div>
 
       <!-- Backups Tab -->
@@ -1576,76 +1237,14 @@ watch(activeTab, (tab) => {
         v-if="activeTab === 'backups'"
         class="tab-content"
       >
-        <div
-          v-if="reportsLoading"
-          class="reports-loading"
-        >
-          <BaseSpinner size="sm" />
-        </div>
-        <div
-          v-else-if="reportsError"
-          class="error-banner"
-        >
-          {{ reportsError }}
-        </div>
-        <div
-          v-else-if="scheduleArchives.length === 0"
-          class="empty-state"
-        >
-          No backup archives found for this schedule.
-        </div>
-        <ArchiveBrowserLayout
-          v-else
-          narrow-list
-        >
-          <template #list>
-            <!-- Archive list -->
-            <div class="panel backups-list-panel">
-              <div class="panel-header">
-                <span class="panel-title">Archives</span>
-              </div>
-              <table class="archives-table">
-                <thead>
-                  <tr>
-                    <th>Archive</th>
-                    <th>Host</th>
-                    <th>Date</th>
-                    <th>Size</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="r in scheduleArchives"
-                    :key="r.id"
-                    class="archive-row"
-                    :class="{ selected: selectedBackupReport?.id === r.id }"
-                    @click="selectScheduleArchive(r)"
-                  >
-                    <td class="cell-archive-name">{{ r.archive_name }}</td>
-                    <td class="cell-host">
-                      {{
-                        agentMap.get(r.agent_id ?? 0)?.display_name ??
-                        agentMap.get(r.agent_id ?? 0)?.hostname ??
-                        `#${r.agent_id ?? 0}`
-                      }}
-                    </td>
-                    <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
-                    <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </template>
-          <template #browser>
-            <!-- File browser -->
-            <div class="panel backups-browser-panel">
-              <ArchiveFileBrowser
-                :repo-id="schedule?.repo_id ?? null"
-                :archive="selectedScheduleArchive"
-              />
-            </div>
-          </template>
-        </ArchiveBrowserLayout>
+        <ScheduleBackupsTab
+          v-model:selected="selectedBackupReport"
+          :reports="reports"
+          :loading="reportsLoading"
+          :error="reportsError"
+          :agents="agentMap"
+          :repo-id="schedule?.repo_id ?? null"
+        />
       </div>
 
       <!-- Save bar -->
@@ -1698,52 +1297,52 @@ watch(activeTab, (tab) => {
     </template>
 
     <!-- Delete Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteDialog"
-        class="overlay"
-        @click.self="showDeleteDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Schedule</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Are you sure you want to delete this
-              <strong>{{ schedule ? scheduleTypeLabel(schedule.schedule_type) : '' }}</strong>
-              schedule? All associated backup reports will also be removed.
-            </p>
-            <p>This action cannot be undone.</p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteLoading"
-              @click="confirmDeleteSchedule"
-            >
-              {{ deleteLoading ? 'Deleting...' : 'Delete Schedule' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <BaseModal
+      :open="showDeleteDialog"
+      title="Delete Schedule"
+      @close="showDeleteDialog = false"
+    >
+      <p>
+        Are you sure you want to delete this
+        <strong>{{ schedule ? scheduleTypeLabel(schedule.schedule_type) : '' }}</strong>
+        schedule? All associated backup reports will also be removed.
+      </p>
+      <p>This action cannot be undone.</p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showDeleteDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="deleteLoading"
+          @click="confirmDeleteSchedule"
+        >
+          {{ deleteLoading ? 'Deleting...' : 'Delete Schedule' }}
+        </button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
 <style scoped>
+/* Not a tab: it leaves the page. Pushed to the end and kept muted so it does
+   not read as a fourth section. */
+.tab-link {
+  margin-left: auto;
+  color: var(--text-muted);
+  gap: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tab-link:hover {
+  color: var(--text-primary);
+}
+
 .schedule-detail {
   color: var(--text-primary);
   max-width: 900px;
@@ -1754,7 +1353,7 @@ watch(activeTab, (tab) => {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 1.5rem;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 
 .crumb-link {
@@ -1777,12 +1376,6 @@ watch(activeTab, (tab) => {
   font-family: var(--mono);
 }
 
-.page-title {
-  font-size: 1.3rem;
-  font-weight: 700;
-  margin: 0 0 0.4rem;
-}
-
 .error-banner {
   background: var(--danger-subtle);
   border: 1px solid var(--danger);
@@ -1790,44 +1383,7 @@ watch(activeTab, (tab) => {
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
   margin-bottom: 1rem;
-  font-size: 0.875rem;
-}
-
-.tab-bar {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin-top: 1.5rem;
-  margin-bottom: 1.5rem;
-}
-
-.tab-btn {
-  padding: 0.6rem 1.2rem;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition:
-    color 0.15s,
-    border-color 0.15s;
-}
-
-.tab-btn:hover {
-  color: var(--text-primary);
-}
-
-.tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-.tab-btn-link {
-  margin-left: auto;
-  color: var(--text-muted);
+  font-size: var(--fs-base);
 }
 
 .form-grid {
@@ -1845,11 +1401,6 @@ watch(activeTab, (tab) => {
 }
 
 .info-title {
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
   margin: 0 0 1rem;
 }
 
@@ -1866,12 +1417,12 @@ watch(activeTab, (tab) => {
 }
 
 .info-label {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
 .info-value {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1896,7 +1447,7 @@ watch(activeTab, (tab) => {
 }
 
 .target-health-name {
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1905,7 +1456,7 @@ watch(activeTab, (tab) => {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--warning);
   background: var(--warning-subtle);
@@ -1914,37 +1465,8 @@ watch(activeTab, (tab) => {
 }
 
 .target-health-note {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
-}
-
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-group:last-child {
-  margin-bottom: 0;
-}
-
-.form-group-inline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.form-label {
-  display: block;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 0.35rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.form-group-inline .form-label {
-  margin-bottom: 0;
 }
 
 .required {
@@ -1953,12 +1475,10 @@ watch(activeTab, (tab) => {
 
 .field-hint {
   display: block;
-  font-size: 0.72rem;
-  color: var(--text-muted);
   margin-top: 0.25rem;
 }
 
-.form-input,
+.input,
 .form-select {
   width: 100%;
   padding: 0.5rem 0.75rem;
@@ -1966,13 +1486,13 @@ watch(activeTab, (tab) => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
 }
 
-.form-input:focus,
+.input:focus,
 .form-select:focus {
   border-color: var(--accent);
 }
@@ -1981,7 +1501,7 @@ watch(activeTab, (tab) => {
   min-height: 80px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 
@@ -2001,122 +1521,10 @@ watch(activeTab, (tab) => {
   gap: 0.25rem;
 }
 
-.cmd-area {
-  min-height: 60px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: 0.82rem;
-  line-height: 1.5;
-}
-
-.form-sublabel {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-top: 0.5rem;
-  display: block;
-}
-
 .retention-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
-}
-
-.form-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.35rem;
-}
-
-.form-label-row .form-label {
-  margin-bottom: 0;
-}
-
-.ref-toggle {
-  padding: 0.15rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    background 0.15s;
-}
-
-.ref-toggle:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.ref-panel {
-  margin-top: 0.5rem;
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.875rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.ref-title {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.ref-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.ref-section-title {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.ref-section-title code {
-  font-family: var(--mono);
-  color: var(--accent);
-  text-transform: none;
-  letter-spacing: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.ref-entry {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.ref-entry code {
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  color: var(--text-primary);
-  background: var(--bg-card);
-  padding: 0.1rem 0.35rem;
-  border-radius: var(--radius-sm);
-}
-
-.ref-entry span {
-  font-size: 0.68rem;
-  color: var(--text-muted);
 }
 
 .save-bar {
@@ -2130,20 +1538,14 @@ watch(activeTab, (tab) => {
 }
 
 .error-inline {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--danger);
 }
 
 .save-success {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   color: var(--success);
   font-weight: 600;
-}
-
-.empty-state {
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  padding: 1rem 0;
 }
 
 /* Multi-select */
@@ -2158,14 +1560,14 @@ watch(activeTab, (tab) => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   outline: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
   text-align: left;
 }
@@ -2183,7 +1585,7 @@ watch(activeTab, (tab) => {
 }
 
 .multi-select-arrow {
-  font-size: 0.65rem;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -2193,10 +1595,10 @@ watch(activeTab, (tab) => {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: var(--bg-elevated, var(--bg-card));
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg, var(--shadow));
+  box-shadow: var(--shadow-lg);
   padding: 0.4rem;
   z-index: 100;
   max-height: 220px;
@@ -2213,9 +1615,9 @@ watch(activeTab, (tab) => {
   padding: 0.35rem 0.5rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .multi-select-item:hover {
@@ -2237,40 +1639,6 @@ watch(activeTab, (tab) => {
 }
 
 /* Segmented control */
-.segmented-control {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.seg-btn {
-  padding: 0.4rem 1rem;
-  border: none;
-  background: var(--bg-input);
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
-}
-
-.seg-btn + .seg-btn {
-  border-left: 1px solid var(--border);
-}
-
-.seg-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.seg-btn.active {
-  background: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
 
 /* Ordering list */
 .order-list {
@@ -2290,7 +1658,7 @@ watch(activeTab, (tab) => {
 }
 
 .order-index {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   color: var(--text-muted);
   min-width: 1.2rem;
@@ -2299,7 +1667,7 @@ watch(activeTab, (tab) => {
 
 .order-name {
   flex: 1;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2318,11 +1686,11 @@ watch(activeTab, (tab) => {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font-size: 1.1rem;
+  font-size: var(--fs-lg);
   cursor: pointer;
   transition:
-    background 0.1s,
-    color 0.1s;
+    background var(--duration-fast),
+    color var(--duration-fast);
   line-height: 1;
 }
 
@@ -2337,310 +1705,19 @@ watch(activeTab, (tab) => {
 }
 
 /* Danger zone */
+
+/* Sits directly after the settings form here, so it needs breathing room the
+   other detail views get from their surrounding grid. */
 .danger-zone {
-  border-color: var(--danger);
   margin-top: 2rem;
 }
 
-.danger-zone .info-title {
-  color: var(--danger);
-}
-
-.danger-body {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-}
-
-.danger-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.danger-heading {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.danger-desc {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
 /* Dialog */
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-}
-
-.dialog {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  width: min(480px, 90vw);
-  box-shadow: var(--shadow-lg, var(--shadow));
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.dialog-title {
-  font-size: 1rem;
-  font-weight: 700;
-  margin: 0;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  color: var(--text-muted);
-  cursor: pointer;
-  line-height: 1;
-}
-
-.close-btn:hover {
-  color: var(--text-primary);
-}
-
-.dialog-body {
-  padding: 1.25rem;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.dialog-body p {
-  margin: 0 0 0.75rem;
-}
-
-.dialog-body p:last-child {
-  margin-bottom: 0;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 1rem 1.25rem;
-  border-top: 1px solid var(--border);
-}
-
-.reports-loading {
-  padding: 2rem 0;
-  display: flex;
-  justify-content: center;
-}
-
-.reports-table-wrap {
-  overflow-x: auto;
-}
-
-.reports-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.82rem;
-}
-
-.reports-table th {
-  text-align: left;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.report-row td {
-  padding: 0.55rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  vertical-align: middle;
-}
-
-.report-row:last-child td {
-  border-bottom: none;
-}
-
-.cell-ts {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
-}
-
-.cell-host {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.cell-dur,
-.cell-size {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
-}
-
-.cell-error {
-  max-width: 280px;
-}
-
-.error-snippet {
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  color: var(--danger);
-  word-break: break-all;
-}
-
-.no-error {
-  color: var(--text-muted);
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.badge-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.badge-started {
-  background: var(--info-subtle);
-  color: var(--info);
-}
-
-.badge-cancelled {
-  background: var(--muted-subtle, #f0f0f0);
-  color: var(--muted, #6b7280);
-}
-
-.btn-danger {
-  background: var(--danger);
-  color: #fff;
-  border: none;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: var(--danger-hover, color-mix(in srgb, var(--danger) 85%, #000));
-}
 
 /* Backups tab layout */
 
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.backups-list-panel .panel-header {
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.backups-list-panel .panel-title {
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.archives-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8rem;
-}
-
-.archives-table th {
-  text-align: left;
-  padding: 0.45rem 0.75rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.archives-table td {
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  vertical-align: middle;
-  color: var(--text-secondary);
-}
-
-.archives-table tr:last-child td {
-  border-bottom: none;
-}
-
-.archives-table tr {
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.archives-table tr:hover {
-  background: var(--bg-hover);
-}
-
-.archives-table tr.selected td {
+.data-table tr.selected td {
   background: var(--accent-subtle);
   color: var(--text-primary);
-}
-
-.cell-archive-name {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-}
-
-.cell-host {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.cell-date {
-  white-space: nowrap;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-
-.backups-browser-panel {
-  min-height: 300px;
 }
 </style>

@@ -42,7 +42,7 @@ async function enrollTotp(page: Page): Promise<{ secret: string; recovery_codes:
   await page.goto('/profile')
   await page.waitForLoadState('networkidle')
 
-  await page.getByRole('button', { name: 'Two-Factor Auth' }).click()
+  await page.getByRole('tab', { name: 'Two-Factor Auth' }).click()
   await page.getByRole('button', { name: 'Set Up Two-Factor Auth' }).click()
 
   const setupResponse = await page.waitForResponse(
@@ -90,7 +90,7 @@ async function disableTotpIfEnabled(page: Page): Promise<void> {
   try {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
-    const tab = page.getByRole('button', { name: 'Two-Factor Auth' })
+    const tab = page.getByRole('tab', { name: 'Two-Factor Auth' })
     if (!(await tab.isVisible().catch(() => false))) {
       return
     }
@@ -119,7 +119,7 @@ test.describe('TOTP / 2FA', () => {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('button', { name: 'Two-Factor Auth' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Two-Factor Auth' })).toBeVisible()
   })
 
   test('Sessions tab on profile shows active sessions', async ({ page }) => {
@@ -127,7 +127,7 @@ test.describe('TOTP / 2FA', () => {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
 
-    const sessionsTab = page.getByRole('button', { name: 'Sessions' })
+    const sessionsTab = page.getByRole('tab', { name: 'Sessions' })
     await expect(sessionsTab).toBeVisible()
     await sessionsTab.click()
     await expect(page.locator('text=current').first()).toBeVisible()
@@ -191,7 +191,7 @@ test('can revoke another active session from the Sessions tab', async ({ page, r
   await page.goto('/profile')
   await page.waitForLoadState('networkidle')
 
-  const sessionsTab = page.getByRole('button', { name: 'Sessions' })
+  const sessionsTab = page.getByRole('tab', { name: 'Sessions' })
   await expect(sessionsTab).toBeVisible({ timeout: 10_000 })
   await sessionsTab.click()
 

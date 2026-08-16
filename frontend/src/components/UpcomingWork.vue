@@ -59,13 +59,6 @@ defineProps<{
 </template>
 
 <style scoped>
-.panel-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.75rem;
-}
-
 .work-list {
   display: flex;
   flex-direction: column;
@@ -82,7 +75,7 @@ defineProps<{
   border-top: 1px solid var(--border);
   color: inherit;
   text-decoration: none;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 
 .work-row span,
@@ -107,7 +100,7 @@ defineProps<{
   background: var(--accent);
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
   .work-row {
     grid-template-columns: 10px 1fr auto;
   }

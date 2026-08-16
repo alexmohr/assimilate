@@ -80,7 +80,7 @@ async function compare(): Promise<void> {
         <label class="field-label">Archive 1</label>
         <select
           v-model="archive1"
-          class="select-input"
+          class="input select-input"
         >
           <option
             :value="null"
@@ -101,7 +101,7 @@ async function compare(): Promise<void> {
         <label class="field-label">Archive 2</label>
         <select
           v-model="archive2"
-          class="select-input"
+          class="input select-input"
         >
           <option
             :value="null"
@@ -229,11 +229,6 @@ async function compare(): Promise<void> {
 
 .field-label {
   display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   margin-bottom: 0.4rem;
 }
 
@@ -244,7 +239,7 @@ async function compare(): Promise<void> {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 0.55rem 0.75rem;
-  font-size: 0.85rem;
+  font-size: var(--fs-base);
 }
 
 .select-input:focus {
@@ -257,8 +252,6 @@ async function compare(): Promise<void> {
 }
 
 .form-error {
-  color: var(--danger);
-  font-size: 0.85rem;
   margin-bottom: 0.75rem;
 }
 
@@ -275,7 +268,7 @@ async function compare(): Promise<void> {
 
 .diff-summary {
   padding: 0.6rem 1rem;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   user-select: none;
@@ -307,7 +300,7 @@ async function compare(): Promise<void> {
 .diff-item {
   padding: 0.35rem 1rem;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -327,6 +320,6 @@ async function compare(): Promise<void> {
   text-align: center;
   padding: 1.5rem;
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
 }
 </style>

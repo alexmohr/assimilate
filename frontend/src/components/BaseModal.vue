@@ -4,26 +4,37 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick, useId } from 'vue'
 import { X } from '@lucide/vue'
 
 interface Props {
   open: boolean
   title?: string
   size?: 'sm' | 'md' | 'lg'
+  /**
+   * Wrap body and footer in a `<form>` so that a submit button in the footer
+   * submits the fields in the body. Emits `submit` with the native event
+   * already prevented.
+   */
+  form?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   title: undefined,
   size: 'md',
+  form: false,
 })
 
 const emit = defineEmits<{
   close: []
+  submit: []
 }>()
 
 const dialogRef = ref<HTMLElement | null>(null)
 const previousActiveElement = ref<Element | null>(null)
+// Unique per instance: a view may declare several modals, and a duplicated
+// id would point aria-labelledby at another dialog's heading.
+const titleId = useId()
 
 function trapFocus(e: KeyboardEvent): void {
   if (!dialogRef.value) return
@@ -52,29 +63,44 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
+function activate(): void {
+  previousActiveElement.value = document.activeElement
+  document.documentElement.style.overflow = 'hidden'
+  // Bind synchronously. Deferring this until after the nextTick below would let
+  // a close that lands in between remove a listener that is not attached yet,
+  // and the listener would then outlive the dialog.
+  document.addEventListener('keydown', onKeydown)
+  void nextTick().then(() => {
+    if (props.open) dialogRef.value?.focus()
+  })
+}
+
+function deactivate(): void {
+  document.documentElement.style.overflow = ''
+  document.removeEventListener('keydown', onKeydown)
+  if (previousActiveElement.value instanceof HTMLElement) {
+    previousActiveElement.value.focus()
+  }
+}
+
+function onSubmit(e: Event): void {
+  e.preventDefault()
+  emit('submit')
+}
+
 watch(
   () => props.open,
-  async (isOpen) => {
+  (isOpen) => {
     if (isOpen) {
-      previousActiveElement.value = document.activeElement
-      document.documentElement.style.overflow = 'hidden'
-      await nextTick()
-      dialogRef.value?.focus()
-      document.addEventListener('keydown', onKeydown)
+      activate()
     } else {
-      document.documentElement.style.overflow = ''
-      document.removeEventListener('keydown', onKeydown)
-      if (previousActiveElement.value instanceof HTMLElement) {
-        previousActiveElement.value.focus()
-      }
+      deactivate()
     }
   },
 )
 
 onMounted(() => {
-  if (props.open) {
-    document.addEventListener('keydown', onKeydown)
-  }
+  if (props.open) activate()
 })
 
 onUnmounted(() => {
@@ -95,7 +121,7 @@ onUnmounted(() => {
           ref="dialogRef"
           role="dialog"
           aria-modal="true"
-          :aria-labelledby="title ? 'modal-title' : undefined"
+          :aria-labelledby="title || $slots.header ? titleId : undefined"
           class="modal-dialog"
           :class="`modal-${size}`"
           tabindex="-1"
@@ -104,30 +130,57 @@ onUnmounted(() => {
             v-if="title || $slots.header"
             class="modal-header"
           >
-            <slot name="header">
+            <!-- `titleId` is handed to the slot so a custom header can still
+                 name the dialog for assistive tech. -->
+            <slot
+              name="header"
+              :title-id="titleId"
+            >
               <h2
-                id="modal-title"
+                :id="titleId"
                 class="modal-title"
               >
                 {{ title }}
               </h2>
             </slot>
             <button
+              type="button"
               class="modal-close"
               aria-label="Close"
               @click="emit('close')"
             >
-              <X :size="18" />
+              <X :size="20" />
             </button>
           </div>
-          <div class="modal-body">
-            <slot />
-          </div>
-          <div
-            v-if="$slots.footer"
-            class="modal-footer"
+
+          <form
+            v-if="form"
+            class="modal-content"
+            @submit="onSubmit"
           >
-            <slot name="footer" />
+            <div class="modal-body">
+              <slot />
+            </div>
+            <div
+              v-if="$slots.footer"
+              class="modal-footer"
+            >
+              <slot name="footer" />
+            </div>
+          </form>
+          <div
+            v-else
+            class="modal-content"
+          >
+            <div class="modal-body">
+              <slot />
+            </div>
+            <div
+              v-if="$slots.footer"
+              class="modal-footer"
+            >
+              <slot name="footer" />
+            </div>
           </div>
         </div>
       </div>
@@ -152,34 +205,40 @@ onUnmounted(() => {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  max-width: 95vw;
+  width: 100%;
   max-height: 85vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   box-shadow: var(--shadow-lg);
   outline: none;
 }
 
 .modal-sm {
-  width: 380px;
+  max-width: 380px;
 }
 
 .modal-md {
-  width: 460px;
+  max-width: 460px;
 }
 
 .modal-lg {
-  width: 640px;
+  max-width: 640px;
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
   padding: 1.25rem 1.5rem 0;
+  flex: none;
 }
 
-.modal-title {
-  font-size: 1.1rem;
+/* `:deep` because most callers supply their own `#header` slot content, which
+   carries the *caller's* scope id - without it those ten dialogs rendered
+   their title at the browser default instead of the modal title style. */
+.modal-header :deep(.modal-title) {
+  font-size: var(--fs-lg);
   font-weight: 700;
 }
 
@@ -189,14 +248,15 @@ onUnmounted(() => {
   justify-content: center;
   width: 2rem;
   height: 2rem;
+  flex: none;
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition:
-    color 0.15s,
-    background 0.15s;
+    color var(--duration-base),
+    background var(--duration-base);
 }
 
 .modal-close:hover {
@@ -204,25 +264,45 @@ onUnmounted(() => {
   background: var(--bg-hover);
 }
 
+/* The scroll container is the body, not the dialog, so the header and the
+   footer stay put while a long form scrolls between them. */
+.modal-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .modal-body {
   padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .modal-footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.75rem;
   padding: 0 1.5rem 1.25rem;
+  flex: none;
+}
+
+/* A validation error in the footer explains the buttons next to it, so it
+   takes a row of its own rather than squeezing in beside them. */
+.modal-footer :deep(.form-error) {
+  flex-basis: 100%;
+  margin-top: 0;
 }
 
 .modal-enter-active,
 .modal-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-slow) ease;
 }
 
 .modal-enter-active .modal-dialog,
 .modal-leave-active .modal-dialog {
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .modal-enter-from,

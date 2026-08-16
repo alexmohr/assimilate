@@ -1209,14 +1209,6 @@ watch(
   padding: 0;
 }
 
-.exclude-area {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
 .card-top-badges {
   display: flex;
   align-items: center;

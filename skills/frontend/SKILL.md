@@ -68,6 +68,9 @@ These live in `frontend/src/style.css` or `frontend/src/components/`. Never re-d
 * **Toggles** — `ToggleSwitch` for a setting that applies on change. A native checkbox only inside a multi-select list, or in a form with an explicit Save.
 * **Icons** — `@lucide/vue` only, never an HTML entity or a literal glyph. Sizes are 12 (inline with small text), 14 (inline and in controls), 16 (headings), 20 (section headers), 40 (empty states).
 * **Busy labels** — three periods, `'Saving...'`, not an ellipsis character.
+* **Info cards** — `.info-card` with `.info-title`, `.info-grid` (`dt`/`dd` rows) and `.info-actions` for the ruled button footer. This is the detail views' settings surface; `.panel` is for list containers. A card that flips between a read-only view and an inline edit form is `EditableInfoCard`, which owns the Edit/Cancel/Save shell and leaves the parent the two bodies and the save call.
+* **Inline fields** — `.field field-inline` puts a control beside its label instead of under it (used for toggles); `.field-label-row` shares a label's row with a secondary control.
+* **Per-agent overrides** — `PerAgentFields`, for a schedule form section that can be configured separately per selected agent.
 
 ## `local/no-string-literal-control-flow` ESLint rule
 

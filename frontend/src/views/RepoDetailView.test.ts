@@ -95,6 +95,7 @@ vi.mock('../components/QuotaPanel.vue', () => ({
 }))
 
 import { apiClient } from '../api/client'
+import RepoArchivesTab from '../components/RepoArchivesTab.vue'
 
 interface RepoWithStats {
   id: number
@@ -789,7 +790,6 @@ describe('RepoDetailView', () => {
       await flushPromises()
 
       expect(wrapper.vm.archiveFilterName).toBe(archiveA.name)
-      expect(wrapper.vm.hasArchiveFilter).toBe(true)
     })
 
     it('AC-U3: archive browser and filters are hidden, showing only the filter banner', async () => {
@@ -875,13 +875,11 @@ describe('RepoDetailView', () => {
       await wrapper.vm.$router.replace({ query: { archive: archiveA.name } })
       await flushPromises()
 
-      expect(wrapper.vm.hasArchiveFilter).toBe(true)
       expect(wrapper.vm.archiveFilterName).toBe(archiveA.name)
 
       wrapper.vm.clearArchiveFilter()
       await flushPromises()
 
-      expect(wrapper.vm.hasArchiveFilter).toBe(false)
       expect(wrapper.vm.archiveFilterName).toBeNull()
     })
   })
@@ -946,9 +944,10 @@ describe('RepoDetailView', () => {
 
       // Re-requesting deletion for the same archive while it's still pending
       // must not reopen the confirmation modal (the actual guard being tested).
-      wrapper.vm.requestArchiveDeletion(deletingArchive)
+      const archivesTab = wrapper.findComponent(RepoArchivesTab).vm
+      archivesTab.requestArchiveDeletion(deletingArchive)
       await flushPromises()
-      expect(wrapper.vm.archivePendingDeletion).toBeNull()
+      expect(archivesTab.archivePendingDeletion).toBeNull()
     })
 
     it('marks the row as deleting immediately, before the delete request resolves', async () => {
@@ -1167,8 +1166,9 @@ describe('RepoDetailView', () => {
       // While that refetch is still outstanding, the user starts deleting a
       // wholly unrelated archive. This must be marked immediately and must
       // not be touched by the sweep once it resolves below.
-      wrapper.vm.requestArchiveDeletion(otherArchive)
-      await wrapper.vm.confirmArchiveDeletion()
+      const archivesTab = wrapper.findComponent(RepoArchivesTab).vm
+      archivesTab.requestArchiveDeletion(otherArchive)
+      await archivesTab.confirmArchiveDeletion()
 
       expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
         true,

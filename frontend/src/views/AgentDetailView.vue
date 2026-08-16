@@ -16,21 +16,17 @@ import { formatDate, formatDateShort, formatBytes, relativeTime } from '../utils
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
-import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
 import type { EntityIssue } from '../components/EntityStatusBadges.vue'
-import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/scheduleHealth'
-import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
@@ -39,6 +35,10 @@ import { backupStatusBadgeClass } from '../utils/badge'
 import { X, CalendarClock } from '@lucide/vue'
 import EmptyState from '../components/EmptyState.vue'
 import ScheduleCard from '../components/ScheduleCard.vue'
+import EntityTags from '../components/EntityTags.vue'
+import AgentDefaultsCards from '../components/AgentDefaultsCards.vue'
+import AgentHostnameAliases from '../components/AgentHostnameAliases.vue'
+import AgentDangerZone from '../components/AgentDangerZone.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -110,22 +110,14 @@ const filteredSortedReports = computed(() => {
 })
 
 // Tags
-const allAgentTags = ref<TagRow[]>([])
-const agentTagIds = ref<number[]>([])
-const newTagName = ref('')
-const newTagColor = ref('#6b7280')
-const createTagLoading = ref(false)
 
 const isAdmin = computed(() => authStore.isAdmin)
 const isImported = computed(() => agent.value?.is_imported ?? false)
 
-const hostTags = computed<TagRow[]>(() =>
-  allAgentTags.value.filter((t) => agentTagIds.value.includes(t.id)),
-)
-
-const availableTags = computed<TagRow[]>(() =>
-  allAgentTags.value.filter((t) => !agentTagIds.value.includes(t.id)),
-)
+/** Merge back the fields the defaults panel just wrote, leaving the rest. */
+function onDefaultsSaved(updated: AgentRow): void {
+  agent.value = agent.value ? { ...agent.value, ...updated } : updated
+}
 
 // Merge dialog
 const allAgents = ref<AgentRow[]>([])
@@ -164,62 +156,6 @@ function deployButtonLabel(): string | null {
   if (!availableAgentVersion.value) return null
   return agent.value.agent_version === availableAgentVersion.value ? null : 'Upgrade'
 }
-
-// Default backup paths
-const editingPaths = ref(false)
-const pathsText = ref('')
-const pathsSaving = ref(false)
-const pathsError = ref<string | null>(null)
-
-function startEditPaths(): void {
-  pathsText.value = (agent.value?.default_backup_paths ?? []).join('\n')
-  pathsError.value = null
-  editingPaths.value = true
-}
-
-function cancelEditPaths(): void {
-  editingPaths.value = false
-}
-
-async function savePaths(): Promise<void> {
-  if (!agent.value) return
-  pathsSaving.value = true
-  pathsError.value = null
-  try {
-    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
-      display_name: agent.value.display_name,
-      default_backup_paths: parseLines(pathsText.value),
-      default_exclude_patterns: agent.value.default_exclude_patterns,
-      default_pre_backup_commands: agent.value.default_pre_backup_commands,
-      default_post_backup_commands: agent.value.default_post_backup_commands,
-      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
-    })
-    agent.value = { ...agent.value, ...res.data }
-    editingPaths.value = false
-  } catch (e: unknown) {
-    pathsError.value = extractError(e)
-  } finally {
-    pathsSaving.value = false
-  }
-}
-
-const editingExcludes = ref(false)
-const excludesText = ref('')
-const excludesSaving = ref(false)
-const excludesError = ref<string | null>(null)
-
-// Hostname Aliases (patterns)
-interface AgentHostnamePattern {
-  id: number
-  agent_id: number
-  pattern: string
-  created_at: string
-}
-
-const hostnamePatterns = ref<AgentHostnamePattern[]>([])
-const newPattern = ref('')
-const patternAddLoading = ref(false)
-const patternError = ref<string | null>(null)
 
 // Hostname & display name editing
 const editingIdentity = ref(false)
@@ -273,6 +209,7 @@ async function saveIdentity(): Promise<void> {
 }
 
 // Hostname alias confirmation
+const aliasesPanel = ref<InstanceType<typeof AgentHostnameAliases> | null>(null)
 const showAliasConfirm = ref(false)
 const pendingAliasOldHostname = ref('')
 const pendingAliasNewHostname = ref('')
@@ -285,70 +222,13 @@ async function confirmAddAlias(): Promise<void> {
   await apiClient.post(`/agents/${pendingAliasNewHostname.value}/hostname-patterns`, {
     pattern: pendingAliasOldHostname.value,
   })
-  await loadHostnamePatterns(pendingAliasNewHostname.value)
+  await aliasesPanel.value?.reload(pendingAliasNewHostname.value)
   showAliasConfirm.value = false
 }
 
 function declineAlias(): void {
   showAliasConfirm.value = false
 }
-const deleteLoading = ref(false)
-const showDeleteDialog = ref(false)
-
-useEscapeKey(showDeleteDialog, () => {
-  showDeleteDialog.value = false
-})
-
-async function confirmDeleteHost(): Promise<void> {
-  if (!agent.value) return
-  deleteLoading.value = true
-  try {
-    await apiClient.delete(`/agents/${agent.value.hostname}`)
-    router.push('/agents')
-  } catch (e: unknown) {
-    logger.error('Failed to delete host', e)
-  } finally {
-    deleteLoading.value = false
-  }
-}
-
-// Hide imported agent
-const hideLoading = ref(false)
-
-async function hideAgent(): Promise<void> {
-  if (!agent.value) return
-  hideLoading.value = true
-  try {
-    await apiClient.put(`/agents/${agent.value.hostname}/hide`)
-    router.push('/agents')
-  } catch (e: unknown) {
-    logger.error('Failed to hide agent', e)
-  } finally {
-    hideLoading.value = false
-  }
-}
-
-// Delete archives & remove imported agent
-const showDeleteArchivesDialog = ref(false)
-const deleteArchivesLoading = ref(false)
-
-useEscapeKey(showDeleteArchivesDialog, () => {
-  showDeleteArchivesDialog.value = false
-})
-
-async function confirmDeleteArchives(): Promise<void> {
-  if (!agent.value) return
-  deleteArchivesLoading.value = true
-  try {
-    await apiClient.post(`/agents/${agent.value.hostname}/delete-archives`)
-    router.push('/agents')
-  } catch (e: unknown) {
-    logger.error('Failed to delete archives', e)
-  } finally {
-    deleteArchivesLoading.value = false
-  }
-}
-
 async function adoptHost(): Promise<void> {
   if (!agent.value) return
   try {
@@ -384,158 +264,9 @@ function onMerged(): void {
   router.push('/agents')
 }
 
-function startEditExcludes(): void {
-  excludesText.value = (agent.value?.default_exclude_patterns ?? []).join('\n')
-  excludesError.value = null
-  editingExcludes.value = true
-}
-
-function cancelEditExcludes(): void {
-  editingExcludes.value = false
-}
-
-async function saveExcludes(): Promise<void> {
-  if (!agent.value) return
-  excludesSaving.value = true
-  excludesError.value = null
-  try {
-    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
-      display_name: agent.value.display_name,
-      default_backup_paths: agent.value.default_backup_paths,
-      default_exclude_patterns: parseLines(excludesText.value),
-      default_pre_backup_commands: agent.value.default_pre_backup_commands,
-      default_post_backup_commands: agent.value.default_post_backup_commands,
-      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
-    })
-    agent.value = { ...agent.value, ...res.data }
-    editingExcludes.value = false
-  } catch (e: unknown) {
-    excludesError.value = extractError(e)
-  } finally {
-    excludesSaving.value = false
-  }
-}
-
-// Default file change patterns
-const editingFileChangePatterns = ref(false)
-const fileChangePatternsText = ref('')
-const fileChangePatternsSaving = ref(false)
-const fileChangePatternsError = ref<string | null>(null)
-
-function startEditFileChangePatterns(): void {
-  fileChangePatternsText.value = agent.value?.default_file_change_patterns_raw ?? ''
-  fileChangePatternsError.value = null
-  editingFileChangePatterns.value = true
-}
-
-function cancelEditFileChangePatterns(): void {
-  editingFileChangePatterns.value = false
-}
-
-async function saveFileChangePatterns(): Promise<void> {
-  if (!agent.value) return
-  fileChangePatternsSaving.value = true
-  fileChangePatternsError.value = null
-  try {
-    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
-      display_name: agent.value.display_name,
-      default_backup_paths: agent.value.default_backup_paths,
-      default_exclude_patterns: agent.value.default_exclude_patterns,
-      default_pre_backup_commands: agent.value.default_pre_backup_commands,
-      default_post_backup_commands: agent.value.default_post_backup_commands,
-      default_file_change_patterns_raw: fileChangePatternsText.value,
-    })
-    agent.value = { ...agent.value, ...res.data }
-    editingFileChangePatterns.value = false
-  } catch (e: unknown) {
-    fileChangePatternsError.value = extractError(e)
-  } finally {
-    fileChangePatternsSaving.value = false
-  }
-}
-
-// Default pre/post backup commands
-const editingHookCmds = ref(false)
-const preCmdsText = ref('')
-const postCmdsText = ref('')
-const hookCmdsSaving = ref(false)
-const hookCmdsError = ref<string | null>(null)
-
-function startEditHookCmds(): void {
-  preCmdsText.value = (agent.value?.default_pre_backup_commands ?? []).join('\n')
-  postCmdsText.value = (agent.value?.default_post_backup_commands ?? []).join('\n')
-  hookCmdsError.value = null
-  editingHookCmds.value = true
-}
-
-function cancelEditHookCmds(): void {
-  editingHookCmds.value = false
-}
-
-async function saveHookCmds(): Promise<void> {
-  if (!agent.value) return
-  hookCmdsSaving.value = true
-  hookCmdsError.value = null
-  try {
-    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
-      display_name: agent.value.display_name,
-      default_backup_paths: agent.value.default_backup_paths,
-      default_exclude_patterns: agent.value.default_exclude_patterns,
-      default_pre_backup_commands: parseLines(preCmdsText.value),
-      default_post_backup_commands: parseLines(postCmdsText.value),
-      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
-    })
-    agent.value = { ...agent.value, ...res.data }
-    editingHookCmds.value = false
-  } catch (e: unknown) {
-    hookCmdsError.value = extractError(e)
-  } finally {
-    hookCmdsSaving.value = false
-  }
-}
-
 useEscapeKey(showTokenDialog, () => {
   showTokenDialog.value = false
 })
-
-async function loadHostnamePatterns(hostname?: string): Promise<void> {
-  const h = hostname ?? agent.value?.hostname
-  if (!h) return
-  try {
-    const res = await apiClient.get<AgentHostnamePattern[]>(`/agents/${h}/hostname-patterns`)
-    hostnamePatterns.value = res.data
-  } catch (e: unknown) {
-    logger.error('loadHostnamePatterns failed', e)
-  }
-}
-
-async function addHostnamePattern(): Promise<void> {
-  if (!agent.value || !newPattern.value.trim()) return
-  patternAddLoading.value = true
-  patternError.value = null
-  try {
-    const res = await apiClient.post<AgentHostnamePattern>(
-      `/agents/${agent.value.hostname}/hostname-patterns`,
-      { pattern: newPattern.value.trim() },
-    )
-    hostnamePatterns.value = [...hostnamePatterns.value, res.data]
-    newPattern.value = ''
-  } catch (e: unknown) {
-    patternError.value = extractError(e)
-  } finally {
-    patternAddLoading.value = false
-  }
-}
-
-async function deleteHostnamePattern(id: number): Promise<void> {
-  if (!agent.value) return
-  try {
-    await apiClient.delete(`/agents/${agent.value.hostname}/hostname-patterns/${id}`)
-    hostnamePatterns.value = hostnamePatterns.value.filter((p) => p.id !== id)
-  } catch (e: unknown) {
-    patternError.value = extractError(e)
-  }
-}
 
 function isOnline(agent: AgentRow): boolean {
   return agent.is_connected ?? false
@@ -561,7 +292,7 @@ async function loadAgent(): Promise<void> {
     if (!agent.value) {
       throw new Error(`Agent "${props.hostname}" not found`)
     }
-    await Promise.all([loadTabData(), loadTags(), loadHostnamePatterns()])
+    await loadTabData()
   })
 }
 
@@ -703,62 +434,6 @@ async function restartAgent(): Promise<void> {
     restartError.value = extractError(e)
   } finally {
     restartLoading.value = false
-  }
-}
-
-async function loadTags(): Promise<void> {
-  try {
-    const [tagsRes, agentTagsRes] = await Promise.all([
-      apiClient.get<TagRow[]>('/tags', { params: { scope: 'host' } }),
-      apiClient.get<TagRow[]>(`/agents/${props.hostname}/tags`).catch((e: unknown) => {
-        logger.error('load agent tags failed', e)
-        return { data: [] as TagRow[] }
-      }),
-    ])
-    allAgentTags.value = tagsRes.data
-    agentTagIds.value = agentTagsRes.data.map((t) => t.id)
-  } catch (e: unknown) {
-    logger.error('loadTags failed', e)
-  }
-}
-
-async function addTag(tagId: number): Promise<void> {
-  const updated = [...agentTagIds.value, tagId]
-  try {
-    await apiClient.put(`/agents/${props.hostname}/tags`, { tag_ids: updated })
-    agentTagIds.value = updated
-  } catch (e: unknown) {
-    logger.error('addTag failed', e)
-  }
-}
-
-async function removeTag(tagId: number): Promise<void> {
-  const updated = agentTagIds.value.filter((id) => id !== tagId)
-  try {
-    await apiClient.put(`/agents/${props.hostname}/tags`, { tag_ids: updated })
-    agentTagIds.value = updated
-  } catch (e: unknown) {
-    logger.error('removeTag failed', e)
-  }
-}
-
-async function createAndAddTag(): Promise<void> {
-  if (!newTagName.value.trim()) return
-  createTagLoading.value = true
-  try {
-    const res = await apiClient.post<TagRow>('/tags', {
-      name: newTagName.value.trim(),
-      color: newTagColor.value,
-      scope: 'host',
-    })
-    allAgentTags.value.push(res.data)
-    await addTag(res.data.id)
-    newTagName.value = ''
-    newTagColor.value = '#6b7280'
-  } catch (e: unknown) {
-    logger.error('createAndAddTag failed', e)
-  } finally {
-    createTagLoading.value = false
   }
 }
 
@@ -1093,516 +768,28 @@ watch(wsStatus, (newStatus, oldStatus) => {
         </div>
 
         <!-- Tags -->
-        <div
+        <EntityTags
           v-if="isAdmin"
-          class="info-card"
-        >
-          <h3 class="info-title">Tags</h3>
-          <div class="tags-section">
-            <div
-              v-if="hostTags.length > 0"
-              class="tag-list"
-            >
-              <span
-                v-for="tag in hostTags"
-                :key="tag.id"
-                class="tag-pill"
-                :style="{
-                  background: tag.color + '22',
-                  color: tag.color,
-                  borderColor: tag.color + '44',
-                }"
-              >
-                {{ tag.name }}
-                <button
-                  v-if="!isImported"
-                  class="tag-remove"
-                  :aria-label="`Remove tag ${tag.name}`"
-                  @click="removeTag(tag.id)"
-                >
-                  <X :size="12" />
-                </button>
-              </span>
-            </div>
-            <span
-              v-else
-              class="muted"
-              >No tags assigned.</span
-            >
+          scope="host"
+          :entity-path="`/agents/${props.hostname}`"
+        />
 
-            <div
-              v-if="!isImported"
-              class="tag-add-row"
-            >
-              <select
-                v-if="availableTags.length > 0"
-                class="input input-sm"
-                @change="
-                  (e) => {
-                    const id = Number((e.target as HTMLSelectElement).value)
-                    if (id) addTag(id)
-                    ;(e.target as HTMLSelectElement).value = ''
-                  }
-                "
-              >
-                <option value="">Add existing tag...</option>
-                <option
-                  v-for="t in availableTags"
-                  :key="t.id"
-                  :value="t.id"
-                >
-                  {{ t.name }}
-                </option>
-              </select>
-              <div class="tag-create-inline">
-                <input
-                  v-model="newTagName"
-                  class="input input-sm"
-                  placeholder="New tag name"
-                />
-                <input
-                  v-model="newTagColor"
-                  class="input color-input"
-                  type="color"
-                />
-                <button
-                  class="btn btn-sm btn-ghost"
-                  :disabled="!newTagName.trim() || createTagLoading"
-                  @click="createAndAddTag"
-                >
-                  {{ createTagLoading ? '...' : '+ Create' }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <AgentDefaultsCards
+          :agent="agent"
+          :can-edit="!isImported"
+          @saved="onDefaultsSaved"
+        />
 
-        <!-- Default Backup Paths -->
-        <div class="info-card">
-          <h3 class="info-title">Default Backup Paths</h3>
-          <template v-if="!editingPaths">
-            <div
-              v-if="(agent.default_backup_paths ?? []).length > 0"
-              class="paths-list"
-            >
-              <code
-                v-for="(p, idx) in agent.default_backup_paths ?? []"
-                :key="idx"
-                class="path-item mono"
-              >
-                {{ p }}
-              </code>
-            </div>
-            <span
-              v-else
-              class="muted"
-              >No default paths configured.</span
-            >
-            <span class="field-hint"
-              >Schedules with empty backup paths will use these defaults.</span
-            >
-            <div class="info-actions">
-              <button
-                v-if="!isImported"
-                class="btn btn-sm btn-ghost"
-                @click="startEditPaths"
-              >
-                Edit
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <textarea
-              v-model="pathsText"
-              class="input exclude-area"
-              placeholder="Directories to back up, one per line"
-              spellcheck="false"
-            />
-            <div
-              v-if="pathsError"
-              class="form-error"
-            >
-              {{ pathsError }}
-            </div>
-            <div class="info-actions">
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="pathsSaving"
-                @click="cancelEditPaths"
-              >
-                Cancel
-              </button>
-              <button
-                class="btn btn-sm btn-primary"
-                :disabled="pathsSaving"
-                @click="savePaths"
-              >
-                {{ pathsSaving ? 'Saving...' : 'Save' }}
-              </button>
-            </div>
-          </template>
-        </div>
+        <AgentHostnameAliases
+          ref="aliasesPanel"
+          :hostname="agent.hostname"
+          :can-edit="!isImported"
+        />
 
-        <!-- Default Exclude Patterns -->
-        <div class="info-card">
-          <h3 class="info-title">Default Exclude Patterns</h3>
-          <template v-if="!editingExcludes">
-            <div
-              v-if="(agent.default_exclude_patterns ?? []).length > 0"
-              class="paths-list"
-            >
-              <code
-                v-for="(p, idx) in agent.default_exclude_patterns ?? []"
-                :key="idx"
-                class="path-item mono"
-              >
-                {{ p }}
-              </code>
-            </div>
-            <span
-              v-else
-              class="muted"
-              >No default excludes configured.</span
-            >
-            <span class="field-hint"
-              >Applied to all schedules on this host (unless schedule ignores them).</span
-            >
-            <div class="info-actions">
-              <button
-                v-if="!isImported"
-                class="btn btn-sm btn-ghost"
-                @click="startEditExcludes"
-              >
-                Edit
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <textarea
-              v-model="excludesText"
-              class="input exclude-area"
-              placeholder="Exclude patterns, one per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
-              spellcheck="false"
-            />
-            <div
-              v-if="excludesError"
-              class="form-error"
-            >
-              {{ excludesError }}
-            </div>
-            <div class="info-actions">
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="excludesSaving"
-                @click="cancelEditExcludes"
-              >
-                Cancel
-              </button>
-              <button
-                class="btn btn-sm btn-primary"
-                :disabled="excludesSaving"
-                @click="saveExcludes"
-              >
-                {{ excludesSaving ? 'Saving...' : 'Save' }}
-              </button>
-            </div>
-          </template>
-        </div>
-
-        <!-- Default File Change Patterns -->
-        <div class="info-card">
-          <h3 class="info-title">Default File Change Patterns</h3>
-          <template v-if="!editingFileChangePatterns">
-            <div
-              v-if="
-                parseFileChangePatterns(agent.default_file_change_patterns_raw ?? '').length > 0
-              "
-              class="paths-list"
-            >
-              <code
-                v-for="(p, idx) in parseFileChangePatterns(
-                  agent.default_file_change_patterns_raw ?? '',
-                )"
-                :key="idx"
-                class="path-item mono"
-              >
-                {{ p.path }} <span class="fcp-action-badge">{{ p.action }}</span>
-              </code>
-            </div>
-            <span
-              v-else
-              class="muted"
-              >No default file change patterns configured.</span
-            >
-            <span class="field-hint"
-              >Applied to every schedule targeting this host, as a fallback for warnings not matched
-              by a schedule-level pattern.</span
-            >
-            <div class="info-actions">
-              <button
-                v-if="!isImported"
-                class="btn btn-sm btn-ghost"
-                @click="startEditFileChangePatterns"
-              >
-                Edit
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <FileChangePatternsEditor v-model="fileChangePatternsText">
-              <template #hint>
-                Glob patterns matched against the full warning message, with actions:
-                <code>ignore</code> (no warning), <code>warn</code> (default), <code>fatal</code>
-                (fail backup). Checked after schedule-level patterns, as a fallback for this host.
-                <code>*</code> does not match <code>/</code> - to cover every file under a
-                directory, end the pattern with <code>**</code>, e.g. <code>/data/wal/**</code>.
-              </template>
-            </FileChangePatternsEditor>
-            <div
-              v-if="fileChangePatternsError"
-              class="form-error"
-            >
-              {{ fileChangePatternsError }}
-            </div>
-            <div class="info-actions">
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="fileChangePatternsSaving"
-                @click="cancelEditFileChangePatterns"
-              >
-                Cancel
-              </button>
-              <button
-                class="btn btn-sm btn-primary"
-                :disabled="fileChangePatternsSaving"
-                @click="saveFileChangePatterns"
-              >
-                {{ fileChangePatternsSaving ? 'Saving...' : 'Save' }}
-              </button>
-            </div>
-          </template>
-        </div>
-
-        <!-- Default Hook Commands -->
-        <div class="info-card">
-          <h3 class="info-title">Default Hook Commands</h3>
-          <template v-if="!editingHookCmds">
-            <div class="field-hint">
-              Run before and after every backup on this host. Schedule-specific commands are
-              appended after the agent-level ones (pre) or prepended before them (post).
-            </div>
-            <div class="hook-cmds-view">
-              <div class="hook-cmds-group">
-                <span class="hook-cmds-label">Pre-backup</span>
-                <div
-                  v-if="agent.default_pre_backup_commands.length > 0"
-                  class="paths-list"
-                >
-                  <code
-                    v-for="(cmd, idx) in agent.default_pre_backup_commands"
-                    :key="idx"
-                    class="path-item mono"
-                  >
-                    {{ cmd }}
-                  </code>
-                </div>
-                <span
-                  v-else
-                  class="muted"
-                  >None configured.</span
-                >
-              </div>
-              <div class="hook-cmds-group">
-                <span class="hook-cmds-label">Post-backup</span>
-                <div
-                  v-if="agent.default_post_backup_commands.length > 0"
-                  class="paths-list"
-                >
-                  <code
-                    v-for="(cmd, idx) in agent.default_post_backup_commands"
-                    :key="idx"
-                    class="path-item mono"
-                  >
-                    {{ cmd }}
-                  </code>
-                </div>
-                <span
-                  v-else
-                  class="muted"
-                  >None configured.</span
-                >
-              </div>
-            </div>
-            <div class="info-actions">
-              <button
-                v-if="!isImported"
-                class="btn btn-sm btn-ghost"
-                @click="startEditHookCmds"
-              >
-                Edit
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <label class="hook-cmds-label">Pre-backup Commands</label>
-            <textarea
-              v-model="preCmdsText"
-              class="input exclude-area"
-              placeholder="Commands run before each backup, one per line&#10;e.g. systemctl stop myapp"
-              spellcheck="false"
-            />
-            <label class="hook-cmds-label">Post-backup Commands</label>
-            <textarea
-              v-model="postCmdsText"
-              class="input exclude-area"
-              placeholder="Commands run after each backup, one per line&#10;e.g. systemctl start myapp"
-              spellcheck="false"
-            />
-            <div
-              v-if="hookCmdsError"
-              class="form-error"
-            >
-              {{ hookCmdsError }}
-            </div>
-            <div class="info-actions">
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="hookCmdsSaving"
-                @click="cancelEditHookCmds"
-              >
-                Cancel
-              </button>
-              <button
-                class="btn btn-sm btn-primary"
-                :disabled="hookCmdsSaving"
-                @click="saveHookCmds"
-              >
-                {{ hookCmdsSaving ? 'Saving...' : 'Save' }}
-              </button>
-            </div>
-          </template>
-        </div>
-
-        <!-- Hostname Aliases -->
-        <div class="info-card">
-          <h3 class="info-title">Hostname Aliases</h3>
-          <p class="field-hint">
-            Glob patterns that match archive hostnames to this agent during repository import. Only
-            affects future discoveries — existing imported agents are not retroactively reassigned.
-            Use "Merge into" on an imported agent to move its historical archives.
-          </p>
-          <div
-            v-if="hostnamePatterns.length > 0"
-            class="paths-list"
-          >
-            <div
-              v-for="p in hostnamePatterns"
-              :key="p.id"
-              class="pattern-row"
-            >
-              <code class="path-item mono">{{ p.pattern }}</code>
-              <button
-                v-if="!isImported"
-                class="tag-remove pattern-delete"
-                title="Delete pattern"
-                aria-label="Delete hostname pattern"
-                @click="deleteHostnamePattern(p.id)"
-              >
-                <X :size="12" />
-              </button>
-            </div>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >No alias patterns configured.</span
-          >
-          <p class="field-hint">
-            <code>*</code> matches any characters, <code>?</code> matches a single character.
-          </p>
-          <div
-            v-if="patternError"
-            class="form-error"
-          >
-            {{ patternError }}
-          </div>
-          <div
-            v-if="!isImported"
-            class="pattern-add-row"
-          >
-            <input
-              v-model="newPattern"
-              class="input input-sm"
-              placeholder="e.g. myhost* or host-??"
-              @keyup.enter="addHostnamePattern"
-            />
-            <button
-              class="btn btn-sm btn-primary"
-              :disabled="patternAddLoading || !newPattern.trim()"
-              @click="addHostnamePattern"
-            >
-              {{ patternAddLoading ? 'Adding...' : 'Add Pattern' }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Danger Zone -->
-        <div
+        <AgentDangerZone
           v-if="isAdmin"
-          class="info-card danger-zone"
-        >
-          <h3 class="info-title">Danger Zone</h3>
-          <template v-if="isImported">
-            <div class="danger-body">
-              <div class="danger-info">
-                <span class="danger-heading">Hide Agent</span>
-                <span class="danger-desc">
-                  Hide this imported agent from the default list view.
-                </span>
-              </div>
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="hideLoading"
-                @click="hideAgent"
-              >
-                {{ hideLoading ? 'Hiding...' : 'Hide' }}
-              </button>
-            </div>
-            <div class="danger-body danger-body-sep">
-              <div class="danger-info">
-                <span class="danger-heading">Delete Archives &amp; Remove</span>
-                <span class="danger-desc">
-                  Permanently delete all borg archives and remove this agent. This is irreversible.
-                </span>
-              </div>
-              <button
-                class="btn btn-sm btn-danger"
-                :disabled="deleteArchivesLoading"
-                @click="showDeleteArchivesDialog = true"
-              >
-                {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <div class="danger-body">
-              <div class="danger-info">
-                <span class="danger-heading">Delete Agent</span>
-                <span class="danger-desc">
-                  Permanently remove this agent and all associated data. This action cannot be
-                  undone.
-                </span>
-              </div>
-              <button
-                class="btn btn-sm btn-danger"
-                :disabled="deleteLoading"
-                @click="showDeleteDialog = true"
-              >
-                {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
-              </button>
-            </div>
-          </template>
-        </div>
+          :agent="agent"
+        />
       </div>
 
       <!-- Schedules Tab -->
@@ -1790,67 +977,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
       </template>
     </BaseModal>
 
-    <!-- Delete Agent Confirmation Dialog -->
-    <BaseModal
-      :open="showDeleteDialog"
-      title="Delete Agent"
-      @close="showDeleteDialog = false"
-    >
-      <p>
-        Permanently delete <strong>{{ agent?.hostname }}</strong
-        >? All associated schedules and backup reports will be removed. This action cannot be
-        undone.
-      </p>
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="showDeleteDialog = false"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-danger"
-          :disabled="deleteLoading"
-          @click="confirmDeleteHost"
-        >
-          {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Delete Archives Confirmation Dialog -->
-    <BaseModal
-      :open="showDeleteArchivesDialog"
-      title="Delete Archives &amp; Remove Agent"
-      @close="showDeleteArchivesDialog = false"
-    >
-      <p class="danger-warning-text">
-        This will <strong>permanently destroy all borg archives</strong> belonging to
-        <strong>{{ agent?.hostname }}</strong> and remove the agent from the system.
-      </p>
-      <p class="danger-warning-text">
-        This operation is <strong>irreversible</strong>. Backup data will be permanently lost and
-        cannot be recovered.
-      </p>
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="showDeleteArchivesDialog = false"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-danger"
-          :disabled="deleteArchivesLoading"
-          @click="confirmDeleteArchives"
-        >
-          {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
-        </button>
-      </template>
-    </BaseModal>
-
     <!-- Hostname Alias Confirmation Dialog -->
     <BaseModal
       :open="showAliasConfirm"
@@ -1974,56 +1100,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 /* Info card (Overview) */
-.info-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-
-  & + & {
-    margin-top: 0.75rem;
-  }
-}
-
-.info-title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  margin-bottom: 1.25rem;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: var(--fs-sm);
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.6rem 1.5rem;
-  margin: 0;
-}
-
-.info-grid dt {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  font-weight: 500;
-}
-
-.info-grid dd {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-}
-
-.info-actions {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
 .restart-hint {
   font-size: var(--fs-xs);
   color: var(--text-muted);
@@ -2031,114 +1107,14 @@ watch(wsStatus, (newStatus, oldStatus) => {
 }
 
 /* Tags */
-.muted {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-}
-
-.color-input {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  background: transparent;
-}
-
-.input-sm {
-  padding: 0.35rem 0.55rem;
-  font-size: var(--fs-sm);
-  width: auto;
-  min-width: 140px;
-}
 
 /* Repos grid */
-.repo-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 1rem;
-}
-
-.repo-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.875rem;
-}
-
-.repo-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.repo-name {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-}
-
-.repo-details {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.repo-detail {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-}
-
-.detail-label {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
-  min-width: 80px;
-}
-
-.detail-value {
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-}
-
-.cron-badge {
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  padding: 0.15rem 0.4rem;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.repo-card-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: auto;
-}
 
 /* Schedule cards */
 .schedule-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: 1rem;
-}
-
-.card-repo {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Results list */
@@ -2302,52 +1278,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   cursor: not-allowed;
 }
 
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 1rem;
-}
-
-.field-full {
-  grid-column: 1 / -1;
-}
-
-.field-narrow {
-  max-width: 120px;
-}
-
-.field-group {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 1rem;
-  align-items: flex-start;
-}
-
-.section-divider {
-  grid-column: 1 / -1;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.3rem;
-  margin-top: 0.25rem;
-}
-
-.toggle-row {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: center;
-  margin-top: 0.5rem;
-}
-
-.toggle-row-label {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-}
-
 .token-warning {
   color: var(--warning);
   font-size: var(--fs-base);
@@ -2375,101 +1305,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
   padding: 0;
 }
 
-.exclude-area {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.paths-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.5rem;
-}
-
-.path-item {
-  font-size: var(--fs-sm);
-  padding: 0.2rem 0.5rem;
-  background: var(--bg-input);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-}
-
-.fcp-action-badge {
-  font-family: var(--font-sans);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.cmd-area {
-  min-height: 60px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.hook-cmds-view {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.hook-cmds-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.hook-cmds-label {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 0.25rem;
-  display: block;
-}
-
-.pattern-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.pattern-delete {
-  font-size: var(--fs-lg);
-  flex-shrink: 0;
-}
-
-.pattern-add-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-top: 0.75rem;
-  flex-wrap: wrap;
-}
-
 /* Danger zone */
-
-.danger-body-sep {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
-}
-
-.danger-warning-text {
-  font-size: var(--fs-base);
-  color: var(--danger);
-  margin-bottom: 0.5rem;
-}
 
 .info-title-row {
   display: flex;

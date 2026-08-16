@@ -90,6 +90,12 @@ const OWNED = [
   'danger-desc',
   'tag-pill',
   'tag-dropdown',
+  'info-card',
+  'info-title',
+  'info-grid',
+  'info-actions',
+  'field-inline',
+  'field-label-row',
 ]
 
 const FILES = vueFiles()

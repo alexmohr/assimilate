@@ -234,7 +234,10 @@ onUnmounted(() => {
   flex: none;
 }
 
-.modal-title {
+/* `:deep` because most callers supply their own `#header` slot content, which
+   carries the *caller's* scope id - without it those ten dialogs rendered
+   their title at the browser default instead of the modal title style. */
+.modal-header :deep(.modal-title) {
   font-size: var(--fs-lg);
   font-weight: 700;
 }

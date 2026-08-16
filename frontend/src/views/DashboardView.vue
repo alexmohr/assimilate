@@ -866,12 +866,6 @@ async function fetchOverview(): Promise<void> {
   align-items: stretch;
 }
 
-.attention-left {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
 .attention-sidebar {
   display: grid;
   grid-template-rows: 1fr 1fr;
@@ -995,10 +989,6 @@ async function fetchOverview(): Promise<void> {
 }
 
 /* Panel */
-
-.panel-full {
-  flex: 1;
-}
 
 .panel-header .panel-title {
   margin: 0;
@@ -1164,75 +1154,6 @@ async function fetchOverview(): Promise<void> {
 }
 
 /* Health Cards */
-.health-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 0.75rem;
-}
-
-.health-card {
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.health-card-link {
-  cursor: pointer;
-  transition:
-    border-color var(--duration-base),
-    background var(--duration-base);
-}
-
-.health-card-link:hover {
-  border-color: var(--accent);
-  background: var(--bg-hover);
-}
-
-.hc-header {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.hc-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.hc-host {
-  font-weight: 600;
-  font-size: var(--fs-base);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.overdue-badge {
-  background: var(--danger-subtle);
-  color: var(--danger);
-  padding: 0.1rem 0.4rem;
-  border-radius: var(--radius-sm);
-  font-weight: 700;
-  font-size: var(--fs-2xs);
-  flex-shrink: 0;
-}
-
-.hc-target {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-}
-
-.hc-time {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-}
 
 /* Trends Row */
 .trends-row {

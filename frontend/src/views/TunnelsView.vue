@@ -651,10 +651,6 @@ onMounted(() => {
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-.status-error {
-  background: var(--danger);
-}
-
 @keyframes pulse {
   0%,
   100% {

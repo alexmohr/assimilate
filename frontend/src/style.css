@@ -260,6 +260,66 @@
     margin: 0;
   }
 
+  /* --- Info card ---------------------------------------------------------
+     The detail views' settings surface: a titled block of key/value rows or
+     an inline edit form, stacked vertically down a column. Distinct from
+     `.panel`, which is a list container with a ruled header.
+
+     `.info-title` is uppercase-muted rather than `.panel-title`'s sentence
+     case because these headings label a settings *group*, the same role
+     `.field-label` plays for a single field. */
+  .info-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+  }
+
+  .info-card + .info-card {
+    margin-top: 0.75rem;
+  }
+
+  .info-title {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 1.25rem;
+  }
+
+  /* Key/value rows: a muted label column sized to its content, values
+     taking the rest. */
+  .info-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.6rem 1.5rem;
+    margin: 0;
+  }
+
+  .info-grid dt {
+    color: var(--text-muted);
+    font-size: var(--fs-base);
+    font-weight: 500;
+  }
+
+  .info-grid dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-base);
+  }
+
+  /* Ruled footer holding the card's buttons. */
+  .info-actions {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
   /* --- Badge -------------------------------------------------------------
      One shape, one size, five tones. A leading `.badge-dot` marks live
      state (Online, Running, Failed); no dot means classification (Manual,
@@ -572,6 +632,24 @@
   .field-hint {
     font-size: var(--fs-xs);
     color: var(--text-muted);
+  }
+
+  /* A field whose control sits beside its label rather than under it. Used
+     for toggles, where a full-width column wastes a whole row. */
+  .field-inline {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  /* A label sharing its row with a secondary control, e.g. a "show
+     reference" toggle next to the field it documents. */
+  .field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
   }
 
   .required {

@@ -9,7 +9,6 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import {
   listChannels,
@@ -23,12 +22,13 @@ import {
   getVapidPublicKey,
   subscribePush,
   listDeliveries,
-  validateSmtp,
 } from '../api/notifications'
-import { Plus, Trash2, Bell, Send, Mail, Globe, BellRing, ChevronDown } from '@lucide/vue'
+import { Plus, Trash2, Bell, Send, Mail, Globe, BellRing } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import ChannelConfigFields from '../components/ChannelConfigFields.vue'
+import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
 import type {
   NotificationChannel,
   CreateChannelRequest,
@@ -69,6 +69,8 @@ const scopeAgents = ref<ScopeOption[]>([])
 const scopeSchedules = ref<ScopeOption[]>([])
 
 // Add channel wizard state
+const addConfigFields = ref<InstanceType<typeof ChannelConfigFields> | null>(null)
+const editConfigFields = ref<InstanceType<typeof ChannelConfigFields> | null>(null)
 const showAddChannelDialog = ref(false)
 const wizardStep = ref(1)
 const addChannelForm = ref<CreateChannelRequest>({
@@ -131,9 +133,6 @@ const testResult = ref<{ id: number; success: boolean; message: string } | null>
 
 const currentPushSubscription = ref<PushSubscription | null>(null)
 const vapidConfigured = ref(false)
-
-const smtpValidating = ref(false)
-const smtpValidationResult = ref<{ success: boolean; message: string } | null>(null)
 
 const EVENT_TYPES: NotificationEventType[] = [
   'backup_success',
@@ -216,26 +215,6 @@ function channelTypeIcon(ct: ChannelType): typeof Mail {
   if (ct === 'email') return Mail
   if (ct === 'webhook') return Globe
   return BellRing
-}
-
-function deliveryStatusClass(status: NotificationDelivery['status']): string {
-  if (status === 'sent') return 'status-sent'
-  if (status === 'failed') return 'status-failed'
-  return 'status-pending'
-}
-
-function channelNameById(id: number): string {
-  return channels.value.find((c) => c.id === id)?.name ?? String(id)
-}
-
-const expandedDeliveryId = ref<number | null>(null)
-
-function toggleDeliveryExpand(id: number): void {
-  expandedDeliveryId.value = expandedDeliveryId.value === id ? null : id
-}
-
-function formatPayload(payload: unknown): string {
-  return JSON.stringify(payload, null, 2)
 }
 
 function channelEventsLabel(channelId: number): string {
@@ -373,7 +352,7 @@ function openAddChannel(): void {
   wizardStep.value = 1
   wizardEvents.value = []
   wizardScope.value = {}
-  smtpValidationResult.value = null
+  addConfigFields.value?.reset()
   showAddChannelDialog.value = true
 }
 
@@ -392,9 +371,9 @@ async function submitAddChannel(): Promise<void> {
   addChannelError.value = ''
   try {
     if (addChannelForm.value.channel_type === 'email') {
-      const valid = await validateSmtpCredentials(addChannelEmailCfg.value)
+      const valid = await addConfigFields.value?.validate()
       if (!valid) {
-        addChannelError.value = smtpValidationResult.value?.message ?? 'SMTP validation failed'
+        addChannelError.value = addConfigFields.value?.result?.message ?? 'SMTP validation failed'
         return
       }
     }
@@ -460,7 +439,7 @@ function openEditChannel(channel: NotificationChannel): void {
     editToAddressesInput.value = channel.config.to_addresses.join(', ')
   }
   editChannelError.value = ''
-  smtpValidationResult.value = null
+  editConfigFields.value?.reset()
   showEditChannelDialog.value = true
 }
 
@@ -481,9 +460,9 @@ async function submitEditChannel(): Promise<void> {
   editChannelError.value = ''
   try {
     if (editChannelType() === 'email' && editChannelForm.value.config) {
-      const valid = await validateSmtpCredentials(editChannelEmailCfg.value)
+      const valid = await editConfigFields.value?.validate()
       if (!valid) {
-        editChannelError.value = smtpValidationResult.value?.message ?? 'SMTP validation failed'
+        editChannelError.value = editConfigFields.value?.result?.message ?? 'SMTP validation failed'
         return
       }
     }
@@ -497,27 +476,6 @@ async function submitEditChannel(): Promise<void> {
     editChannelError.value = extractError(e)
   } finally {
     editChannelLoading.value = false
-  }
-}
-
-async function validateSmtpCredentials(cfg: EmailConfig): Promise<boolean> {
-  smtpValidating.value = true
-  smtpValidationResult.value = null
-  try {
-    await validateSmtp({
-      smtp_host: cfg.smtp_host,
-      smtp_port: cfg.smtp_port,
-      smtp_user: cfg.smtp_user,
-      smtp_password: cfg.smtp_password,
-      security: cfg.security ?? 'starttls',
-    })
-    smtpValidationResult.value = { success: true, message: 'SMTP login successful' }
-    return true
-  } catch (e: unknown) {
-    smtpValidationResult.value = { success: false, message: extractError(e) }
-    return false
-  } finally {
-    smtpValidating.value = false
   }
 }
 
@@ -823,85 +781,11 @@ onMounted(() => {
 
     <!-- History Tab -->
     <div v-if="activeTab === 'history'">
-      <EmptyState
-        v-if="deliveries.length === 0"
-        :icon="Send"
-        title="No deliveries yet"
-        description="Notifications sent to your channels will be listed here."
+      <NotificationHistoryTab
+        :deliveries="deliveries"
+        :channels="channels"
+        :event-type-label="eventTypeLabel"
       />
-      <div
-        v-else
-        class="table-wrapper"
-      >
-        <table class="data-table data-table-expandable">
-          <thead>
-            <tr>
-              <th class="col-expand"></th>
-              <th>Channel</th>
-              <th>Event</th>
-              <th>Status</th>
-              <th>Error</th>
-              <th>Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template
-              v-for="d in deliveries"
-              :key="d.id"
-            >
-              <tr
-                class="delivery-row"
-                :class="{ expanded: expandedDeliveryId === d.id }"
-                @click="toggleDeliveryExpand(d.id)"
-              >
-                <td class="col-expand">
-                  <ChevronDown
-                    :size="14"
-                    class="expand-chevron"
-                  />
-                </td>
-                <td data-label="Channel">{{ channelNameById(d.channel_id) }}</td>
-                <td data-label="Event">{{ eventTypeLabel(d.event_type) }}</td>
-                <td data-label="Status">
-                  <span
-                    class="delivery-status"
-                    :class="deliveryStatusClass(d.status)"
-                  >
-                    {{ d.status }}
-                  </span>
-                </td>
-                <td
-                  data-label="Error"
-                  class="mono cell-error"
-                >
-                  {{ d.error_message ?? '—' }}
-                </td>
-                <td data-label="Time">{{ formatDate(d.attempted_at) }}</td>
-              </tr>
-              <tr
-                v-if="expandedDeliveryId === d.id"
-                class="detail-row"
-              >
-                <td colspan="6">
-                  <div class="detail-panel">
-                    <div
-                      v-if="d.error_message"
-                      class="detail-block"
-                    >
-                      <span class="detail-block-label">Error</span>
-                      <pre class="detail-pre error-pre">{{ d.error_message }}</pre>
-                    </div>
-                    <div class="detail-block">
-                      <span class="detail-block-label">Payload</span>
-                      <pre class="detail-pre">{{ formatPayload(d.payload) }}</pre>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
     </div>
 
     <!-- Add Channel Wizard -->
@@ -947,98 +831,14 @@ onMounted(() => {
           />
         </div>
 
-        <!-- Email Config -->
-        <template v-if="addChannelForm.channel_type === 'email'">
-          <div class="field">
-            <label class="field-label">SMTP Host <span class="required">*</span></label>
-            <input
-              v-model="addChannelEmailCfg.smtp_host"
-              class="input mono"
-              placeholder="smtp.example.com"
-            />
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label class="field-label">SMTP User</label>
-              <input
-                v-model="addChannelEmailCfg.smtp_user"
-                class="input"
-              />
-            </div>
-            <div class="field field-narrow">
-              <label class="field-label">Port</label>
-              <input
-                v-model.number="addChannelEmailCfg.smtp_port"
-                class="input"
-                type="number"
-              />
-            </div>
-          </div>
-          <div class="field">
-            <label class="field-label">SMTP Password</label>
-            <input
-              v-model="addChannelEmailCfg.smtp_password"
-              class="input"
-              type="password"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">From Address <span class="required">*</span></label>
-            <input
-              v-model="addChannelEmailCfg.from_address"
-              class="input"
-              placeholder="noreply@example.com"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">To Addresses <span class="required">*</span></label>
-            <input
-              v-model="toAddressesInput"
-              class="input"
-              placeholder="admin@example.com, ops@example.com"
-            />
-            <span class="field-hint">Comma-separated email addresses</span>
-          </div>
-          <div class="field">
-            <label class="field-label">Security</label>
-            <select
-              v-model="addChannelEmailCfg.security"
-              class="input"
-            >
-              <option value="starttls">STARTTLS (port 587)</option>
-              <option value="tls">SSL/TLS (port 465)</option>
-              <option value="none">None (insecure)</option>
-            </select>
-          </div>
-          <div class="field">
-            <button
-              class="btn btn-sm btn-ghost"
-              :disabled="smtpValidating"
-              @click="validateSmtpCredentials(addChannelEmailCfg)"
-            >
-              {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
-            </button>
-            <span
-              v-if="smtpValidationResult"
-              class="smtp-validation-result"
-              :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
-            >
-              {{ smtpValidationResult.message }}
-            </span>
-          </div>
-        </template>
-
-        <!-- Webhook Config -->
-        <template v-if="addChannelForm.channel_type === 'webhook'">
-          <div class="field">
-            <label class="field-label">URL <span class="required">*</span></label>
-            <input
-              v-model="addChannelWebhookCfg.url"
-              class="input mono"
-              placeholder="https://hooks.example.com/notify"
-            />
-          </div>
-        </template>
+        <ChannelConfigFields
+          ref="addConfigFields"
+          v-model:to-addresses="toAddressesInput"
+          v-model:email-config="addChannelEmailCfg"
+          v-model:webhook-config="addChannelWebhookCfg"
+          :channel-type="addChannelForm.channel_type"
+          show-required
+        />
 
         <!-- Web Push hint -->
         <div
@@ -1200,95 +1000,14 @@ onMounted(() => {
         />
       </div>
 
-      <!-- Email Config Edit -->
-      <template v-if="editChannelType() === 'email' && editChannelForm.config">
-        <div class="field">
-          <label class="field-label">SMTP Host</label>
-          <input
-            v-model="editChannelEmailCfg.smtp_host"
-            class="input mono"
-          />
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label class="field-label">SMTP User</label>
-            <input
-              v-model="editChannelEmailCfg.smtp_user"
-              class="input"
-            />
-          </div>
-          <div class="field field-narrow">
-            <label class="field-label">Port</label>
-            <input
-              v-model.number="editChannelEmailCfg.smtp_port"
-              class="input"
-              type="number"
-            />
-          </div>
-        </div>
-        <div class="field">
-          <label class="field-label">SMTP Password</label>
-          <input
-            v-model="editChannelEmailCfg.smtp_password"
-            class="input"
-            type="password"
-          />
-        </div>
-        <div class="field">
-          <label class="field-label">From Address</label>
-          <input
-            v-model="editChannelEmailCfg.from_address"
-            class="input"
-          />
-        </div>
-        <div class="field">
-          <label class="field-label">To Addresses</label>
-          <input
-            v-model="editToAddressesInput"
-            class="input"
-            placeholder="admin@example.com, ops@example.com"
-          />
-          <span class="field-hint">Comma-separated email addresses</span>
-        </div>
-        <div class="field">
-          <label class="field-label">Security</label>
-          <select
-            v-model="editChannelEmailCfg.security"
-            class="input"
-          >
-            <option value="starttls">STARTTLS (port 587)</option>
-            <option value="tls">SSL/TLS (port 465)</option>
-            <option value="none">None (insecure)</option>
-          </select>
-        </div>
-        <div class="field">
-          <button
-            class="btn btn-sm btn-ghost"
-            :disabled="smtpValidating"
-            @click="validateSmtpCredentials(editChannelEmailCfg)"
-          >
-            {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
-          </button>
-          <span
-            v-if="smtpValidationResult"
-            class="smtp-validation-result"
-            :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
-          >
-            {{ smtpValidationResult.message }}
-          </span>
-        </div>
-      </template>
-
-      <!-- Webhook Config Edit -->
-      <template v-if="editChannelType() === 'webhook' && editChannelForm.config">
-        <div class="field">
-          <label class="field-label">URL</label>
-          <input
-            v-model="editChannelWebhookCfg.url"
-            class="input mono"
-          />
-        </div>
-      </template>
+      <ChannelConfigFields
+        v-if="editChannelForm.config"
+        ref="editConfigFields"
+        v-model:to-addresses="editToAddressesInput"
+        v-model:email-config="editChannelEmailCfg"
+        v-model:webhook-config="editChannelWebhookCfg"
+        :channel-type="editChannelType()"
+      />
 
       <div class="field">
         <ToggleSwitch
@@ -1556,13 +1275,6 @@ onMounted(() => {
   color: var(--danger);
 }
 
-.smtp-validation-result {
-  margin-left: 0.5rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
-}
-
 .channel-meta {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
@@ -1602,208 +1314,6 @@ onMounted(() => {
 .meta-edit-btn:hover {
   background: var(--bg-elevated);
   color: var(--accent);
-}
-
-.table-wrapper {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.data-table th {
-  padding: 0.75rem 1rem;
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.data-table td {
-  padding: 0.75rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.data-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.data-table tbody tr:hover td {
-  background: var(--bg-hover);
-}
-
-.delivery-status {
-  font-size: var(--fs-xs);
-  padding: 0.15rem 0.5rem;
-  border-radius: var(--radius-sm);
-  font-weight: 500;
-}
-
-.col-expand {
-  width: 2rem;
-  padding-right: 0 !important;
-}
-
-.delivery-row {
-  cursor: pointer;
-}
-
-.expand-chevron {
-  color: var(--text-muted);
-  transition: transform var(--duration-base);
-}
-
-.delivery-row.expanded .expand-chevron {
-  transform: rotate(-180deg);
-}
-
-.cell-error {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail-row td {
-  padding: 0;
-  background: var(--bg-hover);
-}
-
-.detail-panel {
-  padding: 1rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.detail-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.detail-block-label {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
-}
-
-.detail-pre {
-  margin: 0;
-  padding: 0.6rem 0.75rem;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.detail-pre.error-pre {
-  color: var(--danger);
-}
-
-/* Below this breakpoint the table restructures into a stacked card list per
-   row instead of scrolling horizontally, so long values (errors, payloads)
-   wrap in place rather than forcing the whole table wider than the viewport. */
-@media (max-width: 640px) {
-  .table-wrapper {
-    overflow-x: visible;
-    border: none;
-  }
-
-  .data-table-expandable thead {
-    display: none;
-  }
-
-  .data-table-expandable tbody {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .data-table-expandable .delivery-row {
-    display: flex;
-    flex-direction: column;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-card);
-    padding: 0.5rem 0.75rem;
-  }
-
-  .data-table-expandable .delivery-row td {
-    border-bottom: none;
-  }
-
-  .data-table-expandable .col-expand {
-    display: none;
-  }
-
-  .data-table-expandable td {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.35rem 0;
-    text-align: right;
-    white-space: normal;
-    word-break: break-word;
-  }
-
-  .data-table-expandable td::before {
-    content: attr(data-label);
-    flex-shrink: 0;
-    text-align: left;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text-muted);
-  }
-
-  .data-table-expandable .cell-error {
-    max-width: none;
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-  }
-
-  .data-table-expandable .detail-row td {
-    display: block;
-    background: transparent;
-    text-align: left;
-  }
-
-  .data-table-expandable .detail-row td::before {
-    content: none;
-  }
-}
-
-.status-sent {
-  background: color-mix(in srgb, var(--success) 15%, transparent);
-  color: var(--success);
-}
-
-.status-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.status-pending {
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
-  color: var(--warning);
 }
 
 /* Wizard */
@@ -1892,20 +1402,10 @@ onMounted(() => {
 }
 
 /* Form */
-.field-row {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
 
 .field-row .field {
   flex: 1;
   margin-bottom: 0;
-}
-
-.field-narrow {
-  max-width: 120px;
-  flex: 0 0 120px !important;
 }
 
 .form-hint-warning {

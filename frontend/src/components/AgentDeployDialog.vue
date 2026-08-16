@@ -367,9 +367,6 @@ async function submitDeploy(): Promise<void> {
 }
 
 .field-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin-bottom: 0.3rem;
 }
 

@@ -149,3 +149,20 @@ describe('state conventions', () => {
     expect(offenders).toEqual([])
   })
 })
+
+describe('view size', () => {
+  it('keeps every view under the size at which shared styles get re-declared', () => {
+    // F-24: five views were over 2,000 lines and the largest was 3,359. Every
+    // duplication in Part II of the audit lived in a file like that, because a
+    // 1,000-line scoped stylesheet is where re-declaring `.panel` feels
+    // cheaper than importing it. Split on a tab or dialog boundary rather than
+    // raising this number.
+    const LIMIT = 1800
+    const offenders: string[] = []
+    for (const f of VUE) {
+      const lines = readFileSync(f, 'utf-8').split('\n').length
+      if (lines > LIMIT) offenders.push(`${relative(SRC, f)}: ${lines} lines`)
+    }
+    expect(offenders).toEqual([])
+  })
+})

@@ -15,17 +15,72 @@ Scope: 39 components, 25 views, 1 layout, 37,405 lines.
 
 ## Status
 
-Findings F-01 to F-23 and F-25 to F-27 are implemented, guarded by
-`frontend/src/design-tokens.test.ts`, `modal-usage.test.ts`,
-`shared-components.test.ts` and `ui-conventions.test.ts`.
+All 27 findings are implemented, guarded by `frontend/src/design-tokens.test.ts`,
+`modal-usage.test.ts`, `shared-components.test.ts` and `ui-conventions.test.ts`.
 
-F-24 (splitting the oversized views) is partly done. The shared-component work
-removed 525 lines from `RepoDetailView`, 335 from `AgentDetailView` and 249
-from `ScheduleDetailView`, and the schedules tab is now
-`RepoSchedulesTab.vue` + a shared `ScheduleCard.vue`. The remaining cuts -
-`RepoOverviewTab`, `RepoArchivesTab`, `RepoBorgConsole` and the
-`useRepoDetail` composable, plus the equivalents for the agent and schedule
-views - have not been made. The table below records the original findings.
+F-24 was the last to land. Every view named in its table is now under 1,800
+lines, and the five that were over 2,000 are between 367 and 1,724:
+
+| View | Before | After |
+| --- | ---: | ---: |
+| `RepoDetailView` | 3,359 | 367 |
+| `AgentDetailView` | 2,819 | 1,320 |
+| `ScheduleDetailView` | 2,646 | 1,724 |
+| `ReposView` | 2,434 | 1,396 |
+| `NotificationsView` | 2,031 | 1,420 |
+
+The units the split produced:
+
+| File | Extracted from |
+| --- | --- |
+| `RepoOverviewCard.vue` | `RepoDetailView` |
+| `RepoArchivesTab.vue` | `RepoDetailView` |
+| `RepoSchedulesTab.vue` | `RepoDetailView` |
+| `RepoBorgConsole.vue` | `RepoDetailView` |
+| `RepoDangerZone.vue` | `RepoDetailView` |
+| `useArchiveList.ts` | `RepoDetailView` |
+| `useArchiveDeletion.ts` | `RepoDetailView` |
+| `AgentDefaultsCards.vue` | `AgentDetailView` |
+| `AgentHostnameAliases.vue` | `AgentDetailView` |
+| `AgentDangerZone.vue` | `AgentDetailView` |
+| `ScheduleAdvancedTab.vue` | `ScheduleDetailView` |
+| `ScheduleLogsTab.vue` | `ScheduleDetailView` |
+| `ScheduleBackupsTab.vue` | `ScheduleDetailView` |
+| `BorgPatternReference.vue` | `ScheduleDetailView` |
+| `RepoCreateDialog.vue` | `ReposView` |
+| `NotificationHistoryTab.vue` | `NotificationsView` |
+| `ChannelConfigFields.vue` | `NotificationsView` (add wizard + edit dialog) |
+| `EditableInfoCard.vue` | shared read/edit card shell |
+| `EntityTags.vue` | `RepoDetailView` + `AgentDetailView` |
+| `ScheduleCard.vue` | `RepoDetailView` + `AgentDetailView` |
+| `PerAgentFields.vue` | `ScheduleDetailView` (4 copies) |
+
+Along the way the split surfaced defects that were invisible while the code sat
+inside a 2,000-line file. They are fixed in the same change:
+
+- `ReposView`'s repository dialog carried a complete "edit" mode - a title, six
+  conditional branches and a `PUT /repos/:id` - that nothing could reach, since
+  `repoMode` was only ever set to `create`. Repositories are edited from their
+  detail page. Removed.
+- `AgentDetailView`'s `.info-title` declared `font-size` twice, so the first
+  declaration never applied. `.info-card`, `.info-title`, `.info-grid` and
+  `.info-actions` are now defined once in `style.css`; `SystemView`'s copy had
+  drifted to a different size, colour and casing and now matches the rest.
+- `.field-inline` and `.field-label-row` were used by the schedule form but
+  defined nowhere, so the toggle rows stacked instead of sitting inline. Both
+  are now real rules in `style.css`.
+- `ScheduleDetailView` styled `.data-table tr` with `cursor: pointer` and a
+  hover fill, which made the read-only log rows look clickable while the
+  genuinely clickable archive rows had no selected state at all. The cue now
+  sits on the clickable rows only.
+- `NotificationsView` re-styled `.data-table`'s cells locally, so the delivery
+  log used different padding and colours from every other table in the app. It
+  now inherits the shared table.
+- `AgentDetailView` declared a local `AgentHostnamePattern` interface
+  duplicating the generated `HostnamePatternResponse`. It now uses the
+  generated type.
+- Roughly 200 dead scoped-CSS rules left behind by the extraction were removed
+  across nine files.
 
 ## Summary
 

@@ -851,28 +851,11 @@ async function resetSystem(): Promise<void> {
   max-width: 800px;
 }
 
-.info-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-
-  & + & {
-    margin-top: 0.75rem;
-  }
-}
-
 .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.5rem;
-}
-
-.info-title {
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  color: var(--text-primary);
 }
 
 .info-description {

@@ -1410,22 +1410,6 @@ function filterByRun(runId: string): void {
   word-break: break-word;
 }
 
-.col-ts {
-  width: 140px;
-}
-
-.col-lvl {
-  width: 70px;
-}
-
-.col-target {
-  width: 200px;
-}
-
-.col-msg {
-  width: auto;
-}
-
 .schedule-label {
   display: block;
   font-size: var(--fs-xs);

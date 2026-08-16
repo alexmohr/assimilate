@@ -1,0 +1,225 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { validateSmtp } from '../api/notifications'
+import { extractError } from '../utils/error'
+import type { ChannelType, EmailConfig, WebhookConfig } from '../types/notifications'
+
+/**
+ * The transport-specific fields of a notification channel. The add wizard and
+ * the edit dialog carried two near-identical copies of this markup, differing
+ * only in whether the labels are marked required. See
+ * docs/contributing/ui-design-audit.md (F-24).
+ */
+defineProps<{
+  channelType: ChannelType
+  /** Marks the mandatory labels, which the create flow wants and edit does not. */
+  showRequired?: boolean
+}>()
+
+/**
+ * Bound two-way because the fields below edit the caller's config object in
+ * place - the parent holds the request payload these become.
+ */
+const emailConfig = defineModel<EmailConfig>('emailConfig', { required: true })
+const webhookConfig = defineModel<WebhookConfig>('webhookConfig', { required: true })
+
+/** Comma-separated recipients, parsed back into `to_addresses` on submit. */
+const toAddresses = defineModel<string>('toAddresses', { required: true })
+
+const validating = ref(false)
+const result = ref<{ success: boolean; message: string } | null>(null)
+
+/**
+ * Checks the SMTP credentials, surfacing the verdict inline. Also called by
+ * the owning dialog before it saves, so a channel is never stored with
+ * credentials that cannot log in.
+ */
+async function validate(): Promise<boolean> {
+  validating.value = true
+  result.value = null
+  try {
+    await validateSmtp({
+      smtp_host: emailConfig.value.smtp_host,
+      smtp_port: emailConfig.value.smtp_port,
+      smtp_user: emailConfig.value.smtp_user,
+      smtp_password: emailConfig.value.smtp_password,
+      security: emailConfig.value.security ?? 'starttls',
+    })
+    result.value = { success: true, message: 'SMTP login successful' }
+    return true
+  } catch (e: unknown) {
+    result.value = { success: false, message: extractError(e) }
+    return false
+  } finally {
+    validating.value = false
+  }
+}
+
+/** Cleared when the dialog reopens, so a stale verdict is never shown. */
+function reset(): void {
+  result.value = null
+}
+
+defineExpose({ validate, reset, result })
+</script>
+
+<template>
+  <template v-if="channelType === 'email'">
+    <div class="field">
+      <label class="field-label">
+        SMTP Host
+        <span
+          v-if="showRequired"
+          class="required"
+          >*</span
+        >
+      </label>
+      <input
+        v-model="emailConfig.smtp_host"
+        class="input mono"
+        placeholder="smtp.example.com"
+      />
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label class="field-label">SMTP User</label>
+        <input
+          v-model="emailConfig.smtp_user"
+          class="input"
+        />
+      </div>
+      <div class="field field-narrow">
+        <label class="field-label">Port</label>
+        <input
+          v-model.number="emailConfig.smtp_port"
+          class="input"
+          type="number"
+        />
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label">SMTP Password</label>
+      <input
+        v-model="emailConfig.smtp_password"
+        class="input"
+        type="password"
+      />
+    </div>
+    <div class="field">
+      <label class="field-label">
+        From Address
+        <span
+          v-if="showRequired"
+          class="required"
+          >*</span
+        >
+      </label>
+      <input
+        v-model="emailConfig.from_address"
+        class="input"
+        placeholder="noreply@example.com"
+      />
+    </div>
+    <div class="field">
+      <label class="field-label">
+        To Addresses
+        <span
+          v-if="showRequired"
+          class="required"
+          >*</span
+        >
+      </label>
+      <input
+        v-model="toAddresses"
+        class="input"
+        placeholder="admin@example.com, ops@example.com"
+      />
+      <span class="field-hint">Comma-separated email addresses</span>
+    </div>
+    <div class="field">
+      <label class="field-label">Security</label>
+      <select
+        v-model="emailConfig.security"
+        class="input"
+      >
+        <option value="starttls">STARTTLS (port 587)</option>
+        <option value="tls">SSL/TLS (port 465)</option>
+        <option value="none">None (insecure)</option>
+      </select>
+    </div>
+    <div class="field">
+      <button
+        class="btn btn-sm btn-ghost"
+        :disabled="validating"
+        @click="validate"
+      >
+        {{ validating ? 'Testing...' : 'Test Connection' }}
+      </button>
+      <span
+        v-if="result"
+        class="smtp-validation-result"
+        :class="result.success ? 'test-success' : 'test-failure'"
+      >
+        {{ result.message }}
+      </span>
+    </div>
+  </template>
+
+  <template v-if="channelType === 'webhook'">
+    <div class="field">
+      <label class="field-label">
+        URL
+        <span
+          v-if="showRequired"
+          class="required"
+          >*</span
+        >
+      </label>
+      <input
+        v-model="webhookConfig.url"
+        class="input mono"
+        placeholder="https://hooks.example.com/notify"
+      />
+    </div>
+  </template>
+</template>
+
+<style scoped>
+.field-row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.field-row .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.field-narrow {
+  max-width: 120px;
+  flex: 0 0 120px !important;
+}
+
+.smtp-validation-result {
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+}
+
+.test-success {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+}
+
+.test-failure {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+</style>

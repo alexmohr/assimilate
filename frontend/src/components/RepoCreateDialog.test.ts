@@ -334,6 +334,51 @@ describe('RepoCreateDialog', () => {
       )
     })
 
+    // The debounce used to outlive the dialog: closing it within 300ms of a
+    // keystroke still fired the listing, and in tests that stray request
+    // landed in whichever case happened to be running when the timer expired,
+    // breaking its `toHaveBeenLastCalledWith`. It read as flakiness because
+    // only a loaded machine pushed the timer past the end of its own test.
+    it('cancels the pending path lookup when the dialog goes away', async () => {
+      vi.useFakeTimers()
+      try {
+        const wrapper = mount()
+        await setField('SSH Host', 'backup.example.com')
+        await setField('Repo Path', '/backup/re')
+        vi.mocked(apiClient.post).mockClear()
+
+        wrapper.unmount()
+        vi.advanceTimersByTime(1000)
+        await flushPromises()
+
+        expect(apiClient.post).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('looks the path up once the debounce elapses', async () => {
+      vi.useFakeTimers()
+      try {
+        mount()
+        await setField('SSH Host', 'backup.example.com')
+        await setField('Repo Path', '/backup/re')
+        vi.mocked(apiClient.post)
+          .mockClear()
+          .mockResolvedValue(listDir('/backup') as never)
+
+        vi.advanceTimersByTime(300)
+        await flushPromises()
+
+        expect(apiClient.post).toHaveBeenCalledWith(
+          '/ssh/list-dir',
+          expect.objectContaining({ path: '/backup' }),
+        )
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('jumps to an ancestor from the breadcrumbs', async () => {
       mount()
       await openBrowser('/backup/repos')

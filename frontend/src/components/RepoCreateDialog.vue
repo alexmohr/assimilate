@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { Folder, FolderPlus } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
@@ -156,14 +156,30 @@ const formValid = computed(
 const autocompleteEntries = ref<DirEntry[]>([])
 const showAutocomplete = ref(false)
 let autocompleteTimer: ReturnType<typeof setTimeout> | null = null
+let hideAutocompleteTimer: ReturnType<typeof setTimeout> | null = null
 
 function onPathInput(): void {
   if (autocompleteTimer) clearTimeout(autocompleteTimer)
   autocompleteTimer = setTimeout(() => {
+    autocompleteTimer = null
     fetchAutocomplete()
     syncBrowserToPath()
   }, 300)
 }
+
+/**
+ * Both timers outlive the component otherwise: the debounce fires an
+ * `/ssh/list-dir` request 300ms after the last keystroke, so closing the
+ * dialog right after typing a path issued an SSH directory listing on behalf
+ * of a dialog that no longer exists - and, in tests, landed that request in
+ * whichever case happened to be running when it fired.
+ */
+onBeforeUnmount(() => {
+  if (autocompleteTimer) clearTimeout(autocompleteTimer)
+  if (hideAutocompleteTimer) clearTimeout(hideAutocompleteTimer)
+  autocompleteTimer = null
+  hideAutocompleteTimer = null
+})
 
 function syncBrowserToPath(): void {
   if (!browser.showBrowser || !sshReady.value) return
@@ -221,7 +237,9 @@ function selectAutocomplete(entry: DirEntry): void {
 }
 
 function hideAutocomplete(): void {
-  setTimeout(() => {
+  if (hideAutocompleteTimer) clearTimeout(hideAutocompleteTimer)
+  hideAutocompleteTimer = setTimeout(() => {
+    hideAutocompleteTimer = null
     showAutocomplete.value = false
   }, 200)
 }

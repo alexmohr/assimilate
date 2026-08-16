@@ -834,19 +834,6 @@ async function fetchOverview(): Promise<void> {
   .calendar-cell {
     grid-column: 1 / -1;
   }
-  .attention-row {
-    grid-template-columns: 1fr;
-  }
-
-  .attention-sidebar-wide {
-    grid-template-columns: 1fr;
-  }
-  .rings-row {
-    grid-template-columns: 1fr;
-  }
-  .trends-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 768px) {
@@ -1161,6 +1148,24 @@ async function fetchOverview(): Promise<void> {
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
   align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .attention-row {
+    grid-template-columns: 1fr;
+  }
+
+  .attention-sidebar-wide {
+    grid-template-columns: 1fr;
+  }
+
+  .rings-row {
+    grid-template-columns: 1fr;
+  }
+
+  .trends-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Active Backups */

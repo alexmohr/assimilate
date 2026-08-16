@@ -112,6 +112,36 @@ function setupDefaultMocks(): void {
   mockApiGet.mockResolvedValue({ data: [] })
 }
 
+/**
+ * Every dialog in this view teleports, so its controls are queried off the
+ * document body rather than through the wrapper. Shared by the wizard, edit
+ * and scope/delete suites below.
+ */
+function dialogButton(label: string): HTMLButtonElement {
+  const match = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent?.trim() === label,
+  )
+  if (!match) throw new Error(`no button labelled "${label}"`)
+  return match
+}
+
+function fieldByLabel(label: string): HTMLInputElement {
+  const wrap = [...document.body.querySelectorAll('.field')].find((f) =>
+    f.querySelector('.field-label')?.textContent?.includes(label),
+  )
+  const control = wrap?.querySelector('input, select')
+  if (!control) throw new Error(`no field labelled "${label}"`)
+  return control as HTMLInputElement
+}
+
+async function setByLabel(label: string, value: string): Promise<void> {
+  const control = fieldByLabel(label)
+  control.value = value
+  control.dispatchEvent(new Event('input'))
+  control.dispatchEvent(new Event('change'))
+  await flushPromises()
+}
+
 describe('NotificationsView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -273,31 +303,6 @@ describe('NotificationsView', () => {
   })
 
   describe('add channel wizard', () => {
-    function dialogButton(label: string): HTMLButtonElement {
-      const match = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (b) => b.textContent?.trim() === label,
-      )
-      if (!match) throw new Error(`no button labelled "${label}"`)
-      return match
-    }
-
-    function fieldByLabel(label: string): HTMLInputElement {
-      const wrap = [...document.body.querySelectorAll('.field')].find((f) =>
-        f.querySelector('.field-label')?.textContent?.includes(label),
-      )
-      const control = wrap?.querySelector('input, select')
-      if (!control) throw new Error(`no field labelled "${label}"`)
-      return control as HTMLInputElement
-    }
-
-    async function setByLabel(label: string, value: string): Promise<void> {
-      const control = fieldByLabel(label)
-      control.value = value
-      control.dispatchEvent(new Event('input'))
-      control.dispatchEvent(new Event('change'))
-      await flushPromises()
-    }
-
     /** Fills step 1 with a valid email channel and advances to step 2. */
     async function fillStepOne(): Promise<void> {
       await setByLabel('Name', 'Ops Alerts')
@@ -520,31 +525,6 @@ describe('NotificationsView', () => {
   })
 
   describe('edit channel', () => {
-    function dialogButton(label: string): HTMLButtonElement {
-      const match = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (b) => b.textContent?.trim() === label,
-      )
-      if (!match) throw new Error(`no button labelled "${label}"`)
-      return match
-    }
-
-    function fieldByLabel(label: string): HTMLInputElement {
-      const wrap = [...document.body.querySelectorAll('.field')].find((f) =>
-        f.querySelector('.field-label')?.textContent?.includes(label),
-      )
-      const control = wrap?.querySelector('input, select')
-      if (!control) throw new Error(`no field labelled "${label}"`)
-      return control as HTMLInputElement
-    }
-
-    async function setByLabel(label: string, value: string): Promise<void> {
-      const control = fieldByLabel(label)
-      control.value = value
-      control.dispatchEvent(new Event('input'))
-      control.dispatchEvent(new Event('change'))
-      await flushPromises()
-    }
-
     /** Opens the edit dialog for a channel by its card position. */
     async function openEdit(index: number) {
       setupDefaultMocks()
@@ -662,14 +642,6 @@ describe('NotificationsView', () => {
         if (url === '/schedules') return Promise.resolve({ data: SCOPE_SCHEDULES })
         return Promise.resolve({ data: [] })
       })
-    }
-
-    function dialogButton(label: string): HTMLButtonElement {
-      const match = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (b) => b.textContent?.trim() === label,
-      )
-      if (!match) throw new Error(`no button labelled "${label}"`)
-      return match
     }
 
     async function render() {

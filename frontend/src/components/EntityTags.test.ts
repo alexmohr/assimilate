@@ -238,19 +238,27 @@ describe('EntityTags', () => {
       expect(apiClient.put).toHaveBeenCalledWith('/repos/12/tags', { tag_ids: [1, 9] })
     })
 
+    /** Types a tag name, presses Create, and hands back the name field. */
+    async function submitNewTag(wrapper: ReturnType<typeof mount>, name: string) {
+      const field = wrapper.find('input[aria-label="New tag name"]')
+      await field.setValue(name)
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Create'))!
+        .trigger('click')
+      await flushPromises()
+      return field
+    }
+
+    // The field is cleared on success and kept on failure: retyping a name
+    // the server just rejected would be the wrong thing to ask of the user.
     it('clears the form after a successful create', async () => {
       const created = { id: 9, name: 'nightly', color: '#123456', scope: 'repo' } as TagRow
       vi.mocked(apiClient.post).mockResolvedValueOnce({ data: created } as never)
 
       const wrapper = mount()
       await flushPromises()
-      const name = wrapper.find('input[aria-label="New tag name"]')
-      await name.setValue('nightly')
-      await wrapper
-        .findAll('button')
-        .find((b) => b.text().includes('Create'))!
-        .trigger('click')
-      await flushPromises()
+      const name = await submitNewTag(wrapper, 'nightly')
 
       expect((name.element as HTMLInputElement).value).toBe('')
     })
@@ -260,13 +268,7 @@ describe('EntityTags', () => {
 
       const wrapper = mount()
       await flushPromises()
-      const name = wrapper.find('input[aria-label="New tag name"]')
-      await name.setValue('nightly')
-      await wrapper
-        .findAll('button')
-        .find((b) => b.text().includes('Create'))!
-        .trigger('click')
-      await flushPromises()
+      const name = await submitNewTag(wrapper, 'nightly')
 
       expect((name.element as HTMLInputElement).value).toBe('nightly')
     })

@@ -13,7 +13,7 @@ import { useApiTokens } from '../composables/useApiTokens'
 import { formatDate } from '../utils/format'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
-import { Trash2 } from '@lucide/vue'
+import { Trash2, Monitor, Sun, Moon } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type {
@@ -250,9 +250,9 @@ onMounted(async () => {
         class="password-form"
         @submit.prevent="handlePasswordSubmit"
       >
-        <div class="form-group">
+        <div class="field">
           <label
-            class="form-label"
+            class="field-label"
             for="profile-new-pw"
             >New Password</label
           >
@@ -260,16 +260,16 @@ onMounted(async () => {
             id="profile-new-pw"
             v-model="newPassword"
             type="password"
-            class="form-input"
+            class="input"
             autocomplete="new-password"
             placeholder="Minimum 8 characters"
             :disabled="passwordSubmitting"
           />
         </div>
 
-        <div class="form-group">
+        <div class="field">
           <label
-            class="form-label"
+            class="field-label"
             for="profile-confirm-pw"
             >Confirm Password</label
           >
@@ -277,7 +277,7 @@ onMounted(async () => {
             id="profile-confirm-pw"
             v-model="confirmPassword"
             type="password"
-            class="form-input"
+            class="input"
             autocomplete="new-password"
             :disabled="passwordSubmitting"
           />
@@ -285,13 +285,13 @@ onMounted(async () => {
 
         <div
           v-if="passwordError"
-          class="msg msg-error"
+          class="form-error"
         >
           {{ passwordError }}
         </div>
         <div
           v-if="passwordSuccess"
-          class="msg msg-success"
+          class="form-success"
         >
           {{ passwordSuccess }}
         </div>
@@ -389,21 +389,21 @@ onMounted(async () => {
             <code class="totp-secret">{{ totpSetupData.secret }}</code>
           </p>
 
-          <div class="form-group">
-            <label class="form-label">Verify the code from your authenticator app</label>
+          <div class="field">
+            <label class="field-label">Verify the code from your authenticator app</label>
             <input
               v-model="totpVerifyCode"
               type="text"
               inputmode="numeric"
               maxlength="6"
               placeholder="000000"
-              class="form-input"
+              class="input"
               :disabled="totpVerifying"
             />
           </div>
           <div
             v-if="totpVerifyError"
-            class="msg msg-error"
+            class="form-error"
           >
             {{ totpVerifyError }}
           </div>
@@ -432,20 +432,20 @@ onMounted(async () => {
         >
           <div class="totp-status-badge totp-enabled">Two-factor authentication is enabled</div>
 
-          <div class="form-group">
-            <label class="form-label">Enter your password to disable 2FA</label>
+          <div class="field">
+            <label class="field-label">Enter your password to disable 2FA</label>
             <input
               v-model="totpDisablePassword"
               type="password"
               autocomplete="current-password"
-              class="form-input"
+              class="input"
               placeholder="Current password"
               :disabled="totpDisabling"
             />
           </div>
           <div
             v-if="totpDisableError"
-            class="msg msg-error"
+            class="form-error"
           >
             {{ totpDisableError }}
           </div>
@@ -478,7 +478,7 @@ onMounted(async () => {
           </button>
           <div
             v-if="totpError"
-            class="msg msg-error"
+            class="form-error"
           >
             {{ totpError }}
           </div>
@@ -502,7 +502,7 @@ onMounted(async () => {
 
       <div
         v-else-if="sessionsError"
-        class="msg msg-error"
+        class="form-error"
       >
         {{ sessionsError }}
       </div>
@@ -588,7 +588,10 @@ onMounted(async () => {
             :class="{ active: theme === 'auto' }"
             @click="setTheme('auto')"
           >
-            <span class="theme-icon">&#9881;</span>
+            <Monitor
+              class="theme-icon"
+              :size="16"
+            />
             Auto
           </button>
           <button
@@ -596,7 +599,10 @@ onMounted(async () => {
             :class="{ active: theme === 'light' }"
             @click="setTheme('light')"
           >
-            <span class="theme-icon">&#9788;</span>
+            <Sun
+              class="theme-icon"
+              :size="16"
+            />
             Light
           </button>
           <button
@@ -604,7 +610,10 @@ onMounted(async () => {
             :class="{ active: theme === 'dark' }"
             @click="setTheme('dark')"
           >
-            <span class="theme-icon">&#9789;</span>
+            <Moon
+              class="theme-icon"
+              :size="16"
+            />
             Dark
           </button>
         </div>
@@ -618,11 +627,11 @@ onMounted(async () => {
       @close="closeCreateModal"
     >
       <template v-if="!newTokenPlaintext">
-        <div class="form-group">
-          <label class="form-label">Token Name</label>
+        <div class="field">
+          <label class="field-label">Token Name</label>
           <input
             v-model="createName"
-            class="form-input"
+            class="input"
             placeholder="e.g. CI pipeline"
             :disabled="createSubmitting"
             @keydown.enter.prevent="submitCreateToken"
@@ -630,7 +639,7 @@ onMounted(async () => {
         </div>
         <div
           v-if="createError"
-          class="msg msg-error"
+          class="form-error"
         >
           {{ createError }}
         </div>
@@ -678,7 +687,7 @@ onMounted(async () => {
       </p>
       <div
         v-if="deleteError"
-        class="msg msg-error"
+        class="form-error"
       >
         {{ deleteError }}
       </div>
@@ -709,7 +718,7 @@ onMounted(async () => {
       <p>Revoke this session? The device will be signed out immediately.</p>
       <div
         v-if="revokeError"
-        class="msg msg-error"
+        class="form-error"
       >
         {{ revokeError }}
       </div>
@@ -759,61 +768,6 @@ onMounted(async () => {
 
 .password-form {
   max-width: 380px;
-}
-
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-label {
-  display: block;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 0.35rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.form-input {
-  width: 100%;
-  padding: 0.55rem 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-  box-sizing: border-box;
-  transition: border-color var(--duration-base);
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.form-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.msg {
-  padding: 0.6rem 0.875rem;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-base);
-  margin-bottom: 1rem;
-}
-
-.msg-error {
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  color: var(--danger);
-}
-
-.msg-success {
-  background: var(--success-subtle);
-  border: 1px solid var(--success);
-  color: var(--success);
 }
 
 .tokens-header {

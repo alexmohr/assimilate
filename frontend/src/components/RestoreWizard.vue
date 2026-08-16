@@ -185,7 +185,7 @@ function cancelDownload(): void {
       <label class="field-label">Select Archive</label>
       <select
         v-model="selectedArchiveName"
-        class="select-input full-width"
+        class="input select-input full-width"
       >
         <option
           :value="null"
@@ -211,7 +211,7 @@ function cancelDownload(): void {
       <label class="field-label">Paths to restore (one per line)</label>
       <textarea
         v-model="pathsInput"
-        class="textarea-input"
+        class="input textarea-input"
         rows="6"
         placeholder="/etc/nginx/nginx.conf&#10;/home/user/documents"
       />
@@ -248,14 +248,14 @@ function cancelDownload(): void {
         <input
           v-model="hostname"
           type="text"
-          class="text-input full-width"
+          class="input text-input full-width"
           placeholder="backup-host-01"
         />
         <label class="field-label mt-1">Target path</label>
         <input
           v-model="targetPath"
           type="text"
-          class="text-input full-width"
+          class="input text-input full-width"
           placeholder="/tmp/restore"
         />
       </template>

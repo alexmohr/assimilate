@@ -325,7 +325,7 @@ watch(
     <div class="cron-input-row">
       <input
         type="text"
-        class="cron-input"
+        class="input cron-input"
         :value="modelValue"
         placeholder="0 2 * * *"
         spellcheck="false"
@@ -359,7 +359,7 @@ watch(
         <label class="helper-label">Frequency</label>
         <select
           v-model="frequency"
-          class="helper-select"
+          class="input helper-select"
         >
           <option value="hourly">Hourly</option>
           <option value="daily">Daily</option>
@@ -378,7 +378,7 @@ watch(
           type="number"
           min="1"
           max="23"
-          class="helper-input helper-input-narrow"
+          class="input helper-input helper-input-narrow"
         />
         <span class="helper-suffix">hours</span>
       </div>
@@ -389,7 +389,7 @@ watch(
           <div class="time-picker">
             <select
               v-model.number="timeHour"
-              class="helper-select time-select"
+              class="input helper-select time-select"
             >
               <option
                 v-for="h in hourOptions"
@@ -402,7 +402,7 @@ watch(
             <span class="time-sep">:</span>
             <select
               v-model.number="timeMinute"
-              class="helper-select time-select"
+              class="input helper-select time-select"
             >
               <option
                 v-for="m in minuteOptions"
@@ -445,7 +445,7 @@ watch(
           type="number"
           min="1"
           max="31"
-          class="helper-input helper-input-narrow"
+          class="input helper-input helper-input-narrow"
         />
       </div>
 

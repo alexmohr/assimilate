@@ -581,7 +581,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Machine</label>
               <select
                 v-model="filterMachine"
-                class="select-input"
+                class="input select-input"
               >
                 <option value="">All Machines</option>
                 <option
@@ -598,7 +598,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Schedule</label>
               <select
                 v-model="filterScheduleId"
-                class="select-input"
+                class="input select-input"
               >
                 <option :value="null">All Schedules</option>
                 <option
@@ -632,7 +632,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Target</label>
               <select
                 v-model="filterTarget"
-                class="select-input"
+                class="input select-input"
               >
                 <option value="all">All</option>
                 <option
@@ -649,7 +649,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Status</label>
               <select
                 v-model="filterStatus"
-                class="select-input"
+                class="input select-input"
               >
                 <option value="all">All</option>
                 <option value="success">Success</option>
@@ -665,7 +665,7 @@ function filterByRun(runId: string): void {
               <input
                 v-model="filterFrom"
                 type="date"
-                class="date-input"
+                class="input date-input"
               />
             </div>
 
@@ -674,7 +674,7 @@ function filterByRun(runId: string): void {
               <input
                 v-model="filterTo"
                 type="date"
-                class="date-input"
+                class="input date-input"
               />
             </div>
           </template>
@@ -684,7 +684,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Level</label>
               <select
                 v-model="logLevel"
-                class="select-input"
+                class="input select-input"
               >
                 <option value="">All</option>
                 <option value="error">Error</option>
@@ -705,7 +705,7 @@ function filterByRun(runId: string): void {
                 <input
                   v-model="logSearch"
                   type="text"
-                  class="search-input"
+                  class="input search-input"
                   placeholder="Filter messages..."
                 />
               </div>

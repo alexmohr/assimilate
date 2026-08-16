@@ -93,7 +93,7 @@ function liveRelativeTime(iso: string): string {
       v-if="loading"
       class="state-msg state-msg--inline"
     >
-      Loading…
+      Loading...
     </div>
     <div
       v-else-if="items.length === 0"

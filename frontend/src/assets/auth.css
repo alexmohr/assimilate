@@ -54,39 +54,16 @@
   gap: 1rem;
 }
 
-.form-group {
+.field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.form-group label {
+.field label {
   font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-secondary);
-}
-
-.form-group input {
-  padding: 0.625rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-  outline: none;
-  transition: border-color var(--duration-base);
-}
-
-.form-group input:focus {
-  border-color: var(--accent);
-}
-
-.login-error {
-  font-size: var(--fs-sm);
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
 }
 
 .login-btn {

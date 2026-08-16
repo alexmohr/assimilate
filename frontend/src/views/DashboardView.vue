@@ -25,6 +25,7 @@ import RepositoryCapacity from '../components/RepositoryCapacity.vue'
 import type { DashboardOperation, DashboardOverview } from '../types/dashboard'
 import type { Repo } from '../types/repo'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
+import { ChevronRight } from '@lucide/vue'
 
 const rangeOptions: SegmentedOption<number>[] = [
   { value: 7, label: '7d' },
@@ -569,7 +570,10 @@ async function fetchOverview(): Promise<void> {
             >
               {{ backup.hostname }}
             </RouterLink>
-            <span class="active-backup-sep">&rarr;</span>
+            <ChevronRight
+              class="active-backup-sep"
+              :size="14"
+            />
             <RouterLink
               v-if="backup.repo_id !== null"
               :to="{ name: 'repo-detail', params: { id: String(backup.repo_id) } }"
@@ -647,7 +651,7 @@ async function fetchOverview(): Promise<void> {
               <div class="trends-controls">
                 <select
                   v-model="successRepoFilter"
-                  class="trends-select"
+                  class="input trends-select"
                 >
                   <option :value="undefined">All Repos</option>
                   <option

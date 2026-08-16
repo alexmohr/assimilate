@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { logger } from '../utils/logger'
 import type { Repo } from '../types/repo'
+import { X, ChevronLeft, ChevronRight } from '@lucide/vue'
 
 interface CalendarEvent {
   type: string
@@ -220,7 +221,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
       <h2 class="panel-title">Backup Calendar</h2>
       <select
         v-model="selectedRepoId"
-        class="cal-select"
+        class="input cal-select"
       >
         <option :value="undefined">All Repos</option>
         <option
@@ -237,21 +238,21 @@ function navigateToScheduleAndClose(scheduleId: number): void {
         class="cal-nav-btn"
         @click="prevMonth"
       >
-        &larr;
+        <ChevronLeft :size="16" />
       </button>
       <span class="cal-month-label">{{ monthLabel }}</span>
       <button
         class="cal-nav-btn"
         @click="nextMonth"
       >
-        &rarr;
+        <ChevronRight :size="16" />
       </button>
     </div>
     <div
       v-if="loading"
       class="state-msg state-msg--inline"
     >
-      Loading…
+      Loading...
     </div>
     <template v-else>
       <div class="cal-grid">
@@ -361,9 +362,10 @@ function navigateToScheduleAndClose(scheduleId: number): void {
           <span class="cal-error-title">Backup Failed</span>
           <button
             class="cal-error-close"
+            aria-label="Close"
             @click="closeErrorPopup"
           >
-            &times;
+            <X :size="14" />
           </button>
         </div>
         <div class="cal-error-meta">

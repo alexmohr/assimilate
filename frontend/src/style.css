@@ -625,6 +625,18 @@
     }
   }
 
+  /* Counterpart to .form-error, for the same slot in a form. */
+  .form-success {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.875rem;
+    background: var(--success-subtle);
+    border: 1px solid var(--success);
+    border-radius: var(--radius-sm);
+    color: var(--success);
+    font-size: var(--fs-base);
+    white-space: pre-line;
+  }
+
   .mono {
     font-family: var(--mono);
     font-size: var(--fs-sm);

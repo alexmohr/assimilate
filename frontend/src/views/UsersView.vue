@@ -386,30 +386,33 @@ onMounted(fetchUsers)
       @close="showCreateModal = false"
       @submit="submitCreate"
     >
-      <div class="form-group">
+      <div class="field">
         <label for="new-username">Username</label>
         <input
           id="new-username"
           v-model="createForm.username"
+          class="input"
           type="text"
           required
         />
       </div>
-      <div class="form-group">
+      <div class="field">
         <label for="new-password">Password</label>
         <input
           id="new-password"
           v-model="createForm.password"
+          class="input"
           type="password"
           required
           minlength="8"
         />
       </div>
-      <div class="form-group">
+      <div class="field">
         <label for="new-role">Role</label>
         <select
           id="new-role"
           v-model="createForm.role"
+          class="input"
         >
           <option value="user">User</option>
           <option value="admin">Admin</option>
@@ -417,7 +420,7 @@ onMounted(fetchUsers)
       </div>
       <div
         v-if="createError"
-        class="modal-error"
+        class="form-error"
       >
         {{ createError }}
       </div>
@@ -464,11 +467,12 @@ onMounted(fetchUsers)
           v-if="editTab === 'general'"
           class="tab-content"
         >
-          <div class="form-group">
+          <div class="field">
             <label for="edit-role">Role</label>
             <select
               id="edit-role"
               v-model="editRole"
+              class="input"
             >
               <option value="user">User</option>
               <option value="admin">Admin</option>
@@ -476,7 +480,7 @@ onMounted(fetchUsers)
           </div>
           <div
             v-if="editRoleError"
-            class="modal-error"
+            class="form-error"
           >
             {{ editRoleError }}
           </div>
@@ -496,11 +500,12 @@ onMounted(fetchUsers)
           v-if="editTab === 'password'"
           class="tab-content"
         >
-          <div class="form-group">
+          <div class="field">
             <label for="edit-password">New Password</label>
             <input
               id="edit-password"
               v-model="editPassword"
+              class="input"
               type="password"
               minlength="8"
               placeholder="Enter new password"
@@ -508,13 +513,13 @@ onMounted(fetchUsers)
           </div>
           <div
             v-if="editPasswordError"
-            class="modal-error"
+            class="form-error"
           >
             {{ editPasswordError }}
           </div>
           <div
             v-if="editPasswordSuccess"
-            class="modal-success"
+            class="form-success"
           >
             Password updated successfully.
           </div>
@@ -588,7 +593,7 @@ onMounted(fetchUsers)
           </template>
           <div
             v-if="editRolesError"
-            class="modal-error"
+            class="form-error"
           >
             {{ editRolesError }}
           </div>
@@ -767,20 +772,14 @@ onMounted(fetchUsers)
   gap: 0.75rem;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
+.field label {
   font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-secondary);
 }
 
-.form-group input,
-.form-group select {
+.field input,
+.field select {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -789,26 +788,10 @@ onMounted(fetchUsers)
   font-size: var(--fs-base);
 }
 
-.form-group input:focus,
-.form-group select:focus {
+.field input:focus,
+.field select:focus {
   outline: none;
   border-color: var(--accent);
-}
-
-.modal-error {
-  font-size: var(--fs-sm);
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-success {
-  font-size: var(--fs-sm);
-  color: var(--success);
-  padding: 0.5rem 0.75rem;
-  background: var(--success-subtle);
-  border-radius: var(--radius-sm);
 }
 
 .modal-actions {

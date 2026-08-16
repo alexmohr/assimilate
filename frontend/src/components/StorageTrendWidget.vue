@@ -212,7 +212,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
       <div class="controls">
         <select
           v-model="selectedRepoId"
-          class="stats-select"
+          class="input stats-select"
         >
           <option :value="undefined">All Repos</option>
           <option
@@ -238,7 +238,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
       v-if="loading"
       class="state-msg state-msg--inline"
     >
-      Loading…
+      Loading...
     </div>
     <div
       v-else-if="!hasData"

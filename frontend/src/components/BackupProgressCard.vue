@@ -37,7 +37,7 @@ defineProps<{
         v-if="!progress"
         class="live-log-empty"
       >
-        Waiting for progress&hellip;
+        Waiting for progress...
       </div>
       <template v-else>
         <div class="progress-row">

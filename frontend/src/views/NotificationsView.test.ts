@@ -187,7 +187,8 @@ describe('NotificationsView', () => {
     await flushPromises()
     const historyTab = wrapper.findAll('button').find((b) => b.text().includes('History'))
     await historyTab!.trigger('click')
-    expect(wrapper.text()).toContain('No delivery history yet')
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.find('.empty-title').text()).toBe('No deliveries yet')
   })
 
   it('expands a delivery row to reveal the full error and payload', async () => {

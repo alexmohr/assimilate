@@ -190,7 +190,7 @@ function handleDeleteWholeArchive(): void {
           <template #filter="{ filterModel, filterCallback }">
             <input
               v-model="filterModel.value"
-              class="filter-input"
+              class="input filter-input"
               type="text"
               placeholder="Filter name..."
               @input="filterCallback()"
@@ -225,7 +225,7 @@ function handleDeleteWholeArchive(): void {
           <template #filter="{ filterModel, filterCallback }">
             <input
               v-model="filterModel.value"
-              class="filter-input"
+              class="input filter-input"
               type="text"
               placeholder="Filter size..."
               @input="filterCallback()"
@@ -245,7 +245,7 @@ function handleDeleteWholeArchive(): void {
           <template #filter="{ filterModel, filterCallback }">
             <input
               v-model="filterModel.value"
-              class="filter-input"
+              class="input filter-input"
               type="text"
               placeholder="Filter date..."
               @input="filterCallback()"

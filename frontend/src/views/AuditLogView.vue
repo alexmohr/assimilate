@@ -108,7 +108,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">Action</label>
           <input
             v-model="filters.action"
-            class="filter-input"
+            class="input filter-input"
             type="text"
             placeholder="e.g. create, update, delete"
           />
@@ -117,7 +117,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">User</label>
           <input
             v-model="filters.user"
-            class="filter-input"
+            class="input filter-input"
             type="text"
             placeholder="Username"
           />
@@ -126,7 +126,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">From</label>
           <input
             v-model="filters.from"
-            class="date-input"
+            class="input date-input"
             type="date"
           />
         </div>
@@ -134,7 +134,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">To</label>
           <input
             v-model="filters.to"
-            class="date-input"
+            class="input date-input"
             type="date"
           />
         </div>
@@ -267,7 +267,7 @@ onMounted(fetchAuditLog)
       <label class="filter-label">Rows per page</label>
       <select
         v-model="perPage"
-        class="select-input"
+        class="input select-input"
       >
         <option
           v-for="opt in perPageOptions"

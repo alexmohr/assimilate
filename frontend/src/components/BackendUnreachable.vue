@@ -18,7 +18,7 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
     >
       <div class="backend-overlay-card">
         <WifiOff
-          :size="48"
+          :size="40"
           class="backend-overlay-icon"
         />
         <h2 class="backend-overlay-title">Trying to reach backend</h2>
@@ -31,7 +31,7 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
           :disabled="checking"
           @click="retryNow()"
         >
-          {{ checking ? 'Checking…' : 'Retry now' }}
+          {{ checking ? 'Checking...' : 'Retry now' }}
         </button>
       </div>
     </div>

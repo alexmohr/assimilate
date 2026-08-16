@@ -823,12 +823,12 @@ onMounted(() => {
 
     <!-- History Tab -->
     <div v-if="activeTab === 'history'">
-      <div
+      <EmptyState
         v-if="deliveries.length === 0"
-        class="state-msg"
-      >
-        No delivery history yet.
-      </div>
+        :icon="Send"
+        title="No deliveries yet"
+        description="Notifications sent to your channels will be listed here."
+      />
       <div
         v-else
         class="table-wrapper"

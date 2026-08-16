@@ -54,6 +54,21 @@ All visual constants live in `frontend/src/style.css` and are enforced by `front
 * **Focus** — a single `:focus-visible` rule in `@layer base` covers every control. It is wrapped in `:where()` so it carries zero specificity. Do not add per-component focus styling, and do not use `outline: none` without `:focus-visible` handling (the global rule survives `outline: none` on `:focus`, which is why the pattern is safe).
 * **Motion** — `@media (prefers-reduced-motion: reduce)` in `@layer base` neutralises every animation and transition. Do not add motion that bypasses it.
 
+## Shared components
+
+These live in `frontend/src/style.css` or `frontend/src/components/`. Never re-declare one in a scoped `<style>` block — `frontend/src/shared-components.test.ts` fails the build if a scoped rule sets a property the shared rule already sets. Adding a *new* property (a widget needing `min-width: 0` on its panel) is fine.
+
+* **Dialogs** — `BaseModal`. It supplies `role="dialog"`, `aria-modal`, Escape, the focus trap, the scroll lock and focus restore. Use its `form` prop when a submit button in the footer must submit fields in the body. For a yes/no destructive prompt use `ConfirmDeleteDialog`; for a form use `ModalFormActions` in the `#footer` slot. Never hand-roll an overlay.
+* **Panels** — `.panel`, plus `.panel--sectioned` for the ruled-header/flush-body variant. Headings are `.panel-title` (sentence case, primary ink).
+* **Badges** — `.badge` with one of `.badge--success|warning|danger|info|accent|neutral`, chosen through `src/utils/badge.ts`. Add `.badge-dot` for live state (Online, Running); omit it for classification (Manual, Admin). `.badge--pulse` marks work in flight.
+* **Tables** — `.data-table`, wrapped in `.table-wrap`. `.data-table--compact` only for wide numeric grids.
+* **Tabs and segmented controls** — `BaseTabs` and `BaseSegmented`. Both carry the ARIA roles and keyboard behaviour; a hand-rolled row of buttons does not.
+* **Empty states** — `EmptyState`, with an action wherever one would resolve the emptiness. `.state-msg` is for errors and for `.state-msg--inline` inside dashboard widgets, not for "nothing here yet".
+* **Forms** — `.field` / `.field-label` / `.input`, and `.form-error` / `.form-success` for messages. Every text-shaped control (`input`, `select`, `textarea`) carries `.input`; checkboxes and radios do not.
+* **Toggles** — `ToggleSwitch` for a setting that applies on change. A native checkbox only inside a multi-select list, or in a form with an explicit Save.
+* **Icons** — `@lucide/vue` only, never an HTML entity or a literal glyph. Sizes are 12 (inline with small text), 14 (inline and in controls), 16 (headings), 20 (section headers), 40 (empty states).
+* **Busy labels** — three periods, `'Saving...'`, not an ellipsis character.
+
 ## `local/no-string-literal-control-flow` ESLint rule
 
 The "no string comparisons for control flow" rule is enforced for the frontend by a type-aware custom ESLint rule at `frontend/eslint-rules/no-string-literal-control-flow.js`, wired into `frontend/eslint.config.js` as `local/no-string-literal-control-flow`. Unlike a syntax-only `no-restricted-syntax` rule, it uses the TypeScript checker (via type-aware parsing, `parserOptions.projectService`) to flag a comparison or `switch` only when the non-literal operand's type is the *wide* `string` — not when it's already a narrow string-literal union/enum being compared to one of its own members. That distinction matters because TypeScript's idiomatic "enum" (a `type Foo = 'a' | 'b'` union) is itself expressed via string literals, so a syntax-only rule can't tell a real violation from already-correct code.

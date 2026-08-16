@@ -295,7 +295,7 @@ const dedupOptions = computed(() => {
       <div class="trends-controls">
         <select
           v-model="selectedRepoId"
-          class="trends-select"
+          class="input trends-select"
         >
           <option :value="undefined">All Repos</option>
           <option
@@ -321,7 +321,7 @@ const dedupOptions = computed(() => {
       v-if="loading"
       class="state-msg state-msg--inline"
     >
-      Loading trends…
+      Loading trends...
     </div>
     <div
       v-else-if="trends.length === 0"

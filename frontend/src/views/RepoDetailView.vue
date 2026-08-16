@@ -18,7 +18,7 @@ import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import { Trash2 } from '@lucide/vue'
+import { Trash2, X, ChevronRight, AlertTriangle, CalendarClock } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
@@ -36,6 +36,7 @@ import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 import BaseTabs from '../components/BaseTabs.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 type TabId = 'overview' | 'archives' | 'schedules'
 
@@ -1363,9 +1364,10 @@ async function resetImport(): Promise<void> {
                 {{ tag.name }}
                 <button
                   class="tag-remove"
+                  :aria-label="`Remove tag ${tag.name}`"
                   @click="removeTag(tag.id)"
                 >
-                  &times;
+                  <X :size="12" />
                 </button>
               </span>
             </div>
@@ -1404,7 +1406,7 @@ async function resetImport(): Promise<void> {
                 />
                 <input
                   v-model="newTagColor"
-                  class="color-input"
+                  class="input color-input"
                   type="color"
                 />
                 <button
@@ -1444,7 +1446,7 @@ async function resetImport(): Promise<void> {
               :disabled="borgConsoleLoading || !borgConsoleCommand.trim()"
               @click="runBorgCommand"
             >
-              {{ borgConsoleLoading ? 'Running…' : 'Run' }}
+              {{ borgConsoleLoading ? 'Running...' : 'Run' }}
             </button>
           </div>
           <div class="console-hints">
@@ -1696,13 +1698,13 @@ async function resetImport(): Promise<void> {
                 <div class="archive-controls">
                   <input
                     v-model="archiveFilter"
-                    class="filter-input"
+                    class="input filter-input"
                     type="text"
                     placeholder="Filter archives..."
                   />
                   <select
                     v-model="archiveSortMode"
-                    class="select-input archive-sort-select"
+                    class="input select-input archive-sort-select"
                   >
                     <option
                       v-for="option in archiveSortModeOptions"
@@ -1740,7 +1742,10 @@ async function resetImport(): Promise<void> {
                       :class="{ collapsed: isGroupCollapsed(group.hostname) }"
                       @click="toggleGroup(group.hostname)"
                     >
-                      <span class="group-chevron">&#9656;</span>
+                      <ChevronRight
+                        class="group-chevron"
+                        :size="14"
+                      />
                       <BaseHostLink
                         :hostname="
                           group.agentHostname && group.matched
@@ -1755,8 +1760,9 @@ async function resetImport(): Promise<void> {
                         v-if="!group.matched"
                         class="match-icon match-warn"
                         title="Unmatched"
-                        >&#9888;</span
                       >
+                        <AlertTriangle :size="12" />
+                      </span>
                       <span class="group-count">{{ group.archives.length }}</span>
                     </button>
                     <div
@@ -1866,12 +1872,12 @@ async function resetImport(): Promise<void> {
         >
           {{ repoSchedulesError }}
         </div>
-        <div
+        <EmptyState
           v-else-if="repoSchedules.length === 0"
-          class="state-msg"
-        >
-          No schedules configured for this repository.
-        </div>
+          :icon="CalendarClock"
+          title="No schedules yet"
+          description="Nothing backs up to this repository. Create a schedule to start."
+        />
         <div
           v-else
           class="repo-schedule-grid"
@@ -1943,7 +1949,7 @@ async function resetImport(): Promise<void> {
     >
       <div class="archive-delete-message">
         <div class="archive-delete-icon">
-          <Trash2 :size="22" />
+          <Trash2 :size="20" />
         </div>
         <div>
           <p>

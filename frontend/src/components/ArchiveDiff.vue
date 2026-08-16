@@ -80,7 +80,7 @@ async function compare(): Promise<void> {
         <label class="field-label">Archive 1</label>
         <select
           v-model="archive1"
-          class="select-input"
+          class="input select-input"
         >
           <option
             :value="null"
@@ -101,7 +101,7 @@ async function compare(): Promise<void> {
         <label class="field-label">Archive 2</label>
         <select
           v-model="archive2"
-          class="select-input"
+          class="input select-input"
         >
           <option
             :value="null"

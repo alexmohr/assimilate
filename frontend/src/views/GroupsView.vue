@@ -9,11 +9,12 @@ import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { Plus, Trash2 } from '@lucide/vue'
+import { Plus, Trash2, Users } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import BaseModal from '../components/BaseModal.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 interface Group {
   id: number
@@ -258,12 +259,14 @@ onMounted(async () => {
     >
       {{ error }}
     </div>
-    <div
+    <EmptyState
       v-else-if="groups.length === 0"
-      class="state-msg"
-    >
-      No groups created yet.
-    </div>
+      :icon="Users"
+      title="No groups yet"
+      description="Groups let you grant a set of roles to several users at once."
+      action="Create Group"
+      @action="openCreate"
+    />
     <div
       v-else-if="filteredGroups.length === 0"
       class="state-msg"

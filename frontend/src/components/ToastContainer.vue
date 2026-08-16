@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { useToast } from '../composables/useToast'
-import { CheckCircle, XCircle, AlertTriangle, Info } from '@lucide/vue'
+import { CheckCircle, XCircle, AlertTriangle, Info, X } from '@lucide/vue'
 import type { Component } from 'vue'
 import type { ToastType } from '../composables/useToast'
 
@@ -46,7 +46,7 @@ const iconMap: Record<ToastType, Component> = {
             aria-label="Dismiss"
             @click="remove(toast.id)"
           >
-            &times;
+            <X :size="14" />
           </button>
         </div>
       </TransitionGroup>

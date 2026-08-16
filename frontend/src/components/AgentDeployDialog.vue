@@ -239,7 +239,7 @@ async function submitDeploy(): Promise<void> {
             :disabled="fetchServiceLoading || !deployForm.ssh_host"
             @click="loadExistingServiceUnit()"
           >
-            {{ fetchServiceLoading ? 'Loading…' : 'Load from remote' }}
+            {{ fetchServiceLoading ? 'Loading...' : 'Load from remote' }}
           </button>
         </div>
         <textarea

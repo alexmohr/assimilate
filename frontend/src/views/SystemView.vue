@@ -398,7 +398,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint">Number of days to keep backup job history.</span>
             </div>
@@ -418,7 +418,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Days to keep successful/archived reports. 0 = keep forever.</span
@@ -440,7 +440,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Days to keep failed/archive-less reports. 0 = keep forever.</span
@@ -462,7 +462,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
             </div>
@@ -482,7 +482,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="0"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Days to keep notification delivery-attempt history. 0 = keep forever.</span
@@ -504,7 +504,7 @@ async function resetSystem(): Promise<void> {
                 type="number"
                 min="1"
                 step="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Maximum seconds to wait for a single <code>borg list</code> or
@@ -526,7 +526,7 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.session_idle_timeout_minutes"
                 type="number"
                 min="1"
-                class="form-input retention-input"
+                class="input retention-input"
               />
               <span class="field-hint"
                 >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not

@@ -83,11 +83,12 @@ function toggleRecoveryCode(): void {
         class="login-form"
         @submit.prevent="handleSubmit"
       >
-        <div class="form-group">
+        <div class="field">
           <label for="username">Username</label>
           <input
             id="username"
             v-model="username"
+            class="input"
             type="text"
             autocomplete="username"
             required
@@ -95,11 +96,12 @@ function toggleRecoveryCode(): void {
           />
         </div>
 
-        <div class="form-group">
+        <div class="field">
           <label for="password">Password</label>
           <input
             id="password"
             v-model="password"
+            class="input"
             type="password"
             autocomplete="current-password"
             required
@@ -111,6 +113,7 @@ function toggleRecoveryCode(): void {
           <input
             id="remember-me"
             v-model="rememberMe"
+            class="input"
             type="checkbox"
             :disabled="submitting"
           />
@@ -119,7 +122,7 @@ function toggleRecoveryCode(): void {
 
         <div
           v-if="error"
-          class="login-error"
+          class="form-error"
         >
           {{ error }}
         </div>
@@ -157,12 +160,13 @@ function toggleRecoveryCode(): void {
 
         <div
           v-if="!useRecoveryCode"
-          class="form-group"
+          class="field"
         >
           <label for="totp-code">Authenticator Code</label>
           <input
             id="totp-code"
             v-model="totpCode"
+            class="input"
             type="text"
             inputmode="numeric"
             autocomplete="one-time-code"
@@ -174,12 +178,13 @@ function toggleRecoveryCode(): void {
         </div>
         <div
           v-else
-          class="form-group"
+          class="field"
         >
           <label for="totp-recovery-code">Recovery Code</label>
           <input
             id="totp-recovery-code"
             v-model="totpCode"
+            class="input"
             type="text"
             autocomplete="off"
             placeholder="xxxxxxxx-xxxxxxxx"
@@ -190,7 +195,7 @@ function toggleRecoveryCode(): void {
 
         <div
           v-if="error"
-          class="login-error"
+          class="form-error"
         >
           {{ error }}
         </div>

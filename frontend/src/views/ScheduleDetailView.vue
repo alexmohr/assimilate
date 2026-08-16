@@ -755,7 +755,7 @@ watch(activeTab, (tab) => {
             @click="goToLogs"
           >
             Logs
-            <ExternalLink :size="13" />
+            <ExternalLink :size="12" />
           </button>
         </template>
       </BaseTabs>
@@ -769,12 +769,12 @@ watch(activeTab, (tab) => {
           <!-- Schedule Name -->
           <div class="form-card">
             <h3 class="info-title">General</h3>
-            <div class="form-group">
-              <label class="form-label">Name</label>
+            <div class="field">
+              <label class="field-label">Name</label>
               <input
                 v-model="form.name"
                 type="text"
-                class="form-input"
+                class="input"
                 placeholder="e.g. Daily web server backup"
               />
               <span class="field-hint">Optional display name for this schedule</span>
@@ -789,8 +789,8 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">Target</h3>
 
             <!-- Multi-select for hosts -->
-            <div class="form-group">
-              <label class="form-label">Hosts <span class="required">*</span></label>
+            <div class="field">
+              <label class="field-label">Hosts <span class="required">*</span></label>
               <div
                 ref="agentDropdownRef"
                 class="multi-select-wrapper"
@@ -826,11 +826,11 @@ watch(activeTab, (tab) => {
             </div>
 
             <!-- On Failure -->
-            <div class="form-group">
-              <label class="form-label">On Failure</label>
+            <div class="field">
+              <label class="field-label">On Failure</label>
               <select
                 v-model="onFailure"
-                class="form-select"
+                class="input form-select"
               >
                 <option value="stop">Stop</option>
                 <option value="continue">Continue</option>
@@ -843,9 +843,9 @@ watch(activeTab, (tab) => {
             <!-- Ordering (2+ hosts) -->
             <div
               v-if="selectedAgentIds.length > 1"
-              class="form-group"
+              class="field"
             >
-              <label class="form-label">Execution Order</label>
+              <label class="field-label">Execution Order</label>
               <div class="order-list">
                 <div
                   v-for="(agentId, idx) in selectedAgentIds"
@@ -878,11 +878,11 @@ watch(activeTab, (tab) => {
               </div>
             </div>
 
-            <div class="form-group">
-              <label class="form-label">Repository <span class="required">*</span></label>
+            <div class="field">
+              <label class="field-label">Repository <span class="required">*</span></label>
               <select
                 v-model.number="selectedRepoId"
-                class="form-select"
+                class="input form-select"
               >
                 <option
                   :value="null"
@@ -900,11 +900,11 @@ watch(activeTab, (tab) => {
               </select>
               <span class="field-hint">The borg repository to back up to</span>
             </div>
-            <div class="form-group">
-              <label class="form-label">Schedule Type</label>
+            <div class="field">
+              <label class="field-label">Schedule Type</label>
               <select
                 v-model="selectedType"
-                class="form-select"
+                class="input form-select"
               >
                 <option value="backup">Backup</option>
                 <option value="check">Integrity Check</option>
@@ -1011,8 +1011,8 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">Target Settings</h3>
 
             <!-- Multi-select for hosts -->
-            <div class="form-group">
-              <label class="form-label">Hosts</label>
+            <div class="field">
+              <label class="field-label">Hosts</label>
               <div
                 ref="agentDropdownRef"
                 class="multi-select-wrapper"
@@ -1046,11 +1046,11 @@ watch(activeTab, (tab) => {
               </div>
             </div>
 
-            <div class="form-group">
-              <label class="form-label">Repository</label>
+            <div class="field">
+              <label class="field-label">Repository</label>
               <select
                 v-model.number="selectedRepoId"
-                class="form-select"
+                class="input form-select"
               >
                 <option
                   v-for="r in repos"
@@ -1063,11 +1063,11 @@ watch(activeTab, (tab) => {
             </div>
 
             <!-- On Failure -->
-            <div class="form-group">
-              <label class="form-label">On Failure</label>
+            <div class="field">
+              <label class="field-label">On Failure</label>
               <select
                 v-model="onFailure"
-                class="form-select"
+                class="input form-select"
               >
                 <option value="stop">Stop</option>
                 <option value="continue">Continue</option>
@@ -1077,9 +1077,9 @@ watch(activeTab, (tab) => {
             <!-- Ordering (2+ hosts) -->
             <div
               v-if="selectedAgentIds.length > 1"
-              class="form-group"
+              class="field"
             >
-              <label class="form-label">Execution Order</label>
+              <label class="field-label">Execution Order</label>
               <div class="order-list">
                 <div
                   v-for="(agentId, idx) in selectedAgentIds"
@@ -1115,12 +1115,12 @@ watch(activeTab, (tab) => {
 
           <div class="form-card">
             <h3 class="info-title">Timing</h3>
-            <div class="form-group">
-              <label class="form-label">Schedule</label>
+            <div class="field">
+              <label class="field-label">Schedule</label>
               <CronBuilder v-model="form.cron_expression" />
             </div>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Enabled</label>
+            <div class="field field-inline">
+              <label class="field-label">Enabled</label>
               <ToggleSwitch v-model="form.enabled" />
             </div>
           </div>
@@ -1130,19 +1130,19 @@ watch(activeTab, (tab) => {
               <h3 class="info-title">Backup Paths</h3>
               <div
                 v-if="selectedAgentIds.length > 1"
-                class="form-group form-group-inline"
+                class="field field-inline"
               >
-                <label class="form-label">Configure per agent</label>
+                <label class="field-label">Configure per agent</label>
                 <ToggleSwitch v-model="usePerHostPaths" />
               </div>
 
               <div
                 v-if="!usePerHostPaths"
-                class="form-group"
+                class="field"
               >
                 <textarea
                   v-model="form.backup_sources"
-                  class="form-input area-input"
+                  class="input area-input"
                   placeholder="Directories to back up, one per line"
                   spellcheck="false"
                 />
@@ -1160,10 +1160,10 @@ watch(activeTab, (tab) => {
                   :key="agentId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="field-label">{{ agentLabel(agentId) }}</label>
                   <textarea
                     :value="perHostSources[agentId] ?? ''"
-                    class="form-input area-input area-input-sm"
+                    class="input area-input area-input-sm"
                     placeholder="Directories to back up, one per line"
                     spellcheck="false"
                     @input="
@@ -1181,49 +1181,49 @@ watch(activeTab, (tab) => {
             <div class="form-card">
               <h3 class="info-title">Retention</h3>
               <div class="retention-grid">
-                <div class="form-group">
-                  <label class="form-label">Hourly</label>
+                <div class="field">
+                  <label class="field-label">Hourly</label>
                   <input
                     v-model.number="form.keep_hourly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Daily</label>
+                <div class="field">
+                  <label class="field-label">Daily</label>
                   <input
                     v-model.number="form.keep_daily"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Weekly</label>
+                <div class="field">
+                  <label class="field-label">Weekly</label>
                   <input
                     v-model.number="form.keep_weekly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Monthly</label>
+                <div class="field">
+                  <label class="field-label">Monthly</label>
                   <input
                     v-model.number="form.keep_monthly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Yearly</label>
+                <div class="field">
+                  <label class="field-label">Yearly</label>
                   <input
                     v-model.number="form.keep_yearly"
                     type="number"
                     min="0"
-                    class="form-input"
+                    class="input"
                   />
                 </div>
               </div>
@@ -1240,25 +1240,25 @@ watch(activeTab, (tab) => {
         <div class="form-grid">
           <div class="form-card">
             <h3 class="info-title">Options</h3>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Canary Verification</label>
+            <div class="field field-inline">
+              <label class="field-label">Canary Verification</label>
               <ToggleSwitch v-model="form.canary_enabled" />
             </div>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Ignore Global Excludes</label>
+            <div class="field field-inline">
+              <label class="field-label">Ignore Global Excludes</label>
               <ToggleSwitch v-model="form.ignore_global_excludes" />
             </div>
-            <div class="form-group form-group-inline">
-              <label class="form-label">Compact after backup</label>
+            <div class="field field-inline">
+              <label class="field-label">Compact after backup</label>
               <ToggleSwitch v-model="form.compact_enabled" />
             </div>
-            <div class="form-group">
-              <label class="form-label">Remote Rate Limit (kB/s)</label>
+            <div class="field">
+              <label class="field-label">Remote Rate Limit (kB/s)</label>
               <input
                 v-model.number="form.rate_limit_kbps"
                 type="number"
                 min="0"
-                class="form-input"
+                class="input"
               />
               <span class="field-hint">Caps borg's upload bandwidth. Set to 0 for unlimited.</span>
             </div>
@@ -1268,14 +1268,14 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">Exclude Patterns</h3>
             <div
               v-if="selectedAgentIds.length > 1"
-              class="form-group form-group-inline"
+              class="field field-inline"
             >
-              <label class="form-label">Configure per agent</label>
+              <label class="field-label">Configure per agent</label>
               <ToggleSwitch v-model="usePerHostExcludes" />
             </div>
-            <div class="form-group">
-              <div class="form-label-row">
-                <label class="form-label">Patterns</label>
+            <div class="field">
+              <div class="field-label-row">
+                <label class="field-label">Patterns</label>
                 <button
                   type="button"
                   class="ref-toggle"
@@ -1287,7 +1287,7 @@ watch(activeTab, (tab) => {
               <textarea
                 v-if="!usePerHostExcludes"
                 v-model="form.exclude_patterns"
-                class="form-input area-input"
+                class="input area-input"
                 placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
                 spellcheck="false"
               />
@@ -1300,10 +1300,10 @@ watch(activeTab, (tab) => {
                   :key="agentId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="field-label">{{ agentLabel(agentId) }}</label>
                   <textarea
                     :value="perHostExcludes[agentId] ?? ''"
-                    class="form-input area-input area-input-sm"
+                    class="input area-input area-input-sm"
                     placeholder="Exclude patterns, one per line"
                     spellcheck="false"
                     @input="
@@ -1364,13 +1364,13 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">File Change Patterns</h3>
             <div
               v-if="selectedAgentIds.length > 1"
-              class="form-group form-group-inline"
+              class="field field-inline"
             >
-              <label class="form-label">Configure per agent</label>
+              <label class="field-label">Configure per agent</label>
               <ToggleSwitch v-model="usePerHostFileChangePatterns" />
             </div>
-            <div class="form-group">
-              <label class="form-label">Patterns</label>
+            <div class="field">
+              <label class="field-label">Patterns</label>
               <FileChangePatternsEditor
                 v-if="!usePerHostFileChangePatterns"
                 v-model="form.file_change_patterns"
@@ -1384,10 +1384,10 @@ watch(activeTab, (tab) => {
                   :key="agentId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="field-label">{{ agentLabel(agentId) }}</label>
                   <textarea
                     :value="perHostFileChangePatterns[agentId] ?? ''"
-                    class="form-input area-input area-input-sm"
+                    class="input area-input area-input-sm"
                     placeholder="File change patterns, one per line"
                     spellcheck="false"
                     @input="
@@ -1409,26 +1409,26 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">Commands</h3>
             <div
               v-if="selectedAgentIds.length > 1"
-              class="form-group form-group-inline"
+              class="field field-inline"
             >
-              <label class="form-label">Configure per agent</label>
+              <label class="field-label">Configure per agent</label>
               <ToggleSwitch v-model="usePerAgentCmds" />
             </div>
             <template v-if="!usePerAgentCmds">
-              <div class="form-group">
-                <label class="form-label">Pre-backup Commands</label>
+              <div class="field">
+                <label class="field-label">Pre-backup Commands</label>
                 <textarea
                   v-model="form.pre_backup_commands"
-                  class="form-input cmd-area"
+                  class="input cmd-area"
                   placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
                   spellcheck="false"
                 />
               </div>
-              <div class="form-group">
-                <label class="form-label">Post-backup Commands</label>
+              <div class="field">
+                <label class="field-label">Post-backup Commands</label>
                 <textarea
                   v-model="form.post_backup_commands"
-                  class="form-input cmd-area"
+                  class="input cmd-area"
                   placeholder="One command per line (optional)"
                   spellcheck="false"
                 />
@@ -1441,11 +1441,11 @@ watch(activeTab, (tab) => {
                   :key="agentId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="field-label">{{ agentLabel(agentId) }}</label>
                   <label class="form-sublabel">Pre-backup</label>
                   <textarea
                     :value="perAgentPreCmds[agentId] ?? ''"
-                    class="form-input cmd-area"
+                    class="input cmd-area"
                     placeholder="One command per line"
                     spellcheck="false"
                     @input="
@@ -1456,7 +1456,7 @@ watch(activeTab, (tab) => {
                   <label class="form-sublabel">Post-backup</label>
                   <textarea
                     :value="perAgentPostCmds[agentId] ?? ''"
-                    class="form-input cmd-area"
+                    class="input cmd-area"
                     placeholder="One command per line (optional)"
                     spellcheck="false"
                     @input="
@@ -1859,10 +1859,6 @@ watch(activeTab, (tab) => {
   color: var(--text-muted);
 }
 
-.form-group {
-  margin-bottom: 1rem;
-}
-
 .form-group:last-child {
   margin-bottom: 0;
 }
@@ -1872,16 +1868,6 @@ watch(activeTab, (tab) => {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-}
-
-.form-label {
-  display: block;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 0.35rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .form-group-inline .form-label {
@@ -1897,7 +1883,7 @@ watch(activeTab, (tab) => {
   margin-top: 0.25rem;
 }
 
-.form-input,
+.input,
 .form-select {
   width: 100%;
   padding: 0.5rem 0.75rem;
@@ -1911,7 +1897,7 @@ watch(activeTab, (tab) => {
   box-sizing: border-box;
 }
 
-.form-input:focus,
+.input:focus,
 .form-select:focus {
   border-color: var(--accent);
 }

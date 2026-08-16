@@ -529,7 +529,8 @@ describe('AgentDetailView — schedules tab', () => {
     await flushPromises()
     await openSchedulesTab(wrapper)
 
-    expect(wrapper.text()).toContain('No schedules for this agent.')
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.find('.empty-title').text()).toBe('No schedules yet')
   })
 
   it('shows a Disabled pill and tints the card for a disabled schedule', async () => {

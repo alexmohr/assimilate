@@ -136,7 +136,7 @@ const displayValue = computed((): string => {
       ref="inputRef"
       :value="displayValue"
       type="text"
-      class="form-input"
+      class="input"
       :placeholder="placeholder ?? 'Search timezone...'"
       autocomplete="off"
       @focus="onInputFocus"

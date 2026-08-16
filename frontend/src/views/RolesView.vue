@@ -5,13 +5,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Plus, Trash2 } from '@lucide/vue'
+import { Plus, Trash2, ShieldCheck } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import BaseModal from '../components/BaseModal.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 interface Role {
   id: number
@@ -252,12 +253,14 @@ onMounted((): void => {
     >
       {{ error }}
     </div>
-    <div
+    <EmptyState
       v-else-if="roles.length === 0"
-      class="state-msg"
-    >
-      No roles configured yet.
-    </div>
+      :icon="ShieldCheck"
+      title="No roles yet"
+      description="Roles bundle permissions so they can be granted to users and groups."
+      action="Create Role"
+      @action="showCreateModal = true"
+    />
 
     <!-- Permission Matrix -->
     <div

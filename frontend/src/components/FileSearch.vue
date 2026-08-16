@@ -114,7 +114,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <label class="field-label">Archive</label>
         <select
           v-model="selectedArchiveName"
-          class="select-input"
+          class="input select-input"
         >
           <option
             :value="null"

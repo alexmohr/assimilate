@@ -107,7 +107,8 @@ describe('ServerQuotasView', () => {
     mockList.mockResolvedValue([])
     const wrapper = renderWithPlugins(ServerQuotasView)
     await flushPromises()
-    expect(wrapper.text()).toContain('No repositories are configured yet.')
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.find('.empty-title').text()).toBe('No repositories yet')
   })
 
   it('shows an error message when loading fails', async () => {

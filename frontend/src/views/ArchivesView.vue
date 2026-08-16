@@ -8,7 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download } from '@lucide/vue'
+import { Folder, File, Download, RefreshCw, Check, AlertTriangle } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
@@ -372,7 +372,7 @@ onMounted(loadRepos)
         <label class="selector-label">Repository</label>
         <select
           v-model="selectedRepoId"
-          class="select-input"
+          class="input select-input"
           @change="onRepoChange"
         >
           <option
@@ -430,9 +430,13 @@ onMounted(loadRepos)
               <button
                 class="btn btn-sm btn-ghost"
                 :disabled="archivesLoading"
+                aria-label="Refresh archives"
                 @click="loadArchives"
               >
-                {{ archivesLoading ? '...' : '&#8635;' }}
+                <RefreshCw
+                  :size="14"
+                  :class="{ spinning: archivesLoading }"
+                />
               </button>
             </div>
           </div>
@@ -477,7 +481,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -496,7 +500,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -515,7 +519,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -551,14 +555,16 @@ onMounted(loadRepos)
                   v-if="data.matched === true"
                   class="match-icon match-ok"
                   title="Matched"
-                  >&#10003;</span
                 >
+                  <Check :size="14" />
+                </span>
                 <span
                   v-else-if="data.matched !== true"
                   class="match-icon match-warn"
                   title="Unmatched"
-                  >&#9888;</span
                 >
+                  <AlertTriangle :size="14" />
+                </span>
               </template>
             </Column>
             <Column
@@ -570,7 +576,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter..."
                   @input="filterCallback()"
@@ -613,7 +619,7 @@ onMounted(loadRepos)
             class="state-msg state-msg--inline"
           >
             <BaseSpinner size="sm" />
-            Indexing archive contents — this only happens once…
+            Indexing archive contents — this only happens once...
           </div>
           <div
             v-else-if="contentsError"
@@ -648,7 +654,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter name..."
                   @input="filterCallback()"
@@ -683,7 +689,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter size..."
                   @input="filterCallback()"
@@ -703,7 +709,7 @@ onMounted(loadRepos)
               <template #filter="{ filterModel, filterCallback }">
                 <input
                   v-model="filterModel.value"
-                  class="filter-input"
+                  class="input filter-input"
                   type="text"
                   placeholder="Filter date..."
                   @input="filterCallback()"
@@ -799,6 +805,18 @@ onMounted(loadRepos)
 </template>
 
 <style scoped>
+/* The refresh control spins while the request is in flight, replacing the
+   old "..." text swap. */
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .archives-view {
   max-width: 1300px;
   color: var(--text-primary);

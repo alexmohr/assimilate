@@ -1087,7 +1087,7 @@ onMounted(loadRepos)
                       ? 'Import Failed'
                       : entry.repo.import_total > 0
                         ? `${repoImportPhaseVerb(entry.repo)} ${entry.repo.import_progress}/${entry.repo.import_total}`
-                        : `${repoImportPhaseVerb(entry.repo)}…`
+                        : `${repoImportPhaseVerb(entry.repo)}...`
                   }}
                 </span>
               </div>
@@ -1673,13 +1673,13 @@ onMounted(loadRepos)
     >
       <label
         for="folder-name-input"
-        class="form-label"
+        class="field-label"
         >Folder name</label
       >
       <input
         id="folder-name-input"
         v-model="folderModal.name"
-        class="form-control"
+        class="input form-control"
         type="text"
         placeholder="my-backups"
         autofocus

@@ -37,6 +37,8 @@ import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs from '../components/BaseTabs.vue'
 import { backupStatusBadgeClass } from '../utils/badge'
+import { X, CalendarClock } from '@lucide/vue'
+import EmptyState from '../components/EmptyState.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -1042,9 +1044,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <h3 class="info-title">Deploy SSH Key</h3>
             <button
               class="btn btn-sm btn-ghost"
+              aria-label="Close"
               @click="showDeploySshKey = false"
             >
-              &times;
+              <X :size="14" />
             </button>
           </div>
           <SshKeyDeployPanel
@@ -1125,9 +1128,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 <button
                   v-if="!isImported"
                   class="tag-remove"
+                  :aria-label="`Remove tag ${tag.name}`"
                   @click="removeTag(tag.id)"
                 >
-                  &times;
+                  <X :size="12" />
                 </button>
               </span>
             </div>
@@ -1169,7 +1173,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 />
                 <input
                   v-model="newTagColor"
-                  class="color-input"
+                  class="input color-input"
                   type="color"
                 />
                 <button
@@ -1512,9 +1516,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 v-if="!isImported"
                 class="tag-remove pattern-delete"
                 title="Delete pattern"
+                aria-label="Delete hostname pattern"
                 @click="deleteHostnamePattern(p.id)"
               >
-                &times;
+                <X :size="12" />
               </button>
             </div>
           </div>
@@ -1625,12 +1630,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
             + Add Schedule
           </RouterLink>
         </div>
-        <div
+        <EmptyState
           v-if="agentSchedules.length === 0"
-          class="state-msg"
-        >
-          No schedules for this agent.
-        </div>
+          :icon="CalendarClock"
+          title="No schedules yet"
+          description="This agent has no backup schedules. Create one to start backing it up."
+        />
         <div
           v-else
           class="schedule-grid"

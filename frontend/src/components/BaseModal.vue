@@ -149,7 +149,7 @@ onUnmounted(() => {
               aria-label="Close"
               @click="emit('close')"
             >
-              <X :size="18" />
+              <X :size="20" />
             </button>
           </div>
 

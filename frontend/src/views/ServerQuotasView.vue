@@ -19,6 +19,8 @@ import ModalFormActions from '../components/ModalFormActions.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 import { badgeClass, thresholdTone } from '../utils/badge'
+import EmptyState from '../components/EmptyState.vue'
+import { HardDrive } from '@lucide/vue'
 
 const { isMobile } = useMobile()
 
@@ -139,12 +141,12 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
     >
       {{ error }}
     </div>
-    <div
+    <EmptyState
       v-else-if="quotas.length === 0"
-      class="state-msg"
-    >
-      No repositories are configured yet.
-    </div>
+      :icon="HardDrive"
+      title="No repositories yet"
+      description="Server quotas apply to repositories on this server. Add one to set a quota."
+    />
 
     <div
       v-else-if="isMobile"

@@ -8,8 +8,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Agent Detail, Unstacked</title>
-</head>
-<body>
 <style>
   /* ---- Tokens -------------------------------------------------------
      Colours, radii and the type ladder are lifted verbatim from
@@ -836,11 +834,96 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
   ul.plain li { margin-bottom: 0.4rem; }
   ul.plain li::marker { color: var(--text-muted); }
 
+  /* ---- Option comparisons --------------------------------------------- */
+  .opts { display: flex; flex-direction: column; gap: 1.75rem; }
+  .opt { display: flex; flex-direction: column; gap: 0.7rem; }
+  .opt-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+  .opt-head h3 { font-size: var(--fs-base); }
+  .opt-head p { font-size: var(--fs-sm); color: var(--text-muted); }
+
+  .verdict {
+    font-family: var(--mono);
+    font-size: var(--fs-2xs);
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .verdict--yes { color: var(--success); border-color: var(--success); background: var(--success-subtle); }
+  .verdict--no { color: var(--text-muted); }
+
+  .frame--compact .frame-body { min-height: 0; }
+  .frame--compact .pane { padding: 0.9rem 1.1rem 1.1rem; gap: 0.85rem; }
+
+  .m-note-strip {
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.85rem;
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .m-empty-state {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    padding: 1.4rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    text-align: center;
+  }
+  .m-empty-state b { font-size: var(--fs-base); }
+  .m-empty-state p { font-size: var(--fs-sm); color: var(--text-secondary); max-width: 48ch; }
+  .m-empty-actions { display: flex; gap: 0.4rem; margin-top: 0.2rem; }
+
+  /* ---- Success-window options ------------------------------------------ */
+  .wgrid-scroll { overflow-x: auto; }
+  .wgrid {
+    display: grid;
+    grid-template-columns: 168px repeat(3, minmax(190px, 1fr));
+    gap: 0.7rem 0.8rem;
+    min-width: 760px;
+    align-items: start;
+  }
+  .wgrid-head {
+    font-family: var(--mono);
+    font-size: var(--fs-2xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    align-self: end;
+    padding-bottom: 0.2rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .wgrid-head b { display: block; color: var(--text-primary); font-size: var(--fs-sm); letter-spacing: 0; text-transform: none; font-family: var(--sans); }
+  .wgrid-label { display: flex; flex-direction: column; gap: 0.15rem; padding-top: 0.15rem; }
+  .wgrid-label b { font-size: var(--fs-sm); }
+  .wgrid-label span { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.45; font-family: var(--mono); }
+  .wcell { display: flex; flex-direction: column; gap: 0.35rem; }
+  .wnote { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.45; }
+  .wnote--bad { color: var(--warning); }
+  .wnote--good { color: var(--success); }
+
+  .m-strip { display: flex; gap: 2px; margin-top: 0.3rem; }
+  .m-strip i { flex: 1; height: 13px; border-radius: 2px; background: var(--success); }
+  .m-strip i.bad { background: var(--danger); }
+  .m-strip i.warn { background: var(--warning); }
+  .m-strip i.none { background: var(--bg-hover); border: 1px solid var(--border); }
+
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
 </style>
-
+</head>
+<body>
 <div class="wrap">
 
   <header>
@@ -917,7 +1000,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
         <div class="slabs">
           <div class="slab slab--live" style="height: 42px">Header: identity, status, actions menu</div>
           <div class="slab slab--live" style="height: 30px">Needs attention (only when there is any)</div>
-          <div class="slab slab--live" style="height: 40px">Last backup &middot; Next run &middot; Repos &middot; 30-day rate</div>
+          <div class="slab slab--live" style="height: 40px">Last backup &middot; Next run &middot; Repos &middot; Last 30 runs</div>
           <div class="slab slab--live" style="height: 66px">Schedules on this agent</div>
           <div class="slab slab--live" style="height: 78px">Recent backups</div>
           <div class="slab slab--moved" style="height: 36px">&darr; Tags, defaults, aliases, danger zone</div>
@@ -997,7 +1080,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
           <div class="m-tabs" role="tablist" aria-label="Agent sections">
             <button class="m-tab" role="tab" type="button" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
             <button class="m-tab" role="tab" type="button" id="tab-schedules" aria-controls="panel-schedules" aria-selected="false">Schedules<span class="m-tab-count">3</span></button>
-            <button class="m-tab" role="tab" type="button" id="tab-backups" aria-controls="panel-backups" aria-selected="false">Backups<span class="m-tab-count">33</span></button>
+            <button class="m-tab" role="tab" type="button" id="tab-backups" aria-controls="panel-backups" aria-selected="false">Backups<span class="m-tab-count">59</span></button>
             <button class="m-tab" role="tab" type="button" id="tab-settings" aria-controls="panel-settings" aria-selected="false">Settings</button>
           </div>
 
@@ -1038,10 +1121,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                 <span class="m-tile-sub">812 MB deduplicated</span>
               </div>
               <div class="m-tile">
-                <span class="m-tile-label">30-day success</span>
-                <span class="m-tile-value">94%</span>
-                <div class="m-meter"><i style="width: 94%"></i></div>
-                <span class="m-tile-sub">31 of 33 runs</span>
+                <span class="m-tile-label">Last 30 runs</span>
+                <span class="m-tile-value">1 failed</span>
+                <div class="m-strip">
+                  <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  <i></i><i></i><i></i><i></i><i></i><i class="warn"></i><i></i><i class="bad"></i><i></i><i></i>
+                  <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                </div>
+                <span class="m-tile-sub">past 15d &middot; oldest left</span>
               </div>
             </div>
 
@@ -1072,7 +1159,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <div>
               <div class="m-sec-head">
                 <span class="m-sec-title">Recent backups</span>
-                <a class="m-link" href="#mock">View all 33 &rarr;</a>
+                <a class="m-link" href="#mock">View all 59 &rarr;</a>
               </div>
               <div class="m-rows" style="margin-top: 0.5rem">
                 <div class="m-row">
@@ -1086,7 +1173,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                 <div class="m-row">
                   <i class="m-row-stripe m-row-stripe--success"></i>
                   <span class="m-row-when">1d ago</span>
-                  <span class="m-row-name">database-hourly</span>
+                  <span class="m-row-name">database-nightly</span>
                   <span class="m-row-spacer m-row-stats">
                     <span>8.9 GB</span><span>140 MB dedup</span><span>2,104 files</span><span>51s</span>
                   </span>
@@ -1134,10 +1221,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
               <div class="m-row">
                 <i class="m-row-stripe m-row-stripe--success"></i>
-                <span class="m-row-name">database-hourly</span>
-                <span class="m-row-when">every hour</span>
-                <span class="m-tile-sub">repo database-hourly</span>
-                <span class="m-row-spacer m-row-stats"><span>last 41m ago</span><span>next in 19m</span></span>
+                <span class="m-row-name">database-nightly</span>
+                <span class="m-row-when">23:00 daily</span>
+                <span class="m-tile-sub">repo database-nightly</span>
+                <span class="m-row-spacer m-row-stats"><span>last 11h ago</span><span>next in 13h</span></span>
                 <div class="m-row-actions">
                   <button class="m-btn" type="button">Run now</button>
                   <button class="m-btn m-btn--ghost" type="button">Open</button>
@@ -1154,10 +1241,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
           <div class="m-panel" role="tabpanel" id="panel-backups" aria-labelledby="tab-backups" tabindex="0" hidden>
             <div class="m-toolbar">
               <div class="m-seg" role="group" aria-label="Filter by status">
-                <button type="button" aria-pressed="true">All 33</button>
-                <button type="button" aria-pressed="false">Success 31</button>
-                <button type="button" aria-pressed="false">Warning 1</button>
-                <button type="button" aria-pressed="false">Failed 1</button>
+                <button type="button" aria-pressed="true">All 59</button>
+                <button type="button" aria-pressed="false">Success 55</button>
+                <button type="button" aria-pressed="false">Warning 2</button>
+                <button type="button" aria-pressed="false">Failed 2</button>
               </div>
               <button class="m-btn m-row-spacer" type="button">Newest first</button>
             </div>
@@ -1175,8 +1262,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               <div class="m-row">
                 <i class="m-row-stripe m-row-stripe--success"></i>
                 <span class="m-row-when">1d ago</span>
-                <span class="m-row-name">database-hourly</span>
-                <span class="m-tile-sub">web-server-01-2026-08-15T13:00</span>
+                <span class="m-row-name">database-nightly</span>
+                <span class="m-tile-sub">web-server-01-2026-08-15T23:00</span>
                 <span class="m-row-spacer m-row-stats">
                   <span>8.9 GB</span><span>140 MB</span><span>2,104 files</span><span>51s</span>
                 </span>
@@ -1353,6 +1440,453 @@ borg: Failed to create/acquire the lock /srv/borg/server-daily/lock.exclusive</p
     </p>
   </section>
 
+  <section id="q-settings">
+    <div class="stack measure">
+      <p class="eyebrow">Open question 1 &middot; drawn both ways</p>
+      <h2>Settings as a tab, or as a link in the header</h2>
+      <p class="prose">
+        Same content either way &mdash; the difference is whether configuration lives inside the
+        detail page or beside it. Both are drawn below at the same scale, cropped to the part that
+        actually changes.
+      </p>
+    </div>
+
+    <div class="opts">
+      <div class="opt">
+        <div class="opt-head">
+          <h3>A &mdash; Fourth tab</h3>
+          <span class="verdict verdict--yes">Recommended</span>
+          <p><code>/agents/web-server-01?tab=settings</code></p>
+        </div>
+        <div class="frame frame--compact">
+          <div class="frame-bar">
+            <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+            <span class="frame-path">/agents/web-server-01?tab=settings</span>
+          </div>
+          <div class="frame-body">
+            <div class="pane">
+              <p class="m-crumb"><b>Agents</b> / web-server-01</p>
+              <div class="m-head">
+                <div class="m-identity">
+                  <div class="m-title-row">
+                    <span class="m-hostname">web-server-01</span>
+                    <span class="m-badge m-badge--success"><i class="m-dot"></i>Online</span>
+                  </div>
+                  <div class="m-subtitle">Production Web Server</div>
+                </div>
+                <div class="m-head-actions">
+                  <button class="m-btn m-btn--primary" type="button">Upgrade to v0.9.4</button>
+                  <button class="m-btn" type="button">Activity log</button>
+                  <button class="m-btn m-btn--icon" type="button" aria-label="More agent actions">...</button>
+                </div>
+              </div>
+              <div class="m-tabs" role="tablist" aria-label="Agent sections, option A">
+                <button class="m-tab" role="tab" type="button" aria-selected="false">Overview</button>
+                <button class="m-tab" role="tab" type="button" aria-selected="false">Schedules<span class="m-tab-count">3</span></button>
+                <button class="m-tab" role="tab" type="button" aria-selected="false">Backups<span class="m-tab-count">59</span></button>
+                <button class="m-tab" role="tab" type="button" aria-selected="true">Settings</button>
+              </div>
+              <div class="m-settings">
+                <nav class="m-subnav" aria-label="Settings sections, option A">
+                  <button type="button" aria-current="false">Identity</button>
+                  <button type="button" aria-current="true">Backup defaults</button>
+                  <button type="button" aria-current="false">Hostname aliases</button>
+                  <button type="button" aria-current="false">Tags</button>
+                  <button type="button" class="is-danger" aria-current="false">Danger zone</button>
+                </nav>
+                <div class="m-setting-pane">
+                  <div class="m-card">
+                    <div class="m-card-head">
+                      <span class="m-card-title">Backup defaults</span>
+                      <button class="m-btn" type="button">Edit</button>
+                    </div>
+                    <div class="m-group">
+                      <span class="m-group-label">Paths</span>
+                      <div class="m-chips">
+                        <span class="m-chip">/etc</span><span class="m-chip">/home</span><span class="m-chip">/var/www</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="opt">
+        <div class="opt-head">
+          <h3>B &mdash; Header link to a settings route</h3>
+          <span class="verdict verdict--no">Rejected, for now</span>
+          <p><code>/agents/web-server-01/settings</code></p>
+        </div>
+        <div class="frame frame--compact">
+          <div class="frame-bar">
+            <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+            <span class="frame-path">/agents/web-server-01</span>
+          </div>
+          <div class="frame-body">
+            <div class="pane">
+              <p class="m-crumb"><b>Agents</b> / web-server-01</p>
+              <div class="m-head">
+                <div class="m-identity">
+                  <div class="m-title-row">
+                    <span class="m-hostname">web-server-01</span>
+                    <span class="m-badge m-badge--success"><i class="m-dot"></i>Online</span>
+                  </div>
+                  <div class="m-subtitle">Production Web Server</div>
+                </div>
+                <div class="m-head-actions">
+                  <button class="m-btn m-btn--primary" type="button">Upgrade to v0.9.4</button>
+                  <button class="m-btn" type="button">Activity log</button>
+                  <button class="m-btn" type="button">Settings</button>
+                  <button class="m-btn m-btn--icon" type="button" aria-label="More agent actions">...</button>
+                </div>
+              </div>
+              <div class="m-tabs" role="tablist" aria-label="Agent sections, option B">
+                <button class="m-tab" role="tab" type="button" aria-selected="true">Overview</button>
+                <button class="m-tab" role="tab" type="button" aria-selected="false">Schedules<span class="m-tab-count">3</span></button>
+                <button class="m-tab" role="tab" type="button" aria-selected="false">Backups<span class="m-tab-count">59</span></button>
+              </div>
+              <div class="m-note-strip">
+                The tab bar now holds only things that happened or will happen, which is a cleaner
+                grammar &mdash; but the action row is back to three buttons plus an overflow, which
+                is the row this redesign set out to cut. Settings becomes a second page with its own
+                route, its own breadcrumb and its own way back.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">&nbsp;</th>
+            <th scope="col">A &mdash; fourth tab</th>
+            <th scope="col">B &mdash; header link</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Router cost</td>
+            <td class="to">None. <code>?tab=settings</code> on the existing route</td>
+            <td class="to">A new route, a second view, a second breadcrumb</td>
+          </tr>
+          <tr>
+            <td>Convention</td>
+            <td class="to">Matches <code>RepoDetailView</code> and today's <code>AgentDetailView</code>, both of which drive tabs off <code>route.query.tab</code></td>
+            <td class="to">New pattern; nothing else in the app splits a detail page in two</td>
+          </tr>
+          <tr>
+            <td>Header actions</td>
+            <td class="to">Two buttons plus overflow</td>
+            <td class="to">Three buttons plus overflow</td>
+          </tr>
+          <tr>
+            <td>Tab bar grammar</td>
+            <td class="to">Mixed: three state tabs and one config tab</td>
+            <td class="to">Uniform: every tab is state</td>
+          </tr>
+          <tr>
+            <td>Getting back</td>
+            <td class="to">Click another tab; the page never unloads</td>
+            <td class="to">Browser back, or the breadcrumb</td>
+          </tr>
+          <tr>
+            <td>Room to grow</td>
+            <td class="to">Sub-nav holds maybe eight sections before it strains</td>
+            <td class="to">A full page, so effectively unbounded</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption">
+      A wins on every line except tab-bar grammar, and that one is a taste argument against five
+      concrete costs. Worth noting the two are not a one-way door: Settings is a self-contained
+      component either way, so if the sub-nav ever outgrows the pane, promoting it to a route is a
+      router change and nothing else.
+    </p>
+  </section>
+
+  <section id="q-imported">
+    <div class="stack measure">
+      <p class="eyebrow">Open question 2 &middot; answered</p>
+      <h2>Imported hosts keep every tab</h2>
+      <p class="prose">
+        No tab is dropped. An imported host has archives but no agent, so Schedules is empty
+        &mdash; and an empty tab that explains itself is more useful than a tab bar whose contents
+        shift depending on which host you opened. The position of Backups stays put across the
+        fleet, and the tab is exactly where the emptiness ends the moment the host is adopted.
+      </p>
+    </div>
+
+    <div class="frame frame--compact">
+      <div class="frame-bar">
+        <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+        <span class="frame-path">/agents/nas-archive?tab=schedules</span>
+      </div>
+      <div class="frame-body">
+        <div class="pane">
+          <p class="m-crumb"><b>Agents</b> / nas-archive</p>
+          <div class="m-head">
+            <div class="m-identity">
+              <div class="m-title-row">
+                <span class="m-hostname">nas-archive</span>
+                <span class="m-badge m-badge--neutral">Imported</span>
+              </div>
+              <div class="m-subtitle">No agent installed</div>
+              <div class="m-meta">
+                <span>discovered in <b>archive-main</b></span>
+                <span>first seen <b>2026-06-02</b></span>
+                <span>archives <b>41</b></span>
+                <span>newest <b>3d ago</b></span>
+              </div>
+            </div>
+            <div class="m-head-actions">
+              <button class="m-btn m-btn--primary" type="button">Adopt</button>
+              <button class="m-btn" type="button">Merge into&hellip;</button>
+              <button class="m-btn m-btn--icon" type="button" aria-label="More host actions">...</button>
+            </div>
+          </div>
+          <div class="m-tabs" role="tablist" aria-label="Imported host sections">
+            <button class="m-tab" role="tab" type="button" aria-selected="false">Overview</button>
+            <button class="m-tab" role="tab" type="button" aria-selected="true">Schedules<span class="m-tab-count">0</span></button>
+            <button class="m-tab" role="tab" type="button" aria-selected="false">Backups<span class="m-tab-count">41</span></button>
+            <button class="m-tab" role="tab" type="button" aria-selected="false">Settings</button>
+          </div>
+          <div class="m-empty-state">
+            <b>No schedules yet</b>
+            <p>
+              <span class="mono">nas-archive</span> was reconstructed from archives found in a
+              repository, so there is no agent here to run a backup. Adopt the host to install one,
+              or merge it into an agent that already exists.
+            </p>
+            <div class="m-empty-actions">
+              <button class="m-btn m-btn--primary" type="button">Adopt this host</button>
+              <button class="m-btn" type="button">Merge into&hellip;</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">
+      The header carries a different meta strip &mdash; there is no version, revision or build
+      timestamp for a host with no agent &mdash; and the two adoption actions take the primary
+      slot. <code>EmptyState</code> already exists in the components directory; this is that
+      component with copy that names the actual reason. Settings still opens: tags, hostname
+      aliases and the danger zone all apply to an imported host.
+    </p>
+  </section>
+
+  <section id="q-window">
+    <div class="stack measure">
+      <p class="eyebrow">Open question 3 &middot; four options</p>
+      <h2>What the success tile should actually count</h2>
+      <p class="prose">
+        The same tile, computed four ways, against three agents with different cadences. One
+        finding first, because it eliminates half the field:
+        <code>GET /agents/:hostname/reports</code> takes a <code>limit</code> and defaults to
+        <strong>50</strong>, and the view calls it with no parameters. Any window measured in
+        <em>days</em> is therefore only honest while the agent runs fewer than fifty backups in
+        that span. An hourly schedule does 720 a month.
+      </p>
+    </div>
+
+    <div class="wgrid-scroll">
+      <div class="wgrid">
+        <div class="wgrid-head">Window</div>
+        <div class="wgrid-head"><b>db-01</b>hourly &middot; 720 runs/30d</div>
+        <div class="wgrid-head"><b>app-02</b>daily &middot; 30 runs/30d</div>
+        <div class="wgrid-head"><b>nas-media</b>weekly &middot; 4 runs/30d</div>
+
+        <div class="wgrid-label">
+          <b>A. Last 30 days</b>
+          <span>as drawn above</span>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">30-day success</span>
+            <span class="m-tile-value">99%</span>
+            <div class="m-meter"><i style="width: 99%"></i></div>
+            <span class="m-tile-sub">715 of 720 runs</span>
+          </div>
+          <p class="wnote wnote--bad">
+            Five failures during last night's lock contention round to nothing. Also uncomputable:
+            720 &gt; the 50 the endpoint returns.
+          </p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">30-day success</span>
+            <span class="m-tile-value">93%</span>
+            <div class="m-meter"><i style="width: 93%"></i></div>
+            <span class="m-tile-sub">28 of 30 runs</span>
+          </div>
+          <p class="wnote wnote--good">Reads exactly right. Daily is the cadence this window was designed around.</p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">30-day success</span>
+            <span class="m-tile-value">75%</span>
+            <div class="m-meter"><i style="width: 75%"></i></div>
+            <span class="m-tile-sub">3 of 4 runs</span>
+          </div>
+          <p class="wnote wnote--bad">One missed week paints the tile amber. The next four weeks cannot move it above 75% or below it by less than 25 points.</p>
+        </div>
+
+        <div class="wgrid-label">
+          <b>B. Last 7 days</b>
+          <span>the alternative</span>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">7-day success</span>
+            <span class="m-tile-value">97%</span>
+            <div class="m-meter"><i style="width: 97%"></i></div>
+            <span class="m-tile-sub">163 of 168 runs</span>
+          </div>
+          <p class="wnote wnote--bad">Better, but still 168 runs against a 50-report ceiling, and last night's outage is still a three-point dip.</p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">7-day success</span>
+            <span class="m-tile-value">86%</span>
+            <div class="m-meter"><i style="width: 86%"></i></div>
+            <span class="m-tile-sub">6 of 7 runs</span>
+          </div>
+          <p class="wnote">Reactive, and jumpier: every single run is worth 14 points.</p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">7-day success</span>
+            <span class="m-tile-value">&mdash;</span>
+            <span class="m-tile-sub">1 run in window</span>
+          </div>
+          <p class="wnote wnote--bad">A weekly schedule contributes zero or one run, so the tile shows 0%, 100% or nothing at all.</p>
+        </div>
+
+        <div class="wgrid-label">
+          <b>C. Last 30 runs</b>
+          <span>count, not calendar</span>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">Last 30 runs</span>
+            <span class="m-tile-value">83%</span>
+            <div class="m-meter"><i style="width: 83%"></i></div>
+            <span class="m-tile-sub">25 of 30 &middot; past 30h</span>
+          </div>
+          <p class="wnote wnote--good">The outage finally shows. One request, <code>?limit=30</code>, inside the endpoint's default.</p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">Last 30 runs</span>
+            <span class="m-tile-value">93%</span>
+            <div class="m-meter"><i style="width: 93%"></i></div>
+            <span class="m-tile-sub">28 of 30 &middot; past 30d</span>
+          </div>
+          <p class="wnote wnote--good">Identical to option A, because for a daily agent 30 runs is 30 days.</p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">Last 30 runs</span>
+            <span class="m-tile-value">97%</span>
+            <div class="m-meter"><i style="width: 97%"></i></div>
+            <span class="m-tile-sub">29 of 30 &middot; past 7 months</span>
+          </div>
+          <p class="wnote">Always has a sample, but the sample reaches back over half a year. The tile has to say so.</p>
+        </div>
+
+        <div class="wgrid-label">
+          <b>D. Last 30 runs, drawn</b>
+          <span>count + outcome strip</span>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">Last 30 runs</span>
+            <span class="m-tile-value">5 failed <span class="m-badge m-badge--danger">Incident</span></span>
+            <div class="m-strip">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              <i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i><i class="bad"></i>
+              <i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <span class="m-tile-sub">past 30h &middot; oldest left</span>
+          </div>
+          <p class="wnote wnote--good">Five contiguous reds read as one incident that has since recovered &mdash; which is the truth, and which no percentage can express.</p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">Last 30 runs</span>
+            <span class="m-tile-value">2 failed</span>
+            <div class="m-strip">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="bad"></i><i></i>
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i class="bad"></i><i></i><i class="warn"></i><i></i><i></i><i></i><i></i>
+            </div>
+            <span class="m-tile-sub">past 30d &middot; oldest left</span>
+          </div>
+          <p class="wnote wnote--good">Two isolated reds, weeks apart: a flaky night, not a trend. Warnings get their own colour instead of being rounded into success.</p>
+        </div>
+        <div class="wcell">
+          <div class="m-tile">
+            <span class="m-tile-label">Last 30 runs</span>
+            <span class="m-tile-value">1 failed</span>
+            <div class="m-strip">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="bad"></i>
+            </div>
+            <span class="m-tile-sub">past 7 months &middot; oldest left</span>
+          </div>
+          <p class="wnote wnote--bad">The single red is the most recent run, which matters far more than 97% suggests. Position carries that; a percentage does not.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note">
+        <h3>The recommendation is D</h3>
+        <p>
+          Headline the failure count, draw the outcomes, and name the real time span underneath.
+          It is cadence-independent by construction, it fits <code>?limit=30</code> on an endpoint
+          the view already calls, and it distinguishes one incident from a pattern &mdash; the
+          distinction you actually open the page to make. When every run is clean the tile reads
+          &ldquo;All 30 clean&rdquo; over a solid green strip.
+        </p>
+      </div>
+      <div class="note">
+        <h3>Why not keep the percentage</h3>
+        <p>
+          A percentage is a fleet-level statistic that got put on a single-agent page. It answers
+          &ldquo;how does this host compare&rdquo;, which is a Dashboard question, and it is worst
+          exactly where it is needed most: the run that failed an hour ago moves it by one point
+          on an hourly agent and twenty-five on a weekly one.
+        </p>
+      </div>
+      <div class="note">
+        <h3>What this corrects</h3>
+        <p>
+          The earlier claim that every Overview number falls out of what the view already fetches
+          was too strong. The tile as first drawn &mdash; a 30-day rate &mdash; is not derivable
+          for a busy agent, because the reports call takes the server's default of 50. Option D
+          needs no new endpoint, but it does need an explicit <code>?limit=</code>.
+        </p>
+      </div>
+      <div class="note">
+        <h3>Still open</h3>
+        <p>
+          Whether 30 is the right run count. Twenty fits the tile at a comfortable cell width and
+          covers three weeks of daily backups; fifty is the endpoint's free ceiling but renders as
+          hairlines. The strip should probably size itself to the tile and take whatever fits.
+        </p>
+      </div>
+    </div>
+  </section>
+
   <section id="mapping">
     <div class="stack measure">
       <p class="eyebrow">Where everything went</p>
@@ -1441,12 +1975,13 @@ borg: Failed to create/acquire the lock /srv/borg/server-daily/lock.exclusive</p
       <div class="note">
         <h3>No new endpoints</h3>
         <p>
-          Last backup, 30-day success rate and the recent list all come from
-          <code>GET /agents/:hostname/reports</code>, which the view already loads. Next run and the
-          overdue badge come from <code>/schedules</code> and <code>/stats/health</code>, also
-          already loaded. Repository count comes from <code>/agents/:hostname/repos</code>.
-          &ldquo;Run now&rdquo; on a schedule row is the existing
-          <code>POST /schedules/:id/run</code>.
+          Last backup, the outcome strip and the recent list all come from
+          <code>GET /agents/:hostname/reports</code>, which the view already loads &mdash; though
+          it will need an explicit <code>?limit=30</code>, since the server defaults to 50 and the
+          view sends nothing. Next run and the overdue badge come from <code>/schedules</code> and
+          <code>/stats/health</code>, also already loaded. Repository count comes from
+          <code>/agents/:hostname/repos</code>. &ldquo;Run now&rdquo; on a schedule row is the
+          existing <code>POST /schedules/:id/run</code>.
         </p>
       </div>
       <div class="note">
@@ -1470,11 +2005,13 @@ borg: Failed to create/acquire the lock /srv/borg/server-daily/lock.exclusive</p
         </p>
       </div>
       <div class="note">
-        <h3>Open questions</h3>
+        <h3>Settled above</h3>
         <p>
-          Does a fourth tab beat a settings link in the header? Should the imported-host variant
-          drop the Backups tab entirely, since imported hosts have reports but no schedules? And the
-          30-day window is a guess &mdash; 7 days may read better for hourly schedules.
+          The three open questions are answered in their own sections: Settings is a
+          <a href="#q-settings">fourth tab</a>, imported hosts
+          <a href="#q-imported">keep every tab</a>, and the success tile counts
+          <a href="#q-window">the last 30 runs rather than a span of days</a>. What is still open
+          is the run count itself, and whether the strip should size to the tile.
         </p>
       </div>
     </div>

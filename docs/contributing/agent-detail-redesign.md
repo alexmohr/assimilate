@@ -150,13 +150,69 @@ wiring. Splitting along the four tabs is the same move F-24 made on
 `RepoDetailView`, which came out at 367 lines. See
 [`ui-design-audit.md`](ui-design-audit.md).
 
-## Open questions
+## Three questions, settled
 
-* Does a fourth tab beat a settings link in the header?
-* Should imported hosts drop the Schedules tab? They have reports but no
-  schedules, so the tab is always empty for them.
-* The success-rate window is a guess. 30 days reads well for daily schedules
-  and poorly for hourly ones; 7 days may be the better default.
+Each of these is drawn as options in the mockup; the sections are linked from
+its table of contents.
+
+### Settings: a fourth tab, not a header link
+
+Both were mocked. The tab wins on router cost (`?tab=settings` on the existing
+route versus a new route, a second view and a second breadcrumb), on
+convention (`RepoDetailView` and today's `AgentDetailView` both drive tabs off
+`route.query.tab`), and on the header (a `Settings` button would take the
+action row back to three buttons plus an overflow -- the row this redesign
+exists to cut). The link wins on one thing: a tab bar of three state tabs plus
+one configuration tab is mixed grammar.
+
+Not a one-way door. Settings is a self-contained component either way, so
+promoting it to its own route later is a router change and nothing else.
+
+### Imported hosts keep every tab
+
+Nothing is dropped. An imported host has archives but no agent, so its
+Schedules tab is empty -- and an empty tab that explains itself is worth more
+than a tab bar whose contents shift depending on which host you opened. The
+position of Backups stays fixed across the fleet, and the tab is exactly where
+the emptiness ends the moment the host is adopted. `EmptyState` renders the
+reason and offers Adopt and `Merge into...`.
+
+The imported header differs in two ways: no version, revision or build
+timestamp (there is no agent to report them), and the two adoption actions
+take the primary slot.
+
+### The success tile counts runs, not days
+
+`GET /agents/{hostname}/reports` takes a `limit` and defaults to 50; the view
+calls it with no parameters. Any window measured in *days* is therefore only
+honest while the agent runs fewer than fifty backups in that span, and an
+hourly schedule does 720 a month. That eliminates both calendar options:
+
+| Window | Hourly agent | Daily agent | Weekly agent |
+| --- | --- | --- | --- |
+| Last 30 days | 99%, five failures rounded away; needs 720 reports | 93%, reads right | 75% off one missed week |
+| Last 7 days | 97%, still 168 reports | 86%, every run worth 14 points | 0 or 1 runs, so no number |
+| Last 30 runs | 83%, past 30h | 93%, past 30d | 97%, past 7 months |
+| Last 30 runs, drawn | 5 failed, contiguous | 2 failed, weeks apart | 1 failed, most recent run |
+
+The recommendation is the last one: headline the failure count, draw the
+outcomes as a strip, and name the real time span underneath. It is
+cadence-independent by construction, it fits `?limit=30` inside the endpoint's
+default, and it separates one incident from a pattern -- which a percentage
+cannot express. When every run is clean the tile reads "All 30 clean" over a
+solid green strip.
+
+A percentage is a fleet statistic that ended up on a single-agent page; it
+belongs on the Dashboard, where every agent shares one window.
+
+**This corrects a claim above.** "Every number is derivable from what the view
+already fetches" was too strong: the 30-day rate as first drawn is not
+derivable for a busy agent. Option D still needs no new endpoint, but it does
+need an explicit `?limit=`.
+
+Still open: whether 30 is the right count. Twenty covers three weeks of daily
+backups and renders comfortably; fifty is the endpoint's free ceiling but
+draws as hairlines. The strip should probably size itself to the tile.
 
 ## If this is accepted
 

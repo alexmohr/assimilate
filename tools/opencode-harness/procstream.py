@@ -5,7 +5,7 @@
 during quiet stretches, instead of the silent capture-until-exit that makes
 a slow-but-working command indistinguishable from a hung one.
 
-Shared by opencode_runner.py (the opencode call itself) and validate.py
+Shared by agent_runner.py (the opencode/claude CLI call itself) and validate.py
 (pre-commit, cargo fmt/clippy/test/deny, npm format/lint/build/test) - all of
 these can run for minutes with a plain `subprocess.run(capture_output=True)`,
 which is exactly the silence this exists to remove.
@@ -54,10 +54,11 @@ def run_streaming(
     one variable should pass `{**os.environ, "VAR": value}`.
     """
     # start_new_session puts the child in its own process group so a timeout
-    # kill can take out every process it spawned (e.g. opencode's bash tool
-    # calling pre-commit/git), not just the top-level one - killing only the
-    # parent leaves grandchildren running orphaned, still holding locks or
-    # writing files, which then breaks every subsequent command in this repo.
+    # kill can take out every process it spawned (e.g. the agent CLI's own
+    # bash tool calling pre-commit/git), not just the top-level one - killing
+    # only the parent leaves grandchildren running orphaned, still holding
+    # locks or writing files, which then breaks every subsequent command in
+    # this repo.
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,

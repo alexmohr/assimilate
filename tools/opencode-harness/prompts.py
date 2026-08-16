@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-"""Builds the fix/implementation prompts handed to opencode.
+"""Builds the fix/implementation prompts handed to the agent CLI (opencode or
+claude - see agent_runner.py).
 
 All of the actual diagnosis (what's failing, why) happens in gh.py before
 this is called - these functions only format already-gathered, deterministic
-facts into an instruction. opencode is never asked to go figure out why CI is
-red on its own; it's handed the failing job's log text directly.
+facts into an instruction. The agent is never asked to go figure out why CI
+is red on its own; it's handed the failing job's log text directly.
 """
 
 from __future__ import annotations

@@ -9,6 +9,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_runner import SUPPORTED_CLIS as _VALID_AGENT_CLIS
+
 
 def _int(name: str, default: int) -> int:
     return int(os.environ.get(name, str(default)))
@@ -26,13 +28,43 @@ def _optional_int(name: str) -> int | None:
     return int(val) if val else None
 
 
+# Each backend's own cheap/fast classifier model, used as HARNESS_ROUTER_MODEL's
+# default - keyed by agent_cli so switching backends doesn't silently try to
+# route through a model id the other CLI's provider doesn't recognize.
+_DEFAULT_ROUTER_MODEL_BY_CLI = {
+    "opencode": "opencode-go/deepseek-v4-flash",
+    "claude": "claude-haiku-4-5-20251001",
+}
+
+
+def _agent_cli(name: str, default: str) -> str:
+    val = os.environ.get(name, default).strip().lower()
+    if val not in _VALID_AGENT_CLIS:
+        raise ValueError(
+            f"{name}={val!r} is not a supported agent CLI - must be one of {_VALID_AGENT_CLIS}"
+        )
+    return val
+
+
+def default_router_model(agent_cli: str) -> str:
+    """The router model HARNESS_ROUTER_MODEL defaults to for `agent_cli` when
+    it isn't set explicitly - public so main()'s `--agent-cli` CLI override
+    (which lands after Config.from_env() has already resolved a router_model
+    from whatever HARNESS_AGENT_CLI was in the environment) can re-derive the
+    right default for the CLI-chosen backend instead of silently keeping the
+    other backend's router model.
+    """
+    return _DEFAULT_ROUTER_MODEL_BY_CLI[agent_cli]
+
+
 @dataclass(frozen=True)
 class Config:
     repo: str
     repo_dir: Path
     base_branch: str
     poll_interval_seconds: int
-    opencode_model: str | None
+    agent_cli: str
+    agent_model: str | None
     router_model: str
     router_timeout_seconds: int
     opencode_timeout_seconds: int
@@ -55,13 +87,17 @@ class Config:
     def from_env() -> Config:
         repo_dir = Path(os.environ.get("HARNESS_REPO_DIR", ".")).resolve()
         log_file_env = os.environ.get("HARNESS_LOG_FILE")
+        agent_cli = _agent_cli("HARNESS_AGENT_CLI", "opencode")
         return Config(
             repo=os.environ.get("HARNESS_REPO", "alexmohr/assimilate"),
             repo_dir=repo_dir,
             base_branch=os.environ.get("HARNESS_BASE_BRANCH", "main"),
             poll_interval_seconds=_int("HARNESS_POLL_INTERVAL", 180),
-            opencode_model=None,
-            router_model=os.environ.get("HARNESS_ROUTER_MODEL", "opencode-go/deepseek-v4-flash"),
+            agent_cli=agent_cli,
+            agent_model=None,
+            router_model=os.environ.get(
+                "HARNESS_ROUTER_MODEL", _DEFAULT_ROUTER_MODEL_BY_CLI[agent_cli]
+            ),
             router_timeout_seconds=_int("HARNESS_ROUTER_TIMEOUT", 120),
             opencode_timeout_seconds=_int("HARNESS_OPENCODE_TIMEOUT", 14400),
             max_local_validation_attempts=_int("HARNESS_MAX_LOCAL_ATTEMPTS", 3),
@@ -90,7 +126,7 @@ class Config:
         misconfigured env var (e.g. set on its own line without `export`,
         so it never reached this process) is visible immediately instead of
         only showing up as an unexplained default several log lines later."""
-        model = self.opencode_model or f"(routed per-task via {self.router_model})"
+        model = self.agent_model or f"(routed per-task via {self.router_model})"
         max_solved = self.max_solved if self.max_solved is not None else "unlimited"
         target = "auto"
         if self.target_all_prs:
@@ -101,7 +137,8 @@ class Config:
             target = "issue(s) " + ",".join(f"#{n}" for n in self.target_issues)
         return (
             f"repo={self.repo} repo_dir={self.repo_dir} base_branch={self.base_branch} "
-            f"poll_interval={self.poll_interval_seconds}s model={model} target={target} "
+            f"poll_interval={self.poll_interval_seconds}s agent_cli={self.agent_cli} "
+            f"model={model} target={target} "
             f"opencode_timeout={self.opencode_timeout_seconds}s "
             f"max_local_attempts={self.max_local_validation_attempts} "
             f"max_stuck_cycles={self.max_stuck_cycles} max_solved={max_solved} "

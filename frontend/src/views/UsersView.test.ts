@@ -163,4 +163,286 @@ describe('UsersView', () => {
 
     expect(document.body.textContent).toContain('web-server-01 / daily')
   })
+
+  describe('user dialogs', () => {
+    const ADMIN = { auth: { user: { id: 99, username: 'admin', role: 'admin' } } }
+
+    const ROLES = [
+      { id: 10, name: 'operators' },
+      { id: 11, name: 'auditors' },
+    ]
+    const GROUPS = [{ id: 20, name: 'eu-west' }]
+    const REPOS = [{ id: 1, name: 'server-daily', enabled: true }]
+
+    function mockEditData(): void {
+      mockApiGet.mockImplementation((url: string) => {
+        if (url === '/roles') return Promise.resolve({ data: ROLES })
+        if (url === '/groups') return Promise.resolve({ data: GROUPS })
+        if (url === '/repos') return Promise.resolve({ data: REPOS })
+        if (/\/users\/\d+\/roles$/.test(url)) return Promise.resolve({ data: [ROLES[0]] })
+        if (/\/users\/\d+\/groups$/.test(url)) return Promise.resolve({ data: [] })
+        if (/\/users\/\d+\/permissions$/.test(url)) return Promise.resolve({ data: [] })
+        return Promise.resolve({ data: mockUsers })
+      })
+    }
+
+    async function render() {
+      const wrapper = renderWithPlugins(UsersView, { storeState: ADMIN })
+      await flushPromises()
+      return wrapper
+    }
+
+    async function openCreate(wrapper: Awaited<ReturnType<typeof render>>) {
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('New'))!
+        .trigger('click')
+      await flushPromises()
+    }
+
+    async function openEditFor(wrapper: Awaited<ReturnType<typeof render>>, index: number) {
+      await wrapper
+        .findAll('button')
+        .filter((b) => b.text().includes('Edit'))
+        [index].trigger('click')
+      await flushPromises()
+    }
+
+    async function selectTab(wrapper: Awaited<ReturnType<typeof render>>, label: string) {
+      await wrapper
+        .findAll('button.tab')
+        .find((t) => t.text().trim() === label)!
+        .trigger('click')
+      await flushPromises()
+    }
+
+    it('creates a user from the filled form', async () => {
+      const post = apiClient.post as ReturnType<typeof vi.fn>
+      post.mockResolvedValue({ data: {} })
+
+      const wrapper = await render()
+      await openCreate(wrapper)
+
+      await wrapper.find('#new-username').setValue('newcomer')
+      await wrapper.find('#new-password').setValue('correct horse battery')
+      await wrapper.find('#new-role').setValue('admin')
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+
+      expect(post).toHaveBeenCalledWith('/users', {
+        username: 'newcomer',
+        password: 'correct horse battery',
+        role: 'admin',
+      })
+    })
+
+    it('reports a create failure and keeps the dialog open', async () => {
+      const post = apiClient.post as ReturnType<typeof vi.fn>
+      post.mockRejectedValue(new Error('username taken'))
+
+      const wrapper = await render()
+      await openCreate(wrapper)
+      await wrapper.find('#new-username').setValue('newcomer')
+      await wrapper.find('#new-password').setValue('correct horse battery')
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+
+      expect(wrapper.find('.form-error').exists()).toBe(true)
+      expect(wrapper.find('#new-username').exists()).toBe(true)
+    })
+
+    it('closes the create dialog on Cancel without posting', async () => {
+      const post = apiClient.post as ReturnType<typeof vi.fn>
+      const wrapper = await render()
+      await openCreate(wrapper)
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Cancel')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(post).not.toHaveBeenCalled()
+      expect(wrapper.find('#new-username').exists()).toBe(false)
+    })
+
+    it('starts the create form empty each time it opens', async () => {
+      const wrapper = await render()
+      await openCreate(wrapper)
+      await wrapper.find('#new-username').setValue('discarded')
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Cancel')!
+        .trigger('click')
+      await flushPromises()
+
+      await openCreate(wrapper)
+      expect((wrapper.find('#new-username').element as HTMLInputElement).value).toBe('')
+    })
+
+    it('prefills the edit dialog with the user role', async () => {
+      mockEditData()
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+
+      expect((wrapper.find('#edit-role').element as HTMLSelectElement).value).toBe('user')
+    })
+
+    it('checks the roles the user already holds and leaves the rest clear', async () => {
+      mockEditData()
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Roles & Groups')
+
+      const boxes = wrapper.findAll('.rg-item input[type="checkbox"]')
+      expect(boxes.length).toBeGreaterThanOrEqual(3)
+      expect((boxes[0].element as HTMLInputElement).checked).toBe(true)
+      expect((boxes[1].element as HTMLInputElement).checked).toBe(false)
+    })
+
+    it('toggles a role on and back off', async () => {
+      mockEditData()
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Roles & Groups')
+
+      const second = wrapper.findAll('.rg-item input[type="checkbox"]')[1]
+      await second.setValue(true)
+      expect((second.element as HTMLInputElement).checked).toBe(true)
+
+      await second.setValue(false)
+      await flushPromises()
+      expect(
+        (wrapper.findAll('.rg-item input[type="checkbox"]')[1].element as HTMLInputElement).checked,
+      ).toBe(false)
+    })
+
+    it('toggles a group membership', async () => {
+      mockEditData()
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Roles & Groups')
+
+      const boxes = wrapper.findAll('.rg-item input[type="checkbox"]')
+      const groupBox = boxes[boxes.length - 1]
+      expect((groupBox.element as HTMLInputElement).checked).toBe(false)
+      await groupBox.setValue(true)
+      expect((groupBox.element as HTMLInputElement).checked).toBe(true)
+    })
+
+    // Each column writes the whole permission row back, so a toggle on one
+    // flag must not silently clear the others.
+    it('sends the full permission row when one flag is toggled', async () => {
+      mockEditData()
+      const put = apiClient.put as ReturnType<typeof vi.fn>
+      put.mockResolvedValue({ data: {} })
+
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Permissions')
+
+      await wrapper.findAll('.perm-check-cell input[type="checkbox"]')[0].trigger('change')
+      await flushPromises()
+
+      expect(put).toHaveBeenCalledWith(
+        '/repos/1/permissions/2',
+        expect.objectContaining({
+          can_view: true,
+          can_backup: false,
+          can_modify_schedules: false,
+          can_extract: false,
+          can_delete: false,
+        }),
+      )
+    })
+
+    it('drives each permission column independently', async () => {
+      mockEditData()
+      const put = apiClient.put as ReturnType<typeof vi.fn>
+      put.mockResolvedValue({ data: {} })
+
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Permissions')
+
+      const boxes = wrapper.findAll('.perm-check-cell input[type="checkbox"]')
+      expect(boxes).toHaveLength(5)
+      for (const box of boxes) {
+        await box.trigger('change')
+        await flushPromises()
+      }
+
+      // Each toggle keeps the flags already set, so the assertion is that
+      // the Nth call is the first to carry the Nth flag - not that it is the
+      // only true one.
+      const FIELDS = [
+        'can_view',
+        'can_backup',
+        'can_modify_schedules',
+        'can_extract',
+        'can_delete',
+      ] as const
+      expect(put.mock.calls).toHaveLength(5)
+      FIELDS.forEach((field, i) => {
+        const body = put.mock.calls[i][1] as Record<string, boolean>
+        expect(body[field]).toBe(true)
+        for (const later of FIELDS.slice(i + 1)) expect(body[later]).toBe(false)
+      })
+    })
+
+    it('sets a new password from the password tab', async () => {
+      mockEditData()
+      const put = apiClient.put as ReturnType<typeof vi.fn>
+      put.mockResolvedValue({ data: {} })
+
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Password')
+
+      await wrapper.find('#edit-password').setValue('a much longer secret')
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Reset Password')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(put).toHaveBeenCalled()
+      const passwordCall = put.mock.calls.find((c) => String(c[0]).includes('password'))
+      expect(passwordCall).toBeDefined()
+    })
+
+    it('names the user it is about to delete and drops the row on confirm', async () => {
+      const del = apiClient.delete as ReturnType<typeof vi.fn>
+      del.mockResolvedValue({ data: {} })
+
+      const wrapper = await render()
+      // Row order matches the fixture, so the first delete button is admin.
+      await wrapper.findAll('button.btn-danger-text')[0].trigger('click')
+      await flushPromises()
+      expect(document.body.textContent).toContain('admin')
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Delete')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(del).toHaveBeenCalledWith('/users/1')
+    })
+
+    it('keeps the user when the delete is cancelled', async () => {
+      const del = apiClient.delete as ReturnType<typeof vi.fn>
+      const wrapper = await render()
+      await wrapper.findAll('button.btn-danger-text')[0].trigger('click')
+      await flushPromises()
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'Cancel')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(del).not.toHaveBeenCalled()
+    })
+  })
 })

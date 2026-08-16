@@ -259,10 +259,10 @@ describe('ReposView', () => {
 
   it('shows "no match" message when filter text has no matches', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to see the plain "no results" message this test targets.
+    await clickGroupByHost(wrapper)
 
     const input = wrapper.find('input.search-input')
     await input.setValue('zzz-does-not-exist')
@@ -300,6 +300,9 @@ describe('ReposView', () => {
       storeState: { auth: { user: { role: 'viewer' } } },
     })
     await flushPromises()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to assert that non-matching repos are actually gone.
+    await clickGroupByHost(wrapper)
 
     const input = wrapper.find('input.search-input')
     await input.setValue('media')
@@ -477,10 +480,10 @@ describe('ReposView quota filter chips', () => {
 
   it('filters to only at-risk repos when the At risk chip is clicked', async () => {
     setupApiSuccess(reposWithQuota)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to assert that non-matching repos are actually gone.
+    await clickGroupByHost(wrapper)
 
     const chips = wrapper.findAll('.quota-fchip')
     await chips[1]!.trigger('click')
@@ -493,10 +496,8 @@ describe('ReposView quota filter chips', () => {
 
   it('filters to only unconfigured repos when the No quota chip is clicked', async () => {
     setupApiSuccess(reposWithQuota)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const chips = wrapper.findAll('.quota-fchip')
     await chips[2]!.trigger('click')
@@ -529,10 +530,9 @@ describe('ReposView group by host', () => {
     vi.clearAllMocks()
   })
 
-  it('groups repos sharing an ssh_host under one pool header', async () => {
+  it('groups repos sharing an ssh_host under one pool header by default', async () => {
     setupApiSuccess()
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const headers = wrapper.findAll('.pool-header')
     expect(headers).toHaveLength(1)
@@ -559,7 +559,7 @@ describe('ReposView group by host', () => {
     const tagButton = wrapper.findAll('button').find((b) => b.text() === 'Group by tag')
     const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
 
-    await clickGroupByHost(wrapper)
+    // Host grouping is on by default.
     expect(hostButton!.classes()).toContain('active')
     expect(tagButton!.classes()).not.toContain('active')
     expect(wrapper.find('.pool-header').exists()).toBe(true)
@@ -569,6 +569,12 @@ describe('ReposView group by host', () => {
     expect(tagButton!.classes()).toContain('active')
     expect(hostButton!.classes()).not.toContain('active')
     expect(wrapper.find('.pool-header').exists()).toBe(false)
+
+    await hostButton!.trigger('click')
+    await flushPromises()
+    expect(hostButton!.classes()).toContain('active')
+    expect(tagButton!.classes()).not.toContain('active')
+    expect(wrapper.find('.pool-header').exists()).toBe(true)
   })
 
   it('dims filtered-out repos instead of removing them from the group', async () => {
@@ -598,7 +604,6 @@ describe('ReposView group by host', () => {
     ]
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const atRiskChip = wrapper.findAll('.quota-fchip').find((c) => c.text().includes('At risk'))
     await atRiskChip!.trigger('click')
@@ -633,7 +638,6 @@ describe('ReposView group by host', () => {
     ]
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const hosts = wrapper.findAll('.pool-host').map((h) => h.text())
     expect(hosts).toEqual(['a.example.com', 'z.example.com'])
@@ -653,7 +657,6 @@ describe('ReposView group by host', () => {
   it('navigates to the repo detail page when a card inside a host group is clicked', async () => {
     setupApiSuccess()
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const card = wrapper
       .findAll('.repo-hostgrouped .repo-card')
@@ -701,7 +704,6 @@ describe('ReposView group by host', () => {
       serverQuota({ warn_bytes: 21_474_836_480, critical_bytes: 32_212_254_720 }),
     )
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const track = wrapper.find('.pool-track')
     expect(track.exists()).toBe(true)
@@ -720,7 +722,6 @@ describe('ReposView group by host', () => {
       }),
     )
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const note = wrapper.find('.pool-note').text()
     expect(note).toContain('over critical')
@@ -732,7 +733,6 @@ describe('ReposView group by host', () => {
       serverQuota({ warn_bytes: null, critical_bytes: 32_212_254_720 }),
     )
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     expect(wrapper.find('.pool-note').text()).toContain('healthy')
     expect(wrapper.find('.pool-mark').exists()).toBe(false)
@@ -786,6 +786,8 @@ describe('ReposView quota sort', () => {
   it('sorts by quota utilization ascending, with unconfigured repos always last', async () => {
     setupApiSuccess(reposForSort)
     const wrapper = await mountAsAdmin()
+    // Sort only applies to the flat list - a host group orders its own cards by size.
+    await clickGroupByHost(wrapper)
     await clickQuotaSort(wrapper)
 
     const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
@@ -812,6 +814,7 @@ describe('ReposView quota sort', () => {
     ]
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
     await clickQuotaSort(wrapper)
 
     const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
@@ -822,6 +825,9 @@ describe('ReposView quota sort', () => {
   it('resets to the full list when the All chip is clicked after filtering', async () => {
     setupApiSuccess(reposForSort)
     const wrapper = await mountAsAdmin()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to assert that non-matching repos are actually gone.
+    await clickGroupByHost(wrapper)
 
     const chips = wrapper.findAll('.quota-fchip')
     const atRiskChip = chips.find((c) => c.text().includes('At risk'))

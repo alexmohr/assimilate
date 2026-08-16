@@ -6,9 +6,24 @@ import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import RepoSchedulesTab from './RepoSchedulesTab.vue'
 import { apiClient } from '../api/client'
+import type * as VueRouter from 'vue-router'
+
+type VueRouterModule = typeof VueRouter
+
+const toastSuccess = vi.fn()
+const routerPush = vi.fn()
 
 vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn(), post: vi.fn() },
+}))
+
+vi.mock('../composables/useToast', () => ({
+  useToast: () => ({ success: toastSuccess, error: vi.fn() }),
+}))
+
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<VueRouterModule>()),
+  useRouter: () => ({ push: routerPush }),
 }))
 
 vi.mock('../utils/error', () => ({
@@ -120,5 +135,39 @@ describe('RepoSchedulesTab', () => {
     await flushPromises()
 
     expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/repos/9/schedules')
+  })
+
+  // One case per ScheduleType arm: a type added to the union without a label
+  // renders blank in the run-started toast, which is easy to miss.
+  it.each([
+    ['backup', 'Backup'],
+    ['check', 'Integrity Check'],
+    ['verify', 'Verify (extract dry-run)'],
+  ])('names a %s schedule when it is started', async (type, label) => {
+    mockList([{ ...SCHEDULE, schedule_type: type }])
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} } as never)
+
+    const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().trim() === 'Run')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/schedules/7/run', {})
+    expect(toastSuccess).toHaveBeenCalledWith(`${label} started.`)
+  })
+
+  it('opens the schedule when its card is selected', async () => {
+    mockList([SCHEDULE])
+    const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
+    await flushPromises()
+
+    await wrapper.find('.schedule-card').trigger('click')
+    await flushPromises()
+
+    expect(routerPush).toHaveBeenCalledWith('/schedules/7')
   })
 })

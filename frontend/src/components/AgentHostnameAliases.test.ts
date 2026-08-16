@@ -111,4 +111,40 @@ describe('AgentHostnameAliases', () => {
     await (wrapper.vm as unknown as { reload: (h?: string) => Promise<void> }).reload('renamed-01')
     expect(apiClient.get).toHaveBeenLastCalledWith('/agents/renamed-01/hostname-patterns')
   })
+
+  // The alias list is a side panel on the agent page. A failed load is logged
+  // rather than surfaced, so a transient error does not put an error banner
+  // on a page whose main content loaded fine.
+  it('stays quiet when the alias list fails to load', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('unreachable'))
+    const wrapper = await mount()
+
+    expect(wrapper.find('.form-error').exists()).toBe(false)
+    expect(wrapper.findAll('.pattern-row')).toHaveLength(0)
+  })
+
+  it('reports a failure to add an alias, and keeps the typed pattern', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('pattern already exists'))
+    const wrapper = await mount()
+
+    const input = wrapper.find('.pattern-add-row input')
+    await input.setValue('web-*')
+    await wrapper.find('.pattern-add-row button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('web-*')
+  })
+
+  it('reports a failure to delete an alias and keeps the row', async () => {
+    vi.mocked(apiClient.delete).mockRejectedValue(new Error('in use'))
+    const wrapper = await mount()
+    const before = wrapper.findAll('.pattern-row').length
+
+    await wrapper.find('.pattern-delete').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').exists()).toBe(true)
+    expect(wrapper.findAll('.pattern-row')).toHaveLength(before)
+  })
 })

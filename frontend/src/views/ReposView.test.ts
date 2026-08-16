@@ -516,6 +516,101 @@ describe('ReposView', () => {
     expect(text).not.toContain('database-hourly')
     expect(text).not.toContain('media-weekly')
   })
+
+  it('navigates to the repo detail page when a card in the flat list is clicked', async () => {
+    setupApiSuccess()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+
+    const card = wrapper.findAll('.repo-card').find((c) => c.text().includes('server-daily'))
+    await card!.trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/repos/1')
+  })
+
+  it('toggles sort direction when the same sort button is clicked twice', async () => {
+    setupApiSuccess()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+
+    // Name-ascending is the default; the first click on the already-active field reverses it.
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'database-hourly',
+      'media-weekly',
+      'server-daily',
+    ])
+
+    await clickButton(wrapper, (t) => t.startsWith('Name'))
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'server-daily',
+      'media-weekly',
+      'database-hourly',
+    ])
+
+    await clickButton(wrapper, (t) => t.startsWith('Name'))
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'database-hourly',
+      'media-weekly',
+      'server-daily',
+    ])
+  })
+
+  it('opens the create dialog from the empty state action', async () => {
+    setupApiSuccess([])
+    const wrapper = await mountAsAdmin()
+
+    await clickButton(wrapper, (t) => t.includes('Add Repository'))
+
+    const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
+    expect(dialog.props('open')).toBe(true)
+  })
+
+  it('groups repos by tag, placing multi-tag repos in each group and untagged repos in "Untagged"', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
+      if (url === '/repo-tags') {
+        return Promise.resolve({
+          data: [
+            { repo_id: 1, tag_name: 'zebra', tag_color: '#000000' },
+            { repo_id: 1, tag_name: 'critical', tag_color: '#ff0000' },
+            { repo_id: 2, tag_name: 'critical', tag_color: '#ff0000' },
+          ],
+        })
+      }
+      if (String(url).startsWith('/tags')) {
+        return Promise.resolve({
+          data: [
+            { id: 1, name: 'critical', color: '#ff0000' },
+            { id: 2, name: 'zebra', color: '#000000' },
+          ],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = await mountAsAdmin()
+
+    await clickButton(wrapper, (t) => t === 'Group by tag')
+
+    const groups = wrapper.findAll('.tag-group')
+    const titles = groups.map((g) => g.find('.tag-group-title').text())
+    // Alphabetical, with "Untagged" always last.
+    expect(titles).toEqual(['critical', 'zebra', 'Untagged'])
+
+    const criticalGroup = groups[0]!
+    expect(criticalGroup.text()).toContain('server-daily')
+    expect(criticalGroup.text()).toContain('database-hourly')
+
+    const zebraGroup = groups[1]!
+    expect(zebraGroup.text()).toContain('server-daily')
+    expect(zebraGroup.text()).not.toContain('database-hourly')
+
+    const untaggedGroup = groups[2]!
+    expect(untaggedGroup.text()).toContain('media-weekly')
+  })
 })
 
 describe('ReposView quota filter chips', () => {

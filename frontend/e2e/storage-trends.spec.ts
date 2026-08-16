@@ -54,7 +54,7 @@ test('storage trend widget repo filter dropdown is present', async ({ page }) =>
   const trendPanel = page.locator('.panel').filter({ hasText: 'Storage Trend' })
   await expect(trendPanel).toBeVisible({ timeout: 10_000 })
   // The select element itself should be visible; it always has the "All Repos" option selected
-  await expect(trendPanel.locator('select.stats-select')).toBeVisible()
+  await expect(trendPanel.locator('select.chart-range-select')).toBeVisible()
 })
 
 test('storage trend charts render with demo data', async ({ page }) => {

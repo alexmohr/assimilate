@@ -10,14 +10,17 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use shared::responses::{
-    CalendarDayResponse, CalendarEventResponse, DashboardAgentLinkResponse,
-    DashboardDestinationResponse, DashboardFindingResponse, DashboardOperationResponse,
-    DashboardOverviewResponse, DashboardProtectionCoverageResponse,
-    DashboardRepositoryCapacityResponse, DashboardSummaryCountersResponse,
-    DashboardSummaryResponse, DashboardUpcomingScheduleResponse, HealthResponse,
-    StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
-    TrendEntryResponse,
+use shared::{
+    responses::{
+        CalendarDayResponse, CalendarEventResponse, DashboardAgentLinkResponse,
+        DashboardDestinationResponse, DashboardFindingResponse, DashboardOperationResponse,
+        DashboardOverviewResponse, DashboardProtectionCoverageResponse,
+        DashboardRepositoryCapacityResponse, DashboardSummaryCountersResponse,
+        DashboardSummaryResponse, DashboardUpcomingScheduleResponse, HealthResponse,
+        StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
+        TrendEntryResponse,
+    },
+    types::{FindingKind, FindingSeverity, FindingStatus},
 };
 
 use super::auth::AuthUser;
@@ -32,6 +35,35 @@ fn percentage_of(part: i64, total: i64) -> f64 {
     }
     let scaled = part.saturating_mul(10_000).checked_div(total).unwrap_or(0);
     f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
+}
+
+/// Upper bound, in characters, for a finding reason sourced from an
+/// agent-supplied message.
+///
+/// Borg failure output can run to kilobytes of stderr, and a finding renders as
+/// a single dashboard row, so an uncapped message lets one finding stretch the
+/// Needs Attention panel without limit. The untruncated text stays available on
+/// the activity record the finding links to.
+const MAX_FINDING_REASON_CHARS: usize = 200;
+
+/// Normalizes an agent- or import-supplied message into a bounded, single-line
+/// finding reason, falling back to `fallback` when no usable message exists.
+fn finding_reason(message: Option<&str>, fallback: &str) -> String {
+    let message = message
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if message.is_empty() {
+        return fallback.to_owned();
+    }
+    let mut chars = message.chars();
+    let short: String = chars.by_ref().take(MAX_FINDING_REASON_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{short}...")
+    } else {
+        short
+    }
 }
 
 /// Query parameters for filtering the activity feed.
@@ -175,9 +207,9 @@ fn dashboard_findings(
             .filter(|host| host.enabled_assignment_count.unwrap_or(0) == 0)
             .map(|host| DashboardFindingResponse {
                 id: format!("agent:{}:unassigned", host.agent_id),
-                kind: "host_unassigned".to_owned(),
-                severity: "warning".to_owned(),
-                status: "warning".to_owned(),
+                kind: FindingKind::HostUnassigned,
+                severity: FindingSeverity::Warning,
+                status: FindingStatus::Warning,
                 hostname: Some(host.hostname.clone()),
                 schedule_id: None,
                 schedule_name: None,
@@ -196,25 +228,25 @@ fn dashboard_findings(
         if repo.enabled_schedule_count.unwrap_or(0) == 0 {
             findings.push(repository_finding(
                 repo,
-                "repository_unscheduled",
-                "warning",
-                "warning",
+                FindingKind::RepositoryUnscheduled,
+                FindingSeverity::Warning,
+                FindingStatus::Warning,
                 "No enabled backup schedule uses this repository",
             ));
         }
         match repository_quota_status(repo) {
             DashboardQuotaStatus::Critical => findings.push(repository_finding(
                 repo,
-                "repository_quota_critical",
-                "critical",
-                "failed",
+                FindingKind::RepositoryQuotaCritical,
+                FindingSeverity::Critical,
+                FindingStatus::Failed,
                 "Repository storage is at or above its critical quota",
             )),
             DashboardQuotaStatus::Warning => findings.push(repository_finding(
                 repo,
-                "repository_quota_warning",
-                "warning",
-                "warning",
+                FindingKind::RepositoryQuotaWarning,
+                FindingSeverity::Warning,
+                FindingStatus::Warning,
                 "Repository storage is at or above its warning quota",
             )),
             DashboardQuotaStatus::Unconfigured | DashboardQuotaStatus::Healthy => {}
@@ -222,16 +254,14 @@ fn dashboard_findings(
         if repo.import_error.is_some() {
             findings.push(repository_finding(
                 repo,
-                "repository_import_failed",
-                "critical",
-                "failed",
-                repo.import_error
-                    .as_deref()
-                    .unwrap_or("Repository import failed"),
+                FindingKind::RepositoryImportFailed,
+                FindingSeverity::Critical,
+                FindingStatus::Failed,
+                &finding_reason(repo.import_error.as_deref(), "Repository import failed"),
             ));
         }
     }
-    findings.sort_by_key(|finding| severity_rank(&finding.severity));
+    findings.sort_by_key(|finding| severity_rank(finding.severity));
     findings.retain(|finding| !dismissed.contains(&finding.id));
     findings
 }
@@ -251,7 +281,7 @@ fn dashboard_running_operations(
             };
             Some(DashboardOperationResponse {
                 report_id,
-                status: "running".to_owned(),
+                status: FindingStatus::Running,
                 hostname: target.hostname.clone(),
                 schedule_id: target.schedule_id,
                 schedule_name: target.schedule_name.clone().unwrap_or_default(),
@@ -365,13 +395,10 @@ fn target_finding(
     let (kind, severity, status, reason, occurred_at, deadline, destination) =
         if target.latest_failed == Some(true) {
             (
-                "backup_failed".to_owned(),
-                "critical".to_owned(),
-                "failed".to_owned(),
-                target
-                    .latest_message
-                    .clone()
-                    .unwrap_or_else(|| "Latest backup failed".to_owned()),
+                FindingKind::BackupFailed,
+                FindingSeverity::Critical,
+                FindingStatus::Failed,
+                finding_reason(target.latest_message.as_deref(), "Latest backup failed"),
                 target.latest_finished_at,
                 None,
                 DashboardDestinationResponse::Activity {
@@ -380,9 +407,9 @@ fn target_finding(
             )
         } else if overdue_at.is_some_and(|deadline| now > deadline) {
             (
-                "schedule_target_overdue".to_owned(),
-                "critical".to_owned(),
-                "overdue".to_owned(),
+                FindingKind::ScheduleTargetOverdue,
+                FindingSeverity::Critical,
+                FindingStatus::Overdue,
                 "No successful backup completed in the expected cron window".to_owned(),
                 target.last_success_at,
                 overdue_at,
@@ -392,13 +419,13 @@ fn target_finding(
             )
         } else if target.latest_warning == Some(true) {
             (
-                "backup_warning".to_owned(),
-                "warning".to_owned(),
-                "warning".to_owned(),
-                target
-                    .latest_message
-                    .clone()
-                    .unwrap_or_else(|| "Latest backup completed with warnings".to_owned()),
+                FindingKind::BackupWarning,
+                FindingSeverity::Warning,
+                FindingStatus::Warning,
+                finding_reason(
+                    target.latest_message.as_deref(),
+                    "Latest backup completed with warnings",
+                ),
                 target.latest_finished_at,
                 None,
                 DashboardDestinationResponse::Activity {
@@ -407,9 +434,9 @@ fn target_finding(
             )
         } else if target.last_success_at.is_none() && target.schedule_last_run_at.is_some() {
             (
-                "schedule_target_never_succeeded".to_owned(),
-                "critical".to_owned(),
-                "never_succeeded".to_owned(),
+                FindingKind::ScheduleTargetNeverSucceeded,
+                FindingSeverity::Critical,
+                FindingStatus::NeverSucceeded,
                 "This enabled schedule target has run but never succeeded".to_owned(),
                 target.latest_finished_at,
                 target.next_run_at,
@@ -423,9 +450,9 @@ fn target_finding(
             && !connected.contains(&target.hostname)
         {
             (
-                "host_offline_due_soon".to_owned(),
-                "warning".to_owned(),
-                "offline_due_soon".to_owned(),
+                FindingKind::HostOfflineDueSoon,
+                FindingSeverity::Warning,
+                FindingStatus::OfflineDueSoon,
                 "Agent is offline and this schedule is due within two hours".to_owned(),
                 None,
                 target.next_run_at,
@@ -463,16 +490,16 @@ fn agent_link(host: &db::dashboard::EligibleAgentRow) -> DashboardAgentLinkRespo
 
 fn repository_finding(
     repo: &db::dashboard::RepositoryRow,
-    kind: &str,
-    severity: &str,
-    status: &str,
+    kind: FindingKind,
+    severity: FindingSeverity,
+    status: FindingStatus,
     reason: &str,
 ) -> DashboardFindingResponse {
     DashboardFindingResponse {
-        id: format!("repository:{}:{kind}", repo.repo_id),
-        kind: kind.to_owned(),
-        severity: severity.to_owned(),
-        status: status.to_owned(),
+        id: format!("repository:{}:{}", repo.repo_id, kind),
+        kind,
+        severity,
+        status,
         hostname: None,
         schedule_id: None,
         schedule_name: None,
@@ -487,34 +514,11 @@ fn repository_finding(
     }
 }
 
-/// Sort-order classification of a [`DashboardFindingResponse::severity`] wire
-/// value. Kept internal to `severity_rank`; the API's `severity` field stays
-/// a plain string since the frontend renders it directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Severity {
-    Critical,
-    Warning,
-    Info,
-    Unknown,
-}
-
-impl From<&str> for Severity {
-    fn from(s: &str) -> Self {
-        match s {
-            "critical" => Self::Critical,
-            "warning" => Self::Warning,
-            "info" => Self::Info,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-fn severity_rank(severity: &str) -> u8 {
-    match Severity::from(severity) {
-        Severity::Critical => 0,
-        Severity::Warning => 1,
-        Severity::Info => 2,
-        Severity::Unknown => 3,
+fn severity_rank(severity: FindingSeverity) -> u8 {
+    match severity {
+        FindingSeverity::Critical => 0,
+        FindingSeverity::Warning => 1,
+        FindingSeverity::Info => 2,
     }
 }
 
@@ -1098,6 +1102,13 @@ async fn project_upcoming_schedule_events(
     month_end: chrono::NaiveDate,
     day_map: &mut std::collections::BTreeMap<String, Vec<CalendarEventResponse>>,
 ) {
+    // Batch-fetch target hostnames for every schedule up front instead of one query per
+    // schedule inside the loop below -- this scales with fleet size on every calendar load.
+    let schedule_ids: Vec<i64> = schedules.iter().map(|s| s.id).collect();
+    let hostnames_by_schedule = db::get_schedule_target_hostnames_by_schedule(pool, &schedule_ids)
+        .await
+        .unwrap_or_default();
+
     for schedule in schedules {
         if filter_repo_id.is_some_and(|rid| schedule.repo_id != Some(rid)) {
             continue;
@@ -1107,10 +1118,10 @@ async fn project_upcoming_schedule_events(
             .and_then(|rid| repos.iter().find(|r| r.id == rid))
             .map(|r| r.name.clone())
             .unwrap_or_default();
-        let hostname = db::get_schedule_target_hostnames(pool, schedule.id)
-            .await
-            .ok()
-            .and_then(|h| h.into_iter().next())
+        let hostname = hostnames_by_schedule
+            .get(&schedule.id)
+            .and_then(|h| h.first())
+            .cloned()
             .unwrap_or_default();
 
         let mut cursor = now;
@@ -1278,7 +1289,10 @@ pub async fn undismiss_finding(
 
 #[cfg(test)]
 mod tests {
-    use shared::{responses::HealthResponse, types::BackupStatus};
+    use shared::{
+        responses::HealthResponse,
+        types::{BackupStatus, FindingKind, FindingSeverity},
+    };
 
     #[test]
     fn health_response_parses_valid_status() {
@@ -1314,9 +1328,14 @@ mod tests {
 
     #[test]
     fn severity_rank_orders_critical_before_warning_before_info() {
-        assert!(super::severity_rank("critical") < super::severity_rank("warning"));
-        assert!(super::severity_rank("warning") < super::severity_rank("info"));
-        assert!(super::severity_rank("info") < super::severity_rank("bogus"));
+        assert!(
+            super::severity_rank(super::FindingSeverity::Critical)
+                < super::severity_rank(super::FindingSeverity::Warning)
+        );
+        assert!(
+            super::severity_rank(super::FindingSeverity::Warning)
+                < super::severity_rank(super::FindingSeverity::Info)
+        );
     }
 
     #[test]
@@ -1484,8 +1503,8 @@ mod tests {
         )
         .expect("expected a backup_failed finding");
 
-        assert_eq!(finding.kind, "backup_failed");
-        assert_eq!(finding.severity, "critical");
+        assert_eq!(finding.kind, FindingKind::BackupFailed);
+        assert_eq!(finding.severity, FindingSeverity::Critical);
         assert_eq!(finding.reason, "boom");
         assert!(matches!(
             finding.destination,
@@ -1508,7 +1527,7 @@ mod tests {
         )
         .expect("expected a schedule_target_overdue finding");
 
-        assert_eq!(finding.kind, "schedule_target_overdue");
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetOverdue);
         assert!(matches!(
             finding.destination,
             super::DashboardDestinationResponse::Schedule { schedule_id } if schedule_id == 1
@@ -1531,9 +1550,82 @@ mod tests {
         )
         .expect("expected a backup_warning finding");
 
-        assert_eq!(finding.kind, "backup_warning");
-        assert_eq!(finding.severity, "warning");
+        assert_eq!(finding.kind, FindingKind::BackupWarning);
+        assert_eq!(finding.severity, FindingSeverity::Warning);
         assert_eq!(finding.reason, "low disk space");
+    }
+
+    #[test]
+    fn finding_reason_keeps_short_messages_verbatim() {
+        assert_eq!(super::finding_reason(Some("boom"), "fallback"), "boom");
+    }
+
+    #[test]
+    fn finding_reason_falls_back_for_missing_or_blank_messages() {
+        assert_eq!(super::finding_reason(None, "fallback"), "fallback");
+        assert_eq!(
+            super::finding_reason(Some("   \n\t"), "fallback"),
+            "fallback"
+        );
+    }
+
+    #[test]
+    fn finding_reason_collapses_whitespace_into_a_single_line() {
+        assert_eq!(
+            super::finding_reason(Some("borg failed:\n  lock timeout\n"), "fallback"),
+            "borg failed: lock timeout"
+        );
+    }
+
+    #[test]
+    fn finding_reason_truncates_messages_beyond_the_character_cap() {
+        let reason = super::finding_reason(Some(&"a".repeat(5_000)), "fallback");
+
+        assert_eq!(reason.chars().count(), super::MAX_FINDING_REASON_CHARS + 3);
+        assert!(reason.ends_with("..."));
+    }
+
+    #[test]
+    fn finding_reason_truncates_on_character_boundaries() {
+        let reason = super::finding_reason(Some(&"\u{e4}".repeat(5_000)), "fallback");
+
+        assert_eq!(
+            reason,
+            format!("{}...", "\u{e4}".repeat(super::MAX_FINDING_REASON_CHARS))
+        );
+    }
+
+    #[test]
+    fn finding_reason_keeps_a_message_exactly_at_the_cap_untruncated() {
+        let message = "a".repeat(super::MAX_FINDING_REASON_CHARS);
+        let reason = super::finding_reason(Some(&message), "fallback");
+
+        assert_eq!(reason, message);
+        assert!(!reason.ends_with("..."));
+    }
+
+    #[test]
+    fn target_finding_truncates_an_unbounded_failure_message() {
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_message = Some("borg stderr ".repeat(1_000));
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a backup_failed finding");
+
+        assert_eq!(
+            finding.reason.chars().count(),
+            super::MAX_FINDING_REASON_CHARS + 3
+        );
+        assert!(finding.reason.starts_with("borg stderr"));
+        assert!(finding.reason.ends_with("..."));
     }
 
     #[test]
@@ -1552,7 +1644,7 @@ mod tests {
         )
         .expect("expected a schedule_target_never_succeeded finding");
 
-        assert_eq!(finding.kind, "schedule_target_never_succeeded");
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetNeverSucceeded);
     }
 
     #[test]
@@ -1570,7 +1662,7 @@ mod tests {
         )
         .expect("expected a host_offline_due_soon finding");
 
-        assert_eq!(finding.kind, "host_offline_due_soon");
+        assert_eq!(finding.kind, FindingKind::HostOfflineDueSoon);
         assert!(matches!(
             finding.destination,
             super::DashboardDestinationResponse::Host { ref hostname } if hostname == "host-a"

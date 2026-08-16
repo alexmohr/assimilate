@@ -19,6 +19,7 @@
 | `AGENT_BINARY_DIR` | — | No | Directory containing arch-specific agent binaries (`agent-x86_64`, `agent-aarch64`, etc.) used by the SSH deploy feature. If unset, the server looks in `/app/` (Docker) or alongside its own executable. |
 | `VAPID_PUBLIC_KEY` | — | No | Web Push VAPID public key. Used as a fallback for browser push notifications when no key is stored in system settings. See [Notifications](notifications.md). |
 | `VAPID_PRIVATE_KEY` | — | No | Web Push VAPID private key. Fallback companion to `VAPID_PUBLIC_KEY`; keys stored via the API take precedence. |
+| `ASSIMILATE_TRUSTED_PROXIES` | — | No | Comma-separated list of trusted proxy CIDR networks (e.g., `10.0.0.0/8,172.16.0.0/12`). When set, the server respects the `X-Forwarded-For` header from these proxies to determine the real client IP for rate limiting. Leave empty to never trust `X-Forwarded-For`. |
 
 !!! warning "Security"
     `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager and never change it after initial setup.
@@ -40,11 +41,13 @@ System settings are stored in the database and managed through the UI or the `/a
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `retention_days` | `7` | Legacy setting — number of days to retain backup-run *history* (failed/cancelled runs without an archive) and system event log entries. Replaced by the three independent settings below on first save, but still read as a fallback. |
+| `retention_days` | `7` | Legacy setting — number of days to retain backup-run *history* (failed/cancelled runs without an archive) and system event log entries. Replaced by the independent settings below on first save, but still read as a fallback. |
 | `report_retention_days` | `retention_days` (or `0`) | Days to keep successful/archived backup reports. Reports with an archive are pruned by this window. `0` = keep forever. |
 | `failed_report_retention_days` | `365` | Days to keep failed/archive-less backup reports. `0` = keep forever. |
 | `system_event_retention_days` | `retention_days` (or `90`) | Days to keep system event log entries. `0` = keep forever. |
+| `notification_delivery_retention_days` | `retention_days` (or `30`) | Days to keep notification delivery-attempt history (the `notification_deliveries` debug/retry log). `0` = keep forever. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
+| `session_idle_timeout_minutes` | `480` | Number of minutes of inactivity before a session is automatically revoked. Must be a positive integer; the idle timeout cannot currently be disabled. Does not apply to "Remember Me" sessions, which are bounded only by their 7-day absolute expiry. |
 
 ## Database Storage
 
@@ -156,12 +159,35 @@ These values are compiled into the server and are not runtime-configurable witho
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| Max login attempts | `5` | Failed login attempts allowed within the window before the account is rate-limited. |
-| Login window | `15 minutes` | Rolling time window used to count failed login attempts. |
-| Session cookie | `HttpOnly; SameSite=Lax; Path=/; Max-Age=86400` | Session cookie attributes. Sessions expire after 24 hours. |
+| Login rate limit (per-username, per-IP) | `5 attempts per 15 minutes` | Scoped to a single (username, IP) pair; rotating usernames from the same IP is not caught by this limiter alone. Returns 429 when exceeded. |
+| Login rate limit (per-IP) | `30 attempts per minute` | IP-address-scoped, independent of username. Applies to `/api/auth/login` and the TOTP login-step endpoints. Returns 429 when exceeded. |
+| Account lockout threshold | `10 consecutive failed attempts since last successful login` | Number of failed attempts (across all IPs) before the account is temporarily locked. Returns 401 (same as invalid credentials) to prevent enumeration. |
+| Lockout duration (exponential backoff) | `1 min → 5 min → 15 min → 1 hr → 24 hr` | Escalating lockout durations based on consecutive lockout cycles. Resets on successful login. |
+| Login attempt record retention | `90 days` | Failed/successful login attempt records (used for the rate limit and lockout checks above) older than this are pruned by the scheduler's retention cleanup. |
+| API rate limit (per-user) | `60 requests per 60 seconds` | Sliding-window rate limit applied to mutating (POST/PUT/PATCH/DELETE) requests on authenticated routes; reads (GET/HEAD/OPTIONS) are not throttled. Returns 429 when exceeded. |
+| Session cookie | `HttpOnly; SameSite=Lax; Path=/; Max-Age=86400` | Session cookie attributes. Sessions expire after 24 hours (7 days with remember-me). |
 | Password minimum length | `8 characters` | Minimum length enforced when setting or changing a password. |
 | Token hashing | SHA-256 | API tokens are stored as SHA-256 hashes; the plaintext is never persisted. |
 | Passphrase encryption | AES-256-GCM | Repository passphrases are encrypted with a key derived from `ASSIMILATE_SECRET_KEY`. |
+| Session idle timeout | `480` minutes (8 hours) | Inactive sessions are automatically revoked after this duration. Configurable via System Settings. |
+| TOTP/2FA | SHA-1, 30-second period, 6-digit codes | Two-factor authentication using time-based one-time passwords. Enrolled per user from the Profile page. Recovery codes (bcrypt-hashed) are provided at enrollment. |
+
+### Two-Factor Authentication (TOTP)
+
+Users can enable TOTP-based two-factor authentication from their **Profile** page. Once enabled:
+
+1. **Login** requires password + TOTP code in two steps.
+2. The password step returns a temporary session token (valid for 10 minutes) that can only be used to complete TOTP verification.
+3. **Recovery codes** (10 codes, provided at enrollment) can bypass TOTP if the authenticator device is lost. Each recovery code can be used once.
+4. To disable TOTP, the current password must be provided.
+
+### Session Management
+
+Users can view and manage their active sessions from the **Sessions** tab in their Profile page:
+
+- Each session shows its creation time, expiration, last activity, and whether "Remember Me" is enabled.
+- Users can revoke individual sessions (except the current one).
+- An **Idle Timeout** can be configured in System Settings. Sessions with no activity beyond this threshold are automatically revoked.
 
 See [Security](security.md) for a full discussion of the security model.
 

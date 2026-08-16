@@ -57,8 +57,8 @@ pub async fn export_config(
             display_name: agent.display_name.clone(),
             default_backup_paths: agent.default_backup_paths.clone(),
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
-            default_pre_backup_commands: agent.default_pre_backup_commands.clone(),
-            default_post_backup_commands: agent.default_post_backup_commands.clone(),
+            default_pre_backup_commands: agent.default_pre_backup_commands.0.clone(),
+            default_post_backup_commands: agent.default_post_backup_commands.0.clone(),
             default_file_change_patterns_raw: agent.default_file_change_patterns_raw.clone(),
             hostname_patterns: patterns.into_iter().map(|p| p.pattern).collect(),
         });
@@ -188,9 +188,8 @@ async fn build_schedule_export(
         })
         .collect();
 
-    let pre_backup_commands = serde_json::from_str(&sched.pre_backup_commands).unwrap_or_default();
-    let post_backup_commands =
-        serde_json::from_str(&sched.post_backup_commands).unwrap_or_default();
+    let pre_backup_commands = sched.pre_backup_commands.0.clone();
+    let post_backup_commands = sched.post_backup_commands.0.clone();
 
     Ok(ScheduleExport {
         name: sched.name.clone(),
@@ -536,11 +535,6 @@ async fn import_schedule(
 
     let target_ids = resolve_schedule_target_agent_ids(pool, sched, hostname_to_id, result).await?;
 
-    let pre_cmds_json =
-        serde_json::to_string(&sched.pre_backup_commands).unwrap_or_else(|_| "[]".to_owned());
-    let post_cmds_json =
-        serde_json::to_string(&sched.post_backup_commands).unwrap_or_else(|_| "[]".to_owned());
-
     let schedule_type_str = sched.schedule_type.to_string();
     let on_failure_str = sched.on_failure.to_string();
 
@@ -560,8 +554,8 @@ async fn import_schedule(
         keep_yearly: sched.keep_yearly,
         compact_enabled: sched.compact_enabled,
         rate_limit_kbps: sched.rate_limit_kbps,
-        pre_backup_commands: &pre_cmds_json,
-        post_backup_commands: &post_cmds_json,
+        pre_backup_commands: &sched.pre_backup_commands,
+        post_backup_commands: &sched.post_backup_commands,
         on_failure: &on_failure_str,
     };
 

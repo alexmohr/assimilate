@@ -38,7 +38,7 @@ sync_repo() {
 }
 
 echo "==> Creating borg repositories on disk..."
-for REPO_NAME in server-daily database-hourly media-weekly; do
+for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo; do
     REPO_DIR="/backup/repos/$REPO_NAME"
     if [ ! -d "$REPO_DIR" ]; then
         su -c "BORG_PASSPHRASE=demo-passphrase-123 borg init --encryption=repokey-blake2 $REPO_DIR" borg
@@ -49,15 +49,16 @@ echo "==> Cleaning up existing demo data (idempotent re-run)..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
 DELETE FROM backup_reports WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod'));
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN agents c ON c.id = st.agent_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM schedules WHERE name = 'Stale nightly report';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01');
-DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
+DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01');
+DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
-DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
+DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
-DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly');
+DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo');
 DELETE FROM system_events;
 DELETE FROM audit_log;
 DELETE FROM login_attempts;
@@ -75,8 +76,8 @@ SQL
 echo "==> Logging in..."
 login
 
-echo "==> Setting timezone to Europe/Berlin..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90}'
+echo "==> Setting timezone to Europe/Berlin and configuring session idle timeout..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"notification_delivery_retention_days":30,"session_idle_timeout_minutes":480}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
@@ -85,6 +86,7 @@ MEDIA_TOKEN=$(api POST "/api/agents" '{"hostname":"media-store-01","display_name
 api POST "/api/agents" '{"hostname":"unassigned-01","display_name":"Unassigned Demo Agent"}' > /dev/null
 api POST "/api/agents" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null
 api POST "/api/agents" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Agent"}' > /dev/null
+api POST "/api/agents" '{"hostname":"stale-report-01","display_name":"Stale Report Demo"}' > /dev/null
 
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
@@ -126,6 +128,34 @@ REPO_WEEKLY_ID=$(api POST "/api/repos" "{
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
 }" | jq -r '.id')
+
+# Dedicated repo for the stale-report-01 demo below, never shared with a
+# schedule that runs real backups and never synced. list_archive_names_for_repo
+# treats every backup_reports.archive_name for a repo as a "known" archive, and
+# a full/scheduled sync (sync_existing_archives, SyncMode::Existing) deletes any
+# backup_reports row whose archive_name isn't found in a real `borg list` of
+# that repo (see delete_archive_records_by_names in db/mod.rs). The backdated
+# report seeded below has no matching real archive on disk, so if it shared a
+# repo that ever gets synced (like server-daily, synced for web-server-01's
+# real backups), it gets silently deleted by that reconciliation within
+# minutes - this is what caused the Retry-button e2e test to fail against the
+# live demo despite passing every local check.
+STALE_REPORT_REPO_ID=$(api POST "/api/repos" "{
+    \"name\": \"stale-report-repo\",
+    \"repo_path\": \"/backup/repos/stale-report-repo\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"passphrase\": \"demo-passphrase-123\",
+    \"compression\": \"lz4\"
+}" | jq -r '.id')
+api PUT "/api/repos/$STALE_REPORT_REPO_ID" "{
+    \"repo_path\": \"/backup/repos/stale-report-repo\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"sync_schedule\": null
+}" > /dev/null
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
 DO $$
@@ -190,9 +220,16 @@ api PUT "/api/repos/$REPO_WEEKLY_ID" "{
 }" > /dev/null
 
 # Blocks until no repo reports importing == true (sync runs in the background).
+# Must poll /api/repos/stats, not /api/repos: the latter returns the plain
+# RepoResponse DTO, which has no `importing` field at all, so `.importing`
+# is always null there and this loop would break on its very first
+# iteration regardless of whether a sync is actually still running -
+# exactly the bug that made every downstream step (schedule_id backfill,
+# archive tagging, the dashboard's per-schedule history) silently race
+# against archives that hadn't been imported yet.
 wait_for_imports() {
     for _attempt in $(seq 1 120); do
-        still=$(curl -sf "$BASE_URL/api/repos" -H "$AUTH_HEADER" \
+        still=$(curl -sf "$BASE_URL/api/repos/stats" -H "$AUTH_HEADER" \
             | jq '[.[] | select(.importing == true)] | length' 2>/dev/null || echo 1)
         [ "$still" = "0" ] && break
         sleep 2
@@ -229,6 +266,7 @@ DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id 
 MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='media-store-01'")
 OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='offline-due-01'")
 DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='disabled-only-01'")
+STALE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='stale-report-01'")
 
 echo "==> Creating schedules..."
 api POST "/api/schedules" "{
@@ -339,17 +377,50 @@ api POST "/api/schedules" "{
     ]
 }" > /dev/null
 
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-UPDATE backup_reports br
-SET schedule_id = s.id
-FROM schedules s
-JOIN schedule_targets st ON st.schedule_id = s.id
-WHERE br.schedule_id IS NULL
-  AND br.repo_id = s.repo_id
-  AND br.agent_id = st.agent_id
-  AND s.enabled = true
-  AND s.name <> 'Offline agent due soon';
+api POST "/api/schedules" "{
+    \"name\": \"Stale nightly report\",
+    \"agent_ids\": [$STALE_REPORT_ID],
+    \"repo_id\": $STALE_REPORT_REPO_ID,
+    \"cron_expression\": \"0 5 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/opt/app\"]
+}" > /dev/null
+
+# Demonstrates the Schedules page's "N host(s) overdue" expand toggle: the
+# schedule's own last_run_at/next_run_at look on track (last dispatch a
+# couple hours ago, next one tonight), but this target host's own most
+# recent backup report is old enough that it's overdue for a daily cron
+# (see is_overdue() in crates/server/src/api/stats.rs) - the exact
+# "looks fine but the badge says Overdue" scenario the toggle exists to
+# explain. No error_message on the report, since this host's problem is
+# staleness, not a failure.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, status, archive_name)
+SELECT $STALE_REPORT_ID, $STALE_REPORT_REPO_ID, s.id,
+       NOW() - interval '4 days' - interval '5 minutes', NOW() - interval '4 days',
+       'success', 'stale-report-01-backup-old'
+FROM schedules s WHERE s.name = 'Stale nightly report';
+
+UPDATE schedules
+SET last_run_at = NOW() - interval '2 hours',
+    next_run_at = NOW() + interval '10 hours'
+WHERE name = 'Stale nightly report';
 SQL
+
+# Fail loudly here rather than leaving the Retry-button e2e test to fail with
+# a confusing "Overdue badge never appeared" 20+ minutes later - this makes a
+# silently-empty INSERT (e.g. no schedule matched the SELECT) diagnosable
+# from the seed step itself instead of guessed at from a downstream test.
+STALE_REPORT_COUNT=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM backup_reports WHERE agent_id = $STALE_REPORT_ID AND archive_name = 'stale-report-01-backup-old'")
+if [ "$STALE_REPORT_COUNT" != "1" ]; then
+    echo "expected exactly 1 backdated backup_reports row for stale-report-01, found $STALE_REPORT_COUNT" >&2
+    exit 1
+fi
 
 echo "==> Adding global excludes..."
 # /api/excludes stores a single raw_text blob (one pattern per line) - it is not
@@ -387,13 +458,17 @@ echo "==> Creating additional users and roles..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL'
 INSERT INTO users (username, password_hash) VALUES
     ('operator1', '$2b$10$bO6/.9GSDqqTPFqe1CiOGOf2UZt3rxK71x7CfBXlFotSLhT0aUoZ2'),
-    ('viewer1', '$2b$10$Ex5wHmqtI7IFdor4vJdXo.6YvqGErhf3PtiKGKCDORiArpZwyg3Ze')
+    ('viewer1', '$2b$10$Ex5wHmqtI7IFdor4vJdXo.6YvqGErhf3PtiKGKCDORiArpZwyg3Ze'),
+    ('totpuser', '$2b$10$92LXqE0n28dyZnMu3ZALt.EsjPxgzLcjcOL4Oapg.mGLah7y65bW2')
 ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'operator1' AND r.name = 'operator'
 ON CONFLICT DO NOTHING;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'viewer1' AND r.name = 'viewer'
+ON CONFLICT DO NOTHING;
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'totpuser' AND r.name = 'viewer'
 ON CONFLICT DO NOTHING;
 SQL
 
@@ -429,12 +504,12 @@ SQL
 echo "==> Adding system events..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
-    (NOW() - interval '5 minutes', 'agent_connected', 'web-server-01', 'Agent connected (version 0.1.0)'),
-    (NOW() - interval '4 minutes', 'agent_connected', 'db-server-01', 'Agent connected (version 0.1.0)'),
-    (NOW() - interval '3 minutes', 'agent_connected', 'media-store-01', 'Agent connected (version 0.1.0)'),
-    (NOW() - interval '2 days', 'agent_disconnected', 'media-store-01', 'Agent disconnected: connection timeout'),
-    (NOW() - interval '7 days', 'backup_failed', 'web-server-01', 'Backup failed: Repository lock could not be acquired'),
-    (NOW() - interval '1 day', 'backup_warning', 'web-server-01', 'Backup completed with warnings');
+    (NOW() - interval '5 minutes', 'repo_sync', 'web-server-01', 'Repository sync completed'),
+    (NOW() - interval '4 minutes', 'repo_sync', 'db-server-01', 'Repository sync completed'),
+    (NOW() - interval '3 minutes', 'repo_sync', 'media-store-01', 'Repository sync completed'),
+    (NOW() - interval '2 days', 'repo_sync_slow', 'media-store-01', 'Repository sync took longer than the warning threshold'),
+    (NOW() - interval '7 days', 'repo_sync_failed', 'web-server-01', 'Repository sync failed: repository lock could not be acquired'),
+    (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token');
 SQL
 
 echo "==> Adding audit log entries..."
@@ -518,11 +593,20 @@ SQL
 
 echo "==> Adding warnings to the most recent web-server-01 backup report..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
+-- The first warning is deliberately long-winded, since borg emits
+-- multi-sentence diagnostics: the activity log shows it in full, while a
+-- dashboard Needs Attention finding built from it gets capped and clamped
+-- rather than growing a row as tall as the message happens to be.
 UPDATE backup_reports
 SET warnings = ARRAY[
-        'file changed while we backed it up: /var/www/config.php',
+        'file changed while we backed it up: /var/www/config.php - the size or inode changed between stat() and read(), so the archived copy may not match the file on disk; borg archived the version it read first and continued with the remaining backup sources',
         'slow read on /var/log/nginx/access.log'
     ],
+    -- The agent populates error_message for warning-only runs too (the
+    -- backup_warning notification path reads it); the UI hides the
+    -- redundant Error box for warning-status reports instead of the agent
+    -- dropping the message, so this mirrors real agent behavior.
+    error_message = 'file changed while we backed it up: /var/www/config.php - the size or inode changed between stat() and read(), so the archived copy may not match the file on disk; borg archived the version it read first and continued with the remaining backup sources; slow read on /var/log/nginx/access.log',
     status = 'warning'
 WHERE id = (
     SELECT id FROM backup_reports
@@ -544,5 +628,53 @@ echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
 }
 IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
 echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
+
+echo "==> Backfilling schedule_id on imported archives..."
+# Kept as the very last data-mutating step (rather than right after
+# wait_for_imports()/wait_for_enrichment() return) as extra insurance now
+# that wait_for_imports() itself is fixed to poll /api/repos/stats - by here,
+# every other seed step that touches backup_reports (archive tagging, the
+# warnings UPDATE) has already run against the same data, so the import is
+# guaranteed to have landed.
+#
+# web-server-01's server-daily archives match both its own solo daily
+# schedule (line ~265) and the multi-agent sequential schedule (line ~346),
+# since both target the same repo and include this agent. A plain UPDATE ...
+# FROM would pick an unspecified one of the matching schedules per row when
+# more than one qualifies, so the DISTINCT ON below deterministically picks
+# the lowest schedule id (the report's earliest/primary owning schedule) -
+# required for the dashboard's per-schedule average-duration lookups to find
+# a consistent, non-empty history.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE backup_reports br
+SET schedule_id = matched.schedule_id
+FROM (
+    SELECT DISTINCT ON (br2.id) br2.id AS report_id, s.id AS schedule_id
+    FROM backup_reports br2
+    JOIN schedules s ON s.repo_id = br2.repo_id
+    JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
+    WHERE br2.schedule_id IS NULL
+      AND s.enabled = true
+      AND s.name <> 'Offline agent due soon'
+    ORDER BY br2.id, s.id
+) matched
+WHERE br.id = matched.report_id;
+SQL
+
+# Fail loudly here rather than leaving the dashboard ETA e2e test to fail with
+# a confusing "left" timeout 15+ minutes later. The dashboard's per-schedule
+# average-duration lookup (frontend/e2e/fixtures.ts's
+# mockRunningBackupOperation and dashboard.spec.ts) hardcodes schedule_id=1
+# for web-server-01's server-daily archives, so the backfill above must land
+# on exactly that id for all 14 of them.
+WEB01_SERVER_DAILY_SCHEDULE_IDS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COALESCE(br.schedule_id::text, 'NULL') || ':' || COUNT(*) FROM backup_reports br \
+     JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+     WHERE a.hostname = 'web-server-01' AND r.name = 'server-daily' AND br.archive_name IS NOT NULL \
+     GROUP BY br.schedule_id ORDER BY br.schedule_id")
+if [ "$WEB01_SERVER_DAILY_SCHEDULE_IDS" != "1:14" ]; then
+    echo "expected all 14 web-server-01/server-daily imported archives to have schedule_id=1, found: $WEB01_SERVER_DAILY_SCHEDULE_IDS" >&2
+    exit 1
+fi
 
 echo "==> Demo data seeded successfully."

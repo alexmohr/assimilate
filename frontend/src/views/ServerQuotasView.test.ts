@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
+import { mockErrorUtils, mockFormatBytes } from '../test-utils/sharedMocks'
 
 vi.mock('../api/serverQuotas', () => ({
   listServerQuotas: vi.fn(),
@@ -16,21 +17,29 @@ vi.mock('../composables/useMobile', () => ({
   useMobile: () => ({ isMobile: isMobileRef }),
 }))
 
-vi.mock('../utils/format', () => ({
-  formatBytes: (bytes: number): string => `${bytes} B`,
-}))
+vi.mock('../utils/format', () => mockFormatBytes())
 
-vi.mock('../utils/error', () => ({
-  extractError: (_e: unknown): string => 'API error',
-  extractBlobError: async (_e: unknown): Promise<string> => 'API error',
-}))
+vi.mock('../utils/error', () => mockErrorUtils())
 
 vi.mock('../components/BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
 }))
 
 vi.mock('../components/ToggleSwitch.vue', () => ({
-  default: { template: '<input type="checkbox" />', props: ['modelValue'] },
+  default: {
+    template: `<input type="checkbox" :checked="modelValue" @change="$emit('update:modelValue', $event.target.checked)" />`,
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+  },
+}))
+
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (payload: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
 }))
 
 import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
@@ -71,6 +80,9 @@ describe('ServerQuotasView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     isMobileRef.value = false
+    for (const key of Object.keys(wsHandlers)) {
+      delete wsHandlers[key]
+    }
   })
 
   it('shows loading state initially', async () => {
@@ -114,13 +126,42 @@ describe('ServerQuotasView', () => {
     await wrapper.find('button.btn-ghost').trigger('click')
     await nextTick()
 
+    await wrapper.find('#warn-gb').setValue(5)
+    await wrapper.find('#warn-action').setValue('block_backups')
+    await wrapper.find('#critical-gb').setValue(10)
+    await wrapper.find('#critical-action').setValue('disable_schedule')
+    await wrapper.find('.toggle-row input[type="checkbox"]').setValue(false)
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
     expect(mockUpsert).toHaveBeenCalledWith(
       'other.example.com',
-      expect.objectContaining({ warn_action: 'notify_only', critical_action: 'notify_only' }),
+      expect.objectContaining({
+        warn_action: 'block_backups',
+        critical_action: 'disable_schedule',
+        enabled: false,
+      }),
     )
+  })
+
+  it('shows an error and lets the user cancel the edit modal', async () => {
+    mockList.mockResolvedValue([configuredQuota])
+    mockUpsert.mockRejectedValue(new Error('save failed'))
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('API error')
+
+    await wrapper.find('button.close-btn').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
   it('removes a configured quota', async () => {
@@ -159,5 +200,20 @@ describe('ServerQuotasView', () => {
     await flushPromises()
 
     expect(mockDelete).toHaveBeenCalledWith('backup.example.com')
+  })
+
+  it('reloads usage totals when a DataChanged event arrives (e.g. after a backup completes)', async () => {
+    mockList.mockResolvedValue([configuredQuota])
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+    expect(wrapper.text()).toContain(`${configuredQuota.total_deduplicated_size} B`)
+
+    const grownQuota = { ...configuredQuota, total_deduplicated_size: 999_999_999_999 }
+    mockList.mockResolvedValue([grownQuota])
+    wsHandlers['DataChanged']?.(undefined)
+    await flushPromises()
+
+    expect(mockList).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('999999999999 B')
   })
 })

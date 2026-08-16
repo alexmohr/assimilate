@@ -15,10 +15,11 @@ use shared::{
     crypto::encrypt_passphrase,
     responses::{
         BreakLockResponse, ConfirmRelocationResponse, ExecBorgResponse, InitRepoResponse,
-        MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse, RepoResponse,
-        RepoWithStatsResponse, RescanResponse, SyncResponse,
+        MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse,
+        RepoQuotaSummaryResponse, RepoResponse, RepoWithStatsResponse, RescanResponse,
+        SyncResponse,
     },
-    types::{BORG_REPO_ENV_KEY, BorgEncryption, build_repo_url},
+    types::{BORG_REPO_ENV_KEY, BorgEncryption, SystemEventType, build_repo_url},
 };
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -53,7 +54,7 @@ impl From<RepoRow> for RepoResponse {
             encryption: row.encryption.parse().unwrap_or_default(),
             enabled: row.enabled,
             owner_id: row.owner_id,
-            visibility: row.visibility,
+            visibility: row.visibility.parse().unwrap_or_default(),
             sync_schedule: row.sync_schedule,
         }
     }
@@ -78,7 +79,7 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             import_total: row.import_total,
             import_status_message: row.import_status_message,
             owner_id: row.owner_id,
-            visibility: row.visibility,
+            visibility: row.visibility.parse().unwrap_or_default(),
             sync_schedule: row.sync_schedule,
             last_synced_at: row.last_synced_at,
             archive_count: row.archive_count,
@@ -93,6 +94,19 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             last_op_at: row.last_op_at,
             last_op_by: row.last_op_by,
             current_op: None,
+            quota: row.quota_enabled.map(|enabled| RepoQuotaSummaryResponse {
+                warn_bytes: row.quota_warn_bytes,
+                critical_bytes: row.quota_critical_bytes,
+                warn_action: row
+                    .quota_warn_action
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                critical_action: row
+                    .quota_critical_action
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default(),
+                enabled,
+            }),
         }
     }
 }
@@ -824,6 +838,10 @@ pub async fn list_repos_with_stats(
     let repos = db::list_repos_with_stats(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
+    // Quota configuration is otherwise gated to operators/admins (see
+    // `require_operator_or_admin` in api/quota.rs) - strip it here too, so embedding it on the
+    // list response doesn't leak it to a viewer who can see the repo but not its quota.
+    let can_view_quota = effective.can_delete_repo || effective.can_view_all_repos;
     let mut visible = Vec::with_capacity(repos.len());
     for repo in repos {
         if is_visible_to_user(
@@ -835,7 +853,10 @@ pub async fn list_repos_with_stats(
         )
         .await?
         {
-            let response = RepoWithStatsResponse::from(repo);
+            let mut response = RepoWithStatsResponse::from(repo);
+            if !can_view_quota {
+                response.quota = None;
+            }
             visible.push(response);
         }
     }
@@ -863,12 +884,19 @@ pub async fn list_repos_with_stats(
 /// Returns an error if the underlying operation fails.
 pub async fn get_repo(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(repo_id): Path<i64>,
 ) -> Result<Json<RepoWithStatsResponse>, ApiError> {
     let mut res: RepoWithStatsResponse =
         db::get_repo_with_stats(&state.pool, repo_id).await?.into();
     res.current_op = state.repo_op_tracker.get(repo_id).await;
+    // Quota configuration is otherwise gated to operators/admins (see
+    // `require_operator_or_admin` in api/quota.rs) - strip it here too, so embedding it on this
+    // response doesn't leak it to a viewer who can see the repo but not its quota.
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !(effective.can_delete_repo || effective.can_view_all_repos) {
+        res.quota = None;
+    }
     Ok(Json(res))
 }
 
@@ -1114,7 +1142,14 @@ pub async fn break_lock(
             op: state.repo_op_tracker.get(repo_id).await,
         });
 
-    let result = run_borg_break_lock(&repo_url, &passphrase, &state.task_registry).await;
+    let result = run_borg_break_lock(
+        repo_id,
+        &repo_url,
+        &passphrase,
+        &state.task_registry,
+        &state.repo_lock,
+    )
+    .await;
 
     state.repo_op_tracker.clear(repo_id).await;
     state
@@ -1280,6 +1315,13 @@ pub async fn exec_borg(
 
     info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
 
+    // Serializes against every other operation that touches this repo's local borg cache
+    // (backup, delete, import, rescan, reset & sync, and Break Lock's own cache-lock
+    // clearing) - an ad-hoc admin command like `compact`/`prune`/`recreate` genuinely uses
+    // the cache exactly like those do, and without this an unrelated concurrent operation
+    // could corrupt state.
+    let _repo_lock_guard = state.repo_lock.acquire(repo_id).await;
+
     let output = Borg::new()
         .with_registry(state.task_registry.clone())
         .run(&req.args, &env)
@@ -1361,6 +1403,12 @@ pub async fn migrate_encryption(
         u16::try_from(repo.ssh_port).unwrap_or(22),
         &repo.repo_path,
     );
+
+    // Serializes against every other operation that touches this repo's local borg cache
+    // (backup, delete, import, rescan, reset & sync, Break Lock's cache-lock clearing) for
+    // the whole migration, not just the `borg init` call below - the SSH rename that
+    // precedes it already mutates the repository a concurrent operation could be using.
+    let _repo_lock_guard = state.repo_lock.acquire(repo_id).await;
 
     let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
@@ -1653,12 +1701,118 @@ async fn run_borg_info_once(
     Ok(BorgInfoResult { encryption })
 }
 
+/// Upper bound for the lock probe [`clear_stale_cache_lock_if_present`] uses to surface a
+/// stale local cache lock's path via borg's own error message. Deliberately short - this call
+/// exists only to read the path out of borg's error, not to wait out real contention. `borg
+/// break-lock` below still targets the repository lock with the normal [`LOCK_WAIT_SECS`]
+/// regardless of what this probe finds.
+const CACHE_LOCK_PROBE_WAIT_SECS: &str = "1";
+/// How long `run_borg_break_lock` waits to acquire `RepoLock` before it will probe for or
+/// clear a stale local cache lock. Deliberately short: this only needs to prove no other
+/// operation from this server is *currently* using the cache, not wait out a hung one (that's
+/// what Break Lock exists to recover from).
+const CACHE_LOCK_SERIALIZATION_WAIT: Duration = Duration::from_secs(2);
+
+/// Probes the repository for a stale local *cache* lock (as opposed to the repository lock
+/// `borg break-lock` already clears) and, if found, attempts to remove it. Returns `None` when
+/// no stale cache lock was found; otherwise a human-readable note describing either what was
+/// cleared or - if removal itself failed - what was found but left in place, so callers don't
+/// mistake a detected-but-unclearable lock for a clean bill of health.
+///
+/// `borg break-lock` only ever clears the repository-side lock - never borg's own local
+/// on-disk cache lock - so a borg process killed (crash, OOM, forced container restart) while
+/// holding the cache lock previously left it stuck until an operator connected via SSH and
+/// deleted `lock.exclusive`/`lock.roster` by hand. This is invoked from the same admin-gated,
+/// explicit "Break Lock" action as the repository-lock break below, and carries the same
+/// safety caveat: only use it when certain nothing else is legitimately using the repository.
+async fn clear_stale_cache_lock_if_present(
+    repo_url: &str,
+    env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Option<String> {
+    let output = Borg::new()
+        .with_registry(task_registry.clone())
+        .run(
+            &[
+                "info",
+                "--json",
+                "--lock-wait",
+                CACHE_LOCK_PROBE_WAIT_SECS,
+                repo_url,
+            ],
+            env,
+        )
+        .await
+        .ok()?;
+
+    if output.status.success() {
+        return None;
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let dir = shared::borg::cache_lock_dir_from_timeout_error(&stderr)?;
+
+    match shared::borg::clear_stale_cache_lock(&dir).await {
+        Ok(()) => {
+            warn!(dir = %dir.display(), "break-lock: cleared stale local borg cache lock");
+            Some(format!(
+                "cleared stale local cache lock at {}",
+                dir.display()
+            ))
+        }
+        Err(e) => {
+            warn!(
+                dir = %dir.display(),
+                error = %e,
+                "break-lock: failed to clear stale local borg cache lock"
+            );
+            Some(format!(
+                "detected a stale local cache lock at {} but failed to clear it: {e}",
+                dir.display()
+            ))
+        }
+    }
+}
+
 async fn run_borg_break_lock(
+    repo_id: i64,
     repo_url: &str,
     passphrase: &str,
     task_registry: &shared::task_registry::TaskRegistry,
+    repo_lock: &RepoLock,
 ) -> Result<String, ApiError> {
     let env = helpers::borg_base_env(passphrase);
+
+    // Unlike the repository lock (which the unconditional `break-lock` call below has
+    // always broken regardless of whether anything else is using it - a pre-existing,
+    // documented risk this feature doesn't change), clearing the *local cache* lock
+    // deletes files out from under whatever currently holds them, with no equivalent
+    // "borg will just re-acquire it" recovery path. Every other operation that touches
+    // this repo's local cache (backup, delete, import, rescan, reset & sync, an ad-hoc
+    // admin command via `exec_borg`, encryption migration) serializes through `repo_lock`
+    // first, so successfully acquiring it here proves none of them is concurrently using
+    // the cache - safe to probe and clear. The wait is short and bounded rather than a
+    // blocking `.acquire()`: Break Lock exists specifically to
+    // recover from an operation that's hung and will never release this lock on its
+    // own, so waiting on it indefinitely here would defeat the action's entire purpose.
+    // If the wait times out, skip cache-lock clearing for this call (surfaced as a note
+    // below) - the repository-lock break still proceeds exactly as it always has.
+    let cache_lock_serialization =
+        tokio::time::timeout(CACHE_LOCK_SERIALIZATION_WAIT, repo_lock.acquire(repo_id))
+            .await
+            .ok();
+    let cache_lock_checked = cache_lock_serialization.is_some();
+    let skipped_note = (!cache_lock_checked).then(|| {
+        "skipped local cache-lock check: another operation currently holds this repository's lock \
+         (safe to ignore if it's genuinely running; retry Break Lock once it's confirmed stuck)"
+            .to_string()
+    });
+
+    let pre_note = if cache_lock_checked {
+        clear_stale_cache_lock_if_present(repo_url, &env, task_registry).await
+    } else {
+        None
+    };
 
     let output = Borg::new()
         .with_registry(task_registry.clone())
@@ -1676,18 +1830,46 @@ async fn run_borg_break_lock(
     if exit_code != 0 {
         error!(exit_code, stderr = %stderr, "borg break-lock failed");
         let summary = extract_borg_error(&stderr);
+        // The cache-lock probe above already ran (and, if it found something, already
+        // mutated the filesystem) regardless of whether break-lock itself goes on to
+        // succeed or fail here - surface that in the error too, so a failure doesn't
+        // read as a clean no-op when a stale cache lock was in fact found or cleared.
+        let note_prefix = skipped_note
+            .or(pre_note)
+            .map_or_else(String::new, |note| format!("{note}\n"));
         return Err(ApiError::BadGateway(format!(
-            "borg break-lock failed (exit {exit_code}): {summary}"
+            "{note_prefix}borg break-lock failed (exit {exit_code}): {summary}"
         )));
     }
+
+    // Borg acquires the repository lock before it can even attempt the local cache lock, so
+    // if the repository lock was itself stale, the pre-probe above could not see the cache
+    // lock at all: its `borg info` call timed out on the repository lock first, and the
+    // reported path belongs to the repository lock, not the cache lock. Now that break-lock
+    // has cleared the repository lock, probe again so a single "Break Lock" invocation still
+    // catches a cache lock left stale by the same crash/OOM/forced-restart. Only worth
+    // retrying if the pre-probe actually ran and genuinely found nothing (not if it was
+    // skipped above, in which case `repo_lock` is still held by whatever's using it).
+    let post_note = if cache_lock_checked && pre_note.is_none() {
+        clear_stale_cache_lock_if_present(repo_url, &env, task_registry).await
+    } else {
+        None
+    };
 
     let combined = if stdout.is_empty() {
         stderr
     } else {
         format!("{stdout}\n{stderr}")
     };
+    let combined = combined.trim().to_string();
 
-    Ok(combined.trim().to_string())
+    // skipped_note, pre_note, and post_note are mutually exclusive by construction (at
+    // most one of the three is ever `Some`), so picking the first present one is
+    // equivalent to collecting and joining them all.
+    Ok(match skipped_note.or(pre_note).or(post_note) {
+        Some(note) => format!("{note}\n{combined}"),
+        None => combined,
+    })
 }
 
 async fn run_borg_init(
@@ -2355,7 +2537,7 @@ async fn build_import_reports(
             schedule_id: None,
             started_at,
             finished_at,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -2907,10 +3089,6 @@ async fn run_borg_info_for_stats(
     }
 }
 
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "borg durations are small positive second counts; removal tracked in #284"
-)]
 fn parse_archive_stats(json: &serde_json::Value, info: &serde_json::Value) -> db::ArchiveStats {
     let raw_stats = info.get("stats");
     db::ArchiveStats {
@@ -2933,7 +3111,9 @@ fn parse_archive_stats(json: &serde_json::Value, info: &serde_json::Value) -> db
         duration_secs: info
             .get("duration")
             .and_then(serde_json::Value::as_f64)
-            .unwrap_or(0.0) as i64,
+            .map_or(0, |d| {
+                format!("{:.0}", d.round()).parse::<i64>().unwrap_or(0)
+            }),
         repo_unique_csize: json
             .get("cache")
             .and_then(|v| v.get("stats"))
@@ -3605,7 +3785,7 @@ async fn handle_repo_sync_failure(
         elapsed.as_secs_f64()
     );
     error!("{msg}");
-    let _ = db::insert_system_event(pool, "repo_sync_failed", None, &msg).await;
+    let _ = db::insert_system_event(pool, SystemEventType::RepoSyncFailed, None, &msg).await;
     if task_state.import_tasks.is_current(repo_id, task_id).await {
         let _ = db::set_repo_import_error(pool, repo_id, Some(&format!("{e}"))).await;
         let _ = db::set_repo_importing(pool, repo_id, false).await;
@@ -3640,11 +3820,11 @@ async fn log_repo_sync_completion(
             "{operation_label} for '{repo_name}' took {duration_secs}s (exceeds {}s threshold)",
             SYNC_WARN_DURATION.as_secs()
         );
-        let _ = db::insert_system_event(pool, "repo_sync_slow", None, &warn_msg).await;
+        let _ = db::insert_system_event(pool, SystemEventType::RepoSyncSlow, None, &warn_msg).await;
     }
 
     info!("{msg}");
-    let _ = db::insert_system_event(pool, "repo_sync", None, &msg).await;
+    let _ = db::insert_system_event(pool, SystemEventType::RepoSync, None, &msg).await;
 }
 
 #[utoipa::path(
@@ -3677,7 +3857,8 @@ pub async fn reset_import(
         info!(repo_id, repo_name = %repo.name, "repo sync cancelled");
         let msg = format!("repo sync cancelled for '{}'", repo.name);
         if let Err(e) =
-            db::insert_system_event(&state.pool, "repo_sync_cancelled", None, &msg).await
+            db::insert_system_event(&state.pool, SystemEventType::RepoSyncCancelled, None, &msg)
+                .await
         {
             tracing::error!(repo_id, error = %e, "failed to log sync cancelled event");
         }
@@ -3762,9 +3943,26 @@ pub async fn reset_and_sync_repo(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use chrono::Datelike as _;
 
     use super::*;
+
+    async fn install_fake_script(
+        script: &str,
+    ) -> (tempfile::TempDir, crate::borg::TestBinaryOverrideGuard) {
+        let tempdir = tempfile::tempdir().unwrap();
+        let borg_path = tempdir.path().join("borg");
+        tokio::fs::write(&borg_path, script).await.unwrap();
+        let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+        permissions.set_mode(0o755);
+        tokio::fs::set_permissions(&borg_path, permissions)
+            .await
+            .unwrap();
+        let guard = crate::borg::override_binary_for_tests(borg_path);
+        (tempdir, guard)
+    }
 
     #[test]
     fn is_lock_error_detects_lock_create_message() {
@@ -4091,6 +4289,11 @@ mod tests {
             relocation_pending: false,
             last_op_at: None,
             last_op_by: None,
+            quota_warn_bytes: None,
+            quota_critical_bytes: None,
+            quota_warn_action: None,
+            quota_critical_action: None,
+            quota_enabled: None,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(resp.last_op_kind, None);
@@ -4129,11 +4332,403 @@ mod tests {
             relocation_pending: false,
             last_op_at: None,
             last_op_by: None,
+            quota_warn_bytes: None,
+            quota_critical_bytes: None,
+            quota_warn_action: None,
+            quota_critical_action: None,
+            quota_enabled: None,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(
             resp.last_op_kind,
             Some(shared::protocol::RepoOpKind::AgentBackup)
         );
+    }
+
+    #[tokio::test]
+    async fn clear_stale_cache_lock_if_present_clears_a_detected_cache_lock() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("a".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        // lock.exclusive is a directory - borg's ExclusiveLock.acquire() creates it via
+        // os.mkdir(), with a per-holder marker file inside it.
+        let lock_exclusive = lock_dir.join("lock.exclusive");
+        tokio::fs::create_dir(&lock_exclusive).await.unwrap();
+        tokio::fs::write(lock_exclusive.join("host-1234-1"), b"")
+            .await
+            .unwrap();
+        tokio::fs::write(lock_dir.join("lock.roster"), b"{}")
+            .await
+            .unwrap();
+
+        let script = format!(
+            "#!/bin/sh\nset -eu\necho 'Failed to create/acquire the lock {}/lock.exclusive \
+             (timeout).' >&2\nexit 1\n",
+            lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        let note = clear_stale_cache_lock_if_present(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await;
+
+        assert!(note.is_some_and(|n| n.contains(&lock_dir.display().to_string())));
+        assert!(
+            !tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !tokio::fs::try_exists(lock_dir.join("lock.roster"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_stale_cache_lock_if_present_ignores_a_repository_lock() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let script = "#!/bin/sh\nset -eu\necho 'Failed to create/acquire the lock \
+                      /home/backups/gremlin/lock.exclusive (timeout).' >&2\nexit 1\n";
+        let (_borg_dir, _guard) = install_fake_script(script).await;
+
+        let note = clear_stale_cache_lock_if_present(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await;
+
+        assert!(note.is_none());
+    }
+
+    #[tokio::test]
+    async fn clear_stale_cache_lock_if_present_returns_none_when_info_succeeds() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let script = "#!/bin/sh\nset -eu\necho '{}'\n";
+        let (_borg_dir, _guard) = install_fake_script(script).await;
+
+        let note = clear_stale_cache_lock_if_present(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await;
+
+        assert!(note.is_none());
+    }
+
+    #[tokio::test]
+    async fn run_borg_break_lock_clears_stale_cache_lock_and_breaks_repository_lock() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("b".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
+            .await
+            .unwrap();
+
+        let script = format!(
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the \
+             lock {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
+             'successfully broke lock'\n    ;;\n  *)\n    exit 1\n    ;;\nesac\n",
+            lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        let result = run_borg_break_lock(
+            1,
+            "ssh://user@host/repo",
+            "hunter2",
+            &shared::task_registry::TaskRegistry::default(),
+            &RepoLock::default(),
+        )
+        .await
+        .unwrap();
+
+        assert!(result.contains("cleared stale local cache lock"));
+        assert!(result.contains("successfully broke lock"));
+        assert!(
+            !tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_break_lock_skips_cache_lock_clearing_when_repo_lock_is_held() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("f".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
+            .await
+            .unwrap();
+
+        let script = format!(
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the \
+             lock {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
+             'successfully broke lock'\n    ;;\n  *)\n    exit 1\n    ;;\nesac\n",
+            lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        // Simulate another operation (a running backup, delete, import, ...) already
+        // holding this repo's lock for the whole call, exactly as every genuine
+        // cache-touching operation does.
+        let repo_lock = RepoLock::default();
+        let _held = repo_lock.acquire(1).await;
+
+        let result = run_borg_break_lock(
+            1,
+            "ssh://user@host/repo",
+            "hunter2",
+            &shared::task_registry::TaskRegistry::default(),
+            &repo_lock,
+        )
+        .await
+        .unwrap();
+
+        // The repository lock still gets broken - unchanged, pre-existing behavior...
+        assert!(result.contains("successfully broke lock"));
+        // ...but the cache lock is left untouched, since it can't be proven stale while
+        // something else might genuinely be using it right now.
+        assert!(result.contains("skipped local cache-lock check"));
+        assert!(
+            tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
+                .await
+                .unwrap(),
+            "a cache lock must never be cleared while repo_lock is held by another operation"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_stale_cache_lock_if_present_surfaces_a_failed_clear() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("c".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        // `lock.exclusive` should always be a directory; a plain file there is a real,
+        // if unusual, on-disk anomaly that makes `remove_dir_all` hit a genuine I/O error
+        // (ENOTDIR) instead of "not found" - mirroring e.g. a permission error.
+        tokio::fs::write(lock_dir.join("lock.exclusive"), b"not a directory")
+            .await
+            .unwrap();
+
+        let script = format!(
+            "#!/bin/sh\nset -eu\necho 'Failed to create/acquire the lock {}/lock.exclusive \
+             (timeout).' >&2\nexit 1\n",
+            lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        let note = clear_stale_cache_lock_if_present(
+            "ssh://user@host/repo",
+            &HashMap::new(),
+            &shared::task_registry::TaskRegistry::default(),
+        )
+        .await;
+
+        let note = note.expect("a detected-but-unclearable cache lock must still produce a note");
+        assert!(note.contains(&lock_dir.display().to_string()));
+        assert!(note.contains("failed to clear"));
+    }
+
+    #[tokio::test]
+    async fn run_borg_break_lock_recovers_a_cache_lock_masked_by_a_stale_repository_lock() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("d".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
+            .await
+            .unwrap();
+
+        // Borg acquires the repository lock before the cache lock, so while the repository
+        // lock is also stale, the pre-`break-lock` probe's `info` call times out on the
+        // repository lock (not the cache lock) and cannot see the cache lock at all. Only
+        // once `break-lock` has cleared the repository lock does a follow-up `info` call
+        // reach the cache lock and report its path.
+        let probed_repo_lock_marker = tempdir.path().join("probed_repo_lock");
+        let script = format!(
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    if [ ! -f {marker} ]; then\n      \
+             touch {marker}\n      echo 'Failed to create/acquire the lock \
+             /home/backups/gremlin/lock.exclusive (timeout).' >&2\n      exit 1\n    else\n      \
+             echo 'Failed to create/acquire the lock {lock}/lock.exclusive (timeout).' >&2\n      \
+             exit 1\n    fi\n    ;;\n  break-lock)\n    echo 'successfully broke lock'\n    ;;\n  \
+             *)\n    exit 1\n    ;;\nesac\n",
+            marker = probed_repo_lock_marker.display(),
+            lock = lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        let result = run_borg_break_lock(
+            1,
+            "ssh://user@host/repo",
+            "hunter2",
+            &shared::task_registry::TaskRegistry::default(),
+            &RepoLock::default(),
+        )
+        .await
+        .unwrap();
+
+        assert!(result.contains("cleared stale local cache lock"));
+        assert!(result.contains(&lock_dir.display().to_string()));
+        assert!(result.contains("successfully broke lock"));
+        assert!(
+            !tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_borg_break_lock_preserves_the_cache_lock_note_when_break_lock_itself_fails() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let lock_dir = tempdir.path().join("borg").join("e".repeat(64));
+        tokio::fs::create_dir_all(&lock_dir).await.unwrap();
+        tokio::fs::create_dir(lock_dir.join("lock.exclusive"))
+            .await
+            .unwrap();
+
+        // The pre-probe finds and clears a stale cache lock, but the repository lock itself
+        // is held by a genuinely active backup, so `break-lock` fails. That filesystem
+        // mutation already happened by the time the error is built - the note must not be
+        // silently dropped just because the overall operation goes on to fail.
+        let script = format!(
+            "#!/bin/sh\nset -eu\ncase \"$1\" in\n  info)\n    echo 'Failed to create/acquire the \
+             lock {}/lock.exclusive (timeout).' >&2\n    exit 1\n    ;;\n  break-lock)\n    echo \
+             'lock held by another process' >&2\n    exit 1\n    ;;\n  *)\n    exit 1\n    \
+             ;;\nesac\n",
+            lock_dir.display()
+        );
+        let (_borg_dir, _guard) = install_fake_script(&script).await;
+
+        let err = run_borg_break_lock(
+            1,
+            "ssh://user@host/repo",
+            "hunter2",
+            &shared::task_registry::TaskRegistry::default(),
+            &RepoLock::default(),
+        )
+        .await
+        .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("cleared stale local cache lock"));
+        assert!(message.contains(&lock_dir.display().to_string()));
+        assert!(message.contains("borg break-lock failed"));
+        assert!(
+            !tokio::fs::try_exists(lock_dir.join("lock.exclusive"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn repo_with_stats_row_from_no_quota_row_yields_none() {
+        let row = db::RepoWithStatsRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            ssh_host_key: None,
+            compression: "lz4".into(),
+            encryption: "repokey".into(),
+            enabled: true,
+            importing: false,
+            import_error: None,
+            import_progress: 0,
+            import_total: 0,
+            import_status_message: None,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+            archive_count: 0,
+            last_backup_at: None,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            agent_count: 0,
+            unmatched_count: 0,
+            last_op_kind: None,
+            relocation_pending: false,
+            last_op_at: None,
+            last_op_by: None,
+            quota_warn_bytes: None,
+            quota_critical_bytes: None,
+            quota_warn_action: None,
+            quota_critical_action: None,
+            quota_enabled: None,
+        };
+        let resp = RepoWithStatsResponse::from(row);
+        assert!(resp.quota.is_none());
+    }
+
+    #[test]
+    fn repo_with_stats_row_from_quota_row_maps_fields_and_falls_back_invalid_actions() {
+        let row = db::RepoWithStatsRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            ssh_host_key: None,
+            compression: "lz4".into(),
+            encryption: "repokey".into(),
+            enabled: true,
+            importing: false,
+            import_error: None,
+            import_progress: 0,
+            import_total: 0,
+            import_status_message: None,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+            archive_count: 0,
+            last_backup_at: None,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            agent_count: 0,
+            unmatched_count: 0,
+            last_op_kind: None,
+            relocation_pending: false,
+            last_op_at: None,
+            last_op_by: None,
+            quota_warn_bytes: Some(500),
+            quota_critical_bytes: Some(600),
+            quota_warn_action: Some("bogus_action".into()),
+            quota_critical_action: Some("block_backups".into()),
+            quota_enabled: Some(true),
+        };
+        let resp = RepoWithStatsResponse::from(row);
+        let quota = resp.quota.expect("quota should be present");
+        assert_eq!(quota.warn_bytes, Some(500));
+        assert_eq!(quota.critical_bytes, Some(600));
+        assert_eq!(quota.warn_action, shared::types::QuotaAction::default());
+        assert_eq!(
+            quota.critical_action,
+            shared::types::QuotaAction::BlockBackups
+        );
+        assert!(quota.enabled);
     }
 }

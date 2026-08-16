@@ -77,9 +77,12 @@ test.describe('Schedule backups tab - archive browser', () => {
     }
 
     // The file browser should show with breadcrumb
-    await expect(page.locator('.breadcrumb')).toBeVisible()
+    await expect(page.locator('.archive-breadcrumb')).toBeVisible()
     await expect(
-      page.locator('.breadcrumb').getByText('~').or(page.locator('.breadcrumb').getByText('/')),
+      page
+        .locator('.archive-breadcrumb')
+        .getByText('~')
+        .or(page.locator('.archive-breadcrumb').getByText('/')),
     ).toBeVisible()
   })
 
@@ -109,7 +112,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     }
 
     // Breadcrumb should show root
-    const breadcrumb = page.locator('.breadcrumb')
+    const breadcrumb = page.locator('.archive-breadcrumb')
     await expect(breadcrumb).toBeVisible()
 
     // Try navigating into a directory if one exists

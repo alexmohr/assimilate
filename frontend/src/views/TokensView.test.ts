@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { cancelThenConfirmDelete, renderWithPlugins } from '../test-utils'
 import TokensView from './TokensView.vue'
 
 vi.mock('../api/client', () => ({
@@ -15,8 +15,9 @@ vi.mock('../api/client', () => ({
   },
 }))
 
+const mockCopyToClipboard = vi.fn()
 vi.mock('../composables/useClipboard', () => ({
-  useClipboard: () => ({ copied: { value: false }, copy: vi.fn() }),
+  useClipboard: () => ({ copied: { value: false }, copy: mockCopyToClipboard }),
 }))
 
 vi.mock('../utils/format', () => ({
@@ -117,5 +118,94 @@ describe('TokensView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('No API tokens')
+  })
+
+  it('opens the create modal from the empty state action', async () => {
+    mockApiGet.mockResolvedValue({ data: { tokens: [] } })
+
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    await wrapper.find('.empty-action').trigger('click')
+
+    expect(wrapper.text()).toContain('Create API Token')
+  })
+
+  it('closes the create modal via the close button and clicking the overlay', async () => {
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    expect(wrapper.text()).toContain('Create API Token')
+
+    await wrapper.find('button.close-btn').trigger('click')
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    expect(wrapper.text()).toContain('Create API Token')
+
+    await wrapper.find('.overlay').trigger('click')
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
+  it('creates a token and shows the plaintext once', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({
+      data: { token: mockTokens[0], plaintext: 'secret-token-value' },
+    })
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button')
+    await buttons.find((b) => b.text().includes('New'))!.trigger('click')
+
+    await wrapper.find('#token-name').setValue('deploy-key')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'deploy-key' })
+    expect(wrapper.text()).toContain('secret-token-value')
+    expect(wrapper.text()).toContain('Token Created')
+
+    await wrapper.find('.token-box button').trigger('click')
+    expect(mockCopyToClipboard).toHaveBeenCalledWith('secret-token-value')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Done')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
+  it('cancels the delete confirm dialog, then deletes a token once confirmed', async () => {
+    const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
+    mockApiDelete.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('CI pipeline')
+
+    await cancelThenConfirmDelete(wrapper, mockApiDelete, '/tokens/1')
+  })
+
+  it('shows an error when deleting a token fails', async () => {
+    const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
+    mockApiDelete.mockRejectedValue(new Error('network error'))
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    const deleteButton = wrapper.findAll('button.btn-danger-text')[0]
+    await deleteButton!.trigger('click')
+    await wrapper.find('button.btn-danger').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').exists()).toBe(true)
+    expect(wrapper.find('.overlay').exists()).toBe(true)
   })
 })

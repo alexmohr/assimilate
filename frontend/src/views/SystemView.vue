@@ -58,7 +58,9 @@ const settingsForm = reactive({
   report_retention_days: 0,
   failed_report_retention_days: 365,
   system_event_retention_days: 90,
+  notification_delivery_retention_days: 30,
   borg_query_timeout_secs: 300,
+  session_idle_timeout_minutes: 480,
 })
 
 const versionInfo = ref<VersionInfo | null>(null)
@@ -86,7 +88,11 @@ onMounted(async () => {
     settingsForm.report_retention_days = Number(res.data.report_retention_days)
     settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
     settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
+    settingsForm.notification_delivery_retention_days = Number(
+      res.data.notification_delivery_retention_days,
+    )
     settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
+    settingsForm.session_idle_timeout_minutes = res.data.session_idle_timeout_minutes ?? 480
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -200,22 +206,27 @@ async function importConfig(): Promise<void> {
 
 async function saveSettings(): Promise<void> {
   settingsSaving.value = true
-  settingsError.value = ''
   settingsSaved.value = false
+  settingsError.value = ''
   try {
     const res = await apiClient.put<SettingsResponse>('/system/settings', {
       retention_days: settingsForm.retention_days,
       report_retention_days: settingsForm.report_retention_days,
       failed_report_retention_days: settingsForm.failed_report_retention_days,
       system_event_retention_days: settingsForm.system_event_retention_days,
+      notification_delivery_retention_days: settingsForm.notification_delivery_retention_days,
       timezone: settingsForm.timezone || undefined,
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
+      session_idle_timeout_minutes: settingsForm.session_idle_timeout_minutes,
     })
     settingsForm.timezone = res.data.timezone
     settingsForm.retention_days = Number(res.data.retention_days)
     settingsForm.report_retention_days = Number(res.data.report_retention_days)
     settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
     settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
+    settingsForm.notification_delivery_retention_days = Number(
+      res.data.notification_delivery_retention_days,
+    )
     settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
     setTimezone(res.data.timezone || undefined)
     settingsSaved.value = true
@@ -348,7 +359,10 @@ async function resetSystem(): Promise<void> {
           {{ settingsError }}
         </div>
 
-        <form class="settings-form">
+        <form
+          class="settings-form"
+          @submit.prevent="saveSettings"
+        >
           <div class="setting-row">
             <label
               class="setting-label"
@@ -456,6 +470,28 @@ async function resetSystem(): Promise<void> {
           <div class="setting-row">
             <label
               class="setting-label"
+              for="settings-notification-delivery-retention"
+            >
+              Notification Delivery Retention (days)
+            </label>
+            <div class="setting-input-group">
+              <input
+                id="settings-notification-delivery-retention"
+                v-model.number="settingsForm.notification_delivery_retention_days"
+                type="number"
+                min="0"
+                step="1"
+                class="form-input retention-input"
+              />
+              <span class="field-hint"
+                >Days to keep notification delivery-attempt history. 0 = keep forever.</span
+              >
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label
+              class="setting-label"
               for="settings-borg-timeout"
             >
               Borg Timeout
@@ -476,11 +512,33 @@ async function resetSystem(): Promise<void> {
             </div>
           </div>
 
+          <div class="setting-row">
+            <label
+              class="setting-label"
+              for="settings-idle-timeout"
+            >
+              Session Idle Timeout
+            </label>
+            <div class="setting-input-group">
+              <input
+                id="settings-idle-timeout"
+                v-model.number="settingsForm.session_idle_timeout_minutes"
+                type="number"
+                min="1"
+                class="form-input retention-input"
+              />
+              <span class="field-hint"
+                >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
+                apply to "Remember Me" sessions.</span
+              >
+            </div>
+          </div>
+
           <div class="settings-actions">
             <button
               class="btn btn-primary"
+              type="submit"
               :disabled="settingsSaving"
-              @click="saveSettings"
             >
               {{ settingsSaving ? 'Saving...' : 'Save' }}
             </button>

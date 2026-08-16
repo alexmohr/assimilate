@@ -63,4 +63,4 @@ async function waitForAllChecks(
   }
 }
 
-module.exports = { waitForAllChecks };
+module.exports = { waitForAllChecks, latestRunPerName };

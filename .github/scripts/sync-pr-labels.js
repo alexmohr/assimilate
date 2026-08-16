@@ -8,7 +8,7 @@
 // isn't `ready to merge` then requires an explicit branch-protection bypass,
 // not just human attentiveness. See skills/review/SKILL.md.
 
-const { waitForAllChecks } = require("./lib/wait-for-check");
+const { waitForAllChecks, latestRunPerName } = require("./lib/wait-for-check");
 
 const CI_WORKFLOW_FILE = "ci.yml";
 
@@ -25,9 +25,20 @@ const GATE_CHECK_NAME = "PR Merge Gate";
 // UI or their own token shows up under their real account instead.
 const TRUSTED_AUTOMATION_LOGIN = "github-actions[bot]";
 
-// Job names from coverage-diff-check.yml / duplicate-code-check.yml - see
-// labelReflectsCurrentCommit below for why these matter.
-const COVERAGE_DIFF_CHECK_NAME = "Check coverage diff";
+// The check-run names labelReflectsCurrentCommit below looks for - not
+// necessarily each workflow's job name. DUPLICATE_CODE_CHECK_NAME matches
+// duplicate-code-check.yml's job name ("Detect duplicate code"), which
+// GitHub reliably auto-registers as its own check run. COVERAGE_DIFF_CHECK_NAME
+// does NOT use coverage-diff-check.yml's job name ("Check coverage diff") -
+// that job-level check was confirmed live on PR #399 to never actually
+// register on the PR's commit (checked repeatedly over several days), so
+// labelReflectsCurrentCommit(..., "Check coverage diff") always returned
+// false and permanently stuck every PR's "PR Merge Gate" at "still waiting
+// on: Check coverage diff", no matter how many times it was re-triggered.
+// "Coverage Diff Check" is the name analyze-coverage-diff.js itself posts
+// via its own checks.create call (CHECK_NAME there) and reliably appears -
+// use that instead.
+const COVERAGE_DIFF_CHECK_NAME = "Coverage Diff Check";
 const DUPLICATE_CODE_CHECK_NAME = "Detect duplicate code";
 
 const STATUS_LABELS = {
@@ -243,6 +254,27 @@ const SUPPRESSION_LINE_PATTERNS = [/^\+\s*#!?\[allow\(/];
 // not pass/fail); otherwise it's stale, carried over from a prior commit,
 // and the ordinary CI/other-checks pending logic below already handles
 // "still waiting on this check" correctly once it registers.
+// Checks the MOST RECENT run of this name for this sha, not "any" run -
+// re-running CI on an unchanged sha (rather than pushing a new commit) can
+// leave an older, already-completed, since-superseded run of the same name
+// sitting alongside a fresh one still in flight for several seconds to a
+// minute. "any completed run exists" reads the stale one as current and
+// reports its (possibly failing) verdict as settled, even while the fresh
+// rerun that will supersede it hasn't posted yet - PR #383 hit exactly this:
+// a CI rerun after fixing a flaky coverage regression left the original
+// failing "Coverage Diff Check" run queryable here well after the rerun
+// started, long enough for a workflow_run-triggered sync to read it as
+// current and publish "PR Merge Gate" as a hard failure a second before the
+// rerun's own passing verdict landed. Collapsing to the latest attempt closes
+// that window: a newer run that hasn't completed yet correctly reports false
+// here (falling through to the ordinary pending handling below) instead of
+// resurrecting a superseded verdict. Reuses lib/wait-for-check.js's
+// latestRunPerName rather than re-deriving "latest" here, so both callers
+// agree on what "latest" means - and specifically so this orders by the
+// monotonic `id` instead of `started_at`, which a queued-but-not-yet-started
+// rerun hasn't populated yet (that would let the stale completed run win and
+// reopen a narrower version of this same bug). Filtering the query by
+// check_name means the helper collapses to at most one entry.
 async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkName) {
   const runs = await github.paginate(github.rest.checks.listForRef, {
     owner,
@@ -251,7 +283,8 @@ async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkNam
     check_name: checkName,
     per_page: 100,
   });
-  return runs.some((run) => run.status === "completed");
+  const [latest] = latestRunPerName(runs);
+  return latest !== undefined && latest.status === "completed";
 }
 
 async function ensureLabelExists(github, owner, repo, label) {
@@ -386,15 +419,17 @@ async function needsHumanSignOff(github, owner, repo, prNumber, pr) {
 }
 
 // Whether a human's removal of `needs human review` still stands for the
-// PR's current head commit. Nothing in this codebase ever calls removeLabel
-// on HUMAN_LABEL (grep it - only ever added, in the toAdd loop below), so
-// any "unlabeled" event in its history is a human's own sign-off action via
-// the GitHub UI, not something this automation did. Without this check,
-// needsHumanSignOff() above would simply re-derive "true" from the same
-// unchanged file patterns on the very next sync and the label would
-// reappear immediately - the additive-only, human-clears-it-only contract
-// documented in skills/review/SKILL.md would be pure documentation with no
-// code behind it.
+// PR's current head commit. This automation itself also removes HUMAN_LABEL
+// now (see the otherGatesClear stripping block below: CI/merge-conflict/a
+// precheck stage failing means review isn't the relevant gate yet), so an
+// "unlabeled" event in the PR's history is no longer proof on its own that a
+// human signed off - it's only trustworthy once TRUSTED_AUTOMATION_LOGIN is
+// ruled out as the actor (mirroring claudeApprovedIsGenuine's provenance
+// check in the other direction). Without that check, a PR whose label this
+// workflow stripped for a CI failure would look permanently signed-off the
+// moment CI turned green again, silently bypassing the sign-off gate for
+// good - needsHumanSignOff() would never even get a chance to re-derive
+// "true", since this function is what decides whether it's asked at all.
 //
 // Scoped to the current commit the same way claude-approved/claude-changes-
 // requested are (see the eventAction === "synchronize" handling above): a
@@ -418,6 +453,7 @@ async function humanSignOffStillStands(github, owner, repo, prNumber, headSha) {
 
   const latest = labelEvents[labelEvents.length - 1];
   if (latest.event !== "unlabeled") return false; // most recent action re-added it
+  if (latest.actor && latest.actor.login === TRUSTED_AUTOMATION_LOGIN) return false; // this workflow's own removal, not a human's
 
   const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: headSha });
   const commitDate = new Date(commit.commit.committer?.date || commit.commit.author.date);
@@ -583,11 +619,13 @@ module.exports = async ({
   const hasClaudeReviewFailed = existingLabels.includes(CLAUDE_REVIEW_FAILED_LABEL.name);
 
   // Hard guarantee: claude-approved must never survive while a pre-flight
-  // stage is failing, no matter how it got set. `ready to merge` no longer
-  // depends on any review verdict (see the status precedence chain below),
-  // so this is purely about not leaving a misleading label on the PR - a
-  // human glancing at labels shouldn't see "approved" next to a currently
-  // failing precheck. pre-review-checks.js already waits for both stages'
+  // stage is failing, no matter how it got set. Even though `ready to merge`
+  // does depend on a genuine review verdict now (see hasGenuineApproval
+  // below), a stale approval sitting next to a currently failing precheck is
+  // still misleading on its own - a human glancing at labels shouldn't see
+  // "approved" next to "coverage failed"/"duplicate code", regardless of
+  // whether it's also blocking the merge gate. pre-review-checks.js already
+  // waits for both stages'
   // check runs to conclude before ever invoking Claude, so this isn't the
   // primary defense anymore - it's for a new push landing on the PR while
   // Claude's review of the previous commit is still in progress, which
@@ -628,16 +666,69 @@ module.exports = async ({
       : Promise.resolve(false),
   ]);
   const reviewDecision = resolveEffectiveReviewDecision(nativeReviewDecision, existingLabels);
-  // A human's own removal of the label overrides re-derivation from the
-  // same unchanged file patterns - see humanSignOffStillStands() above.
-  const needsHuman = hasHumanLabel || (autoNeedsHuman && !signOffStillStands);
   // Only a label backed by a completed check run on *this* commit counts as
   // an actual failure of this commit - see labelReflectsCurrentCommit above.
   const coverageFailedForThisCommit = hasCoverageFailed && coverageLabelCurrent;
   const duplicateCodeForThisCommit = hasDuplicateCode && duplicateLabelCurrent;
 
+  // The same "genuine approval" gate the auto-merge path already applied
+  // (see autoMergeIfApproved's call site below) now also gates the
+  // `ready to merge` status itself, not just the merge action - see
+  // skills/review/SKILL.md. A native APPROVED review is intrinsically
+  // provenance-safe (GitHub guarantees a real, distinct reviewer and
+  // rejects self-approval outright). The same-account fallback,
+  // `claude-approved`, is an ordinary label anyone with triage+ access could
+  // add by hand, so it's only trusted here when the most recent event that
+  // added it was actually authored by this repo's own automation - see
+  // claudeApprovedIsGenuine.
+  const isNativeApproval = nativeReviewDecision === "APPROVED";
+  const isLabelApproval = !isNativeApproval && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name);
+  const hasGenuineApproval =
+    isNativeApproval || (isLabelApproval && (await claudeApprovedIsGenuine(github, owner, repo, prNumber)));
+  if (isLabelApproval && !hasGenuineApproval) {
+    core.info(
+      `PR #${prNumber}: claude-approved is present but wasn't applied by ${TRUSTED_AUTOMATION_LOGIN} - not treating it as a genuine approval.`,
+    );
+  }
+
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
   const mergeConflict = mergeableState === "dirty";
+
+  // `needs human review` is the repo's *last* gate, not a parallel one: a PR
+  // whose CI is red, has a real merge conflict, or is failing a
+  // deterministic pre-review check doesn't need a human's judgment call yet
+  // - it needs those objective, code-fixable problems resolved first.
+  // autoNeedsHuman is a pure function of PR content (sensitive paths,
+  // security keywords), so the very next sync after otherGatesClear flips
+  // back to true re-derives the same "yes" on its own - deferring the label
+  // here doesn't lose track of a real sign-off requirement, it just stops
+  // asking for one before there's anything reviewable.
+  const otherGatesClear =
+    !ciFailed && !mergeConflict && !coverageFailedForThisCommit && !duplicateCodeForThisCommit;
+  // A human's own removal of the label overrides re-derivation from the
+  // same unchanged file patterns - see humanSignOffStillStands() above.
+  const needsHuman = otherGatesClear && (hasHumanLabel || (autoNeedsHuman && !signOffStillStands));
+
+  if (hasHumanLabel && !otherGatesClear) {
+    // Same unconditional-strip pattern as the claude-approved guarantee
+    // above: a maintainer shouldn't have to clear `needs human review` by
+    // hand only to watch it (correctly) reappear once CI/merge/precheck
+    // settle, and leaving it set while the PR isn't even buildable yet just
+    // gives them a second, currently-irrelevant thing to look at. This is
+    // provenance-checked in humanSignOffStillStands so a later sync (once
+    // otherGatesClear flips back to true) never mistakes this automated
+    // removal for a real human sign-off.
+    await github.rest.issues
+      .removeLabel({ owner, repo, issue_number: prNumber, name: HUMAN_LABEL.name })
+      .catch((err) => {
+        if (err.status !== 404) throw err;
+      });
+    existingLabels = existingLabels.filter((name) => name !== HUMAN_LABEL.name);
+    core.info(
+      `PR #${prNumber}: stripped needs human review - CI/merge conflict/a precheck stage is ` +
+        "currently failing, so review isn't the blocking gate yet.",
+    );
+  }
 
   // Single-shot (timeoutMs: 0 - never polls/waits) look at every check run
   // on this commit, computed unconditionally and up front so a stage other
@@ -790,8 +881,20 @@ module.exports = async ({
       // completeness.ok is already implied true here: the
       // `completeness.completed && !completeness.ok` branch above would
       // have caught a failing check before ever reaching this point.
-      status = STATUS_LABELS.READY_TO_MERGE;
-      summary = "CI is green — ready to merge.";
+      if (hasGenuineApproval) {
+        status = STATUS_LABELS.READY_TO_MERGE;
+        summary = "CI is green and a genuine approval is on record — ready to merge.";
+      } else {
+        // Every deterministic gate is clear, but nobody's actually signed
+        // off yet - a genuine approval (native review, or `claude-approved`
+        // applied by this repo's own automation) is required before this
+        // can be `ready to merge`, not just a green build. See
+        // skills/review/SKILL.md.
+        status = STATUS_LABELS.NEEDS_REVIEW;
+        summary =
+          "CI is green, but no genuine approval yet — needs a native approving review or a " +
+          `\`${REVIEW_VERDICT_LABELS.APPROVED.name}\` label applied by ${TRUSTED_AUTOMATION_LOGIN}.`;
+      }
     } else {
       // Not "nothing to review yet" in quite the same sense as the
       // ciConclusion === null branch above (CI itself is done), but every
@@ -850,30 +953,16 @@ module.exports = async ({
 
   // Auto-merge: every deterministic gate this function computes (CI green,
   // no merge conflict, no coverage/duplicate-code failure, no active
-  // changes-requested verdict, no pending human sign-off) is already folded
-  // into `status === READY_TO_MERGE` - the one thing it deliberately does
-  // NOT require is an actual approval (see skills/review/SKILL.md: "An
-  // approving review is not required" for the label itself, since nobody
-  // should approve a red build). Squash-merging on top of that still needs
-  // a real approval to have happened, so check that separately here rather
-  // than loosening READY_TO_MERGE's own meaning.
+  // changes-requested verdict, no pending human sign-off) plus a genuine
+  // approval is already folded into `status === READY_TO_MERGE` itself now
+  // (see hasGenuineApproval above and skills/review/SKILL.md) - reaching
+  // this branch already implies `approved`, nothing left to re-derive here.
   if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
-    const isNativeApproval = nativeReviewDecision === "APPROVED";
-    // The label path only ever kicks in when there's no real native
-    // decision to trust yet - see resolveEffectiveReviewDecision.
-    const isLabelApproval = !isNativeApproval && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name);
-    const approved =
-      isNativeApproval || (isLabelApproval && (await claudeApprovedIsGenuine(github, owner, repo, prNumber)));
-    if (isLabelApproval && !approved) {
-      core.info(
-        `PR #${prNumber}: claude-approved is present but wasn't applied by ${TRUSTED_AUTOMATION_LOGIN} - not auto-merging.`,
-      );
-    }
-    if (approved && !autoMergeEnabled) {
+    if (!autoMergeEnabled) {
       core.info(
         `PR #${prNumber}: ready to merge with a genuine approval, but AUTO_MERGE_ENABLED is off - leaving it for a human to merge.`,
       );
-    } else if (approved) {
+    } else {
       await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);
     }
   }

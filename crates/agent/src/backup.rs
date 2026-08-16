@@ -443,6 +443,13 @@ impl BackupEngine {
                     deduplicated_size: stats.deduplicated_size,
                     repo_unique_csize: stats.repo_unique_csize,
                     files_processed: stats.files_processed,
+                    // Kept populated (not None) despite duplicating `warnings`:
+                    // dispatch_backup_completion_notification's backup_warning
+                    // path reads only this field for the email/push body, so
+                    // clearing it silently drops warning text from
+                    // notifications. The duplicate-display bug this was meant
+                    // to fix is handled at the UI layer instead (report
+                    // detail views hide the Error box when status is Warning).
                     error_message: Some(summary),
                     warnings,
                     archive_name,
@@ -1228,7 +1235,7 @@ mod tests {
         assert_eq!(result.repo_unique_csize, 402_653_184);
         assert_eq!(result.files_processed, 1234);
         assert!(result.error_message.is_none());
-        assert!(result.warnings.is_empty());
+        assert_eq!(result.warnings.len(), 0);
     }
 
     #[tokio::test]
@@ -1455,7 +1462,7 @@ mod tests {
         .join("\n");
 
         let warnings = parse_warnings(&stderr);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings.len(), 0);
     }
 
     #[test]
@@ -1488,7 +1495,7 @@ mod tests {
             r#""msgid": "FileChangedWarning", "message": "/tmp/test.log: file changed"}"#,
         );
         let errors = parse_source_not_found_errors(stderr);
-        assert!(errors.is_empty());
+        assert_eq!(errors.len(), 0);
     }
 
     #[tokio::test]

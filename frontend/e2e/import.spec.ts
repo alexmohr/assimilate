@@ -3,7 +3,7 @@
 
 import { execSync } from 'node:child_process'
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /** Find the running demo server container by its compose service label. */
@@ -67,6 +67,7 @@ test('repo detail shows Full Resync button when not importing', async ({ page })
 test('repo detail shows archive list with entries', async ({ page }) => {
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily', 'Archives')
+  await expandAllArchiveGroups(page)
   // Archives section must contain at least one row
   await expect(page.locator('.archive-row').first()).toBeVisible({
     timeout: 15_000,
@@ -208,6 +209,7 @@ test('full resync completes and preserves archives', async ({ page }) => {
 
   // Switch to archives tab and verify entries are still present after resync
   await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await expandAllArchiveGroups(page)
   await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 15_000 })
 })
 
@@ -400,6 +402,7 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
 
   // Switch to Archives tab and confirm the deleted archive is no longer listed.
   await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await expandAllArchiveGroups(page)
   await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.archive-name', { hasText: toDelete })).not.toBeVisible()
 })
@@ -439,6 +442,7 @@ test('import-status-msg shows waiting-for-lock during borg lock contention', asy
 test('clicking an archive opens the file browser', async ({ page }) => {
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily', 'Archives')
+  await expandAllArchiveGroups(page)
 
   // Wait for archive rows to load, then click the first one
   const firstArchiveRow = page.locator('.archive-row').first()

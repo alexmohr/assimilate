@@ -47,14 +47,24 @@ The Repositories list page shows all registered repositories with:
 
 - **Text filter** — search by repository name
 - **Tag filter** — filter by one or more tags
+- **Quota filter chips** — narrow the list to **At risk** repositories (at or above their own warning threshold) or repositories with **No quota** configured; the **All** chip always shows the total count
 - **Group by tag** — organize repositories into tag groups
-- **Sort buttons** — sort by Name, Size, or Last Backup
+- **Group by host** — organize repositories that share an SSH host under a shared storage pool (see [Quota by Host](#quota-by-host) below)
+- **Sort buttons** — sort by Name, Size, Last Backup, or Quota (utilization of each repository's own quota; repositories with no quota sort last)
 
-Each repository card shows the name, SSH target, enabled state, encryption type, compression algorithm, unmatched host warnings, archive count, deduplicated size, and last backup time.
+Each repository card shows the name, SSH target, encryption type, compression algorithm, archive count, deduplicated size, and last backup time. A disabled repository tints the card and adds a **Disabled** pill; a repository with unmatched imported archives shows an **N unmatched** chip — click it to jump to the Archives tab. A repository with its own [storage quota](quotas.md) configured also shows a compact usage bar with its current size, threshold, and health.
 
 ![Repository Detail](assets/screenshots/repo-detail.png)
 
 The repository detail page shows full connection information, storage statistics (original, compressed, deduplicated sizes), storage quota status with a progress bar, tags, and danger zone actions (Refresh SSH Key, Break Lock, Remove Repository, Delete Repository).
+
+!!! warning "Break Lock"
+    **Break Lock** clears a stale `borg` lock on the repository. It also detects and clears a
+    stale *local cache lock* left behind by a backup process that was crashed, OOM-killed, or
+    forcibly terminated (e.g. a killed container) — something plain `borg break-lock` does not
+    do, since it only ever clears the repository's own lock. Only use Break Lock when you are
+    certain no backup is currently running against the repository; breaking a lock during an
+    active backup will corrupt it.
 
 ## Init New Repository
 
@@ -185,6 +195,18 @@ For general-purpose backups, `lz4` is the default and works well. Use `zstd,3` w
 Tags are short labels that help organize repositories when managing many agents. A repository can have multiple tags.
 
 Tags are set in the repository edit form and are visible in the repository list. They have no effect on backup behavior — they are purely organizational.
+
+## Quota by Host
+
+Clicking **Group by host** on the Repositories page organizes repositories into one section per shared SSH host. Each section header shows a storage pool bar scaled to that host's [server quota](server-quotas.md) — when one is configured and you have admin access — with one segment per repository, sized to its share of the combined usage, and a mark at the server quota's warning threshold.
+
+![Repositories page grouped by host, showing a shared storage pool bar and three repository cards with per-repository quota brackets and headroom](assets/screenshots/repositories-host-quota.png)
+
+Inside a group, each repository card's usage bar is drawn on the same scale as the pool header, so the segments line up: a repository's fill shows its share of the host, and if the repository also has its own [storage quota](quotas.md) configured, a bracket marks where that repository's own limit falls on the shared scale. The chip above the bar reads **% of own** (colored by that repository's health) when an own quota exists, or the neutral **% of box** otherwise. If a repository's own limit would exceed the remaining space on the host, the bracket is drawn with a dashed edge at the host's boundary.
+
+Combining a quota filter chip with **Group by host** dims — rather than removes — repositories that don't match the filter, so the pool bar always reflects the host's true combined usage; the header notes how many of the group's repositories are currently shown.
+
+A host with no configured server quota, or when viewing as a non-admin user, still groups its repositories together, but each card falls back to showing its own quota (if any) on its own scale instead of the shared pool.
 
 ## Passphrase Management
 

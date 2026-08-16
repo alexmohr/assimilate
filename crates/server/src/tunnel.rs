@@ -632,7 +632,7 @@ mod tests {
         time::Duration,
     };
 
-    use russh::client::Handler;
+    use russh::{client::Handler, keys::PublicKey};
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
@@ -694,7 +694,7 @@ mod tests {
     async fn tunnel_manager_new_creates_empty_map() {
         let mgr = dummy_manager();
         let statuses = mgr.all_statuses().await;
-        assert!(statuses.is_empty());
+        assert_eq!(statuses.len(), 0);
     }
 
     #[tokio::test]
@@ -702,7 +702,7 @@ mod tests {
         let mgr = dummy_manager();
         mgr.stop_tunnel(999).await;
         let statuses = mgr.all_statuses().await;
-        assert!(statuses.is_empty());
+        assert_eq!(statuses.len(), 0);
     }
 
     #[tokio::test]
@@ -738,23 +738,30 @@ mod tests {
         assert!(mgr.tunnel_status(1).await.is_none());
     }
 
+    fn check_server_key_sync(
+        expected_host_key: Option<String>,
+        public_key: &PublicKey,
+    ) -> Result<bool, russh::Error> {
+        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: addr,
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key,
+        };
+
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(public_key))
+    }
+
     #[test]
     fn ssh_handler_accepts_when_keys_match() {
         let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
         let public = russh::keys::parse_public_key_base64(key_b64).unwrap();
         let expected = public.to_openssh().unwrap();
 
-        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
-        let mut handler = super::TunnelSshHandler {
-            server_addr: addr,
-            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
-            agent_id: 1,
-            expected_host_key: Some(expected),
-        };
-
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(handler.check_server_key(&public));
+        let result = check_server_key_sync(Some(expected), &public);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -767,17 +774,7 @@ mod tests {
         let public2 = russh::keys::parse_public_key_base64(key2_b64).unwrap();
         let expected = public1.to_openssh().unwrap();
 
-        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
-        let mut handler = super::TunnelSshHandler {
-            server_addr: addr,
-            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
-            agent_id: 1,
-            expected_host_key: Some(expected),
-        };
-
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(handler.check_server_key(&public2));
+        let result = check_server_key_sync(Some(expected), &public2);
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
@@ -787,17 +784,7 @@ mod tests {
         let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
         let public = russh::keys::parse_public_key_base64(key_b64).unwrap();
 
-        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
-        let mut handler = super::TunnelSshHandler {
-            server_addr: addr,
-            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
-            agent_id: 1,
-            expected_host_key: None,
-        };
-
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(handler.check_server_key(&public));
+        let result = check_server_key_sync(None, &public);
         assert!(result.is_ok());
         assert!(result.unwrap());
     }

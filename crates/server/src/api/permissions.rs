@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::str::FromStr;
+
 use axum::{
     Json,
     extract::{Path, State},
 };
 use serde::Deserialize;
-use shared::responses::RepoPermissionResponse;
+use shared::{responses::RepoPermissionResponse, types::Visibility};
 
 use super::auth::{AuthUser, RequireAdmin};
 use crate::{
@@ -194,21 +196,6 @@ pub async fn check_repo_permission(
     ))
 }
 
-/// Mirrors the `repos.visibility` / `schedules.visibility` text column.
-enum RepoVisibility {
-    Shared,
-    Private,
-}
-
-impl From<&str> for RepoVisibility {
-    fn from(s: &str) -> Self {
-        match s {
-            "shared" => Self::Shared,
-            _ => Self::Private,
-        }
-    }
-}
-
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -227,12 +214,12 @@ pub async fn is_visible_to_user(
         return Ok(true);
     }
 
-    match RepoVisibility::from(visibility) {
-        RepoVisibility::Shared => match owner_id {
+    match Visibility::from_str(visibility).unwrap_or_default() {
+        Visibility::Shared => match owner_id {
             Some(owner) => db::user_shares_group_with(pool, user_id, owner).await,
             None => Ok(true),
         },
-        RepoVisibility::Private => Ok(false),
+        Visibility::Private => Ok(false),
     }
 }
 

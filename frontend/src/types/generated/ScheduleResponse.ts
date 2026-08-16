@@ -83,11 +83,11 @@ export type ScheduleResponse = {
   /**
    * Commands to run before the backup.
    */
-  pre_backup_commands: string;
+  pre_backup_commands: Array<string>;
   /**
    * Commands to run after the backup.
    */
-  post_backup_commands: string;
+  post_backup_commands: Array<string>;
   /**
    * Execution mode for the schedule.
    */

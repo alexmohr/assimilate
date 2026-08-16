@@ -28,6 +28,7 @@
     "axios": "^1.16.1",
     "chart.js": "^4.5.1",
     "pinia": "^3.0.4",
+    "postcss": "^8.5.26",
     "primevue": "^4.5.5",
     "tailwindcss": "^4.3.0",
     "v-calendar": "^3.1.2",

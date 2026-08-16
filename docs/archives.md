@@ -10,6 +10,8 @@ You can also browse archives per schedule: open a schedule's detail view and swi
 
 Use the list mode selector to switch between **Host groups** and flat archive ordering by **date**, **original size**, or **deduplicated size**, each in ascending or descending order.
 
+In **Host groups** mode the groups start **collapsed**, showing one row per host with its archive count. Click a group header to expand it and list that host's archives. This keeps the list readable on repositories that hold archives from many hosts.
+
 The table supports **sorting** (click any column header) and **inline filtering** (type in the filter row below headers to narrow results).
 
 Each row displays:
@@ -24,6 +26,12 @@ Each row displays:
 Click an archive row to open its detail view.
 
 ![Archives](assets/screenshots/archives.png)
+
+### Viewing a Single Archive
+
+Links that point at one specific archive (for example from a host's backup history) open the **Archives** tab with an `?archive=<name>` query parameter. In this mode the page shows only a **Showing only `<name>`** banner and the file browser for that archive — the archive list, filter box, sort selector, and group toggle are hidden, since none of them apply to a single result.
+
+Click **Show all archives** in the banner to clear the filter and return to the full list.
 
 ## Archive Details
 
@@ -42,7 +50,11 @@ The deduplicated size is typically much smaller than the original size because b
 
 ## Browsing Archive Contents
 
-From the archive list, click an archive to open the file tree browser in the right panel.
+Archives can be browsed from two places in the UI:
+
+**Repositories page:** From the archive list on a repository detail view, click an archive to open the file tree browser in the right panel.
+
+**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view.
 
 ![Archive Browser](assets/screenshots/archive-browse.png)
 
@@ -75,6 +87,8 @@ Administrators can also click **Delete whole archive** on the root `.` row to pe
 The `borg delete` runs in the background on the server so the UI is never blocked while it works. The repository detail page shows a **Deleting archive** indicator while the operation is in progress, and the archive disappears from the list once borg finishes. If the deletion fails, the archive remains in the list and a `archive_delete_failed` system event records the reason.
 
 All server-side borg operations for a repository (backup, sync, content indexing, and archive deletion) run **sequentially** through a per-repository queue, so they never contend for the borg repository lock. Deleting several archives at once no longer returns a conflict — each deletion is queued and runs in turn, and the indicator shows how many operations are waiting (for example, *Deleting archive (+3 queued)*). Once the deletion queue drains, the archive list and the repository's total archive count are reconciled from borg (without re-reading file contents), so the count stays accurate.
+
+Deleting an archive only unlinks it from the repository's manifest — the segment data it referenced is not reclaimed until the repository is compacted. Assimilate automatically runs `borg compact` after each successful archive deletion to reclaim that space, shown as a **Compacting repository** indicator. If the compact itself fails, the deletion still stands — the failure is logged as an `archive_compact_failed` system event and the freed space is reclaimed on the next opportunity (for example, a scheduled backup's own compact step).
 
 To pull in new archives and index their contents, use **Full Resync** (admin only), which re-reads the repository from borg and indexes any archives that are not already indexed.
 

@@ -273,11 +273,9 @@ pub async fn dismissed_finding_ids(
     pool: &PgPool,
     user_id: i64,
 ) -> Result<HashSet<String>, ApiError> {
-    let uid =
-        i32::try_from(user_id).map_err(|_| ApiError::BadRequest("user_id out of range".into()))?;
     sqlx::query_scalar!(
         "SELECT finding_id FROM dismissed_dashboard_findings WHERE user_id = $1",
-        uid,
+        user_id,
     )
     .fetch_all(pool)
     .await
@@ -287,21 +285,17 @@ pub async fn dismissed_finding_ids(
 
 /// # Errors
 ///
-/// Returns an error if:
-/// - [`ApiError::BadRequest`]: the request is invalid
-/// - [`ApiError::Database`]: the database query fails
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn dismiss_finding(
     pool: &PgPool,
     user_id: i64,
     finding_id: &str,
 ) -> Result<(), ApiError> {
-    let uid =
-        i32::try_from(user_id).map_err(|_| ApiError::BadRequest("user_id out of range".into()))?;
     sqlx::query!(
         "INSERT INTO dismissed_dashboard_findings (user_id, finding_id)
          VALUES ($1, $2)
          ON CONFLICT DO NOTHING",
-        uid,
+        user_id,
         finding_id,
     )
     .execute(pool)
@@ -312,19 +306,15 @@ pub async fn dismiss_finding(
 
 /// # Errors
 ///
-/// Returns an error if:
-/// - [`ApiError::BadRequest`]: the request is invalid
-/// - [`ApiError::Database`]: the database query fails
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn undismiss_finding(
     pool: &PgPool,
     user_id: i64,
     finding_id: &str,
 ) -> Result<(), ApiError> {
-    let uid =
-        i32::try_from(user_id).map_err(|_| ApiError::BadRequest("user_id out of range".into()))?;
     sqlx::query!(
         "DELETE FROM dismissed_dashboard_findings WHERE user_id = $1 AND finding_id = $2",
-        uid,
+        user_id,
         finding_id,
     )
     .execute(pool)

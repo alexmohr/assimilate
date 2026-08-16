@@ -80,15 +80,15 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         last_seen_at: agent.last_seen_at,
         default_backup_paths: agent.default_backup_paths,
         default_exclude_patterns: agent.default_exclude_patterns,
-        default_pre_backup_commands: agent.default_pre_backup_commands,
-        default_post_backup_commands: agent.default_post_backup_commands,
+        default_pre_backup_commands: agent.default_pre_backup_commands.0,
+        default_post_backup_commands: agent.default_post_backup_commands.0,
         default_file_change_patterns_raw: agent.default_file_change_patterns_raw,
         is_connected,
         is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
         is_hidden: agent.is_hidden,
         supports_restart,
         owner_id: agent.owner_id,
-        visibility: agent.visibility,
+        visibility: agent.visibility.parse().unwrap_or_default(),
         restart_unavailable_reason,
         last_ssh_user: agent.last_ssh_user,
     }
@@ -245,10 +245,6 @@ pub async fn update_agent(
     ApiJson(req): ApiJson<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let new_hostname = req.hostname.as_deref().unwrap_or(&hostname);
-    let pre_cmds = serde_json::to_string(&req.default_pre_backup_commands)
-        .unwrap_or_else(|_| "[]".to_string());
-    let post_cmds = serde_json::to_string(&req.default_post_backup_commands)
-        .unwrap_or_else(|_| "[]".to_string());
     let agent = db::update_agent(
         &state.pool,
         &hostname,
@@ -257,8 +253,8 @@ pub async fn update_agent(
             display_name: req.display_name.as_deref(),
             default_backup_paths: &req.default_backup_paths,
             default_exclude_patterns: &req.default_exclude_patterns,
-            default_pre_backup_commands: &pre_cmds,
-            default_post_backup_commands: &post_cmds,
+            default_pre_backup_commands: &req.default_pre_backup_commands,
+            default_post_backup_commands: &req.default_post_backup_commands,
             default_file_change_patterns_raw: &req.default_file_change_patterns_raw,
         },
     )
@@ -340,28 +336,11 @@ pub async fn regenerate_token(
 
     Ok(Json(CreateAgentResponse {
         agent: shared::responses::AgentResponse {
-            id: agent.id,
-            hostname: agent.hostname,
-            display_name: agent.display_name,
-            agent_version: agent.agent_version,
-            agent_git_sha: agent.agent_git_sha,
-            agent_build_time: agent.agent_build_time,
-            agent_commit_count: agent.agent_commit_count,
-            created_at: agent.created_at,
-            last_seen_at: agent.last_seen_at,
-            default_backup_paths: agent.default_backup_paths,
-            default_exclude_patterns: agent.default_exclude_patterns,
-            default_pre_backup_commands: agent.default_pre_backup_commands,
-            default_post_backup_commands: agent.default_post_backup_commands,
-            default_file_change_patterns_raw: agent.default_file_change_patterns_raw,
             is_connected: false,
             is_imported: false,
-            is_hidden: agent.is_hidden,
             supports_restart: false,
-            owner_id: agent.owner_id,
-            visibility: agent.visibility,
             restart_unavailable_reason: None,
-            last_ssh_user: agent.last_ssh_user,
+            ..build_agent_response(&state, agent).await
         },
         token: token_hex,
     }))

@@ -74,6 +74,77 @@ export async function loginAsViewer(page: Page): Promise<void> {
   await login(page, 'viewer1', 'viewer1')
 }
 
+// Overrides the web-server-01 / server-daily health entry (schedule 1, seeded
+// by the demo) for /api/stats/health so tests can force a specific chip
+// (Overdue/Failed) to render without relying on the demo's seeded health
+// state. Used by both the schedules list and the agent-detail schedules tab,
+// which read the same schedule via the same endpoint.
+export async function mockScheduleOneHealth(
+  page: Page,
+  overrides: Record<string, unknown>,
+): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/stats/health',
+    async (route) => {
+      const response = await route.fetch()
+      const entries = (await response.json()) as Array<Record<string, unknown>>
+      const withoutTarget = entries.filter(
+        (e) => !(e.schedule_id === 1 && e.hostname === 'web-server-01'),
+      )
+      withoutTarget.push({
+        schedule_id: 1,
+        hostname: 'web-server-01',
+        target_name: 'server-daily',
+        last_status: 'success',
+        last_backup_at: '2020-01-01T02:00:00Z',
+        is_overdue: false,
+        last_error_message: null,
+        cron_expression: '0 2 * * *',
+        schedule_enabled: true,
+        ...overrides,
+      })
+      return route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        body: JSON.stringify(withoutTarget),
+      })
+    },
+  )
+}
+
+// Injects a running backup operation for web-server-01 / server-daily (schedule 1,
+// seeded by the demo) into /api/stats/dashboard-overview's running_operations, so
+// tests can force the agent list's "Running" pill to render without waiting for a
+// real backup to start.
+export async function mockRunningBackupOperation(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/stats/dashboard-overview',
+    async (route) => {
+      const response = await route.fetch()
+      const overview = (await response.json()) as { running_operations: unknown[] }
+      overview.running_operations = [
+        ...overview.running_operations,
+        {
+          report_id: 999_999,
+          status: 'started',
+          hostname: 'web-server-01',
+          schedule_id: 1,
+          schedule_name: 'server-daily',
+          repo_id: 1,
+          repo_name: 'server-daily',
+          started_at: new Date().toISOString(),
+          destination: { kind: 'schedule', schedule_id: 1 },
+        },
+      ]
+      return route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        body: JSON.stringify(overview),
+      })
+    },
+  )
+}
+
 // Wraps the built-in `page` fixture to collect Istanbul coverage after each
 // test when VITE_COVERAGE=true. The browser accumulates `window.__coverage__`
 // throughout the test; we read it out just before Playwright closes the page
@@ -98,3 +169,23 @@ export const test = base.extend<{ page: Page }>({
 })
 
 export { expect }
+
+// Archive host groups start collapsed by default, so .archive-row elements
+// are hidden until their group is expanded. Wait for the list to settle into
+// some terminal state first, since callers vary in how much they've already
+// waited for the archives fetch to resolve.
+export async function expandAllArchiveGroups(page: Page): Promise<void> {
+  await page
+    .locator('.archive-group, .archive-row-detailed, .state-msg-sm')
+    .first()
+    .waitFor({ state: 'visible', timeout: 20_000 })
+    .catch(() => {})
+  // Click the chevron, not the header button itself: the header also
+  // contains a BaseHostLink that fills most of its width, and clicking the
+  // button's center can land on that link (navigating away) instead of
+  // toggling the group.
+  const collapsedChevrons = page.locator('.group-header.collapsed .group-chevron')
+  while ((await collapsedChevrons.count()) > 0) {
+    await collapsedChevrons.first().click()
+  }
+}

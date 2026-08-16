@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
+import { FilterMatchMode } from '@primevue/core/api'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
+import { formatBytes, formatDate } from '../utils/format'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
@@ -37,6 +39,20 @@ export interface BreadcrumbSegment {
 
 export interface DirDisplayEntry extends ContentEntry {
   displayName: string
+  displaySize: string
+  displayMtime: string
+}
+
+export interface DisplayEntry {
+  type: string
+  path: string
+  size: number
+  mtime: string
+  mode: string
+  displayName: string
+  isDir: boolean
+  displaySize: string
+  displayMtime: string
 }
 
 interface UseArchiveBrowserReturn {
@@ -53,7 +69,7 @@ interface UseArchiveBrowserReturn {
   breadcrumbs: ComputedRef<BreadcrumbSegment[]>
   dirs: ComputedRef<DirDisplayEntry[]>
   files: ComputedRef<ContentEntry[]>
-  loadArchives: () => Promise<void>
+  loadArchives: (silent?: boolean) => Promise<void>
   selectArchive: (archive: ArchiveEntry) => Promise<void>
   loadContents: (path: string) => Promise<void>
   navigateTo: (path: string) => void
@@ -63,6 +79,12 @@ interface UseArchiveBrowserReturn {
   deleteArchive: (entry: ContentEntry) => Promise<boolean>
   deleteArchiveByName: (archive: ArchiveEntry) => Promise<boolean>
   stopPolling: () => void
+  browserFilters: Ref<{
+    displayName: { value: string; matchMode: string }
+    displaySize: { value: string; matchMode: string }
+    displayMtime: { value: string; matchMode: string }
+  }>
+  browserEntries: ComputedRef<DisplayEntry[]>
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
@@ -136,9 +158,18 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       (e) => e.type === DIRECTORY_ENTRY_TYPE && e.path === currentDir,
     )
     if (currentEntry) {
-      entries.push({ ...currentEntry, displayName: '.' })
+      entries.push({ ...currentEntry, displayName: '.', displaySize: '-', displayMtime: '' })
     } else if (currentPath.value === ROOT_PATH) {
-      entries.push({ type: 'd', path: '', size: 0, mtime: '', mode: '', displayName: '.' })
+      entries.push({
+        type: 'd',
+        path: '',
+        size: 0,
+        mtime: '',
+        mode: '',
+        displayName: '.',
+        displaySize: '-',
+        displayMtime: '',
+      })
     }
 
     if (currentPath.value !== ROOT_PATH) {
@@ -150,6 +181,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         mtime: '',
         mode: '',
         displayName: '..',
+        displaySize: '-',
+        displayMtime: '',
       })
     }
 
@@ -162,7 +195,12 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       .sort((a, b) => a.path.localeCompare(b.path))
     return [
       ...entries,
-      ...childDirs.map((e) => ({ ...e, displayName: e.path.split('/').pop() ?? e.path })),
+      ...childDirs.map((e) => ({
+        ...e,
+        displayName: e.path.split('/').pop() ?? e.path,
+        displaySize: '-',
+        displayMtime: '',
+      })),
     ]
   })
 
@@ -177,16 +215,82 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       .sort((a, b) => a.path.localeCompare(b.path))
   })
 
-  async function loadArchives(): Promise<void> {
-    archivesLoading.value = true
+  const browserFilters = ref({
+    displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
+    displaySize: { value: '', matchMode: FilterMatchMode.CONTAINS },
+    displayMtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  })
+
+  const browserEntries = computed<DisplayEntry[]>(() => [
+    ...dirs.value.map((d) => ({
+      type: d.type,
+      path: d.path,
+      size: Number(d.size),
+      mtime: d.mtime,
+      mode: d.mode,
+      displayName: d.displayName,
+      isDir: true,
+      displaySize: d.displaySize,
+      displayMtime: d.displayMtime,
+    })),
+    ...files.value.map((f) => ({
+      type: f.type,
+      path: f.path,
+      size: Number(f.size),
+      mtime: f.mtime,
+      mode: f.mode,
+      displayName: entryName(f),
+      isDir: false,
+      displaySize: formatBytes(Number(f.size)),
+      displayMtime: formatDate(f.mtime),
+    })),
+  ])
+
+  // `silent` skips the archivesLoading flag - the list stays as-is (including
+  // any in-flight delete's "Deletion in progress" row state) while the
+  // refetch is outstanding, instead of the whole panel flashing to a
+  // "Loading archives..." placeholder. Used for background refreshes
+  // triggered by a DataChanged WebSocket message, where blanking the list
+  // the caller didn't ask for would hide other UI state for no reason.
+  //
+  // loadArchives can be triggered by several independent, overlapping
+  // sources (mount, every DataChanged, a manual rescan) whose requests can
+  // resolve out of order. `loadArchivesSeq` guards against an older
+  // request's response landing after a newer one (or after some other
+  // direct mutation like ArchiveDeleted's own splice) and clobbering
+  // fresher state with a stale snapshot - only the response matching the
+  // most recently issued call is ever applied.
+  let loadArchivesSeq = 0
+  // archivesLoading tracks outstanding *non-silent* calls independently of
+  // loadArchivesSeq: a non-silent call that's superseded by a later silent
+  // one (e.g. mount's own fetch still in flight when a background
+  // DataChanged refresh starts) would otherwise never clear the flag - it's
+  // no longer the latest call, so the seq guard would skip it, and the
+  // silent call that "won" never touches archivesLoading by design. Tracking
+  // how many non-silent calls are still outstanding instead means the flag
+  // clears once every real (non-silent) load has finished, regardless of
+  // which one happened to be latest.
+  let pendingNonSilentLoads = 0
+
+  async function loadArchives(silent = false): Promise<void> {
+    const seq = ++loadArchivesSeq
+    if (!silent) {
+      pendingNonSilentLoads++
+      archivesLoading.value = true
+    }
     archivesError.value = null
     try {
       const res = await apiClient.get<ArchiveEntry[]>(`/repos/${repoId.value}/archives`)
+      if (seq !== loadArchivesSeq) return
       archives.value = res.data
     } catch (e: unknown) {
+      if (seq !== loadArchivesSeq) return
       archivesError.value = extractError(e)
     } finally {
-      archivesLoading.value = false
+      if (!silent) {
+        pendingNonSilentLoads--
+        if (pendingNonSilentLoads === 0) archivesLoading.value = false
+      }
     }
   }
 
@@ -328,6 +432,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     breadcrumbs,
     dirs,
     files,
+    browserFilters,
+    browserEntries,
     loadArchives,
     selectArchive,
     loadContents,

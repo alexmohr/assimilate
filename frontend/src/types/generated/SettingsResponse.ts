@@ -21,6 +21,10 @@ export type SettingsResponse = {
    */
   system_event_retention_days: number;
   /**
+   * Number of days to retain notification delivery-attempt history.
+   */
+  notification_delivery_retention_days: number;
+  /**
    * Timezone setting.
    */
   timezone: string;
@@ -28,4 +32,8 @@ export type SettingsResponse = {
    * Timeout for borg queries in seconds.
    */
   borg_query_timeout_secs: number;
+  /**
+   * Session idle timeout duration in minutes.
+   */
+  session_idle_timeout_minutes: number | null;
 };

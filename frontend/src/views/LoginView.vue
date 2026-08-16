@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -15,21 +15,52 @@ const router = useRouter()
 const username = ref('')
 const password = ref('')
 const rememberMe = ref(false)
+const totpCode = ref('')
+const useRecoveryCode = ref(false)
 const { loading: submitting, error, run } = useAsyncAction('Login failed')
 
-async function handleSubmit(): Promise<void> {
-  await run(async () => {
-    await authStore.login(username.value, password.value, rememberMe.value)
-    const next =
-      typeof route.query.next === 'string' && route.query.next.startsWith('/')
-        ? route.query.next
-        : '/'
-    if (authStore.user?.must_change_password) {
-      router.push({ path: '/change-password', query: { next } })
-    } else {
-      router.push(next)
+watch(
+  () => authStore.user,
+  (newUser) => {
+    if (newUser) {
+      const next =
+        typeof route.query.next === 'string' && route.query.next.startsWith('/')
+          ? route.query.next
+          : '/'
+      if (newUser.must_change_password) {
+        router.push({ path: '/change-password', query: { next } })
+      } else {
+        router.push(next)
+      }
     }
+  },
+)
+
+async function handleSubmit(): Promise<void> {
+  if (authStore.totpRequired) {
+    await run(async () => {
+      await authStore.verifyTotp(totpCode.value, useRecoveryCode.value)
+    })
+    return
+  }
+
+  await run(async () => {
+    // If TOTP is required, authStore.user stays unset and we don't redirect -
+    // stay to show the TOTP input. Otherwise the watch() above handles the
+    // redirect once authStore.user becomes truthy.
+    await authStore.login(username.value, password.value, rememberMe.value)
   })
+}
+
+function handleBackToLogin(): void {
+  authStore.resetTotpState()
+  totpCode.value = ''
+  useRecoveryCode.value = false
+}
+
+function toggleRecoveryCode(): void {
+  useRecoveryCode.value = !useRecoveryCode.value
+  totpCode.value = ''
 }
 </script>
 
@@ -48,6 +79,7 @@ async function handleSubmit(): Promise<void> {
       </div>
 
       <form
+        v-if="!authStore.totpRequired"
         class="login-form"
         @submit.prevent="handleSubmit"
       >
@@ -101,80 +133,107 @@ async function handleSubmit(): Promise<void> {
           <span v-else>Sign in</span>
         </button>
       </form>
+
+      <form
+        v-else
+        class="login-form"
+        @submit.prevent="handleSubmit"
+      >
+        <div class="totp-info">
+          <p class="totp-info-text">Two-factor authentication is required for this account.</p>
+          <p
+            v-if="!useRecoveryCode"
+            class="totp-info-subtext"
+          >
+            Enter the code from your authenticator app.
+          </p>
+          <p
+            v-else
+            class="totp-info-subtext"
+          >
+            Enter one of your saved recovery codes.
+          </p>
+        </div>
+
+        <div
+          v-if="!useRecoveryCode"
+          class="form-group"
+        >
+          <label for="totp-code">Authenticator Code</label>
+          <input
+            id="totp-code"
+            v-model="totpCode"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            placeholder="000000"
+            required
+            maxlength="6"
+            :disabled="submitting"
+          />
+        </div>
+        <div
+          v-else
+          class="form-group"
+        >
+          <label for="totp-recovery-code">Recovery Code</label>
+          <input
+            id="totp-recovery-code"
+            v-model="totpCode"
+            type="text"
+            autocomplete="off"
+            placeholder="xxxxxxxx-xxxxxxxx"
+            required
+            :disabled="submitting"
+          />
+        </div>
+
+        <div
+          v-if="error"
+          class="login-error"
+        >
+          {{ error }}
+        </div>
+
+        <button
+          type="submit"
+          class="login-btn"
+          :disabled="submitting"
+        >
+          <span v-if="submitting">Verifying...</span>
+          <span v-else>Verify</span>
+        </button>
+
+        <button
+          type="button"
+          class="login-btn login-btn-ghost"
+          :disabled="submitting"
+          @click="toggleRecoveryCode"
+        >
+          <span v-if="useRecoveryCode">Use authenticator app instead</span>
+          <span v-else>Use a recovery code instead</span>
+        </button>
+
+        <button
+          type="button"
+          class="login-btn login-btn-ghost"
+          :disabled="submitting"
+          @click="handleBackToLogin"
+        >
+          Back to login
+        </button>
+      </form>
     </div>
   </div>
 </template>
 
+<style>
+@import url('../assets/auth.css');
+</style>
+
 <style scoped>
-.login-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  background: var(--bg-base);
-  padding: 1rem;
-}
-
-.login-card {
-  width: 100%;
-  max-width: 380px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 2rem;
-  box-shadow: var(--shadow-lg);
-}
-
-.login-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-}
-
 .login-icon {
   border-radius: 8px;
-}
-
-.login-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.login-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input {
-  padding: 0.625rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.form-group input:focus {
-  border-color: var(--accent);
 }
 
 .remember-me {
@@ -197,32 +256,31 @@ async function handleSubmit(): Promise<void> {
   user-select: none;
 }
 
-.login-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
+.login-btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
 }
 
-.login-btn {
-  padding: 0.625rem 1rem;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+.login-btn-ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.totp-info {
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.totp-info-text {
+  font-size: 0.9rem;
   font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s;
+  color: var(--text-primary);
+  margin: 0 0 0.25rem;
 }
 
-.login-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.login-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.totp-info-subtext {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
 }
 </style>

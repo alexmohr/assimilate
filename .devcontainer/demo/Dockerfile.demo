@@ -52,6 +52,7 @@ WORKDIR /docs-build
 COPY docs/ docs/
 COPY mkdocs.yml .
 COPY docs/requirements.txt .
+COPY frontend/public/icon.png frontend/public/icon.png
 RUN pip install --no-cache-dir -r requirements.txt && mkdocs build
 
 FROM debian:trixie-slim

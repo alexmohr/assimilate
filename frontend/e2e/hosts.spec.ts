@@ -2,7 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Route } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import {
+  expect,
+  loginAsAdmin,
+  mockRunningBackupOperation,
+  mockScheduleOneHealth,
+  test,
+} from './fixtures'
 
 test.describe('Hosts management', () => {
   test('hosts list shows connected agent hosts and imported placeholders', async ({ page }) => {
@@ -54,7 +60,7 @@ test.describe('Hosts management', () => {
     await expect(loadBtn).not.toBeDisabled()
   })
 
-  test('agent card shows expandable CardError for failed backups', async ({ page }) => {
+  test('agent card shows a Failed chip that navigates to the failed backup', async ({ page }) => {
     // Intercept the health API to inject a failure with an error message for web-server-01.
     await page.route('**/api/stats/health', async (route: Route) => {
       await route.fulfill({
@@ -78,17 +84,85 @@ test.describe('Hosts management', () => {
 
     const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
 
-    const errorToggle = card.locator('.error-toggle')
-    await expect(errorToggle).toBeVisible()
+    const failedChip = card.locator('.entity-issue-chip.sev-danger')
+    await expect(failedChip).toBeVisible()
+    await expect(failedChip).toContainText('failed')
 
-    const errorPre = card.locator('.error-pre')
-    await expect(errorPre).not.toBeVisible()
+    await failedChip.click()
+    await page.waitForLoadState('networkidle')
 
-    await errorToggle.click()
-    await expect(errorPre).toBeVisible()
-    await expect(errorPre).toContainText('Repository lock could not be acquired')
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=backups&status=failed/)
+  })
 
-    await errorToggle.click()
-    await expect(errorPre).not.toBeVisible()
+  test('agent card shows an Overdue chip that navigates to the schedules tab', async ({ page }) => {
+    await page.route('**/api/stats/health', async (route: Route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            hostname: 'web-server-01',
+            target_name: 'server-daily',
+            last_status: 'success',
+            last_backup_at: '2020-01-01T02:00:00Z',
+            is_overdue: true,
+            last_error_message: null,
+          },
+        ]),
+      })
+    })
+
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
+
+    const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+    await expect(overdueChip).toBeVisible()
+    await expect(overdueChip).toContainText('overdue')
+
+    await overdueChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=schedules&health=overdue/)
+  })
+
+  test('agent card shows a Running pill while a backup is in progress', async ({ page }) => {
+    await mockRunningBackupOperation(page)
+
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
+    const runningPill = card.locator('.entity-running-pill')
+    await expect(runningPill).toBeVisible()
+    await expect(runningPill).toContainText('server-daily')
+
+    const otherCard = page.locator('.host-card').filter({ hasText: 'db-server-01' }).first()
+    await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
+  })
+
+  test("agent detail schedules tab's Failed chip navigates to the filtered activity log", async ({
+    page,
+  }) => {
+    // schedule 1 ("server-daily") targets web-server-01 - see schedules.spec.ts.
+    await mockScheduleOneHealth(page, {
+      last_status: 'failed',
+      last_error_message: 'Simulated failure',
+    })
+
+    await loginAsAdmin(page)
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card').filter({ hasText: 'server-daily' })
+    const failedChip = card.locator('.entity-issue-chip.sev-danger')
+    await expect(failedChip).toBeVisible()
+
+    await failedChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed/)
   })
 })

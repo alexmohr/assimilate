@@ -1,7 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
+import type { Page } from '@playwright/test'
+
+// media-weekly has 12 weeks of seeded archives and isn't asserted on by name
+// or exact count anywhere else in the suite, unlike server-daily's
+// web-server-01 archives - the safest repo to actually delete an archive
+// from in an e2e run.
+async function navigateToMediaWeeklyArchives(page: Page): Promise<void> {
+  await page.goto('/repos', { waitUntil: 'commit' })
+  await page.getByText('media-weekly', { exact: true }).click()
+  await page.waitForURL(/\/repos\/\d+/, { waitUntil: 'commit' })
+  await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await page.waitForLoadState('networkidle')
+}
 
 test.describe('Archive browsing & diff journey', () => {
   test('archives tab loads showing archive entries with names, dates, and hosts', async ({
@@ -13,6 +26,7 @@ test.describe('Archive browsing & diff journey', () => {
 
     await expect(page.getByRole('button', { name: 'Archives' })).toBeVisible()
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
+    await expandAllArchiveGroups(page)
 
     const firstRow = page.locator('.archive-row').first()
     await expect(firstRow).toBeVisible({ timeout: 30_000 })
@@ -24,6 +38,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await expect(page.getByText(/web-server-01-backup/).first()).toBeVisible()
   })
@@ -32,6 +47,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -39,7 +55,7 @@ test.describe('Archive browsing & diff journey', () => {
       .click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.panel-title').filter({ hasText: /Files/ })).toBeVisible()
+    await expect(page.locator('.browser-title').filter({ hasText: /Files/ })).toBeVisible()
     await expect(page.locator('.archive-breadcrumb')).toBeVisible()
 
     const browserPanel = page.locator('.browser-panel').last()
@@ -50,6 +66,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -71,6 +88,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -85,6 +103,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -149,5 +168,85 @@ test.describe('Archive browsing & diff journey', () => {
 
     await expect(page).toHaveURL(/tab=archives/)
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
+  })
+
+  test('deleting an archive shows an in-progress state and the archive disappears once done', async ({
+    page,
+  }) => {
+    // borg delete + the automatic compact that follows it can take a while
+    // even on the demo's small repos, so give it plenty of room (matching
+    // import.spec.ts's allowance for the same class of slow borg operation).
+    test.setTimeout(180_000)
+
+    await loginAsAdmin(page)
+    await navigateToMediaWeeklyArchives(page)
+    await expandAllArchiveGroups(page)
+
+    const firstRow = page.locator('.archive-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 30_000 })
+    const archiveName = await firstRow.locator('.archive-name').innerText()
+
+    const deleteBtn = firstRow.locator('button[title="Delete archive"]')
+    await expect(deleteBtn).toBeVisible()
+    await deleteBtn.click()
+
+    await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
+
+    // RepoDetailView marks the row as deleting synchronously, before the
+    // DELETE request even goes out. Two earlier real races have since been
+    // fixed at the app level rather than papered over here: RepoOpChanged's
+    // stale-marker cleanup used to clear deletingArchiveNames immediately
+    // against possibly-stale local state, racing DataChanged's own
+    // list-refresh-driven prune for a delete that had just succeeded (it
+    // now refetches before clearing); and the client used to learn a delete
+    // had finished only via the generic DataChanged signal, forcing a full
+    // list refetch-and-diff to notice this specific archive was gone. The
+    // server now also broadcasts a precise ArchiveDeleted { archive_name }
+    // event the moment this archive's delete + auto-compact finish, which
+    // RepoDetailView applies directly and synchronously - no refetch in the
+    // loop for the common success path at all.
+    //
+    // What's left is a plain Playwright coordination gap, not an app race:
+    // two separate `expect().toBeVisible()`/`expect().toBeDisabled()` calls
+    // each poll the DOM on their own schedule, so the row can appear (proof
+    // the marking above ran) and then disappear (the delete finishing) in
+    // the gap between the two polls, on a backend fast enough to complete
+    // the whole delete+compact+notify cycle inside it. `toPass` re-reads
+    // both properties together in one atomic check, so either the row is
+    // caught in the pending state with both properties true at once, or the
+    // retry loop keeps trying - it does not tolerate the row never
+    // appearing at all, or being visible-but-not-disabled. A fixed, tight
+    // interval (rather than toPass's default 100/250/500/1000ms backoff,
+    // which samples far less often over 5s) matters here: a CI run once
+    // caught the row visible-then-vanished with the default backoff still
+    // in place, but the very next run never sampled it as visible at all -
+    // the pending window on this backend can be narrower than what a
+    // backing-off poll reliably lands inside.
+    const pendingBtn = page
+      .locator('.archive-row', { hasText: archiveName })
+      .locator('button[title="Deletion in progress"]')
+    await expect(async () => {
+      expect(await pendingBtn.isVisible()).toBe(true)
+      expect(await pendingBtn.isDisabled()).toBe(true)
+    }).toPass({ timeout: 5_000, intervals: [20] })
+
+    // While the delete (and the compact that automatically follows it) is
+    // still running, the Overview tab's "Current Operation" field should
+    // reflect one of the two phases. Best-effort: on a fast demo repo this
+    // window can be too short to reliably observe, so don't fail the test
+    // over it - the definitive proof the whole pipeline ran is the archive
+    // disappearing below.
+    await page.getByRole('button', { name: 'Overview', exact: true }).click()
+    await page
+      .getByText(/Deleting archive|Compacting repository/)
+      .first()
+      .waitFor({ state: 'visible', timeout: 5_000 })
+      .catch(() => {})
+
+    await page.getByRole('button', { name: 'Archives', exact: true }).click()
+    await expandAllArchiveGroups(page)
+    await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible({
+      timeout: 60_000,
+    })
   })
 })

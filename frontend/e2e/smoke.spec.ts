@@ -24,15 +24,12 @@ test('logout redirects to login', async ({ page }) => {
   // Trigger logout via the API directly so we don't depend on nav UI details
   await page.request.post('/api/auth/logout')
   // waitUntil: 'commit' resolves on response headers; without it Playwright
-  // throws ERR_ABORTED when the SPA route guard fires a client-side redirect
-  // before the page finishes loading.
-  try {
-    await page.goto('/', { waitUntil: 'commit', timeout: 10_000 })
-  } catch {
-    // ERR_ABORTED is expected when the SPA route guard fires before
-    // the page finishes loading - retry once.
-    await page.goto('/', { waitUntil: 'commit', timeout: 10_000 })
-  }
+  // throws when the SPA route guard fires a client-side redirect before the
+  // page finishes loading. That race can hit on any attempt (not just the
+  // first), so swallow it here and rely on the URL assertion below - which
+  // polls independently of how/whether goto() itself settled - to confirm
+  // the end state.
+  await page.goto('/', { waitUntil: 'commit', timeout: 10_000 }).catch(() => {})
   await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
 })
 

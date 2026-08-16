@@ -5,8 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { validateSmtp } from '../api/notifications'
-import { extractError } from '../utils/error'
+import { validateEmailConfig } from '../utils/smtpValidation'
 import type { ChannelType, EmailConfig, WebhookConfig } from '../types/notifications'
 
 /**
@@ -35,26 +34,19 @@ const validating = ref(false)
 const result = ref<{ success: boolean; message: string } | null>(null)
 
 /**
- * Checks the SMTP credentials, surfacing the verdict inline. Also called by
- * the owning dialog before it saves, so a channel is never stored with
- * credentials that cannot log in.
+ * Checks the SMTP credentials on demand, surfacing the verdict inline.
+ *
+ * The owning dialog does NOT gate its save on this - it calls
+ * validateEmailConfig directly, because this component is unmounted on the
+ * later steps of the add wizard and a ref to it would be null exactly when
+ * the save happens.
  */
 async function validate(): Promise<boolean> {
   validating.value = true
   result.value = null
   try {
-    await validateSmtp({
-      smtp_host: emailConfig.value.smtp_host,
-      smtp_port: emailConfig.value.smtp_port,
-      smtp_user: emailConfig.value.smtp_user,
-      smtp_password: emailConfig.value.smtp_password,
-      security: emailConfig.value.security ?? 'starttls',
-    })
-    result.value = { success: true, message: 'SMTP login successful' }
-    return true
-  } catch (e: unknown) {
-    result.value = { success: false, message: extractError(e) }
-    return false
+    result.value = await validateEmailConfig(emailConfig.value)
+    return result.value.success
   } finally {
     validating.value = false
   }

@@ -8,6 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
+import { validateEmailConfig } from '../utils/smtpValidation'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import {
@@ -371,9 +372,12 @@ async function submitAddChannel(): Promise<void> {
   addChannelError.value = ''
   try {
     if (addChannelForm.value.channel_type === 'email') {
-      const valid = await addConfigFields.value?.validate()
-      if (!valid) {
-        addChannelError.value = addConfigFields.value?.result?.message ?? 'SMTP validation failed'
+      // Checked directly rather than through addConfigFields: the SMTP fields
+      // live on step 1, so by the time Create is pressed on step 3 that ref is
+      // null and the gate would reject every email channel.
+      const verdict = await validateEmailConfig(addChannelEmailCfg.value)
+      if (!verdict.success) {
+        addChannelError.value = verdict.message
         return
       }
     }
@@ -460,9 +464,9 @@ async function submitEditChannel(): Promise<void> {
   editChannelError.value = ''
   try {
     if (editChannelType() === 'email' && editChannelForm.value.config) {
-      const valid = await editConfigFields.value?.validate()
-      if (!valid) {
-        editChannelError.value = editConfigFields.value?.result?.message ?? 'SMTP validation failed'
+      const verdict = await validateEmailConfig(editChannelEmailCfg.value)
+      if (!verdict.success) {
+        editChannelError.value = verdict.message
         return
       }
     }

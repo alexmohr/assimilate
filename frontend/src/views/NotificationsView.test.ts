@@ -518,4 +518,261 @@ describe('NotificationsView', () => {
       expect(document.body.textContent).toContain('Step 1 of 3')
     })
   })
+
+  describe('edit channel', () => {
+    function dialogButton(label: string): HTMLButtonElement {
+      const match = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => b.textContent?.trim() === label,
+      )
+      if (!match) throw new Error(`no button labelled "${label}"`)
+      return match
+    }
+
+    function fieldByLabel(label: string): HTMLInputElement {
+      const wrap = [...document.body.querySelectorAll('.field')].find((f) =>
+        f.querySelector('.field-label')?.textContent?.includes(label),
+      )
+      const control = wrap?.querySelector('input, select')
+      if (!control) throw new Error(`no field labelled "${label}"`)
+      return control as HTMLInputElement
+    }
+
+    async function setByLabel(label: string, value: string): Promise<void> {
+      const control = fieldByLabel(label)
+      control.value = value
+      control.dispatchEvent(new Event('input'))
+      control.dispatchEvent(new Event('change'))
+      await flushPromises()
+    }
+
+    /** Opens the edit dialog for a channel by its card position. */
+    async function openEdit(index: number) {
+      setupDefaultMocks()
+      const wrapper = renderWithPlugins(NotificationsView)
+      await flushPromises()
+      const editBtns = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
+      await editBtns[index].trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('prefills the dialog from the channel being edited', async () => {
+      await openEdit(1)
+      expect((fieldByLabel('Name') as HTMLInputElement).value).toBe('Ops Email')
+      expect((fieldByLabel('SMTP Host') as HTMLInputElement).value).toBe('smtp.example.com')
+    })
+
+    // The wire type is a list; the field is one comma-separated string.
+    it('joins the recipient list into the single address field', async () => {
+      await openEdit(1)
+      expect((fieldByLabel('To Addresses') as HTMLInputElement).value).toBe('admin@example.com')
+    })
+
+    it('shows the webhook URL instead for a webhook channel', async () => {
+      await openEdit(0)
+      expect((fieldByLabel('URL') as HTMLInputElement).value).toBe(
+        'https://hooks.example.com/notify',
+      )
+      expect(() => fieldByLabel('SMTP Host')).toThrow()
+    })
+
+    it('saves the edited channel and splits the recipients back into a list', async () => {
+      const { updateChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockResolvedValue({} as never)
+      vi.mocked(updateChannel).mockResolvedValue({ ...EMAIL_CHANNEL, name: 'Renamed' } as never)
+
+      await openEdit(1)
+      await setByLabel('Name', 'Renamed')
+      await setByLabel('To Addresses', 'a@example.com, b@example.com ,')
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(updateChannel)).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({
+          name: 'Renamed',
+          config: expect.objectContaining({
+            to_addresses: ['a@example.com', 'b@example.com'],
+          }),
+        }),
+      )
+    })
+
+    it('checks SMTP before saving an email channel', async () => {
+      const { updateChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockRejectedValue(new Error('535 auth failed'))
+
+      await openEdit(1)
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(validateSmtp)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(updateChannel)).not.toHaveBeenCalled()
+      expect(document.body.querySelector('.form-error')).not.toBeNull()
+    })
+
+    // A webhook has no credentials to check, so it must not be sent through
+    // the SMTP gate - doing so would make webhooks unsaveable.
+    it('does not run the SMTP check for a webhook channel', async () => {
+      const { updateChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(updateChannel).mockResolvedValue(WEBHOOK_CHANNEL as never)
+
+      await openEdit(0)
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(vi.mocked(validateSmtp)).not.toHaveBeenCalled()
+      expect(vi.mocked(updateChannel)).toHaveBeenCalledTimes(1)
+    })
+
+    it('reports a save failure without closing the dialog', async () => {
+      const { updateChannel, validateSmtp } = await import('../api/notifications')
+      vi.mocked(validateSmtp).mockResolvedValue({} as never)
+      vi.mocked(updateChannel).mockRejectedValue(new Error('conflict'))
+
+      await openEdit(1)
+      dialogButton('Save').click()
+      await flushPromises()
+
+      expect(document.body.querySelector('.form-error')).not.toBeNull()
+      expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
+    })
+
+    it('closes without saving on Cancel', async () => {
+      const { updateChannel } = await import('../api/notifications')
+      await openEdit(1)
+      dialogButton('Cancel').click()
+      await flushPromises()
+
+      expect(vi.mocked(updateChannel)).not.toHaveBeenCalled()
+      expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    })
+  })
+
+  describe('channel scope and deletion', () => {
+    const SCOPE_REPOS = [{ id: 7, name: 'server-daily' }]
+    const SCOPE_AGENTS = [{ id: 3, hostname: 'web-01', display_name: null }]
+    const SCOPE_SCHEDULES = [{ id: 5, agent_id: 3, repo_id: 7 }]
+
+    function scopedMocks(): void {
+      setupDefaultMocks()
+      mockApiGet.mockImplementation((url: string) => {
+        if (url === '/repos') return Promise.resolve({ data: SCOPE_REPOS })
+        if (url === '/agents') return Promise.resolve({ data: SCOPE_AGENTS })
+        if (url === '/schedules') return Promise.resolve({ data: SCOPE_SCHEDULES })
+        return Promise.resolve({ data: [] })
+      })
+    }
+
+    function dialogButton(label: string): HTMLButtonElement {
+      const match = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => b.textContent?.trim() === label,
+      )
+      if (!match) throw new Error(`no button labelled "${label}"`)
+      return match
+    }
+
+    async function render() {
+      scopedMocks()
+      const wrapper = renderWithPlugins(NotificationsView)
+      await flushPromises()
+      return wrapper
+    }
+
+    async function clickByTitle(wrapper: Awaited<ReturnType<typeof render>>, title: string) {
+      const btn = wrapper.findAll('button').find((b) => b.attributes('title') === title)
+      if (!btn) throw new Error(`no button titled "${title}"`)
+      await btn.trigger('click')
+      await flushPromises()
+    }
+
+    it('offers the loaded repositories, agents and schedules as wizard scope', async () => {
+      const wrapper = await render()
+      const trigger = wrapper.findAll('button').find((b) => b.text().includes('New'))!
+      await trigger.trigger('click')
+
+      const set = async (label: string, v: string) => {
+        const wrap = [...document.body.querySelectorAll('.field')].find((f) =>
+          f.querySelector('.field-label')?.textContent?.includes(label),
+        )
+        const c = wrap!.querySelector('input, select') as HTMLInputElement
+        c.value = v
+        c.dispatchEvent(new Event('input'))
+        c.dispatchEvent(new Event('change'))
+        await flushPromises()
+      }
+      await set('Name', 'Scoped')
+      await set('SMTP Host', 'smtp.example.com')
+      await set('From Address', 'noreply@example.com')
+      await set('To Addresses', 'admin@example.com')
+
+      dialogButton('Next').click()
+      await flushPromises()
+      dialogButton('Next').click()
+      await flushPromises()
+
+      const text = document.body.textContent ?? ''
+      expect(text).toContain('server-daily')
+      expect(text).toContain('web-01')
+      expect(document.body.querySelectorAll('.scope-item').length).toBeGreaterThanOrEqual(3)
+    })
+
+    it('narrows the scope list as you search', async () => {
+      const wrapper = await render()
+      await clickByTitle(wrapper, 'Edit scope')
+
+      const before = document.body.querySelectorAll('.scope-item').length
+      const search = document.body.querySelector<HTMLInputElement>('.scope-search')!
+      search.value = 'server-daily'
+      search.dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      const after = document.body.querySelectorAll('.scope-item').length
+      expect(after).toBeLessThan(before)
+      expect(document.body.textContent).toContain('server-daily')
+    })
+
+    it('opens the per-channel events editor', async () => {
+      const wrapper = await render()
+      await clickByTitle(wrapper, 'Edit events')
+      expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
+      expect(document.body.textContent).toContain('Backup')
+    })
+
+    it('names the channel it is about to delete', async () => {
+      const wrapper = await render()
+      const del = wrapper.findAll('button.btn-danger-text')[0]
+      await del.trigger('click')
+      await flushPromises()
+      expect(document.body.textContent).toContain('Ops Webhook')
+    })
+
+    it('deletes the channel on confirmation and drops its rules', async () => {
+      const { deleteChannel } = await import('../api/notifications')
+      vi.mocked(deleteChannel).mockResolvedValue(undefined as never)
+
+      const wrapper = await render()
+      const del = wrapper.findAll('button.btn-danger-text')[0]
+      await del.trigger('click')
+      await flushPromises()
+      dialogButton('Delete').click()
+      await flushPromises()
+
+      expect(vi.mocked(deleteChannel)).toHaveBeenCalledWith(1)
+      expect(wrapper.text()).not.toContain('Ops Webhook')
+    })
+
+    it('keeps the channel when the delete is cancelled', async () => {
+      const { deleteChannel } = await import('../api/notifications')
+      const wrapper = await render()
+      const del = wrapper.findAll('button.btn-danger-text')[0]
+      await del.trigger('click')
+      await flushPromises()
+      dialogButton('Cancel').click()
+      await flushPromises()
+
+      expect(vi.mocked(deleteChannel)).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('Ops Webhook')
+    })
+  })
 })

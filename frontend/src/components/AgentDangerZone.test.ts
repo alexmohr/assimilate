@@ -101,4 +101,60 @@ describe('AgentDangerZone', () => {
     // The button is released again rather than left disabled forever.
     expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
   })
+
+  it('keeps the imported agent visible when hiding it fails', async () => {
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('agent busy'))
+    const wrapper = mount(IMPORTED)
+    await wrapper.find('.btn-ghost').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.btn-ghost').attributes('disabled')).toBeUndefined()
+  })
+
+  it('deletes the archives of an imported agent on confirmation', async () => {
+    const wrapper = mount(IMPORTED)
+    await wrapper.find('.btn-danger').trigger('click')
+    await flushPromises()
+    dialogButton('Delete Archives & Remove').click()
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/legacy-01/delete-archives')
+  })
+
+  it('releases the button when deleting the archives fails', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('repo locked'))
+    const wrapper = mount(IMPORTED)
+    await wrapper.find('.btn-danger').trigger('click')
+    await flushPromises()
+    dialogButton('Delete Archives & Remove').click()
+    await flushPromises()
+
+    expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
+  })
+
+  // Both dialogs guard something irreversible, so backing out has to be a
+  // genuine no-op rather than a dismissal that still fired the request.
+  it('does nothing when the delete-agent dialog is cancelled', async () => {
+    const wrapper = mount()
+    await wrapper.find('.btn-danger').trigger('click')
+    await flushPromises()
+
+    dialogButton('Cancel').click()
+    await flushPromises()
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.modal-dialog')).toBeNull()
+  })
+
+  it('does nothing when the delete-archives dialog is cancelled', async () => {
+    const wrapper = mount(IMPORTED)
+    await wrapper.find('.btn-danger').trigger('click')
+    await flushPromises()
+
+    dialogButton('Cancel').click()
+    await flushPromises()
+
+    expect(apiClient.post).not.toHaveBeenCalled()
+    expect(document.body.querySelector('.modal-dialog')).toBeNull()
+  })
 })

@@ -156,4 +156,106 @@ describe('AgentDefaultsCards', () => {
     expect(card(wrapper, 'paths').find('textarea').exists()).toBe(true)
     expect(card(wrapper, 'excludes').find('textarea').exists()).toBe(false)
   })
+
+  /** Opens a card for editing and returns its textarea. */
+  async function startEditing(wrapper: ReturnType<typeof mount>, which: keyof typeof CARDS) {
+    await card(wrapper, which).find('button').trigger('click')
+    return card(wrapper, which).find('textarea')
+  }
+
+  async function clickCardButton(
+    wrapper: ReturnType<typeof mount>,
+    which: keyof typeof CARDS,
+    label: string,
+  ) {
+    const button = card(wrapper, which)
+      .findAll('button')
+      .find((b) => b.text().trim() === label)
+    if (!button) throw new Error(`no "${label}" button on the ${which} card`)
+    await button.trigger('click')
+    await flushPromises()
+  }
+
+  // Every card prefills from the agent it was given rather than starting
+  // blank, so opening one and saving unchanged must not wipe the value.
+  it.each([
+    ['paths', '/srv\n/etc'],
+    ['excludes', '*.cache'],
+  ] as const)('prefills the %s card from the agent', async (which, expected) => {
+    const wrapper = mount()
+    const field = await startEditing(wrapper, which)
+    expect((field.element as HTMLTextAreaElement).value).toBe(expected)
+  })
+
+  // This card edits through FileChangePatternsEditor rather than a bare
+  // textarea, so it is driven through the component's model.
+  it('prefills the file change card from the agent', async () => {
+    const wrapper = mount()
+    await card(wrapper, 'fileChange').find('button').trigger('click')
+    const editor = card(wrapper, 'fileChange').findComponent({
+      name: 'FileChangePatternsEditor',
+    })
+    expect(editor.props('modelValue')).toBe('/data/wal/** ignore')
+  })
+
+  it.each([['paths'], ['excludes'], ['fileChange'], ['hooks']] as const)(
+    'leaves the %s card without saving on Cancel',
+    async (which) => {
+      const wrapper = mount()
+      await card(wrapper, which).find('button').trigger('click')
+      const saveVisible = () =>
+        card(wrapper, which)
+          .findAll('button')
+          .some((b) => b.text().trim() === 'Save')
+      expect(saveVisible()).toBe(true)
+
+      await clickCardButton(wrapper, which, 'Cancel')
+
+      expect(saveVisible()).toBe(false)
+      expect(apiClient.put).not.toHaveBeenCalled()
+    },
+  )
+
+  it('saves edited exclude patterns as a list, dropping blank lines', async () => {
+    const wrapper = mount()
+    const field = await startEditing(wrapper, 'excludes')
+    await field.setValue('*.cache\n\n/var/tmp\n')
+
+    await clickCardButton(wrapper, 'excludes', 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01',
+      expect.objectContaining({ default_exclude_patterns: ['*.cache', '/var/tmp'] }),
+    )
+  })
+
+  // File change patterns are stored as raw text, not split into a list, so
+  // this card must not get the line-splitting treatment the others do.
+  it('saves file change patterns as raw text', async () => {
+    const wrapper = mount()
+    await card(wrapper, 'fileChange').find('button').trigger('click')
+    await card(wrapper, 'fileChange')
+      .findComponent({ name: 'FileChangePatternsEditor' })
+      .vm.$emit('update:modelValue', '/data/wal/** ignore\n/srv/** watch')
+    await flushPromises()
+
+    await clickCardButton(wrapper, 'fileChange', 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01',
+      expect.objectContaining({
+        default_file_change_patterns_raw: '/data/wal/** ignore\n/srv/** watch',
+      }),
+    )
+  })
+
+  it('reopens a cancelled card with the stored value, not the discarded edit', async () => {
+    const wrapper = mount()
+    const field = await startEditing(wrapper, 'excludes')
+    await field.setValue('discarded')
+    await clickCardButton(wrapper, 'excludes', 'Cancel')
+
+    const reopened = await startEditing(wrapper, 'excludes')
+    expect((reopened.element as HTMLTextAreaElement).value).toBe('*.cache')
+  })
 })

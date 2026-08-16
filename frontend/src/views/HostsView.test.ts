@@ -14,6 +14,9 @@ import HostsView from './HostsView.vue'
 vi.mock('../api/client', () => ({
   apiClient: {
     get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
   },
 }))
 
@@ -486,5 +489,127 @@ describe('HostsView deploy button label', () => {
       { agent_version: '0.1.0', server_commit_count: 200 },
     )
     expect(wrapper.text()).toContain('Upgrade')
+  })
+
+  describe('add and adopt dialogs', () => {
+    /** The dialog teleports, so its controls are queried off the document. */
+    function dialogButton(label: string): HTMLButtonElement {
+      const match = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => b.textContent?.trim() === label,
+      )
+      if (!match) throw new Error(`no button labelled "${label}"`)
+      return match
+    }
+
+    async function openAdd(wrapper: Awaited<ReturnType<typeof mountWithAgent>>) {
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'New')!
+        .trigger('click')
+      await flushPromises()
+    }
+
+    async function setByPlaceholder(placeholder: string, value: string): Promise<void> {
+      const control = document.querySelector<HTMLInputElement>(
+        `input[placeholder="${placeholder}"]`,
+      )
+      if (!control) throw new Error(`no field with placeholder "${placeholder}"`)
+      control.value = value
+      control.dispatchEvent(new Event('input'))
+      await flushPromises()
+    }
+
+    /**
+     * The hostname requirement is enforced by disabling Create, not by
+     * reporting an error afterwards, so submitAdd's own guard is unreachable
+     * from the UI. This asserts the gate that actually holds.
+     */
+    it('keeps Create disabled until a hostname is entered', async () => {
+      const wrapper = await mountWithAgent({}, {})
+      await openAdd(wrapper)
+
+      expect(dialogButton('Create').disabled).toBe(true)
+
+      await setByPlaceholder('e.g. workstation-01', 'workstation-01')
+      expect(dialogButton('Create').disabled).toBe(false)
+
+      await setByPlaceholder('e.g. workstation-01', '   ')
+      expect(dialogButton('Create').disabled).toBe(true)
+    })
+
+    // Hostnames cannot contain whitespace, so it is stripped rather than
+    // rejected - a pasted name with a stray space should still work.
+    it('strips whitespace from the hostname and nulls an empty display name', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { agent: { id: 7, hostname: 'workstation-01' }, token: 'tok_abc' },
+      } as never)
+
+      const wrapper = await mountWithAgent({}, {})
+      await openAdd(wrapper)
+      await setByPlaceholder('e.g. workstation-01', '  workstation 01  ')
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/agents', {
+        hostname: 'workstation01',
+        display_name: null,
+      })
+    })
+
+    it('sends a trimmed display name when one is given', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { agent: { id: 7, hostname: 'workstation-01' }, token: 'tok_abc' },
+      } as never)
+
+      const wrapper = await mountWithAgent({}, {})
+      await openAdd(wrapper)
+      await setByPlaceholder('e.g. workstation-01', 'workstation-01')
+      await setByPlaceholder('Optional friendly name', '  Front desk  ')
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/agents', {
+        hostname: 'workstation-01',
+        display_name: 'Front desk',
+      })
+    })
+
+    // The enrolment token is shown once, so the dialog swaps to a reveal step
+    // instead of closing, and closing has to clear it.
+    it('reveals the enrolment token and clears it on close', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { agent: { id: 7, hostname: 'workstation-01' }, token: 'tok_abc' },
+      } as never)
+
+      const wrapper = await mountWithAgent({}, {})
+      await openAdd(wrapper)
+      await setByPlaceholder('e.g. workstation-01', 'workstation-01')
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(document.querySelector('.token-text')?.textContent).toBe('tok_abc')
+      ;[...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find((b) => b.textContent?.includes('Cop'))
+        ?.click()
+      await flushPromises()
+
+      dialogButton('Done').click()
+      await flushPromises()
+
+      expect(document.querySelector('.token-text')).toBeNull()
+    })
+
+    it('reports a create failure without revealing a token', async () => {
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('hostname taken'))
+
+      const wrapper = await mountWithAgent({}, {})
+      await openAdd(wrapper)
+      await setByPlaceholder('e.g. workstation-01', 'workstation-01')
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(document.querySelector('.token-text')).toBeNull()
+      expect(document.querySelector('.form-error')).not.toBeNull()
+    })
   })
 })

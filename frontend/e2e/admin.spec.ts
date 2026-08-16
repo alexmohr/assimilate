@@ -24,7 +24,7 @@ test.describe('Admin journey', () => {
     const operatorRow = page.locator('tr', { hasText: 'operator1' })
     await operatorRow.getByRole('button', { name: 'Edit' }).click()
 
-    await page.getByRole('button', { name: 'Permissions' }).click()
+    await page.getByRole('tab', { name: 'Permissions' }).click()
 
     const repoCell = page.locator('.perm-repo-cell').first()
     await expect(repoCell).toBeVisible()

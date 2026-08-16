@@ -309,13 +309,13 @@ test.describe('Schedules management', () => {
     await page.getByPlaceholder('e.g. Daily web server backup').click()
 
     await targetCard
-      .locator('.form-group', { hasText: 'Repository' })
+      .locator('.field', { hasText: 'Repository' })
       .locator('select')
       .selectOption({ label: 'server-daily' })
 
     // Use Integrity Check so the test doesn't depend on backup source paths.
     await targetCard
-      .locator('.form-group', { hasText: 'Schedule Type' })
+      .locator('.field', { hasText: 'Schedule Type' })
       .locator('select')
       .selectOption({ label: 'Integrity Check' })
 

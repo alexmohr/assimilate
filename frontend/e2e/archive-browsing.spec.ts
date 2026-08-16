@@ -12,7 +12,7 @@ async function navigateToMediaWeeklyArchives(page: Page): Promise<void> {
   await page.goto('/repos', { waitUntil: 'commit' })
   await page.getByText('media-weekly', { exact: true }).click()
   await page.waitForURL(/\/repos\/\d+/, { waitUntil: 'commit' })
-  await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await page.getByRole('tab', { name: 'Archives', exact: true }).click()
   await page.waitForLoadState('networkidle')
 }
 
@@ -24,7 +24,7 @@ test.describe('Archive browsing & diff journey', () => {
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('button', { name: 'Archives' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Archives' })).toBeVisible()
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
     await expandAllArchiveGroups(page)
 
@@ -160,7 +160,7 @@ test.describe('Archive browsing & diff journey', () => {
     await page.goto('/repos/1')
     await page.waitForLoadState('networkidle')
 
-    const archivesTab = page.getByRole('button', { name: 'Archives' })
+    const archivesTab = page.getByRole('tab', { name: 'Archives' })
     await expect(archivesTab).toBeVisible()
 
     await archivesTab.click()
@@ -236,14 +236,14 @@ test.describe('Archive browsing & diff journey', () => {
     // window can be too short to reliably observe, so don't fail the test
     // over it - the definitive proof the whole pipeline ran is the archive
     // disappearing below.
-    await page.getByRole('button', { name: 'Overview', exact: true }).click()
+    await page.getByRole('tab', { name: 'Overview', exact: true }).click()
     await page
       .getByText(/Deleting archive|Compacting repository/)
       .first()
       .waitFor({ state: 'visible', timeout: 5_000 })
       .catch(() => {})
 
-    await page.getByRole('button', { name: 'Archives', exact: true }).click()
+    await page.getByRole('tab', { name: 'Archives', exact: true }).click()
     await expandAllArchiveGroups(page)
     await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible({
       timeout: 60_000,

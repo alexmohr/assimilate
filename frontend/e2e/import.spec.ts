@@ -39,7 +39,7 @@ async function navigateToRepo(page: Page, repoName: string, tab?: string): Promi
   await page.getByText(repoName).first().click()
   await page.waitForURL(/\/repos\/\d+/, { waitUntil: 'commit' })
   if (tab) {
-    await page.getByRole('button', { name: tab, exact: true }).click()
+    await page.getByRole('tab', { name: tab, exact: true }).click()
   }
 }
 
@@ -110,14 +110,18 @@ test('agents page shows imported placeholder agents', async ({ page }) => {
 test('imported agents have the Imported badge', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
-  // At least one .badge-imported must be present (old-webserver and legacy-db-prod)
-  await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 270_000 })
+  // At least one Imported badge must be present (old-webserver and legacy-db-prod)
+  await expect(page.locator('.badge', { hasText: 'Imported' }).first()).toBeVisible({
+    timeout: 270_000,
+  })
 })
 
 test('imported agents show Merge into... and Adopt action buttons', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
-  await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 270_000 })
+  await expect(page.locator('.badge', { hasText: 'Imported' }).first()).toBeVisible({
+    timeout: 270_000,
+  })
   // Merge and Adopt must be visible for at least one imported agent
   await expect(page.getByRole('button', { name: /merge into/i }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: /adopt/i }).first()).toBeVisible()
@@ -208,7 +212,7 @@ test('full resync completes and preserves archives', async ({ page }) => {
   await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
 
   // Switch to archives tab and verify entries are still present after resync
-  await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await page.getByRole('tab', { name: 'Archives', exact: true }).click()
   await expandAllArchiveGroups(page)
   await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 15_000 })
 })
@@ -224,7 +228,7 @@ test('full resync preserves unmatched-banner', async ({ page }) => {
   await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
 
   // Switch to archives tab - unmatched old-webserver archive must survive a resync
-  await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await page.getByRole('tab', { name: 'Archives', exact: true }).click()
   await expect(page.locator('.unmatched-banner')).toBeVisible({ timeout: 10_000 })
 })
 
@@ -393,7 +397,7 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
   await navigateToRepo(page, 'server-daily', 'Archives')
   const resyncBtn = page.getByRole('button', { name: /full resync/i })
   // Resync button is in the Overview tab toolbar; switch back to trigger it.
-  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click()
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
@@ -401,7 +405,7 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
   await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
 
   // Switch to Archives tab and confirm the deleted archive is no longer listed.
-  await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await page.getByRole('tab', { name: 'Archives', exact: true }).click()
   await expandAllArchiveGroups(page)
   await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.archive-name', { hasText: toDelete })).not.toBeVisible()

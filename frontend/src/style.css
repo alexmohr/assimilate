@@ -829,6 +829,53 @@
     gap: 0.375rem;
   }
 
+  /* --- Stat ----------------------------------------------------------------
+     A labelled number: card footers, dashboard KPIs, quota summaries, the
+     agent Overview tiles. This was copy-pasted into six files and had already
+     drifted into four sizes and two label weights - the same F-06 problem the
+     audit fixed for panels and badges. The shape lives here once; the two
+     larger roles are modifiers, following `.btn` / `.btn-sm`. */
+  .stat-label {
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .stat-value {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  /* The larger roles pair a number with a badge or a status dot, so they lay
+     their content out in a row rather than relying on inline layout. */
+  .stat-value--lg,
+  .stat-value--xl {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .stat-value--lg {
+    font-size: var(--fs-lg);
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat-value--xl {
+    font-size: var(--fs-xl);
+    font-weight: 700;
+  }
+
+  /* The line under a stat: what the number is of, or where it came from. */
+  .stat-sub {
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+  }
+
   /* --- Entity rows ---------------------------------------------------------
      One line per thing, for lists long enough that a card per entry stops
      fitting on a screen: a status stripe, a name, a time, stats pushed right,

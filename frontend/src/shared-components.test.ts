@@ -96,6 +96,9 @@ const OWNED = [
   'info-actions',
   'field-inline',
   'field-label-row',
+  'stat-label',
+  'stat-value',
+  'stat-sub',
 ]
 
 const FILES = vueFiles()

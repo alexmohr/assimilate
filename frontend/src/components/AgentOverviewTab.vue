@@ -193,7 +193,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
         <span class="stat-label">Last backup</span>
         <span
           v-if="lastBackup"
-          class="stat-value"
+          class="stat-value stat-value--lg"
         >
           {{ relativeTime(lastBackup.finished_at) }}
           <span
@@ -204,7 +204,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
         </span>
         <span
           v-else
-          class="stat-value stat-value--empty"
+          class="stat-value stat-value--lg stat-value--empty"
           >Never</span
         >
         <span
@@ -219,12 +219,12 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
         <span class="stat-label">Next run</span>
         <span
           v-if="nextRun"
-          class="stat-value"
+          class="stat-value stat-value--lg"
           >{{ formatDateShort(nextRun.schedule.next_run_at) }}</span
         >
         <span
           v-else
-          class="stat-value stat-value--empty"
+          class="stat-value stat-value--lg stat-value--empty"
           >None scheduled</span
         >
         <span
@@ -238,7 +238,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
 
       <div class="tile">
         <span class="stat-label">Repositories</span>
-        <span class="stat-value">{{ repos.length }}</span>
+        <span class="stat-value stat-value--lg">{{ repos.length }}</span>
         <span
           v-if="repoNames"
           class="stat-sub stat-sub--truncate"
@@ -353,33 +353,9 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
   min-width: 0;
 }
 
-.stat-label {
-  font-size: var(--fs-2xs);
-  font-family: var(--mono);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.stat-value {
-  font-size: var(--fs-lg);
-  font-weight: 650;
-  letter-spacing: -0.015em;
-  font-variant-numeric: tabular-nums;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
 .stat-value--empty {
   color: var(--text-muted);
   font-weight: 500;
-}
-
-.stat-sub {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
 }
 
 .stat-sub--truncate {

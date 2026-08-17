@@ -116,7 +116,7 @@ const isSingleIncident = computed(() => {
   <div class="run-strip">
     <div class="run-strip-head">
       <span
-        class="run-strip-value"
+        class="stat-value stat-value--lg"
         :class="{ 'run-strip-value--bad': failedCount > 0 }"
         >{{ headline }}</span
       >
@@ -159,13 +159,6 @@ const isSingleIncident = computed(() => {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-}
-
-.run-strip-value {
-  font-size: var(--fs-lg);
-  font-weight: 650;
-  letter-spacing: -0.015em;
-  font-variant-numeric: tabular-nums;
 }
 
 .run-strip-value--bad {

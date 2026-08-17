@@ -125,15 +125,15 @@ function navigateToActivity(status?: string): void {
         class="mini-stat mini-stat-link"
         @click="navigateToActivity()"
       >
-        <span class="mini-stat-value">{{ totalCount }}</span>
-        <span class="mini-stat-label">Total</span>
+        <span class="stat-value stat-value--lg">{{ totalCount }}</span>
+        <span class="stat-label">Total</span>
       </div>
       <div
         class="mini-stat mini-stat-link"
         @click="navigateToActivity('success')"
       >
         <span
-          class="mini-stat-value"
+          class="stat-value stat-value--lg"
           :class="{
             'color-success': successRate >= 90,
             'color-warning': successRate >= 70 && successRate < 90,
@@ -142,25 +142,23 @@ function navigateToActivity(status?: string): void {
         >
           {{ successRate }}%
         </span>
-        <span class="mini-stat-label">Success</span>
+        <span class="stat-label">Success</span>
       </div>
       <div
         class="mini-stat mini-stat-link"
         @click="navigateToActivity('failed')"
       >
         <span
-          class="mini-stat-value"
+          class="stat-value stat-value--lg"
           :class="{ 'color-danger': failedCount > 0 }"
         >
           {{ failedCount }}
         </span>
-        <span class="mini-stat-label">Failed</span>
+        <span class="stat-label">Failed</span>
       </div>
       <div class="mini-stat">
-        <span class="mini-stat-value mini-stat-value-sm">{{
-          formatDuration(avgDurationSecs)
-        }}</span>
-        <span class="mini-stat-label">Avg Duration</span>
+        <span class="stat-value stat-value--lg">{{ formatDuration(avgDurationSecs) }}</span>
+        <span class="stat-label">Avg Duration</span>
       </div>
     </div>
   </section>
@@ -207,23 +205,6 @@ function navigateToActivity(status?: string): void {
 
 .mini-stat-link:hover {
   background: var(--bg-hover);
-}
-
-.mini-stat-value {
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.mini-stat-value-sm {
-  font-size: var(--fs-lg);
-}
-
-.mini-stat-label {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--text-muted);
 }
 
 .color-success {

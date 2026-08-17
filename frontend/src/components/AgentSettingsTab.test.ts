@@ -115,6 +115,24 @@ describe('AgentSettingsTab', () => {
       expect(button!.attributes('disabled')).toBeDefined()
     })
 
+    it('names the unknowns on an agent that has reported nothing', () => {
+      const text = mount({
+        agent: {
+          ...AGENT,
+          display_name: null,
+          agent_version: null,
+          agent_git_sha: null,
+          agent_build_time: null,
+          created_at: null,
+          last_seen_at: null,
+        },
+      }).text()
+
+      expect(text).toContain('Not set')
+      expect(text).toContain('Unknown')
+      expect(text).toContain('Never')
+    })
+
     // An imported host has no agent to hold a token or report a build.
     it('omits the connection card and build rows for an imported host', () => {
       const wrapper = mount({ agent: { ...AGENT, is_imported: true } })

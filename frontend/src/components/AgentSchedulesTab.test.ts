@@ -85,6 +85,12 @@ describe('AgentSchedulesTab', () => {
     expect(wrapper.emitted('open')).toHaveLength(1)
   })
 
+  // An unnamed schedule is identified by the repository it writes to.
+  it('falls back to the repository name for an unnamed schedule', () => {
+    const wrapper = mount({ schedules: [schedule({ name: '' })] })
+    expect(wrapper.find('.agent-row-name').text()).toBe('server-daily')
+  })
+
   it('surfaces a failed run request', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(new Error('repo locked'))
     const wrapper = mount()

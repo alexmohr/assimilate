@@ -87,6 +87,12 @@ describe('AgentBackupRow', () => {
     expect(stats).not.toContain('dedup')
   })
 
+  // The wire type allows warnings to be absent rather than an empty list.
+  it('treats a report with no warnings field as having none', () => {
+    const wrapper = mount({ report: report({ warnings: null }), showDetail: true })
+    expect(wrapper.find('button[aria-expanded]').exists()).toBe(false)
+  })
+
   describe('detail', () => {
     it('offers no toggle when there is nothing to expand', () => {
       expect(mount({ showDetail: true }).find('button[aria-expanded]').exists()).toBe(false)

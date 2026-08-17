@@ -126,6 +126,11 @@ describe('AgentOverviewTab', () => {
     expect(tile(wrapper, 'Next run').find('.stat-sub').text()).toContain('sooner')
   })
 
+  it('names an unnamed next run by its repository', () => {
+    const wrapper = mount({ schedules: [schedule({ name: '' })] })
+    expect(tile(wrapper, 'Next run').find('.stat-sub').text()).toContain('server-daily')
+  })
+
   it('counts the repositories the agent backs up to', () => {
     const wrapper = mount({
       repos: [
@@ -151,6 +156,37 @@ describe('AgentOverviewTab', () => {
       expect(row.text()).toContain('Overdue')
       expect(row.text()).toContain('Nightly')
       expect(row.find('.attention-link').attributes('href')).toBe('/schedules/100')
+    })
+
+    it('says how long an offline agent has been gone', () => {
+      const wrapper = mount({
+        agent: { ...AGENT, is_connected: false, last_seen_at: '2026-06-01T00:00:00Z' },
+      })
+      expect(wrapper.find('.attention').text()).toContain('last checked in')
+    })
+
+    it('says an agent has never checked in when it never has', () => {
+      const wrapper = mount({
+        agent: { ...AGENT, is_connected: false, last_seen_at: null },
+      })
+      expect(wrapper.find('.attention').text()).toContain('never checked in')
+    })
+
+    // A schedule that has never produced a backup is overdue from the start.
+    it('says an overdue schedule has never run when it never has', () => {
+      const wrapper = mount({
+        health: [health({ is_overdue: true, last_backup_at: null })],
+      })
+      expect(wrapper.find('.attention').text()).toContain('has never run')
+    })
+
+    // An unnamed schedule is identified by what it writes to.
+    it('falls back to the target name for an unnamed overdue schedule', () => {
+      const wrapper = mount({
+        schedules: [schedule({ name: '' })],
+        health: [health({ is_overdue: true })],
+      })
+      expect(wrapper.find('.attention').text()).toContain('server-daily')
     })
 
     it('reports a failed last backup', () => {

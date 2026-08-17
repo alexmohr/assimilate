@@ -109,6 +109,18 @@ describe('AgentRunStrip', () => {
     expect(mount(['success', 'success', 'success']).text()).toMatch(/3 runs back to/)
   })
 
+  // Imported reports can arrive without a repository name attached.
+  it('titles a cell without a repository name', () => {
+    const wrapper = renderWithPlugins(AgentRunStrip, {
+      props: {
+        reports: [
+          { id: 1, repo_name: null, status: 'success', finished_at: '2026-06-01T12:00:00Z' },
+        ] as unknown as ReportRow[],
+      },
+    })
+    expect(wrapper.find('.run-cell').attributes('title')).toContain('backup - success')
+  })
+
   it('describes itself for assistive tech', () => {
     const label = mount(['success', 'failed']).find('.run-strip-cells').attributes('aria-label')
     expect(label).toBe('Last 2 runs, oldest first: 1 failed')

@@ -1429,3 +1429,161 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(openModals(wrapper)).toHaveLength(1)
   })
 })
+
+describe('AgentDetailView - adoption, restart and live updates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+  })
+
+  async function render(
+    agentOverrides: Record<string, unknown> = {},
+  ): Promise<VueWrapper<ComponentPublicInstance>> {
+    const agent = { ...mockAgent, ...agentOverrides }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  async function clickAction(
+    wrapper: VueWrapper<ComponentPublicInstance>,
+    label: string,
+  ): Promise<void> {
+    const match = wrapper.findAll('.agent-actions > button').find((b) => b.text().trim() === label)
+    if (!match) throw new Error(`no action labelled "${label}"`)
+    await match.trigger('click')
+    await flushPromises()
+  }
+
+  // Adopting drops the "(imported)" suffix the import gave the host, then
+  // issues it a real token - the host stops being a placeholder.
+  it('adopts an imported host and reveals its new token', async () => {
+    const wrapper = await render({ is_imported: true, display_name: 'old-web (imported)' })
+    vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { agent: { ...mockAgent, id: '1' }, token: 'tok_adopted' },
+    } as never)
+
+    await clickAction(wrapper, 'Adopt')
+
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-host', {
+      display_name: 'old-web',
+    })
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/regenerate-token')
+    expect(wrapper.find('.token-text').text()).toBe('tok_adopted')
+  })
+
+  it('keeps the page usable when adoption fails', async () => {
+    const wrapper = await render({ is_imported: true })
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('already adopted'))
+
+    await clickAction(wrapper, 'Adopt')
+
+    expect(wrapper.find('.token-text').exists()).toBe(false)
+    expect(wrapper.find('.agent-hostname').exists()).toBe(true)
+  })
+
+  it('leaves the agent list after a merge', async () => {
+    const wrapper = await render({ is_imported: true })
+    await clickAction(wrapper, 'Merge into...')
+
+    wrapper.findComponent(MergeAgentDialog).vm.$emit('merged')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
+      .$router
+    expect(router.currentRoute.value.path).toBe('/agents')
+  })
+
+  it('restarts the agent from the overflow menu', async () => {
+    const wrapper = await render({ supports_restart: true })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} } as never)
+
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Restart agent')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/restart')
+  })
+
+  it('reports a restart that could not be delivered', async () => {
+    const wrapper = await render({ supports_restart: true })
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('agent offline'))
+
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Restart agent')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').exists()).toBe(true)
+  })
+
+  it('navigates to this agent’s activity log', async () => {
+    const wrapper = await render()
+    await clickAction(wrapper, 'Activity log')
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe('/activity?category=backup&hostname=test-host')
+  })
+
+  it('reports an agent that is not in the list', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    // extractError is stubbed to a fixed string in this file, so the thrown
+    // "not found" message cannot be asserted - only that it surfaced at all.
+    expect(wrapper.find('.state-error').exists()).toBe(true)
+    expect(wrapper.find('.agent-hostname').exists()).toBe(false)
+  })
+
+  // The page is long-lived, so it refetches on anything that could have
+  // changed what it is showing rather than waiting for a navigation.
+  it.each([['DataChanged'], ['AgentConnected'], ['AgentDisconnected']])(
+    'refetches on %s',
+    async (event) => {
+      await render()
+      const before = vi.mocked(apiClient.get).mock.calls.length
+
+      wsHandlers[event]?.({})
+      await flushPromises()
+
+      expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
+    },
+  )
+
+  it('refetches when the socket reconnects', async () => {
+    await render()
+    const before = vi.mocked(apiClient.get).mock.calls.length
+
+    wsStatus.value = 'disconnected'
+    await flushPromises()
+    wsStatus.value = 'connected'
+    await flushPromises()
+
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
+  })
+})

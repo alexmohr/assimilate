@@ -242,6 +242,28 @@ describe('AgentHeader', () => {
     })
   })
 
+  // A freshly created agent has connected but reported nothing about itself,
+  // so every field in the meta strip is null at once.
+  it('names the unknowns rather than leaving gaps', () => {
+    const wrapper = mount({
+      display_name: null,
+      agent_version: null,
+      agent_git_sha: null,
+      agent_build_time: null,
+      created_at: null,
+      last_seen_at: null,
+      is_connected: null,
+    })
+
+    expect(wrapper.find('.agent-subtitle').exists()).toBe(false)
+    const meta = wrapper.find('.agent-meta').text()
+    expect(meta).toContain('unknown')
+    expect(meta).not.toContain('rev')
+    expect(meta).not.toContain('seen')
+    // A null connection state is not a connection.
+    expect(wrapper.find('.badge--neutral').text()).toContain('Offline')
+  })
+
   it('surfaces a failed restart', () => {
     expect(mount({}, { restartError: 'connection refused' }).find('.form-error').text()).toBe(
       'connection refused',

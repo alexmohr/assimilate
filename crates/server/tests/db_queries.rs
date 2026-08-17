@@ -14,7 +14,10 @@
 
 use chrono::{DateTime, Datelike, Duration, Utc};
 use chrono_tz::Tz;
-use server::db::{self, patterns, *};
+use server::{
+    archive_index::codec::{self, DirEntry},
+    db::{self, patterns, *},
+};
 use shared::types::QuotaAction;
 use sqlx::PgPool;
 
@@ -42,7 +45,7 @@ async fn database_storage_lists_application_tables(pool: PgPool) {
     assert!(
         relations
             .iter()
-            .any(|relation| relation.table_name == "archive_files")
+            .any(|relation| relation.table_name == "archive_dirs")
     );
     assert!(relations.iter().all(|relation| relation.table_bytes >= 0));
     assert!(relations.iter().all(|relation| relation.index_bytes >= 0));
@@ -8562,4 +8565,387 @@ async fn totp_user_without_secret_returns_none(pool: PgPool) {
 
     let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
     assert!(fields.is_none(), "user without TOTP setup must return None");
+}
+
+/// Seeds one directory of the content index the way `archive_index` writes it:
+/// children sorted into listing order, split into chunks of `chunk_entries`.
+#[cfg(test)]
+async fn seed_archive_dir(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    dir_path: &str,
+    entries: &[DirEntry],
+    chunk_entries: usize,
+) {
+    let archive_id: i64 = sqlx::query_scalar(
+        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) ON CONFLICT (repo_id, name) DO \
+         UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let dir_path_id: i64 = sqlx::query_scalar(
+        "INSERT INTO archive_paths (repo_id, path) VALUES ($1, $2) ON CONFLICT (repo_id, path) DO \
+         UPDATE SET path = EXCLUDED.path RETURNING id",
+    )
+    .bind(repo_id)
+    .bind(dir_path)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let mut sorted = entries.to_vec();
+    codec::sort_for_listing(&mut sorted);
+
+    for (index, chunk) in sorted.chunks(chunk_entries).enumerate() {
+        sqlx::query(
+            "INSERT INTO archive_dirs (archive_id, dir_path_id, chunk_no, entries) VALUES ($1, \
+             $2, $3, $4)",
+        )
+        .bind(archive_id)
+        .bind(dir_path_id)
+        .bind(i32::try_from(index).unwrap())
+        .bind(codec::encode(chunk))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+#[cfg(test)]
+fn dir_entry(name: &str, entry_type: &str) -> DirEntry {
+    DirEntry {
+        name: name.to_owned(),
+        entry_type: entry_type.to_owned(),
+        size: 42,
+        mtime: "2026-06-05T12:00:00.000000".to_owned(),
+        mode: "-rw-r--r--".to_owned(),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn query_dir_lists_children_directories_first_then_by_name(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "var/log",
+        &[
+            dir_entry("syslog", "-"),
+            dir_entry("apt", "d"),
+            dir_entry("auth.log", "-"),
+        ],
+        2000,
+    )
+    .await;
+
+    let entries = server::archive_index::query_dir(&pool, repo.id, "daily-1", "var/log", 100)
+        .await
+        .unwrap();
+
+    let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(paths, ["var/log/apt", "var/log/auth.log", "var/log/syslog"]);
+    assert_eq!(entries.first().unwrap().entry_type, "d");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn query_dir_preserves_metadata_verbatim(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let mut entry = dir_entry("odd\tname\nwith breaks", "-");
+    entry.mtime = "2026-06-05T12:00:00.123456".to_owned();
+    entry.mode = "-rwsr-xr-t".to_owned();
+    entry.size = i64::MAX;
+
+    seed_archive_dir(&pool, repo.id, "daily-1", "data", &[entry], 2000).await;
+
+    let entries = server::archive_index::query_dir(&pool, repo.id, "daily-1", "data", 100)
+        .await
+        .unwrap();
+
+    let only = entries.first().unwrap();
+    assert_eq!(only.path, "data/odd\tname\nwith breaks");
+    assert_eq!(only.mtime, "2026-06-05T12:00:00.123456");
+    assert_eq!(only.mode, "-rwsr-xr-t");
+    assert_eq!(only.size, i64::MAX);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn query_dir_returns_root_children_without_a_leading_separator(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "",
+        &[dir_entry("etc", "d")],
+        2000,
+    )
+    .await;
+
+    let entries = server::archive_index::query_dir(&pool, repo.id, "daily-1", "", 100)
+        .await
+        .unwrap();
+
+    assert_eq!(entries.first().unwrap().path, "etc");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn query_dir_reads_across_chunks_and_honours_the_limit(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let entries: Vec<DirEntry> = (0..250)
+        .map(|i| dir_entry(&format!("file_{i:04}"), "-"))
+        .collect();
+
+    // Chunk size 10 forces 25 chunks, so a limit of 42 must span several of them.
+    seed_archive_dir(&pool, repo.id, "daily-1", "many", &entries, 10).await;
+
+    let limited = server::archive_index::query_dir(&pool, repo.id, "daily-1", "many", 42)
+        .await
+        .unwrap();
+    assert_eq!(limited.len(), 42);
+    assert_eq!(limited.first().unwrap().path, "many/file_0000");
+    assert_eq!(limited.last().unwrap().path, "many/file_0041");
+
+    let all = server::archive_index::query_dir(&pool, repo.id, "daily-1", "many", 1000)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 250);
+    assert_eq!(all.last().unwrap().path, "many/file_0249");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn query_dir_returns_nothing_for_unknown_archives_and_directories(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "etc",
+        &[dir_entry("hosts", "-")],
+        2000,
+    )
+    .await;
+
+    assert!(
+        server::archive_index::query_dir(&pool, repo.id, "missing-archive", "etc", 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        server::archive_index::query_dir(&pool, repo.id, "daily-1", "no/such/dir", 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_an_archive_gcs_only_its_orphaned_directory_paths(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "shared",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-2",
+        "shared",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "only-in-one",
+        &[dir_entry("b", "-")],
+        2000,
+    )
+    .await;
+
+    db::delete_archive_records_by_names(&pool, repo.id, &["daily-1".to_owned()])
+        .await
+        .unwrap();
+
+    let remaining: Vec<String> =
+        sqlx::query_scalar("SELECT path FROM archive_paths WHERE repo_id = $1 ORDER BY path")
+            .bind(repo.id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+
+    // "shared" is still referenced by daily-2; "only-in-one" is now orphaned.
+    assert_eq!(remaining, ["shared"]);
+
+    let survivors = server::archive_index::query_dir(&pool, repo.id, "daily-2", "shared", 100)
+        .await
+        .unwrap();
+    assert_eq!(survivors.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_all_repo_archive_data_clears_the_content_index(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "shared",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-2",
+        "shared",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+
+    db::delete_all_repo_archive_data(&pool, repo.id)
+        .await
+        .unwrap();
+
+    let paths: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_paths WHERE repo_id = $1")
+        .bind(repo.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let dirs: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_dirs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(paths, 0);
+    assert_eq!(dirs, 0);
+}
+
+/// The `(archives.id, archive_paths.id)` pair a seeded directory was stored under.
+#[cfg(test)]
+async fn archive_and_dir_path_ids(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    dir_path: &str,
+) -> (i64, i64) {
+    let archive_id: i64 =
+        sqlx::query_scalar("SELECT id FROM archives WHERE repo_id = $1 AND name = $2")
+            .bind(repo_id)
+            .bind(archive_name)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let dir_path_id: i64 =
+        sqlx::query_scalar("SELECT id FROM archive_paths WHERE repo_id = $1 AND path = $2")
+            .bind(repo_id)
+            .bind(dir_path)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    (archive_id, dir_path_id)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn reindexing_an_archive_replaces_stale_chunks_instead_of_merging(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    // An earlier indexing pass packed the directory into three chunks, as it would
+    // have with a smaller CHUNK_ENTRIES.
+    let first_pass: Vec<DirEntry> = (0..30)
+        .map(|i| dir_entry(&format!("old_{i:03}"), "-"))
+        .collect();
+    seed_archive_dir(&pool, repo.id, "daily-1", "dir", &first_pass, 10).await;
+
+    let (archive_id, dir_path_id) =
+        archive_and_dir_path_ids(&pool, repo.id, "daily-1", "dir").await;
+
+    // A later pass over the same archive produces fewer entries in a single chunk.
+    // Merging would leave chunks 1 and 2 behind for the reader to append.
+    let second_pass: Vec<DirEntry> = (0..5)
+        .map(|i| dir_entry(&format!("new_{i:03}"), "-"))
+        .collect();
+    server::archive_index::replace_archive_dirs(&pool, archive_id, &[(dir_path_id, second_pass)])
+        .await
+        .unwrap();
+
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_dirs WHERE archive_id = $1")
+        .bind(archive_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1, "stale chunk rows from the earlier pass survived");
+
+    let entries = server::archive_index::query_dir(&pool, repo.id, "daily-1", "dir", 1000)
+        .await
+        .unwrap();
+    let names: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "dir/new_000",
+            "dir/new_001",
+            "dir/new_002",
+            "dir/new_003",
+            "dir/new_004"
+        ]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn replacing_one_archive_leaves_other_archives_untouched(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "dir",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-2",
+        "dir",
+        &[dir_entry("b", "-")],
+        2000,
+    )
+    .await;
+
+    let (archive_id, dir_path_id) =
+        archive_and_dir_path_ids(&pool, repo.id, "daily-1", "dir").await;
+    server::archive_index::replace_archive_dirs(
+        &pool,
+        archive_id,
+        &[(dir_path_id, vec![dir_entry("c", "-")])],
+    )
+    .await
+    .unwrap();
+
+    let replaced = server::archive_index::query_dir(&pool, repo.id, "daily-1", "dir", 100)
+        .await
+        .unwrap();
+    let untouched = server::archive_index::query_dir(&pool, repo.id, "daily-2", "dir", 100)
+        .await
+        .unwrap();
+
+    assert_eq!(replaced.first().unwrap().path, "dir/c");
+    assert_eq!(untouched.first().unwrap().path, "dir/b");
 }

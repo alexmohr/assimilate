@@ -570,6 +570,56 @@ SQL
 echo "==> Adding SSH tunnel entry for loopback agent communication..."
 api POST "/api/tunnels" "{\"agent_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
 
+echo "==> Warming the archive content index..."
+# Browsing an archive builds its content index in the background (one compressed
+# blob per directory in archive_dirs). Doing it here means the archive browser
+# has contents to show as soon as the demo comes up, instead of showing an
+# "indexing" spinner on the first screenshot, and it exercises the packed
+# storage layout end to end.
+NEWEST_WEB01_ARCHIVE=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT br.archive_name FROM backup_reports br \
+     WHERE br.repo_id = $REPO_DAILY_ID AND br.archive_name LIKE 'web-server-01-backup-%' \
+     ORDER BY br.started_at DESC LIMIT 1")
+api GET "/api/repos/$REPO_DAILY_ID/archives/$NEWEST_WEB01_ARCHIVE/contents" > /dev/null
+
+# Wait on the indexing job's own status rather than on archive_dirs having rows.
+# replace_archive_dirs deletes the archive's rows and re-inserts them in batches
+# without a wrapping transaction, so a row count can be non-zero while the index
+# is still half-written; the job only reaches 'done' once indexing has finished,
+# which is the same signal the API uses before serving the stored index.
+INDEX_WAIT=0
+INDEX_STATUS=""
+while [ "$INDEX_WAIT" -lt 60 ]; do
+    INDEX_STATUS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+        "SELECT j.status FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id \
+         WHERE a.repo_id = $REPO_DAILY_ID AND a.name = '$NEWEST_WEB01_ARCHIVE'")
+    case "$INDEX_STATUS" in
+        done) break ;;
+        failed)
+            echo "archive content indexing for '$NEWEST_WEB01_ARCHIVE' failed" >&2
+            exit 1
+            ;;
+        *) ;;
+    esac
+    sleep 1
+    INDEX_WAIT=$((INDEX_WAIT + 1))
+done
+if [ "$INDEX_STATUS" != "done" ]; then
+    echo "archive content index for '$NEWEST_WEB01_ARCHIVE' did not finish indexing" \
+        "(last status: ${INDEX_STATUS:-none})" >&2
+    exit 1
+fi
+
+# The job is done, so the blobs are fully written: check the packed layout really
+# was populated and the demo browser has something to show.
+INDEXED_DIRS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM archive_dirs d JOIN archives a ON a.id = d.archive_id \
+     WHERE a.repo_id = $REPO_DAILY_ID AND a.name = '$NEWEST_WEB01_ARCHIVE'")
+if [ "$INDEXED_DIRS" -eq 0 ]; then
+    echo "archive content index for '$NEWEST_WEB01_ARCHIVE' never populated archive_dirs" >&2
+    exit 1
+fi
+
 echo "==> Adding archive tags..."
 # Tag real imported archives (by joining backup_reports -> archives) rather than
 # guessing names -- the most recent and 3rd-most-recent web-server-01 archives.

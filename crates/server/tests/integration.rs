@@ -13,7 +13,10 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use server::api::tokens::hash_token;
+use server::{
+    api::tokens::hash_token,
+    archive_index::codec::{self, DirEntry},
+};
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -633,6 +636,39 @@ async fn clean_tables(pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
+    reset_system_settings(pool).await;
+}
+
+/// Restores `system_settings` to the state a freshly migrated database has.
+///
+/// These tests share one database, and unlike the other tables `system_settings`
+/// was never reset between them, so any test that writes a setting silently
+/// changed the behaviour of every test that ran afterwards. That is not
+/// hypothetical: the settings partial-update test persists
+/// `borg_query_timeout_secs = 120`, and `get_borg_timeout` consults the database
+/// setting *before* the `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` environment
+/// variable, so the borg-hang tests silently got a 120 s timeout instead of the
+/// 1 s they asked for and blew past their own wait. CI hid it by starting from an
+/// empty database every run; running the suite twice against one database, as one
+/// does locally, reproduced it every time.
+///
+/// Only `retention_days` and `session_idle_timeout_minutes` are seeded by
+/// migrations (`0001_schema.sql` and `20260707163000_account_security.sql`), so
+/// clearing the table and re-inserting those two reproduces a fresh database
+/// exactly.
+#[cfg(test)]
+async fn reset_system_settings(pool: &PgPool) {
+    sqlx::query("DELETE FROM system_settings")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO system_settings (key, value) VALUES ('retention_days', '7'), \
+         ('session_idle_timeout_minutes', '480')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// Inserts a repo directly into DB, bypassing the API (which requires SSH connectivity).
@@ -1838,26 +1874,51 @@ async fn insert_stale_archive_with_index(pool: &PgPool, agent_id: i64, repo_id: 
     .execute(pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO archive_paths (repo_id, path) VALUES ($1, $2), ($1, $3)")
-        .bind(repo_id)
-        .bind("")
-        .bind("stale.txt")
-        .execute(pool)
-        .await
-        .unwrap();
+    // Only directories get an archive_paths row; file names live inside the blob.
+    let root_path_id: i64 = sqlx::query_scalar(
+        "INSERT INTO archive_paths (repo_id, path) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(repo_id)
+    .bind("")
+    .fetch_one(pool)
+    .await
+    .unwrap();
     sqlx::query(
-        "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, mtime, \
-         mode) SELECT $1, child.id, parent.id, 'f', 1, '', '' FROM archive_paths child JOIN \
-         archive_paths parent ON parent.repo_id = $2 AND parent.path = $4 WHERE child.repo_id = \
-         $2 AND child.path = $3",
+        "INSERT INTO archive_dirs (archive_id, dir_path_id, chunk_no, entries) VALUES ($1, $2, 0, \
+         $3)",
     )
     .bind(stale_archive_id)
-    .bind(repo_id)
-    .bind("stale.txt")
-    .bind("")
+    .bind(root_path_id)
+    .bind(codec::encode(&[DirEntry {
+        name: "stale.txt".to_owned(),
+        entry_type: "-".to_owned(),
+        size: 1,
+        mtime: String::new(),
+        mode: String::new(),
+    }]))
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// Total number of indexed entries for an archive, summed across its stored
+/// directory blobs.
+#[cfg(test)]
+async fn count_indexed_entries(pool: &PgPool, repo_id: i64, archive_name: &str) -> i64 {
+    let blobs: Vec<Vec<u8>> = sqlx::query_scalar(
+        "SELECT d.entries FROM archive_dirs d JOIN archives a ON a.id = d.archive_id WHERE \
+         a.repo_id = $1 AND a.name = $2",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+
+    blobs
+        .iter()
+        .map(|blob| i64::try_from(codec::decode(blob).unwrap().len()).unwrap())
+        .sum()
 }
 
 #[cfg(test)]
@@ -1882,7 +1943,7 @@ async fn assert_stale_archive_purged(pool: &PgPool, repo_id: i64) {
     .unwrap();
     assert_eq!(stale_index_rows, 0);
     let stale_file_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM archive_files f JOIN archives a ON a.id = f.archive_id WHERE \
+        "SELECT COUNT(*) FROM archive_dirs d JOIN archives a ON a.id = d.archive_id WHERE \
          a.repo_id = $1 AND a.name = $2",
     )
     .bind(repo_id)
@@ -1984,15 +2045,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
 
     assert_stale_archive_purged(&pool, repo_id).await;
 
-    let file_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM archive_files f JOIN archives a ON a.id = f.archive_id WHERE \
-         a.repo_id = $1 AND a.name = $2",
-    )
-    .bind(repo_id)
-    .bind("sync-archive-1")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let file_rows = count_indexed_entries(&pool, repo_id, "sync-archive-1").await;
     assert_eq!(file_rows, 2);
 
     state

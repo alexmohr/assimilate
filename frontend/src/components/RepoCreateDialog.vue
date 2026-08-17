@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { Folder, FolderPlus } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
@@ -164,6 +164,15 @@ function onPathInput(): void {
     syncBrowserToPath()
   }, 300)
 }
+
+// Cancel the debounce when the dialog goes away. Without this the pending timer
+// outlives the component and still runs fetchAutocomplete/syncBrowserToPath,
+// firing an /ssh/list-dir request - and possibly a browseDir - for a dialog the
+// user already closed.
+onBeforeUnmount(() => {
+  if (autocompleteTimer) clearTimeout(autocompleteTimer)
+  autocompleteTimer = null
+})
 
 function syncBrowserToPath(): void {
   if (!browser.showBrowser || !sshReady.value) return

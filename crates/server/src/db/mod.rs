@@ -7122,12 +7122,10 @@ pub async fn delete_archive_records_by_names(
     .await
     .map_err(ApiError::Database)?;
 
-    // Collect candidate path IDs before the cascade delete removes archive_files.
+    // Collect candidate path IDs before the cascade delete removes archive_dirs.
     let candidate_ids: Vec<i64> = sqlx::query_scalar!(
-        "SELECT path_id AS \"path_id!\" FROM archive_files WHERE archive_id IN (SELECT id FROM \
-         archives WHERE repo_id = $1 AND name = ANY($2)) UNION SELECT parent_path_id FROM \
-         archive_files WHERE archive_id IN (SELECT id FROM archives WHERE repo_id = $1 AND name = \
-         ANY($2))",
+        "SELECT DISTINCT dir_path_id AS \"dir_path_id!\" FROM archive_dirs WHERE archive_id IN \
+         (SELECT id FROM archives WHERE repo_id = $1 AND name = ANY($2))",
         repo_id,
         names,
     )
@@ -7135,7 +7133,7 @@ pub async fn delete_archive_records_by_names(
     .await
     .map_err(ApiError::Database)?;
 
-    // Deleting from archives cascades to archive_files, archive_index_jobs, and archive_tags.
+    // Deleting from archives cascades to archive_dirs, archive_index_jobs, and archive_tags.
     sqlx::query!(
         "DELETE FROM archives WHERE repo_id = $1 AND name = ANY($2)",
         repo_id,
@@ -7149,8 +7147,7 @@ pub async fn delete_archive_records_by_names(
     if !candidate_ids.is_empty() {
         sqlx::query!(
             "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_files WHERE path_id = archive_paths.id) AND NOT EXISTS (SELECT 1 FROM \
-             archive_files WHERE parent_path_id = archive_paths.id)",
+             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
             repo_id,
             &candidate_ids,
         )
@@ -7169,11 +7166,10 @@ pub async fn delete_archive_records_by_names(
 pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result<u64, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
-    // Collect candidate path IDs before the cascade delete removes archive_files.
+    // Collect candidate path IDs before the cascade delete removes archive_dirs.
     let candidate_ids: Vec<i64> = sqlx::query_scalar!(
-        "SELECT path_id AS \"path_id!\" FROM archive_files WHERE archive_id IN (SELECT id FROM \
-         archives WHERE repo_id = $1) UNION SELECT parent_path_id FROM archive_files WHERE \
-         archive_id IN (SELECT id FROM archives WHERE repo_id = $1)",
+        "SELECT DISTINCT dir_path_id AS \"dir_path_id!\" FROM archive_dirs WHERE archive_id IN \
+         (SELECT id FROM archives WHERE repo_id = $1)",
         repo_id,
     )
     .fetch_all(&mut *tx)
@@ -7186,7 +7182,7 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
         .await
         .map_err(ApiError::Database)?;
 
-    // Deleting from archives cascades to archive_files, archive_index_jobs, and archive_tags.
+    // Deleting from archives cascades to archive_dirs, archive_index_jobs, and archive_tags.
     sqlx::query!("DELETE FROM archives WHERE repo_id = $1", repo_id)
         .execute(&mut *tx)
         .await
@@ -7196,8 +7192,7 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
     if !candidate_ids.is_empty() {
         sqlx::query!(
             "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_files WHERE path_id = archive_paths.id) AND NOT EXISTS (SELECT 1 FROM \
-             archive_files WHERE parent_path_id = archive_paths.id)",
+             1 FROM archive_dirs WHERE dir_path_id = archive_paths.id)",
             repo_id,
             &candidate_ids,
         )

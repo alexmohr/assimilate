@@ -75,7 +75,7 @@ const sortDir = ref<SortDir>('asc')
 const filterText = ref('')
 const filterTagIds = ref<number[]>([])
 const groupByTag = ref(false)
-const groupByHost = ref(false)
+const groupByHost = ref(true)
 const quotaFilter = ref<QuotaFilter>('all')
 const showTagDropdown = ref(false)
 const serverQuotasByHost = ref<Record<string, ServerQuotaResponse>>({})
@@ -222,7 +222,6 @@ function hostSegGeometry(entry: HostGroupEntry, group: HostGroup): { left: numbe
     offsetBytes: entry.offsetBytes,
     usageBytes: entry.repo.total_deduplicated_size,
     boxMaxBytes: group.boxMaxBytes ?? 0,
-    quota: null,
   })
   return { left: g.leftPercent, width: g.fillWidthPercent }
 }
@@ -710,7 +709,7 @@ onMounted(loadRepos)
                       ? 'Import Failed'
                       : entry.repo.import_total > 0
                         ? `${repoImportPhaseVerb(entry.repo)} ${entry.repo.import_progress}/${entry.repo.import_total}`
-                        : `${repoImportPhaseVerb(entry.repo)}...`
+                        : `${repoImportPhaseVerb(entry.repo)}\u2026`
                   }}
                 </span>
               </div>
@@ -734,18 +733,17 @@ onMounted(loadRepos)
                 <span class="stat-label">Last backup</span>
               </div>
             </div>
-            <RepoQuotaSlice
-              v-if="group.boxMaxBytes"
+            <RepoQuotaMeter
+              v-if="!group.boxMaxBytes || repoQuotaUtilization(entry.repo) !== null"
               :quota="entry.repo.quota"
+              :usage-bytes="entry.repo.total_deduplicated_size"
+            />
+            <RepoQuotaSlice
+              v-else
               :usage-bytes="entry.repo.total_deduplicated_size"
               :offset-bytes="entry.offsetBytes"
               :box-max-bytes="group.boxMaxBytes"
               :color-step="entry.colorStep"
-            />
-            <RepoQuotaMeter
-              v-else
-              :quota="entry.repo.quota"
-              :usage-bytes="entry.repo.total_deduplicated_size"
             />
           </div>
         </div>
@@ -1312,6 +1310,9 @@ onMounted(loadRepos)
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  background: var(--bg-hover);
 }
 
 .repo-card-dim {

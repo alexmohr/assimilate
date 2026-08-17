@@ -134,7 +134,7 @@ test.describe('Repositories management journey', () => {
     await expect(page.locator('.modal-title')).not.toBeVisible()
   })
 
-  test('grouping by host shows a shared storage pool with per-repo quota slices', async ({
+  test('the Repositories page groups by host by default with a shared storage pool', async ({
     page,
   }) => {
     await loginAsAdmin(page)
@@ -146,13 +146,15 @@ test.describe('Repositories management journey', () => {
     await expect(page.locator('.quota-fchip', { hasText: 'All' })).toBeVisible()
 
     // The demo's server-daily/database-hourly/media-weekly repos share the "localhost"
-    // ssh_host and a configured server quota (see .devcontainer/demo/seed-demo.sh).
-    await page.getByRole('button', { name: 'Group by host' }).click()
-    await page.waitForLoadState('networkidle')
-
+    // ssh_host and a configured server quota (see .devcontainer/demo/seed-demo.sh),
+    // and group by host is the default view - no need to toggle it on.
     const poolHeader = page.locator('.pool-header', { hasText: 'localhost' })
     await expect(poolHeader).toBeVisible()
     await expect(poolHeader.locator('.pool-track')).toBeVisible()
+
+    // Each demo repo also has its own quota configured, so its card shows a usage bar
+    // on its own scale rather than the shared pool scale.
+    await expect(page.locator('.repo-card .quota-meter').first()).toBeVisible()
 
     // media-weekly's demo quota (warn_bytes: 1) is always in a breached state, so it
     // should still be visible as an at-risk repo once the filter narrows the view.

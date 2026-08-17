@@ -18,11 +18,19 @@ vi.mock('../api/client')
 
 vi.mock('../composables/useEscapeKey')
 
+const wsHandlers = vi.hoisted(() => new Map<string, (data: unknown) => void>())
+
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
-    onMessage: vi.fn(),
+  useWebSocket: (): { onMessage: (type: string, cb: (data: unknown) => void) => void } => ({
+    onMessage: (type: string, cb: (data: unknown) => void): void => {
+      wsHandlers.set(type, cb)
+    },
   }),
 }))
+
+function triggerWsMessage(type: string, payload: unknown): void {
+  wsHandlers.get(type)?.(payload)
+}
 
 // A real ref, not a plain `{ value: false }` object - the template relies on Vue's
 // auto-unwrapping of genuine refs (e.g. `v-if="isMobile"`), which a plain object bypasses.
@@ -259,10 +267,10 @@ describe('ReposView', () => {
 
   it('shows "no match" message when filter text has no matches', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to see the plain "no results" message this test targets.
+    await clickGroupByHost(wrapper)
 
     const input = wrapper.find('input.search-input')
     await input.setValue('zzz-does-not-exist')
@@ -300,6 +308,9 @@ describe('ReposView', () => {
       storeState: { auth: { user: { role: 'viewer' } } },
     })
     await flushPromises()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to assert that non-matching repos are actually gone.
+    await clickGroupByHost(wrapper)
 
     const input = wrapper.find('input.search-input')
     await input.setValue('media')
@@ -413,6 +424,236 @@ describe('ReposView', () => {
     expect(wrapper.text()).toContain('Indexing 10/50')
     expect(wrapper.text()).not.toContain('Importing')
   })
+
+  it('sorts by size, ascending then descending, when the Size sort button is clicked', async () => {
+    const repos: RepoWithStats[] = [
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'small',
+        repo_path: '/backup/small',
+        total_deduplicated_size: 100,
+      },
+      {
+        ...baseRepo,
+        id: 2,
+        name: 'large',
+        repo_path: '/backup/large',
+        total_deduplicated_size: 300,
+      },
+      {
+        ...baseRepo,
+        id: 3,
+        name: 'medium',
+        repo_path: '/backup/medium',
+        total_deduplicated_size: 200,
+      },
+    ]
+    setupApiSuccess(repos)
+    const wrapper = await mountAsAdmin()
+    // Sort only applies to the flat list - a host group orders its own cards by size.
+    await clickGroupByHost(wrapper)
+    await clickButton(wrapper, (t) => t.startsWith('Size'))
+
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'small',
+      'medium',
+      'large',
+    ])
+
+    await clickButton(wrapper, (t) => t.startsWith('Size'))
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'large',
+      'medium',
+      'small',
+    ])
+  })
+
+  it('sorts by last backup time, oldest (or never) first, when the Last Backup sort button is clicked', async () => {
+    const repos: RepoWithStats[] = [
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'oldest',
+        repo_path: '/backup/oldest',
+        last_backup_at: new Date(Date.now() - 10_000_000).toISOString(),
+      },
+      {
+        ...baseRepo,
+        id: 2,
+        name: 'newest',
+        repo_path: '/backup/newest',
+        last_backup_at: new Date(Date.now() - 1_000).toISOString(),
+      },
+      { ...baseRepo, id: 3, name: 'never', repo_path: '/backup/never', last_backup_at: null },
+    ]
+    setupApiSuccess(repos)
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+    await clickButton(wrapper, (t) => t.startsWith('Last Backup'))
+
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'never',
+      'oldest',
+      'newest',
+    ])
+  })
+
+  it('filters repos by tag when a tag checkbox is toggled', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
+      if (url === '/repo-tags') {
+        return Promise.resolve({
+          data: [{ repo_id: 1, tag_name: 'critical', tag_color: '#ff0000' }],
+        })
+      }
+      if (String(url).startsWith('/tags')) {
+        return Promise.resolve({ data: [{ id: 1, name: 'critical', color: '#ff0000' }] })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+
+    await clickButton(wrapper, (t) => t.startsWith('Tags'))
+    await wrapper.find('.tag-dropdown-item input[type="checkbox"]').setValue(true)
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('server-daily')
+    expect(text).not.toContain('database-hourly')
+    expect(text).not.toContain('media-weekly')
+  })
+
+  it('navigates to the repo detail page when a card in the flat list is clicked', async () => {
+    setupApiSuccess()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+
+    const card = wrapper.findAll('.repo-card').find((c) => c.text().includes('server-daily'))
+    await card!.trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/repos/1')
+  })
+
+  it('toggles sort direction when the same sort button is clicked twice', async () => {
+    setupApiSuccess()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
+
+    // Name-ascending is the default; the first click on the already-active field reverses it.
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'database-hourly',
+      'media-weekly',
+      'server-daily',
+    ])
+
+    await clickButton(wrapper, (t) => t.startsWith('Name'))
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'server-daily',
+      'media-weekly',
+      'database-hourly',
+    ])
+
+    await clickButton(wrapper, (t) => t.startsWith('Name'))
+    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+      'database-hourly',
+      'media-weekly',
+      'server-daily',
+    ])
+  })
+
+  it('opens the create dialog from the empty state action', async () => {
+    setupApiSuccess([])
+    const wrapper = await mountAsAdmin()
+
+    await clickButton(wrapper, (t) => t.includes('Add Repository'))
+
+    const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
+    expect(dialog.props('open')).toBe(true)
+  })
+
+  it('groups repos by tag, placing multi-tag repos in each group and untagged repos in "Untagged"', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
+      if (url === '/repo-tags') {
+        return Promise.resolve({
+          data: [
+            { repo_id: 1, tag_name: 'zebra', tag_color: '#000000' },
+            { repo_id: 1, tag_name: 'critical', tag_color: '#ff0000' },
+            { repo_id: 2, tag_name: 'critical', tag_color: '#ff0000' },
+          ],
+        })
+      }
+      if (String(url).startsWith('/tags')) {
+        return Promise.resolve({
+          data: [
+            { id: 1, name: 'critical', color: '#ff0000' },
+            { id: 2, name: 'zebra', color: '#000000' },
+          ],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = await mountAsAdmin()
+
+    await clickButton(wrapper, (t) => t === 'Group by tag')
+
+    const groups = wrapper.findAll('.tag-group')
+    const titles = groups.map((g) => g.find('.tag-group-title').text())
+    // Alphabetical, with "Untagged" always last.
+    expect(titles).toEqual(['critical', 'zebra', 'Untagged'])
+
+    const criticalGroup = groups[0]!
+    expect(criticalGroup.text()).toContain('server-daily')
+    expect(criticalGroup.text()).toContain('database-hourly')
+
+    const zebraGroup = groups[1]!
+    expect(zebraGroup.text()).toContain('server-daily')
+    expect(zebraGroup.text()).not.toContain('database-hourly')
+
+    const untaggedGroup = groups[2]!
+    expect(untaggedGroup.text()).toContain('media-weekly')
+  })
+
+  it('reloads the repo list when a DataChanged websocket message arrives', async () => {
+    setupApiSuccess()
+    await mountAsAdmin()
+    vi.mocked(apiClient.get).mockClear()
+
+    triggerWsMessage('DataChanged', {})
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/stats')
+  })
+
+  it('applies an ImportProgress websocket message to the matching repo in place', async () => {
+    setupApiSuccess([
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'importing-repo',
+        repo_path: '/backup/importing',
+        importing: true,
+      },
+    ])
+    const wrapper = await mountAsAdmin()
+    expect(wrapper.text()).toContain('Importing…')
+
+    triggerWsMessage('ImportProgress', {
+      repo_id: 1,
+      progress: 17,
+      total: 42,
+      message: 'Importing archive 17 of 42',
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Importing 17/42')
+  })
 })
 
 describe('ReposView quota filter chips', () => {
@@ -477,10 +718,10 @@ describe('ReposView quota filter chips', () => {
 
   it('filters to only at-risk repos when the At risk chip is clicked', async () => {
     setupApiSuccess(reposWithQuota)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to assert that non-matching repos are actually gone.
+    await clickGroupByHost(wrapper)
 
     const chips = wrapper.findAll('.quota-fchip')
     await chips[1]!.trigger('click')
@@ -493,10 +734,8 @@ describe('ReposView quota filter chips', () => {
 
   it('filters to only unconfigured repos when the No quota chip is clicked', async () => {
     setupApiSuccess(reposWithQuota)
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
 
     const chips = wrapper.findAll('.quota-fchip')
     await chips[2]!.trigger('click')
@@ -529,10 +768,9 @@ describe('ReposView group by host', () => {
     vi.clearAllMocks()
   })
 
-  it('groups repos sharing an ssh_host under one pool header', async () => {
+  it('groups repos sharing an ssh_host under one pool header by default', async () => {
     setupApiSuccess()
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const headers = wrapper.findAll('.pool-header')
     expect(headers).toHaveLength(1)
@@ -559,7 +797,7 @@ describe('ReposView group by host', () => {
     const tagButton = wrapper.findAll('button').find((b) => b.text() === 'Group by tag')
     const hostButton = wrapper.findAll('button').find((b) => b.text() === 'Group by host')
 
-    await clickGroupByHost(wrapper)
+    // Host grouping is on by default.
     expect(hostButton!.classes()).toContain('active')
     expect(tagButton!.classes()).not.toContain('active')
     expect(wrapper.find('.pool-header').exists()).toBe(true)
@@ -569,6 +807,12 @@ describe('ReposView group by host', () => {
     expect(tagButton!.classes()).toContain('active')
     expect(hostButton!.classes()).not.toContain('active')
     expect(wrapper.find('.pool-header').exists()).toBe(false)
+
+    await hostButton!.trigger('click')
+    await flushPromises()
+    expect(hostButton!.classes()).toContain('active')
+    expect(tagButton!.classes()).not.toContain('active')
+    expect(wrapper.find('.pool-header').exists()).toBe(true)
   })
 
   it('dims filtered-out repos instead of removing them from the group', async () => {
@@ -598,7 +842,6 @@ describe('ReposView group by host', () => {
     ]
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const atRiskChip = wrapper.findAll('.quota-fchip').find((c) => c.text().includes('At risk'))
     await atRiskChip!.trigger('click')
@@ -633,7 +876,6 @@ describe('ReposView group by host', () => {
     ]
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const hosts = wrapper.findAll('.pool-host').map((h) => h.text())
     expect(hosts).toEqual(['a.example.com', 'z.example.com'])
@@ -653,7 +895,6 @@ describe('ReposView group by host', () => {
   it('navigates to the repo detail page when a card inside a host group is clicked', async () => {
     setupApiSuccess()
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const card = wrapper
       .findAll('.repo-hostgrouped .repo-card')
@@ -701,7 +942,6 @@ describe('ReposView group by host', () => {
       serverQuota({ warn_bytes: 21_474_836_480, critical_bytes: 32_212_254_720 }),
     )
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const track = wrapper.find('.pool-track')
     expect(track.exists()).toBe(true)
@@ -720,7 +960,6 @@ describe('ReposView group by host', () => {
       }),
     )
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     const note = wrapper.find('.pool-note').text()
     expect(note).toContain('over critical')
@@ -732,7 +971,6 @@ describe('ReposView group by host', () => {
       serverQuota({ warn_bytes: null, critical_bytes: 32_212_254_720 }),
     )
     const wrapper = await mountAsAdmin()
-    await clickGroupByHost(wrapper)
 
     expect(wrapper.find('.pool-note').text()).toContain('healthy')
     expect(wrapper.find('.pool-mark').exists()).toBe(false)
@@ -786,6 +1024,8 @@ describe('ReposView quota sort', () => {
   it('sorts by quota utilization ascending, with unconfigured repos always last', async () => {
     setupApiSuccess(reposForSort)
     const wrapper = await mountAsAdmin()
+    // Sort only applies to the flat list - a host group orders its own cards by size.
+    await clickGroupByHost(wrapper)
     await clickQuotaSort(wrapper)
 
     const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
@@ -812,6 +1052,7 @@ describe('ReposView quota sort', () => {
     ]
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
+    await clickGroupByHost(wrapper)
     await clickQuotaSort(wrapper)
 
     const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
@@ -822,6 +1063,9 @@ describe('ReposView quota sort', () => {
   it('resets to the full list when the All chip is clicked after filtering', async () => {
     setupApiSuccess(reposForSort)
     const wrapper = await mountAsAdmin()
+    // Grouped-by-host repos with no match are dimmed in place, not removed - toggle to
+    // the flat list to assert that non-matching repos are actually gone.
+    await clickGroupByHost(wrapper)
 
     const chips = wrapper.findAll('.quota-fchip')
     const atRiskChip = chips.find((c) => c.text().includes('At risk'))

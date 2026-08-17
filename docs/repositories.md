@@ -49,8 +49,8 @@ The Repositories list page shows all registered repositories with:
 - **Tag filter** — filter by one or more tags
 - **Quota filter chips** — narrow the list to **At risk** repositories (at or above their own warning threshold) or repositories with **No quota** configured; the **All** chip always shows the total count
 - **Group by tag** — organize repositories into tag groups
-- **Group by host** — organize repositories that share an SSH host under a shared storage pool (see [Quota by Host](#quota-by-host) below)
-- **Sort buttons** — sort by Name, Size, Last Backup, or Quota (utilization of each repository's own quota; repositories with no quota sort last)
+- **Group by host** — organize repositories that share an SSH host under a shared storage pool (see [Quota by Host](#quota-by-host) below); this is the default view
+- **Sort buttons** — sort by Name, Size, Last Backup, or Quota (utilization of each repository's own quota; repositories with no quota sort last). Sorting applies to the flat list — while grouped by host, each group orders its own repositories by size instead
 
 Each repository card shows the name, SSH target, encryption type, compression algorithm, archive count, deduplicated size, and last backup time. A disabled repository tints the card and adds a **Disabled** pill; a repository with unmatched imported archives shows an **N unmatched** chip — click it to jump to the Archives tab. A repository with its own [storage quota](quotas.md) configured also shows a compact usage bar with its current size, threshold, and health.
 
@@ -198,15 +198,17 @@ Tags are set in the repository edit form and are visible in the repository list.
 
 ## Quota by Host
 
-Clicking **Group by host** on the Repositories page organizes repositories into one section per shared SSH host. Each section header shows a storage pool bar scaled to that host's [server quota](server-quotas.md) — when one is configured and you have admin access — with one segment per repository, sized to its share of the combined usage, and a mark at the server quota's warning threshold.
+The Repositories page groups repositories sharing an SSH host under one section by default — visually separated from other hosts by a shaded panel — so it's clear at a glance which repositories belong to which backup destination. Toggle **Group by host** off to switch back to a flat, sortable list.
 
-![Repositories page grouped by host, showing a shared storage pool bar and three repository cards with per-repository quota brackets and headroom](assets/screenshots/repositories-host-quota.png)
+Each section header shows a storage pool bar scaled to that host's [server quota](server-quotas.md) — when one is configured and you have admin access — with one segment per repository, sized to its share of the combined usage, and a mark at the server quota's warning threshold.
 
-Inside a group, each repository card's usage bar is drawn on the same scale as the pool header, so the segments line up: a repository's fill shows its share of the host, and if the repository also has its own [storage quota](quotas.md) configured, a bracket marks where that repository's own limit falls on the shared scale. The chip above the bar reads **% of own** (colored by that repository's health) when an own quota exists, or the neutral **% of box** otherwise. If a repository's own limit would exceed the remaining space on the host, the bracket is drawn with a dashed edge at the host's boundary.
+![Repositories page grouped by host, showing a shared storage pool bar and repository cards](assets/screenshots/repositories-host-quota.png)
+
+Inside a group, a repository without its own quota shows a usage bar on the same scale as the pool header, so its segment's position and width reflect its share of the host. A repository that has its own [storage quota](quotas.md) configured instead shows a usage bar on its own scale (current size, threshold, and health) — mixing the two scales in one bar made a repository's slice look almost full purely because of its position in the pool, which was confusing next to a "% of own quota" label describing a different number entirely.
 
 Combining a quota filter chip with **Group by host** dims — rather than removes — repositories that don't match the filter, so the pool bar always reflects the host's true combined usage; the header notes how many of the group's repositories are currently shown.
 
-A host with no configured server quota, or when viewing as a non-admin user, still groups its repositories together, but each card falls back to showing its own quota (if any) on its own scale instead of the shared pool.
+A host with no configured server quota, or when viewing as a non-admin user, still groups its repositories together, but every card in that group falls back to showing its own quota (if any) on its own scale instead of the shared pool.
 
 ## Passphrase Management
 

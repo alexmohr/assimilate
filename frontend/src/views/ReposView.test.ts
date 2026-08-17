@@ -18,11 +18,19 @@ vi.mock('../api/client')
 
 vi.mock('../composables/useEscapeKey')
 
+const wsHandlers = vi.hoisted(() => new Map<string, (data: unknown) => void>())
+
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
-    onMessage: vi.fn(),
+  useWebSocket: (): { onMessage: (type: string, cb: (data: unknown) => void) => void } => ({
+    onMessage: (type: string, cb: (data: unknown) => void): void => {
+      wsHandlers.set(type, cb)
+    },
   }),
 }))
+
+function triggerWsMessage(type: string, payload: unknown): void {
+  wsHandlers.get(type)?.(payload)
+}
 
 // A real ref, not a plain `{ value: false }` object - the template relies on Vue's
 // auto-unwrapping of genuine refs (e.g. `v-if="isMobile"`), which a plain object bypasses.
@@ -610,6 +618,41 @@ describe('ReposView', () => {
 
     const untaggedGroup = groups[2]!
     expect(untaggedGroup.text()).toContain('media-weekly')
+  })
+
+  it('reloads the repo list when a DataChanged websocket message arrives', async () => {
+    setupApiSuccess()
+    await mountAsAdmin()
+    vi.mocked(apiClient.get).mockClear()
+
+    triggerWsMessage('DataChanged', {})
+    await flushPromises()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/stats')
+  })
+
+  it('applies an ImportProgress websocket message to the matching repo in place', async () => {
+    setupApiSuccess([
+      {
+        ...baseRepo,
+        id: 1,
+        name: 'importing-repo',
+        repo_path: '/backup/importing',
+        importing: true,
+      },
+    ])
+    const wrapper = await mountAsAdmin()
+    expect(wrapper.text()).toContain('Importing…')
+
+    triggerWsMessage('ImportProgress', {
+      repo_id: 1,
+      progress: 17,
+      total: 42,
+      message: 'Importing archive 17 of 42',
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Importing 17/42')
   })
 })
 

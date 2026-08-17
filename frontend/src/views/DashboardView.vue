@@ -838,7 +838,7 @@ async function fetchOverview(): Promise<void> {
   display: grid;
   grid-template-columns: 3fr 2fr;
   gap: 1.5rem;
-  align-items: stretch;
+  align-items: start;
 }
 
 .attention-sidebar {

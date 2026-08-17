@@ -6,8 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref } from 'vue'
 import { CalendarClock } from '@lucide/vue'
-import { apiClient } from '../api/client'
-import { extractError } from '../utils/error'
+import { useScheduleRun } from '../composables/useScheduleRun'
 import EmptyState from './EmptyState.vue'
 import AgentScheduleRow from './AgentScheduleRow.vue'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
@@ -25,7 +24,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ open: [schedule: ScheduleRow] }>()
 
-const runningId = ref<number | null>(null)
 const runError = ref<string | null>(null)
 
 function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
@@ -33,20 +31,17 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
 }
 
 /**
- * Restricted to this agent. A schedule can target several hosts, and "Run
- * now" pressed on one host's page must not kick off a backup on the others.
+ * The run is restricted to this agent: a schedule can target several hosts,
+ * and "Run now" pressed on one host's page must not kick off a backup on the
+ * others. The failure goes inline rather than to a toast, next to the rows it
+ * applies to, and a start is not announced at all - as it never was here.
  */
-async function runNow(schedule: ScheduleRow): Promise<void> {
-  runningId.value = schedule.id
-  runError.value = null
-  try {
-    await apiClient.post(`/schedules/${schedule.id}/run`, { agent_ids: [props.agent.id] })
-  } catch (e: unknown) {
-    runError.value = extractError(e)
-  } finally {
-    runningId.value = null
-  }
-}
+const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
+  body: () => ({ agent_ids: [props.agent.id] }),
+  onError: (message) => {
+    runError.value = message
+  },
+})
 </script>
 
 <template>

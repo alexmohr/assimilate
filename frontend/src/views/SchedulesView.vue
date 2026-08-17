@@ -13,6 +13,7 @@ import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { useToast } from '../composables/useToast'
+import { useScheduleRun } from '../composables/useScheduleRun'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
@@ -60,11 +61,9 @@ const filterHealth = ref<FilterHealth>(
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
-const runNowLoading = ref<number | null>(null)
 const cancelLoading = ref<number | null>(null)
 const toggleLoading = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
-
 function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
     case 'backup':
@@ -72,9 +71,11 @@ function scheduleTypeLabel(t: ScheduleType): string {
     case 'check':
       return 'Integrity Check'
     case 'verify':
-      return 'Verify (extract dry-run)'
+      return 'Verify'
   }
 }
+
+const { runNowLoading, runNow } = useScheduleRun(scheduleTypeLabel)
 
 const repoMap = computed(() => {
   const m = new Map<number, Repo>()
@@ -242,18 +243,6 @@ async function fetchAll(): Promise<void> {
 
 function navigateToSchedule(s: ScheduleRow): void {
   router.push(`/schedules/${s.id}`)
-}
-
-async function runNow(s: ScheduleRow): Promise<void> {
-  runNowLoading.value = s.id
-  try {
-    await apiClient.post(`/schedules/${s.id}/run`, {})
-    toastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    runNowLoading.value = null
-  }
 }
 
 async function toggleScheduleEnabled(s: ScheduleRow): Promise<void> {
@@ -611,29 +600,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   gap: 1rem;
 }
 
-.schedule-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow var(--duration-base),
-    border-color var(--duration-base);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.schedule-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.schedule-card-notable {
-  background: var(--bg-hover);
-}
-
 .card-hostname {
   font-weight: 600;
   font-family: var(--mono);
@@ -685,19 +651,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-}
-
-.stat-value {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .card-actions {

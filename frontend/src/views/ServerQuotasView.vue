@@ -442,19 +442,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
   gap: 0.1rem;
 }
 
-.stat-value {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
 .quota-card-thresholds {
   display: flex;
   flex-direction: column;

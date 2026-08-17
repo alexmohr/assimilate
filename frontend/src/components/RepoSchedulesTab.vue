@@ -9,8 +9,7 @@ import { useRouter } from 'vue-router'
 import { CalendarClock } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { formatDate } from '../utils/format'
-import { extractError } from '../utils/error'
-import { useToast } from '../composables/useToast'
+import { useScheduleRun } from '../composables/useScheduleRun'
 import {
   scheduleIssuesFromEntries,
   withErrorTitles,
@@ -25,14 +24,6 @@ import type { ScheduleRow, ScheduleType } from '../types/schedule'
 const props = defineProps<{ repoId: number }>()
 
 const router = useRouter()
-const { success: toastSuccess, error: toastError } = useToast()
-
-const schedules = ref<ScheduleRow[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
-const health = ref<ScheduleHealthEntry[]>([])
-const runNowLoading = ref<number | null>(null)
-
 function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
     case 'backup':
@@ -43,6 +34,13 @@ function scheduleTypeLabel(t: ScheduleType): string {
       return 'Verify (extract dry-run)'
   }
 }
+
+const { runNowLoading, runNow } = useScheduleRun(scheduleTypeLabel)
+
+const schedules = ref<ScheduleRow[]>([])
+const loading = ref(false)
+const error = ref<string | null>(null)
+const health = ref<ScheduleHealthEntry[]>([])
 
 function scheduleIssues(s: ScheduleRow): EntityIssue[] {
   const entries = health.value.filter((h) => h.schedule_id === s.id)
@@ -63,18 +61,6 @@ async function load(): Promise<void> {
     error.value = 'Failed to load schedules.'
   } finally {
     loading.value = false
-  }
-}
-
-async function runNow(s: ScheduleRow): Promise<void> {
-  runNowLoading.value = s.id
-  try {
-    await apiClient.post(`/schedules/${s.id}/run`, {})
-    toastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    runNowLoading.value = null
   }
 }
 

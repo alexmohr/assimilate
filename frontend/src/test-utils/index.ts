@@ -14,6 +14,7 @@ import { vi, expect } from 'vitest'
 import type { Component } from 'vue'
 import { router as appRouter } from '../router'
 import BaseModal from '../components/BaseModal.vue'
+import { trackRendered } from './rendered'
 
 export interface RenderWithPluginsOptions {
   props?: Record<string, unknown>
@@ -216,7 +217,7 @@ export function renderWithPlugins(
 
   void router.push(options.routeOverrides ?? '/')
 
-  return mount(component, {
+  const wrapper = mount(component, {
     // Attached so `document`-based queries see the markup; combined with the
     // Teleport stub below, modal content is reachable both ways.
     attachTo: document.body,
@@ -233,4 +234,6 @@ export function renderWithPlugins(
       },
     },
   })
+  trackRendered(wrapper)
+  return wrapper
 }

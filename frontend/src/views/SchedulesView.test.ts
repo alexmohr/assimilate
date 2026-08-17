@@ -3,15 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { mockApiClientRw } from '../test-utils/sharedMocks'
 
-vi.mock('../api/client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-  },
-}))
+vi.mock('../api/client', () => mockApiClientRw())
 
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
@@ -530,6 +524,29 @@ describe('SchedulesView', () => {
       {},
     )
     expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/started/i))
+  })
+
+  // The two places that trigger a run word this type differently, so each
+  // keeps its own label rather than the shared composable picking one.
+  it('names a verify schedule by its full wording when started', async () => {
+    setupApiSuccess()
+    const verifySchedule = { ...mockSchedules[0], schedule_type: 'verify' }
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: [verifySchedule] })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const runButton = wrapper.findAll('button').find((b) => b.text() === 'Run')
+    await runButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockToastSuccess).toHaveBeenCalledWith('Verify started.')
   })
 
   it('shows error toast when run now API fails', async () => {

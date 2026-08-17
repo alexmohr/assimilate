@@ -156,22 +156,31 @@ const formValid = computed(
 const autocompleteEntries = ref<DirEntry[]>([])
 const showAutocomplete = ref(false)
 let autocompleteTimer: ReturnType<typeof setTimeout> | null = null
+let hideAutocompleteTimer: ReturnType<typeof setTimeout> | null = null
 
 function onPathInput(): void {
   if (autocompleteTimer) clearTimeout(autocompleteTimer)
   autocompleteTimer = setTimeout(() => {
+    autocompleteTimer = null
     fetchAutocomplete()
     syncBrowserToPath()
   }, 300)
 }
 
-// Cancel the debounce when the dialog goes away. Without this the pending timer
-// outlives the component and still runs fetchAutocomplete/syncBrowserToPath,
-// firing an /ssh/list-dir request - and possibly a browseDir - for a dialog the
-// user already closed.
+/**
+ * Both timers outlive the component otherwise: the debounce fires an
+ * `/ssh/list-dir` request 300ms after the last keystroke, so closing the
+ * dialog right after typing a path issued an SSH directory listing on behalf
+ * of a dialog that no longer exists - and, in tests, landed that request in
+ * whichever case happened to be running when it fired. The blur timer is the
+ * same story with a shorter fuse: it reopens nothing, but it mutates state on
+ * an unmounted dialog.
+ */
 onBeforeUnmount(() => {
   if (autocompleteTimer) clearTimeout(autocompleteTimer)
+  if (hideAutocompleteTimer) clearTimeout(hideAutocompleteTimer)
   autocompleteTimer = null
+  hideAutocompleteTimer = null
 })
 
 function syncBrowserToPath(): void {
@@ -230,7 +239,9 @@ function selectAutocomplete(entry: DirEntry): void {
 }
 
 function hideAutocomplete(): void {
-  setTimeout(() => {
+  if (hideAutocompleteTimer) clearTimeout(hideAutocompleteTimer)
+  hideAutocompleteTimer = setTimeout(() => {
+    hideAutocompleteTimer = null
     showAutocomplete.value = false
   }, 200)
 }

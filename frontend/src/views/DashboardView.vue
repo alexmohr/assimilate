@@ -460,7 +460,7 @@ async function fetchOverview(): Promise<void> {
           @click="router.push({ name: 'agents', query: { status: 'offline' } })"
         >
           <span class="stat-label">Online Agents</span>
-          <span class="stat-value">
+          <span class="stat-value stat-value--xl">
             <span
               class="stat-dot"
               :style="{ background: agentIndicatorColor }"
@@ -473,7 +473,7 @@ async function fetchOverview(): Promise<void> {
           @click="router.push({ name: 'repos' })"
         >
           <span class="stat-label">Repositories</span>
-          <span class="stat-value">{{ summary?.total_repos ?? 0 }}</span>
+          <span class="stat-value stat-value--xl">{{ summary?.total_repos ?? 0 }}</span>
         </div>
         <div
           class="stat-card stat-card-link"
@@ -481,7 +481,7 @@ async function fetchOverview(): Promise<void> {
         >
           <span class="stat-label">Overdue</span>
           <span
-            class="stat-value"
+            class="stat-value stat-value--xl"
             :class="{ 'stat-danger': overdueCount > 0 }"
           >
             {{ overdueCount }}
@@ -493,7 +493,7 @@ async function fetchOverview(): Promise<void> {
           @click="navigateToLastBackup"
         >
           <span class="stat-label">Last Backup</span>
-          <span class="stat-value stat-value-sm">
+          <span class="stat-value stat-value--lg">
             {{ summary?.last_backup_at ? relativeTime(summary.last_backup_at) : '\u2014' }}
           </span>
         </div>
@@ -505,7 +505,7 @@ async function fetchOverview(): Promise<void> {
           "
         >
           <span class="stat-label">Next Backup</span>
-          <span class="stat-value stat-value-sm">
+          <span class="stat-value stat-value--lg">
             <template v-if="activeBackups.length > 0">Active</template>
             <template v-else>
               {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '\u2014' }}
@@ -514,7 +514,7 @@ async function fetchOverview(): Promise<void> {
         </div>
         <div class="stat-card">
           <span class="stat-label">Total Storage</span>
-          <span class="stat-value stat-value-sm">
+          <span class="stat-value stat-value--lg">
             {{ formatBytes(summary?.total_storage_bytes ?? 0) }}
           </span>
         </div>
@@ -525,7 +525,7 @@ async function fetchOverview(): Promise<void> {
         >
           <span class="stat-label">Last Failure</span>
           <span
-            class="stat-value stat-value-sm"
+            class="stat-value stat-value--lg"
             :class="{ 'stat-danger': summary?.last_failure_at }"
           >
             {{ summary?.last_failure_at ? relativeTime(summary.last_failure_at) : '\u2014' }}
@@ -538,7 +538,7 @@ async function fetchOverview(): Promise<void> {
         >
           <span class="stat-label">Last Warning</span>
           <span
-            class="stat-value stat-value-sm"
+            class="stat-value stat-value--lg"
             :class="{ 'stat-warning': summary?.last_warning_at }"
           >
             {{ summary?.last_warning_at ? relativeTime(summary.last_warning_at) : '\u2014' }}
@@ -902,27 +902,6 @@ async function fetchOverview(): Promise<void> {
 .stat-card-link:hover {
   border-color: var(--accent);
   background: var(--bg-hover);
-}
-
-.stat-label {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.stat-value {
-  font-size: var(--fs-xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.stat-value-sm {
-  font-size: var(--fs-lg);
 }
 
 .stat-danger {

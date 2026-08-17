@@ -1182,19 +1182,6 @@ onMounted(loadRepos)
   gap: 0.1rem;
 }
 
-.stat-value {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
 /* Overlay & Dialog */
 
 .input:disabled {

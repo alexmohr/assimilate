@@ -6,6 +6,10 @@ import { defineComponent, ref, type ComponentPublicInstance } from 'vue'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+// Imported before '../api/client' on purpose: the hoisted vi.mock factory
+// below calls this, so it has to be initialised by the time that module is
+// first imported.
+import { mockApiClientRw } from '../test-utils/sharedMocks'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import type { AuthUser } from '../stores/auth'
@@ -14,14 +18,7 @@ import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import { dismissModal } from '../test-utils'
 
-vi.mock('../api/client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-  },
-}))
+vi.mock('../api/client', () => mockApiClientRw())
 
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: (): { onMessage: ReturnType<typeof vi.fn>; status: ReturnType<typeof ref> } => ({

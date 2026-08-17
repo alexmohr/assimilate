@@ -10,6 +10,13 @@ export interface TabOption<V extends string> {
   id: V
   label: string
   icon?: Component
+  /**
+   * Optional tally rendered after the label, e.g. how many backups a tab
+   * holds. Zero is rendered rather than hidden: on an imported host "0" is
+   * the point, and a tab that silently loses its count reads as a different
+   * tab depending on which host you opened.
+   */
+  count?: number
 }
 
 const props = defineProps<{
@@ -82,6 +89,11 @@ function onKeydown(e: KeyboardEvent, index: number): void {
           aria-hidden="true"
         />
         {{ tab.label }}
+        <span
+          v-if="tab.count !== undefined"
+          class="tab-count"
+          >{{ tab.count }}</span
+        >
       </button>
     </div>
     <slot name="trailing" />
@@ -104,5 +116,16 @@ function onKeydown(e: KeyboardEvent, index: number): void {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.tab-count {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tab.active .tab-count {
+  color: inherit;
 }
 </style>

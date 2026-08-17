@@ -667,6 +667,44 @@ WHERE id = (
 );
 SQL
 
+echo "==> Seeding a recovered outage on db-server-01..."
+# Feeds the agent detail Overview's run strip, which draws one cell per run
+# rather than reducing a window of days to a percentage. Three *consecutive*
+# failures followed by successes is the case the strip exists to show: the
+# same three failures scattered across the window would be a standing
+# problem, while contiguous ones are a single incident that has since
+# recovered. Only the contiguous shape earns the "Incident" chip.
+#
+# archive_name stays NULL, which is both true (a failed backup writes no
+# archive) and load-bearing: delete_archive_records_by_names reconciles a
+# synced repo by deleting reports whose archive_name is absent from a real
+# `borg list`, and `archive_name = ANY(...)` never matches NULL - so unlike
+# the stale-report demo these rows survive in a repo that does get synced.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status, error_message)
+SELECT $DB01_ID, $REPO_HOURLY_ID, s.id,
+       NOW() - (n || ' hours')::interval - interval '3 minutes',
+       NOW() - (n || ' hours')::interval,
+       'failed',
+       'Repository lock could not be acquired' || chr(10) ||
+       'borg: Failed to create/acquire the lock /backup/repos/database-hourly/lock.exclusive'
+FROM generate_series(4, 6) AS n
+CROSS JOIN LATERAL (
+    SELECT id FROM schedules WHERE repo_id = $REPO_HOURLY_ID ORDER BY id LIMIT 1
+) s;
+SQL
+
+# The strip's Incident chip only appears when the failures are contiguous, so
+# a partial insert would silently demote the scenario to "scattered" and the
+# demo would stop covering the thing it was added for.
+INCIDENT_COUNT=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM backup_reports WHERE agent_id = $DB01_ID AND status = 'failed' AND archive_name IS NULL")
+if [ "$INCIDENT_COUNT" != "3" ]; then
+    echo "expected exactly 3 seeded failure rows for db-server-01, found $INCIDENT_COUNT" >&2
+    exit 1
+fi
+
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null
 

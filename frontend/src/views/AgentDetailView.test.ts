@@ -69,6 +69,7 @@ vi.mock('../components/AgentDeployDialog.vue', () => ({
 }))
 
 import { apiClient } from '../api/client'
+import { useEscapeKey } from '../composables/useEscapeKey'
 
 const mockAgent = {
   id: 1,
@@ -191,11 +192,8 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
     await openBackupsTab(wrapper)
 
-    const text = wrapper.text()
-    expect(text).toContain('All')
-    expect(text).toContain('Success')
-    expect(text).toContain('Warning')
-    expect(text).toContain('Failed')
+    const labels = wrapper.findAll('.segmented-option').map((b) => b.text())
+    expect(labels).toEqual(['All 3', 'Success 1', 'Warning 1', 'Failed 1'])
   })
 
   it('shows sort toggle button on the backups tab', async () => {
@@ -219,7 +217,7 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
     await openBackupsTab(wrapper)
 
-    expect(wrapper.findAll('.result-card')).toHaveLength(3)
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
   })
 
   it('shows the repo and schedule name on each report so a failure can be traced', async () => {
@@ -231,10 +229,10 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
     await openBackupsTab(wrapper)
 
-    const card = wrapper.findAll('.result-card')[0]
+    const card = wrapper.findAll('[id^="report-"]')[0]
     expect(card.text()).toContain('server-daily')
     expect(card.text()).toContain('Nightly Server Backup')
-    const scheduleLink = card.find('a.result-schedule-link')
+    const scheduleLink = card.find('a.row-schedule-link')
     expect(scheduleLink.exists()).toBe(true)
     expect(scheduleLink.attributes('href')).toBe('/schedules/100')
   })
@@ -248,8 +246,8 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
     await openBackupsTab(wrapper)
 
-    const card = wrapper.findAll('.result-card')[0]
-    expect(card.find('a.result-schedule-link').exists()).toBe(false)
+    const card = wrapper.findAll('[id^="report-"]')[0]
+    expect(card.find('a.row-schedule-link').exists()).toBe(false)
     expect(card.text()).toContain('server-daily')
   })
 
@@ -262,12 +260,12 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
     await openBackupsTab(wrapper)
 
-    const warningBtn = wrapper.findAll('button').find((b) => b.text() === 'Warning')
+    const warningBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Warning'))
     await warningBtn!.trigger('click')
 
-    const cards = wrapper.findAll('.result-card')
-    expect(cards).toHaveLength(1)
-    expect(cards[0].classes()).toContain('result-warning')
+    const rows = wrapper.findAll('[id^="report-"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].find('.agent-row-stripe--warning').exists()).toBe(true)
   })
 
   it('shows the Warnings box but not a duplicate Error box for a warning-only report', async () => {
@@ -279,14 +277,14 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
     await openBackupsTab(wrapper)
 
-    const warningCard = wrapper
-      .findAll('.result-card')
-      .find((c) => c.classes().includes('result-warning'))
-    expect(warningCard).toBeDefined()
-    await warningCard!.trigger('click')
+    const warningRow = wrapper
+      .findAll('[id^="report-"]')
+      .find((c) => c.find('.agent-row-stripe--warning').exists())
+    expect(warningRow).toBeDefined()
+    await warningRow!.find('button[aria-expanded]').trigger('click')
 
-    expect(warningCard!.find('.result-warnings').exists()).toBe(true)
-    expect(warningCard!.find('.result-error').exists()).toBe(false)
+    expect(wrapper.find('.detail-label--warning').exists()).toBe(true)
+    expect(wrapper.find('.detail-label--danger').exists()).toBe(false)
   })
 
   it('filters to only failed reports when Failed is clicked', async () => {
@@ -298,12 +296,12 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
     await openBackupsTab(wrapper)
 
-    const failedBtn = wrapper.findAll('button').find((b) => b.text() === 'Failed')
+    const failedBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Failed'))
     await failedBtn!.trigger('click')
 
-    const cards = wrapper.findAll('.result-card')
-    expect(cards).toHaveLength(1)
-    expect(cards[0].classes()).toContain('result-failed')
+    const rows = wrapper.findAll('[id^="report-"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].find('.agent-row-stripe--danger').exists()).toBe(true)
   })
 
   it('restores all reports when All is clicked after filtering', async () => {
@@ -317,15 +315,15 @@ describe('AgentDetailView — backups tab', () => {
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Warning')!
+      .find((b) => b.text().startsWith('Warning'))!
       .trigger('click')
-    expect(wrapper.findAll('.result-card')).toHaveLength(1)
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(1)
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'All')!
+      .find((b) => b.text().startsWith('All'))!
       .trigger('click')
-    expect(wrapper.findAll('.result-card')).toHaveLength(3)
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
   })
 
   it('shows empty filter message when no reports match the filter', async () => {
@@ -339,7 +337,7 @@ describe('AgentDetailView — backups tab', () => {
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Failed')!
+      .find((b) => b.text().startsWith('Failed'))!
       .trigger('click')
 
     expect(wrapper.text()).toContain('No backups match the current filter.')
@@ -370,9 +368,9 @@ describe('AgentDetailView — backups tab', () => {
     await router.push({ query: { tab: 'backups', archive: 'test-host-2026-06-02T10:00:00' } })
     await flushPromises()
 
-    const highlighted = wrapper.find('.result-card-highlighted')
+    const highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.exists()).toBe(true)
-    expect(highlighted.classes()).toContain('result-warning')
+    expect(highlighted.find('.agent-row-stripe--warning').exists()).toBe(true)
   })
 
   it('auto-expands the report matching the archive query param', async () => {
@@ -410,9 +408,9 @@ describe('AgentDetailView — backups tab', () => {
   it('pins, expands and highlights the newest report matching the status query param', async () => {
     const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
 
-    const highlighted = wrapper.find('.result-card-highlighted')
+    const highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.exists()).toBe(true)
-    expect(highlighted.classes()).toContain('result-failed')
+    expect(highlighted.find('.agent-row-stripe--danger').exists()).toBe(true)
     expect(wrapper.text()).toContain('Connection refused')
   })
 
@@ -421,7 +419,7 @@ describe('AgentDetailView — backups tab', () => {
     const newerFailed = { ...mockReports[2], id: 5, finished_at: '2026-06-04T10:00:00Z' }
     const wrapper = await mountBackupsWithStatus([olderFailed, newerFailed], 'failed')
 
-    const highlighted = wrapper.find('.result-card-highlighted')
+    const highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.exists()).toBe(true)
     expect(highlighted.attributes('id')).toBe('report-5')
   })
@@ -429,14 +427,14 @@ describe('AgentDetailView — backups tab', () => {
   it('re-pins the matching report when the status query param changes on an already-mounted page', async () => {
     const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
 
-    let highlighted = wrapper.find('.result-card-highlighted')
+    let highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.attributes('id')).toBe('report-3')
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
     await router.push({ query: { tab: 'backups', status: 'warning' } })
     await flushPromises()
 
-    highlighted = wrapper.find('.result-card-highlighted')
+    highlighted = wrapper.find('.agent-row--highlighted')
     expect(highlighted.exists()).toBe(true)
     expect(highlighted.attributes('id')).toBe('report-2')
   })
@@ -444,15 +442,15 @@ describe('AgentDetailView — backups tab', () => {
   it('clears the pinned highlight and auto-expand when the status query param is removed', async () => {
     const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
 
-    expect(wrapper.find('.result-card-highlighted').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Click to collapse')
+    expect(wrapper.find('.agent-row--highlighted').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Hide detail')
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
     await router.push({ query: { tab: 'backups' } })
     await flushPromises()
 
-    expect(wrapper.find('.result-card-highlighted').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('Click to collapse')
+    expect(wrapper.find('.agent-row--highlighted').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Hide detail')
   })
 })
 
@@ -508,7 +506,7 @@ describe('AgentDetailView — schedules tab', () => {
     return wrapper
   }
 
-  it('renders schedule cards on the schedules tab', async () => {
+  it('renders schedule rows on the schedules tab', async () => {
     const wrapper = await mountSchedulesTab([
       {
         id: 1,
@@ -523,7 +521,8 @@ describe('AgentDetailView — schedules tab', () => {
     ])
 
     expect(wrapper.text()).toContain('Nightly Backup')
-    expect(wrapper.find('.entity-status-pill').exists()).toBe(false)
+    expect(wrapper.findAll('.rows .agent-row')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('Disabled')
     expect(wrapper.text()).not.toContain('Sequential')
   })
 
@@ -540,7 +539,7 @@ describe('AgentDetailView — schedules tab', () => {
     expect(wrapper.find('.empty-title').text()).toBe('No schedules yet')
   })
 
-  it('opens the schedule when its card is selected', async () => {
+  it('opens the schedule when its name is clicked', async () => {
     const wrapper = await mountSchedulesTab([
       {
         id: 42,
@@ -554,7 +553,7 @@ describe('AgentDetailView — schedules tab', () => {
       },
     ])
 
-    await wrapper.find('.schedule-card').trigger('click')
+    await wrapper.find('.agent-row-name').trigger('click')
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
@@ -562,7 +561,7 @@ describe('AgentDetailView — schedules tab', () => {
     expect(router.currentRoute.value.fullPath).toBe('/schedules/42')
   })
 
-  it('shows a Disabled pill and tints the card for a disabled schedule', async () => {
+  it('shows a Disabled badge and a muted stripe for a disabled schedule', async () => {
     const wrapper = await mountSchedulesTab([
       {
         id: 1,
@@ -577,7 +576,7 @@ describe('AgentDetailView — schedules tab', () => {
     ])
 
     expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
-    expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-notable')
+    expect(wrapper.find('.agent-row-stripe--muted').exists()).toBe(true)
   })
 
   function setupApiWithHealth(
@@ -640,10 +639,36 @@ describe('AgentDetailView — schedules tab', () => {
 
     const chip = wrapper.find('.entity-issue-chip.sev-warning')
     expect(chip.text()).toBe('Overdue')
-    expect(wrapper.find('.schedule-card').classes()).not.toContain('schedule-card-highlighted')
+    expect(wrapper.find('.rows .agent-row').classes()).not.toContain('agent-row--highlighted')
   })
 
-  it('highlights overdue schedule cards when the health=overdue query param is set', async () => {
+  // The chips are links into the filtered activity log, not decoration. An
+  // earlier revision of the row rendered plain badges and silently dropped
+  // that; only the e2e suite noticed.
+  it('navigates to the filtered activity log from a Failed chip', async () => {
+    setupApiWithHealth(overdueSchedule, [
+      { ...overdueHealth[0], is_overdue: false, last_status: 'failed' },
+    ])
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openSchedulesTab(wrapper)
+
+    const chip = wrapper.find('.entity-issue-chip.sev-danger')
+    expect(chip.text()).toBe('Failed')
+    await chip.trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe(
+      '/activity?category=backup&schedule_id=1&status=failed',
+    )
+  })
+
+  it('highlights overdue schedule rows when the health=overdue query param is set', async () => {
     const wrapper = renderWithHealth()
     await flushPromises()
 
@@ -651,7 +676,7 @@ describe('AgentDetailView — schedules tab', () => {
     await router.push({ query: { tab: 'schedules', health: 'overdue' } })
     await flushPromises()
 
-    expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-highlighted')
+    expect(wrapper.find('.rows .agent-row').classes()).toContain('agent-row--highlighted')
   })
 })
 
@@ -756,6 +781,12 @@ describe('AgentDetailView — backup progress', () => {
   })
 })
 
+async function openDefaultsSettings(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+  const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+  await router.push({ query: { tab: 'settings', section: 'defaults' } })
+  await flushPromises()
+}
+
 describe('AgentDetailView — default file change patterns', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -768,6 +799,7 @@ describe('AgentDetailView — default file change patterns', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
+    await openDefaultsSettings(wrapper)
 
     expect(wrapper.text()).toContain('No default file change patterns configured.')
   })
@@ -792,6 +824,7 @@ describe('AgentDetailView — default file change patterns', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
+    await openDefaultsSettings(wrapper)
 
     const text = wrapper.text()
     expect(text).toContain('*/tmp/*')
@@ -810,9 +843,10 @@ describe('AgentDetailView — default file change patterns', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
+    await openDefaultsSettings(wrapper)
 
     const findCard = (): DOMWrapper<Element> =>
-      wrapper.findAll('.info-card').find((c) => c.text().includes('Default File Change Patterns'))!
+      wrapper.findAll('.info-card').find((c) => c.text().includes('Backup defaults'))!
 
     await findCard().find('button').trigger('click')
     await findCard()
@@ -907,6 +941,19 @@ describe('AgentDetailView - identity, token and merge', () => {
     await flushPromises()
   }
 
+  /** Opens the header overflow menu, where the rare actions now live. */
+  async function clickMenuAction(
+    wrapper: VueWrapper<ComponentPublicInstance>,
+    label: string,
+  ): Promise<void> {
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    const match = wrapper.findAll('.agent-menu-item').find((b) => b.text().trim() === label)
+    if (!match) throw new Error(`no menu item labelled "${label}"`)
+    await match.trigger('click')
+    await flushPromises()
+  }
+
   /**
    * Scoped to the open dialog: the page behind it has its own Add Pattern
    * button in the alias panel, which an unscoped search finds first.
@@ -929,7 +976,7 @@ describe('AgentDetailView - identity, token and merge', () => {
       data: { agent: { ...mockAgent }, token: 'tok_regenerated' },
     } as never)
 
-    await clickButton(wrapper, 'Regenerate Token')
+    await clickMenuAction(wrapper, 'Regenerate token')
 
     expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/regenerate-token')
     expect(wrapper.find('.token-text').text()).toBe('tok_regenerated')
@@ -944,7 +991,7 @@ describe('AgentDetailView - identity, token and merge', () => {
     const wrapper = await render()
     vi.mocked(apiClient.post).mockRejectedValue(new Error('agent offline'))
 
-    await clickButton(wrapper, 'Regenerate Token')
+    await clickMenuAction(wrapper, 'Regenerate token')
 
     expect(wrapper.find('.token-text').exists()).toBe(false)
     expect(openModals(wrapper)).toHaveLength(1)
@@ -957,7 +1004,7 @@ describe('AgentDetailView - identity, token and merge', () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       data: { agent: { ...mockAgent }, token: 'tok_regenerated' },
     } as never)
-    await clickButton(wrapper, 'Regenerate Token')
+    await clickMenuAction(wrapper, 'Regenerate token')
 
     await dismissModal(wrapper)
 
@@ -973,7 +1020,7 @@ describe('AgentDetailView - identity, token and merge', () => {
     } as never)
     vi.mocked(apiClient.post).mockResolvedValue({ data: {} } as never)
 
-    await clickButton(wrapper, 'Edit')
+    await clickMenuAction(wrapper, 'Edit identity')
     await wrapper.find('input[placeholder="hostname"]').setValue('renamed-host')
     await clickButton(wrapper, 'Save')
 
@@ -994,7 +1041,7 @@ describe('AgentDetailView - identity, token and merge', () => {
       data: { ...mockAgent, hostname: 'renamed-host' },
     } as never)
 
-    await clickButton(wrapper, 'Edit')
+    await clickMenuAction(wrapper, 'Edit identity')
     await wrapper.find('input[placeholder="hostname"]').setValue('renamed-host')
     await clickButton(wrapper, 'Save')
     await clickDialogButton(wrapper, 'No')
@@ -1007,7 +1054,7 @@ describe('AgentDetailView - identity, token and merge', () => {
     const wrapper = await render()
     vi.mocked(apiClient.put).mockResolvedValue({ data: { ...mockAgent } } as never)
 
-    await clickButton(wrapper, 'Edit')
+    await clickMenuAction(wrapper, 'Edit identity')
     await wrapper.find('input[placeholder="Optional friendly name"]').setValue('Test Box')
     await clickButton(wrapper, 'Save')
 
@@ -1050,7 +1097,9 @@ describe('AgentDetailView - tab bar and list controls', () => {
     await flushPromises()
 
     expect(backupsTab!.classes()).toContain('active')
-    expect(wrapper.findAll('button').some((b) => b.text().trim() === 'Warning')).toBe(true)
+    expect(wrapper.findAll('.segmented-option').some((b) => b.text().startsWith('Warning'))).toBe(
+      true,
+    )
   })
 
   // Newest first is the default; the toggle is what an operator uses to walk
@@ -1065,7 +1114,7 @@ describe('AgentDetailView - tab bar and list controls', () => {
     await openBackupsTab(wrapper)
 
     const reports = (): string[] =>
-      wrapper.findAll('.result-card').map((r) => r.attributes('id') ?? '')
+      wrapper.findAll('[id^="report-"]').map((r) => r.attributes('id') ?? '')
     const before = reports()
     expect(before.length).toBeGreaterThan(1)
 
@@ -1075,5 +1124,466 @@ describe('AgentDetailView - tab bar and list controls', () => {
     await flushPromises()
 
     expect(reports()).toEqual([...before].reverse())
+  })
+})
+
+describe('AgentDetailView - tab structure and settings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const schedules = [
+    {
+      id: 1,
+      repo_id: 10,
+      name: 'Nightly Backup',
+      target_hostnames: ['test-host'],
+      schedule_type: 'backup',
+      cron_expression: '0 2 * * *',
+      enabled: true,
+      next_run_at: null,
+    },
+  ]
+
+  async function render(
+    agentOverrides: Record<string, unknown> = {},
+  ): Promise<VueWrapper<ComponentPublicInstance>> {
+    const agent = { ...mockAgent, ...agentOverrides }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agent] })
+      if (url === '/agents/test-host/repos')
+        return Promise.resolve({ data: [{ id: 10, name: 'shared-repo' }] })
+      if (url === '/schedules') return Promise.resolve({ data: schedules })
+      if (url === '/agents/test-host/reports') return Promise.resolve({ data: mockReports })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  function tabLabels(wrapper: VueWrapper<ComponentPublicInstance>): string[] {
+    return wrapper.findAll('button.tab').map((t) => t.text().replace(/\s+/g, ' ').trim())
+  }
+
+  async function goTo(
+    wrapper: VueWrapper<ComponentPublicInstance>,
+    query: Record<string, string>,
+  ): Promise<void> {
+    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+    await router.push({ query })
+    await flushPromises()
+  }
+
+  // Settings is a fourth tab rather than a header link: it costs no new route,
+  // it matches the ?tab= convention the other detail views use, and it keeps
+  // the header's action row at navigation plus an overflow.
+  it('offers settings as a fourth tab', async () => {
+    const wrapper = await render()
+    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups 3', 'Settings'])
+  })
+
+  it('opens the settings tab in place, without leaving the route', async () => {
+    const wrapper = await render()
+    const settingsTab = wrapper.findAll('button.tab').find((t) => t.text().includes('Settings'))
+    await settingsTab!.trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
+      .$router
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(wrapper.find('.settings-nav').exists()).toBe(true)
+  })
+
+  it('deep-links to a settings section', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'settings', section: 'aliases' })
+
+    const current = wrapper
+      .findAll('.settings-nav-item')
+      .find((b) => b.attributes('aria-current') === 'true')
+    expect(current!.text()).toBe('Hostname aliases')
+  })
+
+  it('records the chosen settings section in the URL', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'settings' })
+
+    await wrapper
+      .findAll('.settings-nav-item')
+      .find((b) => b.text() === 'Danger zone')!
+      .trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+    ).$router
+    expect(router.currentRoute.value.query.section).toBe('danger')
+  })
+
+  // Configuration used to stack up under the agent's status on the landing
+  // tab, so the build timestamp got the same billing as an overdue backup.
+  it('keeps configuration off the landing tab', async () => {
+    const wrapper = await render()
+    expect(wrapper.text()).not.toContain('Backup defaults')
+    expect(wrapper.text()).not.toContain('Danger Zone')
+
+    await goTo(wrapper, { tab: 'settings', section: 'defaults' })
+    expect(wrapper.text()).toContain('Backup defaults')
+  })
+
+  // An empty tab that explains itself beats a tab bar whose contents shift
+  // depending on which host was opened.
+  it('keeps every tab for an imported host', async () => {
+    const wrapper = await render({ is_imported: true })
+    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups 3', 'Settings'])
+  })
+
+  it('offers no agent-only settings for an imported host', async () => {
+    const wrapper = await render({ is_imported: true })
+    await goTo(wrapper, { tab: 'settings', section: 'identity' })
+
+    expect(wrapper.text()).not.toContain('Connection')
+    expect(wrapper.text()).not.toContain('Agent version')
+  })
+
+  it('hides the danger zone from a non-admin', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'viewer' } } },
+    })
+    await flushPromises()
+    await goTo(wrapper, { tab: 'settings' })
+
+    expect(wrapper.findAll('.settings-nav-item').map((b) => b.text())).toEqual([
+      'Identity',
+      'Backup defaults',
+      'Hostname aliases',
+    ])
+  })
+
+  // The inline panel appeared mid-page and pushed six cards down; every other
+  // form in the app opens through BaseModal.
+  it('edits identity in a dialog rather than an inline panel', async () => {
+    const wrapper = await render()
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Edit identity')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+    expect(wrapper.find('input[placeholder="hostname"]').exists()).toBe(true)
+  })
+
+  // A successful run is a link to what it produced.
+  it('opens the archive list for a successful backup', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'backups' })
+
+    const successRow = wrapper
+      .findAll('[id^="report-"]')
+      .find((r) => r.find('button.agent-row-name').exists())
+    await successRow!.find('button.agent-row-name').trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toContain('/repos/10')
+    expect(router.currentRoute.value.fullPath).toContain('tab=archives')
+    expect(router.currentRoute.value.fullPath).toContain('archive=')
+  })
+
+  // The link only appears when the preview is hiding something, so this needs
+  // more runs than the preview shows.
+  it('follows the Overview preview through to the full tab', async () => {
+    const manyReports = Array.from({ length: 8 }, (_, i) => ({
+      ...mockReports[0],
+      id: 100 + i,
+      finished_at: `2026-06-0${(i % 8) + 1}T10:00:00Z`,
+    }))
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/agents/test-host/reports') return Promise.resolve({ data: manyReports })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const backupsLink = wrapper
+      .findAll('.section-link')
+      .find((l) => l.text().includes('View all 8'))
+    expect(backupsLink).toBeDefined()
+    await backupsLink!.trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+    ).$router
+    expect(router.currentRoute.value.query.tab).toBe('backups')
+  })
+
+  it('opens the deploy dialog from the header', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/system/version')
+        return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+
+    await wrapper
+      .findAll('.agent-actions > button')
+      .find((b) => b.text().includes('Upgrade'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(true)
+  })
+
+  async function openSshKeyDialog(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Deploy SSH key')!
+      .trigger('click')
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(1)
+  }
+
+  it('closes the SSH key dialog from its footer', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Close')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  // Dismissing (backdrop, the dialog's own close) is wired separately from the
+  // footer button, so a dialog can close cleanly one way and stick the other.
+  it('closes the SSH key dialog when it is dismissed', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    await dismissModal(wrapper)
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('closes the SSH key dialog on Escape', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    // useEscapeKey is mocked in this file, so the registered callback has to be
+    // invoked directly. Only the dialog that is actually open has a true ref.
+    const registration = vi
+      .mocked(useEscapeKey)
+      .mock.calls.find(([active]) => (active as { value: boolean }).value === true)
+    expect(registration).toBeDefined()
+    registration![1]()
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('deploys an SSH key from a dialog', async () => {
+    const wrapper = await render()
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Deploy SSH key')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+  })
+})
+
+describe('AgentDetailView - adoption, restart and live updates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+  })
+
+  async function render(
+    agentOverrides: Record<string, unknown> = {},
+  ): Promise<VueWrapper<ComponentPublicInstance>> {
+    const agent = { ...mockAgent, ...agentOverrides }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [agent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  async function clickAction(
+    wrapper: VueWrapper<ComponentPublicInstance>,
+    label: string,
+  ): Promise<void> {
+    const match = wrapper.findAll('.agent-actions > button').find((b) => b.text().trim() === label)
+    if (!match) throw new Error(`no action labelled "${label}"`)
+    await match.trigger('click')
+    await flushPromises()
+  }
+
+  // Adopting drops the "(imported)" suffix the import gave the host, then
+  // issues it a real token - the host stops being a placeholder.
+  it('adopts an imported host and reveals its new token', async () => {
+    const wrapper = await render({ is_imported: true, display_name: 'old-web (imported)' })
+    vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { agent: { ...mockAgent, id: '1' }, token: 'tok_adopted' },
+    } as never)
+
+    await clickAction(wrapper, 'Adopt')
+
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-host', {
+      display_name: 'old-web',
+    })
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/regenerate-token')
+    expect(wrapper.find('.token-text').text()).toBe('tok_adopted')
+  })
+
+  it('keeps the page usable when adoption fails', async () => {
+    const wrapper = await render({ is_imported: true })
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('already adopted'))
+
+    await clickAction(wrapper, 'Adopt')
+
+    expect(wrapper.find('.token-text').exists()).toBe(false)
+    expect(wrapper.find('.agent-hostname').exists()).toBe(true)
+  })
+
+  it('leaves the agent list after a merge', async () => {
+    const wrapper = await render({ is_imported: true })
+    await clickAction(wrapper, 'Merge into...')
+
+    wrapper.findComponent(MergeAgentDialog).vm.$emit('merged')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
+      .$router
+    expect(router.currentRoute.value.path).toBe('/agents')
+  })
+
+  it('restarts the agent from the overflow menu', async () => {
+    const wrapper = await render({ supports_restart: true })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} } as never)
+
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Restart agent')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/restart')
+  })
+
+  it('reports a restart that could not be delivered', async () => {
+    const wrapper = await render({ supports_restart: true })
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('agent offline'))
+
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Restart agent')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.form-error').exists()).toBe(true)
+  })
+
+  it('navigates to this agent’s activity log', async () => {
+    const wrapper = await render()
+    await clickAction(wrapper, 'Activity log')
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe('/activity?category=backup&hostname=test-host')
+  })
+
+  it('reports an agent that is not in the list', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    // extractError is stubbed to a fixed string in this file, so the thrown
+    // "not found" message cannot be asserted - only that it surfaced at all.
+    expect(wrapper.find('.state-error').exists()).toBe(true)
+    expect(wrapper.find('.agent-hostname').exists()).toBe(false)
+  })
+
+  // The page is long-lived, so it refetches on anything that could have
+  // changed what it is showing rather than waiting for a navigation.
+  it.each([['DataChanged'], ['AgentConnected'], ['AgentDisconnected']])(
+    'refetches on %s',
+    async (event) => {
+      await render()
+      const before = vi.mocked(apiClient.get).mock.calls.length
+
+      wsHandlers[event]?.({})
+      await flushPromises()
+
+      expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
+    },
+  )
+
+  it('refetches when the socket reconnects', async () => {
+    await render()
+    const before = vi.mocked(apiClient.get).mock.calls.length
+
+    wsStatus.value = 'disconnected'
+    await flushPromises()
+    wsStatus.value = 'connected'
+    await flushPromises()
+
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
   })
 })

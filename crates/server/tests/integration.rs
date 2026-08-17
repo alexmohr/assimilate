@@ -618,14 +618,14 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
 async fn clean_tables(pool: &PgPool) {
     sqlx::query(
         "TRUNCATE TABLE audit_log, login_attempts, system_events, system_settings, server_quotas, \
-         excludes_global, notification_deliveries, notification_rules, ssh_tunnels, \
-         agent_hostname_patterns, agent_tags, schedule_targets, schedule_excludes, \
-         per_agent_excludes, per_agent_commands, per_agent_file_change_patterns, archive_dirs, \
-         archive_tags, archive_files, archive_index_jobs, archive_paths, archives, backup_sources, \
-         backup_reports, canary_results, repo_tags, repo_stats, repo_import_state, repo_last_op, \
-         repo_quotas, repo_relocation_pending_hosts, schedules, dismissed_dashboard_findings, \
-         push_subscriptions, api_tokens, sessions, user_roles, user_groups, repo_permissions, \
-         totp_attempts, users, groups, tags, repos, agents, notification_channels CASCADE",
+         notification_deliveries, notification_rules, ssh_tunnels, agent_hostname_patterns, \
+         agent_tags, schedule_targets, per_agent_excludes, per_agent_commands, \
+         per_agent_file_change_patterns, archive_dirs, archive_tags, archive_index_jobs, \
+         archive_paths, archives, backup_sources, backup_reports, canary_results, repo_tags, \
+         repo_stats, repo_import_state, repo_last_op, repo_quotas, repo_relocation_pending_hosts, \
+         schedules, dismissed_dashboard_findings, push_subscriptions, api_tokens, sessions, \
+         user_roles, user_groups, repo_permissions, totp_attempts, users, groups, tags, repos, \
+         agents, notification_channels CASCADE",
     )
     .execute(pool)
     .await

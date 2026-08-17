@@ -72,6 +72,33 @@ describe('AgentSettingsTab', () => {
     ).toEqual(['Identity', 'Backup defaults', 'Hostname aliases'])
   })
 
+  // Hiding the nav button is not gating: `?section=` comes straight from the
+  // URL, so a non-admin can ask for a pane they have no button for by typing
+  // it. The pane has to be absent, not just unreachable by clicking.
+  it.each([
+    ['danger', 'AgentDangerZone'],
+    ['tags', 'EntityTags'],
+  ])('does not render the %s pane for a non-admin who asks for it', (section, component) => {
+    const wrapper = mount({ isAdmin: false, section })
+    expect(wrapper.findComponent({ name: component }).exists()).toBe(false)
+  })
+
+  it('falls back to Identity when the requested section is not on offer', () => {
+    const wrapper = mount({ isAdmin: false, section: 'danger' })
+    expect(wrapper.text()).toContain('Hostname')
+    const current = wrapper
+      .findAll('.settings-nav-item')
+      .find((b) => b.attributes('aria-current') === 'true')
+    expect(current!.text()).toBe('Identity')
+  })
+
+  it('still renders those panes for an admin', () => {
+    expect(mount({ section: 'danger' }).findComponent({ name: 'AgentDangerZone' }).exists()).toBe(
+      true,
+    )
+    expect(mount({ section: 'tags' }).findComponent({ name: 'EntityTags' }).exists()).toBe(true)
+  })
+
   it('marks the current section', () => {
     const wrapper = mount({ section: 'aliases' })
     const current = wrapper

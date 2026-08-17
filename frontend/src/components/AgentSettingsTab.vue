@@ -68,6 +68,24 @@ const sections = computed<SectionOption[]>(() => {
   }
   return list
 })
+
+/**
+ * What the pane renders, and what the nav marks current - deliberately not the
+ * `section` prop. `sections` is the one list saying what this viewer may open,
+ * so a section they have no button for falls back to Identity rather than
+ * rendering behind their back: `?section=` comes from the URL, and editing it
+ * by hand is not an exploit, just typing. The server rejects the writes either
+ * way (`RequireAdmin` on the delete and tag routes), so this is about not
+ * offering an action, not about stopping one.
+ *
+ * Derived from `sections` rather than repeating `v-if="isAdmin"` on the two
+ * admin-only panes, because that is the shape that just broke: the nav list
+ * and the pane list were gated separately and drifted apart. One source means
+ * the next section added cannot reintroduce this.
+ */
+const currentSection = computed<SettingsSection>(() =>
+  sections.value.some((s) => s.id === props.section) ? props.section : 'identity',
+)
 </script>
 
 <template>
@@ -82,7 +100,7 @@ const sections = computed<SectionOption[]>(() => {
         type="button"
         class="settings-nav-item"
         :class="{ 'settings-nav-item--danger': s.danger }"
-        :aria-current="s.id === section"
+        :aria-current="s.id === currentSection"
         @click="emit('update:section', s.id)"
       >
         {{ s.label }}
@@ -90,7 +108,7 @@ const sections = computed<SectionOption[]>(() => {
     </nav>
 
     <div class="settings-pane">
-      <template v-if="section === 'identity'">
+      <template v-if="currentSection === 'identity'">
         <div class="info-card">
           <div class="info-title-row">
             <h3 class="info-title">Identity</h3>
@@ -146,27 +164,27 @@ const sections = computed<SectionOption[]>(() => {
       </template>
 
       <AgentDefaultsCard
-        v-else-if="section === 'defaults'"
+        v-else-if="currentSection === 'defaults'"
         :agent="agent"
         :can-edit="!isImported"
         @saved="emit('saved', $event)"
       />
 
       <AgentHostnameAliases
-        v-else-if="section === 'aliases'"
+        v-else-if="currentSection === 'aliases'"
         ref="aliases"
         :hostname="agent.hostname"
         :can-edit="!isImported"
       />
 
       <EntityTags
-        v-else-if="section === 'tags'"
+        v-else-if="currentSection === 'tags'"
         scope="host"
         :entity-path="`/agents/${agent.hostname}`"
       />
 
       <AgentDangerZone
-        v-else-if="section === 'danger'"
+        v-else-if="currentSection === 'danger'"
         :agent="agent"
       />
     </div>

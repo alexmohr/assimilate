@@ -7,6 +7,7 @@ import { renderWithPlugins } from '../test-utils'
 import BackupStatsWidget from './BackupStatsWidget.vue'
 import { apiClient } from '../api/client'
 
+// jscpd:ignore-start -- test setup boilerplate (vi.mock factories cannot reference module-scoped helpers)
 vi.mock('../api/client', () => ({
   apiClient: {
     get: vi.fn(),
@@ -22,8 +23,21 @@ vi.mock('../utils/format', () => ({
 vi.mock('../utils/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }))
+// jscpd:ignore-end
 
 const mockGet = vi.mocked(apiClient.get)
+
+function activityEntry(id: number, status: string): Record<string, unknown> {
+  return {
+    id,
+    hostname: `h${id}`,
+    target_name: `t${id}`,
+    started_at: '',
+    finished_at: '',
+    status,
+    duration_secs: 10,
+  }
+}
 
 describe('BackupStatsWidget', () => {
   beforeEach(() => {
@@ -40,35 +54,7 @@ describe('BackupStatsWidget', () => {
 
   it('displays the success rate percentage', async () => {
     mockGet.mockResolvedValue({
-      data: [
-        {
-          id: 1,
-          hostname: 'h1',
-          target_name: 't1',
-          started_at: '',
-          finished_at: '',
-          status: 'success',
-          duration_secs: 10,
-        },
-        {
-          id: 2,
-          hostname: 'h2',
-          target_name: 't2',
-          started_at: '',
-          finished_at: '',
-          status: 'success',
-          duration_secs: 10,
-        },
-        {
-          id: 3,
-          hostname: 'h3',
-          target_name: 't3',
-          started_at: '',
-          finished_at: '',
-          status: 'failed',
-          duration_secs: 10,
-        },
-      ],
+      data: [activityEntry(1, 'success'), activityEntry(2, 'success'), activityEntry(3, 'failed')],
     })
     const wrapper = renderWithPlugins(BackupStatsWidget, {
       props: { repos: [] },
@@ -79,35 +65,7 @@ describe('BackupStatsWidget', () => {
 
   it('displays failed count', async () => {
     mockGet.mockResolvedValue({
-      data: [
-        {
-          id: 1,
-          hostname: 'h1',
-          target_name: 't1',
-          started_at: '',
-          finished_at: '',
-          status: 'success',
-          duration_secs: 10,
-        },
-        {
-          id: 2,
-          hostname: 'h2',
-          target_name: 't2',
-          started_at: '',
-          finished_at: '',
-          status: 'failed',
-          duration_secs: 10,
-        },
-        {
-          id: 3,
-          hostname: 'h3',
-          target_name: 't3',
-          started_at: '',
-          finished_at: '',
-          status: 'failed',
-          duration_secs: 10,
-        },
-      ],
+      data: [activityEntry(1, 'success'), activityEntry(2, 'failed'), activityEntry(3, 'failed')],
     })
     const wrapper = renderWithPlugins(BackupStatsWidget, {
       props: { repos: [] },
@@ -140,5 +98,40 @@ describe('BackupStatsWidget', () => {
     })
     await flushPromises()
     expect(wrapper.text()).toContain('0%')
+  })
+
+  it('navigates to activity, filtered by status, when a mini-stat is clicked', async () => {
+    mockGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(BackupStatsWidget, {
+      props: { repos: [] },
+    })
+    await flushPromises()
+
+    const links = wrapper.findAll('.mini-stat-link')
+    await links[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$route.name).toBe('activity')
+    expect(wrapper.vm.$route.query.status).toBeUndefined()
+
+    await links[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$route.query.status).toBe('success')
+
+    await links[2]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$route.query.status).toBe('failed')
+  })
+
+  it('refetches stats for the chosen repo', async () => {
+    mockGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(BackupStatsWidget, {
+      props: { repos: [{ id: 4, name: 'repo-beta' }] },
+    })
+    await flushPromises()
+
+    await wrapper.find('select').setValue('4')
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenLastCalledWith(expect.stringContaining('repo_id=4'))
   })
 })

@@ -51,14 +51,14 @@ label change, every `coverage failed`/`duplicate code`/`merge conflict`
 change, and every CI completion, so the status label always reflects current
 reality — **agents must never add or remove the status labels themselves**
 (`pending`, `needs review`, `changes requested`, `ci failing`, `merge conflict`,
-`check failed`, `precheck failed`, `ready to merge`, `needs human review`,
+`check failed`, `precheck failed`, `ready to merge`,
 `coverage failed`, `duplicate code`); only push a fix, submit a review, or
 set the verdict labels per the Workflow section to move them.
 
 | Label | Meaning | Set when |
 |---|---|---|
 | `pending` | Nothing to review yet | Default state — CI hasn't concluded on this commit yet (and no other check has already failed either), or CI is green but a precheck stage (coverage-diff, duplicate-code) hasn't finished |
-| `needs review` | CI (and every check/precheck stage) is green; no other blocking verdict yet, but not ready to merge either | Set once CI — and every other check on the commit — has actually concluded with nothing failing (see `pending`/`check failed` above) and nothing more specific below applies — including while `needs human review` is outstanding, a review verdict has gone stale, or the last automated review attempt errored. Never set while any stage (other than the derived `PR Merge Gate` check itself) has already failed |
+| `needs review` | CI (and every check/precheck stage) is green; no other blocking verdict yet, but not ready to merge either | Set once CI — and every other check on the commit — has actually concluded with nothing failing (see `pending`/`check failed` above) and nothing more specific below applies — including while a review verdict has gone stale, or the last automated review attempt errored. Never set while any stage (other than the derived `PR Merge Gate` check itself) has already failed |
 | `changes requested` | A reviewer requested changes | GitHub review decision is `CHANGES_REQUESTED` — fires regardless of whether CI has concluded on this exact commit yet, since a real, current review verdict is meaningful on its own |
 | `ci failing` | Latest commit's CI run did not succeed | `CI` workflow conclusion is not `success` — always wins, and strips `ready to merge` |
 | `merge conflict` | Real conflicts with the base branch | `mergeable_state == "dirty"` — checked continuously (it's a free API field), same precedence tier as `ci failing` |
@@ -66,8 +66,7 @@ set the verdict labels per the Workflow section to move them.
 | `precheck failed` | A deterministic pre-review stage failed | **Purely derived** — `sync-pr-labels.js` computes it fresh every run from `coverage failed` and/or `duplicate code`, never set directly by anything. This is the one label to look at if you just want "did any pre-flight stage fail" without caring which. See "Automated pre-flight checks" below |
 | `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` via the standalone `.github/workflows/coverage-diff-check.yml`. See "Automated pre-flight checks" below |
 | `duplicate code` | The duplicate-code-scan pre-review stage failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml`. See "Automated pre-flight checks" below |
-| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** no human sign-off is pending **and** neither `coverage failed` nor `duplicate code` is set **and** the review decision is not `CHANGES_REQUESTED` **and** a genuine approval is on record — see note below the table |
-| `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" — **but only once `ci failing`, `merge conflict`, `coverage failed`, and `duplicate code` are all clear; see the note below the table** |
+| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** neither `coverage failed` nor `duplicate code` is set **and** the review decision is not `CHANGES_REQUESTED` **and** a genuine approval is on record — see note below the table |
 
 `ready to merge` requires a **genuine approval**, on top of every
 deterministic gate (CI, merge conflicts, coverage/duplication, an active
@@ -109,26 +108,6 @@ is never set or cleared directly — it's recomputed as a pure
 `coverage failed OR duplicate code` umbrella every time `sync-pr-labels.js`
 runs, from whichever of the two labels currently exist, so it can't go stale
 independently of its inputs.
-
-`needs human review` is the repo's *last* gate, not a parallel one: it is
-only ever added, and only actually blocks `ready to merge`, while `ci
-failing`, `merge conflict`, `coverage failed`, and `duplicate code` are all
-already clear — a PR that isn't even buildable yet doesn't need a human's
-judgment call before its objective, code-fixable problems are resolved.
-Concretely, `sync-pr-labels.js` strips the label itself the moment any of
-those four starts failing (and re-derives it automatically, no human
-involvement needed, the moment they're clear again and the sensitive-path/
-security-keyword triggers still apply) — this keeps a maintainer from having
-to notice and clear the label only to watch a still-broken PR immediately
-re-request their attention. Once those four are clear, though, the label
-reverts to additive-only: only a human clearing it counts as sign-off, and
-even a PR that is fully approved and green stays capped at `needs review`
-while it's present. If your review touches one of the sensitive areas above,
-expect this label once CI is green and do not treat an agent approval as
-sufficient to merge. The "security" text/issue checks are a keyword match,
-not a judgment call — expect occasional false positives (a PR that merely
-discusses security in passing) and treat them as a cheap net that widens the
-gate, not a guarantee that every gated PR is actually security-critical.
 
 ### Same-account review verdict labels
 
@@ -340,15 +319,14 @@ submitted). `ready to merge` already folds in a genuine approval as one of
 its own gates (see the note under the table and "Label forgery protection"
 below), so nothing further is checked independently before merging — CI
 green, no merge conflict, no `coverage failed`/`duplicate code`, no active
-`changes requested` verdict, no pending `needs human review` sign-off, and
-a genuine approval are all required for the status itself.
+`changes requested` verdict, and a genuine approval are all required for the
+status itself.
 
 This is deliberately **not** something the reviewing agent does itself
 anymore — `claude-review.yml`'s prompt explicitly tells Claude never to run
 `gh pr merge`; it ends its job at submitting the verdict. Moving the merge
 decision into the same deterministic script that already computes every
 other gate means it re-fires on its own whenever anything relevant changes
-(e.g. a human clearing `needs human review` on an already-approved PR later)
 rather than existing only as a one-shot action inside a single review turn
 that could be skipped, time out, or simply never run again.
 

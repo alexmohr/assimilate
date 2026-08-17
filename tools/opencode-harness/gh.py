@@ -6,11 +6,10 @@
 Everything here is read-only or additive (comments, our own harness-owned
 label) except `create_pr`. The harness never calls anything that would add or
 remove the repo's own status labels (`needs review`, `ready to merge`,
-`changes requested`, `ci failing`, `merge conflict`, `precheck failed`,
-`needs human review`) or the `claude-approved`/`claude-changes-requested`
-verdict labels - see skills/review/SKILL.md: "agents must never add or
-remove the status labels themselves". Those are owned end-to-end by
-.github/workflows/pr-status-labels.yml.
+`changes requested`, `ci failing`, `merge conflict`, `precheck failed`) or
+the `claude-approved`/`claude-changes-requested` verdict labels - see
+skills/review/SKILL.md: "agents must never add or remove the status labels
+themselves". Those are owned end-to-end by .github/workflows/pr-status-labels.yml.
 """
 
 from __future__ import annotations
@@ -57,7 +56,6 @@ STATUS_LABEL_NAMES = {
     "merge conflict",
     "precheck failed",
     "ready to merge",
-    "needs human review",
     "coverage failed",
     "duplicate code",
     "claude-approved",
@@ -131,10 +129,6 @@ class PrDetail:
         return (
             self.review_decision == "CHANGES_REQUESTED" or "claude-changes-requested" in self.labels
         )
-
-    @property
-    def needs_human_review(self) -> bool:
-        return "needs human review" in self.labels
 
     @property
     def checks_in_progress(self) -> bool:

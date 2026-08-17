@@ -23,13 +23,6 @@ class PrAttempt:
     fingerprint: str = ""
     attempts: int = 0
     last_head_sha: str = ""
-    # Set to "needs_human_review" when the harness's stuck+question marking
-    # came from the needs_human_review branch specifically (see harness.py's
-    # _check_and_fix_pr) - that case is only ever actually resolved by the
-    # `needs human review` label clearing, never by a new commit, so it
-    # needs its own un-stick condition distinct from the ordinary
-    # fingerprint/head-sha circuit breaker below.
-    stuck_reason: str = ""
     # Which of ci/merge/coverage/duplicate-code/review were failing at the
     # moment this PR was marked stuck (see harness.py's _stage_signature) -
     # deliberately excludes the derived `PR Merge Gate` check itself, which
@@ -42,19 +35,6 @@ class PrAttempt:
     # information worth a fresh look, not something the harness should sit on
     # until a human notices and pushes a commit or clears the label by hand.
     stuck_stage_signature: str = ""
-    # Head sha of the PR the last time the harness actually *posted* a
-    # `needs_human_review` stuck comment (see harness.py's
-    # _check_and_fix_pr) - distinct from stuck_reason/stuck_stage_signature,
-    # which track why/what for the ordinary un-stick logic. `needs human
-    # review` toggling off and back on with no new commit (e.g. CI flickers
-    # red for a cycle, which now strips the label - see sync-pr-labels.js -
-    # then goes green again with the same content re-deriving it) used to
-    # make the harness re-post the identical "pausing... needs a decision"
-    # comment every time, five times over five days on PR #334 with nothing
-    # new for a human to act on. Comparing against the *current* head sha
-    # lets a genuinely new commit still get a fresh notice while pure label
-    # churn on the same commit doesn't.
-    needs_human_review_notified_sha: str = ""
 
 
 @dataclass
@@ -91,9 +71,7 @@ class HarnessState:
                     "fingerprint": a.fingerprint,
                     "attempts": a.attempts,
                     "last_head_sha": a.last_head_sha,
-                    "stuck_reason": a.stuck_reason,
                     "stuck_stage_signature": a.stuck_stage_signature,
-                    "needs_human_review_notified_sha": a.needs_human_review_notified_sha,
                 }
                 for number, a in self.pr_attempts.items()
             },
@@ -139,9 +117,7 @@ class HarnessState:
     def set_stuck_stage_signature(self, pr_number: int, signature: str) -> None:
         """Records which stages were failing at the moment `pr_number` was
         marked stuck - see PrAttempt.stuck_stage_signature. Creates the entry
-        if a fix attempt was never actually recorded for this PR, same as
-        set_stuck_reason below (the needs_human_review branch can mark a PR
-        stuck without ever calling record_attempt).
+        if a fix attempt was never actually recorded for this PR.
         """
         key = str(pr_number)
         existing = self.pr_attempts.get(key)
@@ -149,39 +125,6 @@ class HarnessState:
             self.pr_attempts[key] = PrAttempt(stuck_stage_signature=signature)
         else:
             existing.stuck_stage_signature = signature
-        self.save()
-
-    def set_stuck_reason(self, pr_number: int, reason: str) -> None:
-        """Tags the current stuck marking with why, for un-stick conditions
-        that need to tell branches apart (see PrAttempt.stuck_reason) -
-        creates the entry if a fix attempt was never actually recorded for
-        this PR (the needs_human_review branch can mark a PR stuck without
-        ever calling record_attempt, since it fires before any fix is
-        attempted).
-        """
-        key = str(pr_number)
-        existing = self.pr_attempts.get(key)
-        if existing is None:
-            self.pr_attempts[key] = PrAttempt(stuck_reason=reason)
-        else:
-            existing.stuck_reason = reason
-        self.save()
-
-    def needs_human_review_notified_sha(self, pr_number: int) -> str:
-        """Head sha the harness last posted a `needs_human_review` stuck
-        comment for - see PrAttempt.needs_human_review_notified_sha. Empty
-        if no such comment has ever been posted for this PR.
-        """
-        existing = self.pr_attempts.get(str(pr_number))
-        return existing.needs_human_review_notified_sha if existing is not None else ""
-
-    def set_needs_human_review_notified_sha(self, pr_number: int, sha: str) -> None:
-        key = str(pr_number)
-        existing = self.pr_attempts.get(key)
-        if existing is None:
-            self.pr_attempts[key] = PrAttempt(needs_human_review_notified_sha=sha)
-        else:
-            existing.needs_human_review_notified_sha = sha
         self.save()
 
     def mark_issue_started(self, issue_number: int) -> None:

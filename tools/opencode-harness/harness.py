@@ -858,141 +858,40 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         log.info("PR #%d: checks still in progress, waiting for them to settle", number)
         return None
 
-    if detail.needs_human_review and not (
-        detail.ci_failing
-        or detail.merge_conflict
-        or detail.coverage_failed
-        or detail.duplicate_code
-    ):
-        # `needs human review` is the repo's own sign-off gate (see
-        # HUMAN_LABEL/humanSignOffStillStands in sync-pr-labels.js). Only a
-        # human removing the *label* counts as genuine sign-off; dismissing
-        # the review that triggered it does not touch this label at all,
-        # and neither does a fresh approval that leaves the label in place.
-        # sync-pr-labels.js *does* also strip this label itself while
-        # CI/merge conflict/a precheck stage is failing - it's the repo's
-        # last gate, not a parallel one, so a PR that isn't even buildable
-        # yet doesn't need a human's judgment call - but that's provenance-
-        # checked there (see claudeApprovedIsGenuine's pattern applied to
-        # HUMAN_LABEL) precisely so it's never confused with a real human
-        # sign-off; this branch's own `not (ci_failing or merge_conflict or
-        # coverage_failed or duplicate_code)` guard means we only ever get
-        # here once those are already clear, so that distinction doesn't
-        # change anything about this branch itself.
-        # Deliberately keyed on needs_human_review alone, not also
-        # detail.changes_requested: if this required both, changes_requested
-        # flipping back to False on its own (e.g. that same or another
-        # reviewer approves without separately removing the sticky label)
-        # would fall through this branch entirely with needs_human_review
-        # still set - straight into the un-stick block below, which assumes
-        # reaching it means needs_human_review is already false and would
-        # incorrectly clear this PR's stuck bookkeeping. CI/merge/coverage/
-        # duplicate-code problems are ordinary and still worth fixing
-        # regardless of this label, so those still fall through instead of
-        # being caught here. Checked before the stuck-label-clearing logic
-        # below so a harness-authored commit (which changes head_sha) can't
-        # quietly un-stick a PR that's actually still waiting on a human -
-        # without this it would look "stuck" again a few attempts later,
-        # chasing the exact same already-addressed review content.
-        if cfg.stuck_label not in detail.labels:
-            head_sha = gh.get_pr_head_sha(cfg.repo, number)
-            # `needs human review` toggling off and back on with no new
-            # commit - e.g. CI flickers red for a cycle (which now strips
-            # this label - see sync-pr-labels.js) and then goes green again
-            # with the same content re-deriving it - used to make this
-            # branch re-post the identical "pausing... needs a decision"
-            # comment every single time it happened: 5 near-duplicate
-            # copies over 5 days on PR #334, none of them carrying anything
-            # new for a human to act on. Only post a fresh comment when the
-            # commit has actually changed since the last one; still
-            # re-apply the bookkeeping labels either way (cheap, idempotent,
-            # and the un-stick block below depends on stuck_reason being
-            # set) so a human landing on the PR still sees why it's parked.
-            if state.needs_human_review_notified_sha(number) == head_sha:
-                log.info(
-                    "PR #%d: still blocked on `needs human review` at the same commit already "
-                    "announced - re-applying labels without re-posting the comment",
-                    number,
-                )
-                if not cfg.dry_run:
-                    gh.add_label(cfg.repo, number, cfg.stuck_label)
-                    gh.add_label(cfg.repo, number, cfg.question_label)
-                    state.set_stuck_reason(number, "needs_human_review")
-            else:
-                _mark_stuck(
-                    cfg,
-                    state,
-                    detail,
-                    "this PR carries the repo's own `needs human review` label with no other "
-                    "fixable problem outstanding",
-                    "The `needs human review` label only ever clears when a human removes it "
-                    "themselves (or CI/merge/a precheck stage starts failing again) - pushing "
-                    "more commits, or even a fresh approval, can't do that on its own. If a "
-                    "reviewer's changes-requested verdict is also still in effect, only that "
-                    "reviewer's own new review or dismissal refreshes it. Please resolve the "
-                    "outstanding review situation and remove `needs human review` yourself to "
-                    "have the harness retry.",
-                    question=True,
-                )
-                if not cfg.dry_run:
-                    state.set_stuck_reason(number, "needs_human_review")
-                    state.set_needs_human_review_notified_sha(number, head_sha)
-        else:
-            log.info("PR #%d: still needs human review, skipping", number)
-        return None
-
     if cfg.stuck_label in detail.labels:
         recorded = state.pr_attempts.get(str(number))
-        if recorded is not None and recorded.stuck_reason == "needs_human_review":
-            # This PR was marked stuck by the needs_human_review branch
-            # above, not the ordinary fingerprint circuit breaker - the only
-            # thing that ever resolves that is the label clearing (a new
-            # commit is neither necessary nor sufficient for it), and
-            # detail.needs_human_review is already false here or the branch
-            # above would have caught this PR instead. Un-stick regardless
-            # of head_sha - without this, a human doing exactly what the
-            # stuck comment asked (removing the label, no new commit) would
-            # otherwise deadlock forever against the ordinary "no new
-            # commits, still stuck" check below, which the comment never
-            # warns about since it only tells them to remove one label.
-            log.info("PR #%d: needs human review cleared; clearing and retrying", number)
-            gh.remove_label(cfg.repo, number, cfg.stuck_label)
-            if cfg.question_label in detail.labels:
-                gh.remove_label(cfg.repo, number, cfg.question_label)
-            state.clear_pr(number)
-        else:
-            head_sha = gh.get_pr_head_sha(cfg.repo, number)
-            same_commit = recorded is not None and recorded.last_head_sha == head_sha
-            # A stage other than the derived `PR Merge Gate` check flipping
-            # since this PR was parked (e.g. a slow coverage-diff/duplicate-
-            # code run finally posting a failure, or CI being re-run) is new
-            # information the plain head-sha check can't see on its own - see
-            # PrAttempt.stuck_stage_signature. Only meaningful once a
-            # signature was actually recorded (an older state file predating
-            # this field, or a PR stuck via a path that skipped it, both
-            # leave it empty - never treated as "changed" against itself).
-            same_stages = (
-                recorded is not None
-                and recorded.stuck_stage_signature != ""
-                and recorded.stuck_stage_signature == _stage_signature(detail)
+        head_sha = gh.get_pr_head_sha(cfg.repo, number)
+        same_commit = recorded is not None and recorded.last_head_sha == head_sha
+        # A stage other than the derived `PR Merge Gate` check flipping
+        # since this PR was parked (e.g. a slow coverage-diff/duplicate-
+        # code run finally posting a failure, or CI being re-run) is new
+        # information the plain head-sha check can't see on its own - see
+        # PrAttempt.stuck_stage_signature. Only meaningful once a
+        # signature was actually recorded (an older state file predating
+        # this field, or a PR stuck via a path that skipped it, both
+        # leave it empty - never treated as "changed" against itself).
+        same_stages = (
+            recorded is not None
+            and recorded.stuck_stage_signature != ""
+            and recorded.stuck_stage_signature == _stage_signature(detail)
+        )
+        if same_commit and same_stages:
+            log.info("PR #%d still stuck (no new commits), skipping", number)
+            return None
+        if same_commit:
+            log.info(
+                "PR #%d: a different stage is failing than when it was marked stuck "
+                "(no new commit); clearing and retrying",
+                number,
             )
-            if same_commit and same_stages:
-                log.info("PR #%d still stuck (no new commits), skipping", number)
-                return None
-            if same_commit:
-                log.info(
-                    "PR #%d: a different stage is failing than when it was marked stuck "
-                    "(no new commit); clearing and retrying",
-                    number,
-                )
-            else:
-                log.info(
-                    "PR #%d has new commits since being marked stuck; clearing and retrying",
-                    number,
-                )
-            gh.remove_label(cfg.repo, number, cfg.stuck_label)
-            if cfg.question_label in detail.labels:
-                gh.remove_label(cfg.repo, number, cfg.question_label)
+        else:
+            log.info(
+                "PR #%d has new commits since being marked stuck; clearing and retrying",
+                number,
+            )
+        gh.remove_label(cfg.repo, number, cfg.stuck_label)
+        if cfg.question_label in detail.labels:
+            gh.remove_label(cfg.repo, number, cfg.question_label)
 
     if not detail.needs_fix:
         log.info("PR #%d: nothing actionable (labels=%s)", number, detail.labels)
@@ -1195,12 +1094,7 @@ def _clear_stuck_after_base_merge(cfg: Config, state: HarnessState) -> None:
 
     A no-op on the very first cycle a state file has ever seen (nothing
     recorded yet to compare against, so nothing is swept) and whenever base
-    hasn't actually moved. Skips any PR whose stuck marking came from the
-    needs_human_review branch specifically (see PrAttempt.stuck_reason) -
-    that one is gated on the repo's own `needs human review` label, which a
-    base-branch merge has no bearing on at all; clearing it here would just
-    have `_check_and_fix_pr` re-mark it (and repost the same give-up
-    comment) on the very next cycle regardless.
+    hasn't actually moved.
     """
     if cfg.dry_run:
         return
@@ -1213,9 +1107,6 @@ def _clear_stuck_after_base_merge(cfg: Config, state: HarnessState) -> None:
         return
     for pr in gh.list_open_prs(cfg.repo):
         if cfg.stuck_label not in pr.labels:
-            continue
-        recorded = state.pr_attempts.get(str(pr.number))
-        if recorded is not None and recorded.stuck_reason == "needs_human_review":
             continue
         log.info(
             "PR #%d: %s advanced (%s -> %s) since last cycle; clearing stuck state for a "

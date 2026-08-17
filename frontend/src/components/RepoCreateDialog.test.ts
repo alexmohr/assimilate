@@ -480,6 +480,30 @@ describe('RepoCreateDialog', () => {
       expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
     })
 
+    it('cancels the pending debounce when the dialog closes', async () => {
+      // The debounce used to outlive the component, so closing the dialog within
+      // 300ms of typing still fired an /ssh/list-dir request (and could trigger a
+      // browseDir) for a dialog that no longer existed. In this suite that stray
+      // request also consumed the next queued mockResolvedValueOnce, which left a
+      // later test's browse unmocked, put the browser into its error state, and
+      // made the directory listing - and the ".." entry a test then clicks -
+      // disappear. That is what made the browser tests intermittently fail.
+      const wrapper = mount()
+      await setField('SSH Host', 'backup.example.com')
+
+      const input = field('Repo Path') as HTMLInputElement
+      input.value = '/backup/repos/web'
+      input.dispatchEvent(new Event('input'))
+
+      wrapper.unmount()
+      vi.mocked(apiClient.post).mockClear()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await flushPromises()
+
+      expect(apiClient.post).not.toHaveBeenCalled()
+    })
+
     it('lists the parent directory and filters by the typed prefix', async () => {
       mount()
       await setField('SSH Host', 'backup.example.com')

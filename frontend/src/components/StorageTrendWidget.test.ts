@@ -7,6 +7,7 @@ import { renderWithPlugins } from '../test-utils'
 import StorageTrendWidget from './StorageTrendWidget.vue'
 import { apiClient } from '../api/client'
 
+// jscpd:ignore-start -- test setup boilerplate (vi.mock factories cannot reference module-scoped helpers)
 vi.mock('../api/client', () => ({
   apiClient: {
     get: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock('../utils/format', () => ({
 vi.mock('../utils/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }))
+// jscpd:ignore-end
 
 const mockGet = vi.mocked(apiClient.get)
 
@@ -101,5 +103,18 @@ describe('StorageTrendWidget', () => {
     await flushPromises()
 
     expect(mockGet).toHaveBeenLastCalledWith(expect.stringContaining('days=90'))
+  })
+
+  it('refetches the trend for the chosen repo', async () => {
+    mockGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(StorageTrendWidget, {
+      props: { repos: [{ id: 4, name: 'repo-beta' }] },
+    })
+    await flushPromises()
+
+    await wrapper.find('select').setValue('4')
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenLastCalledWith(expect.stringContaining('repo_id=4'))
   })
 })

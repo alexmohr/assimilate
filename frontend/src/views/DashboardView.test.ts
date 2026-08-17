@@ -463,6 +463,31 @@ describe('DashboardView success ring', () => {
     expect(rangeCalls().at(-1)).toContain('days=7')
   })
 
+  it('refetches the success rate for the chosen repo', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos') {
+        return Promise.resolve({ data: [{ id: 5, name: 'repo-alpha' }] })
+      }
+      return defaultApiHandler(url)
+    })
+    const wrapper = await renderDashboard()
+    const repoCalls = (): string[] =>
+      vi
+        .mocked(apiClient.get)
+        .mock.calls.map((c) => String(c[0]))
+        .filter((u) => u.startsWith('/stats/activity?days='))
+    const before = repoCalls().length
+
+    const successControls = wrapper
+      .findAll('.chart-range-controls')
+      .find((c) => c.find('[aria-label="Success rate range"]').exists())!
+    await successControls.find('select').setValue('5')
+    await flushPromises()
+
+    expect(repoCalls().length).toBe(before + 1)
+    expect(repoCalls().at(-1)).toContain('repo_id=5')
+  })
+
   // jscpd:ignore-start -- test boilerplate: repeated mock setup patterns
   it('hydrates active backups from running operations after reload', async () => {
     vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())

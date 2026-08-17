@@ -172,7 +172,9 @@ function onPathInput(): void {
  * `/ssh/list-dir` request 300ms after the last keystroke, so closing the
  * dialog right after typing a path issued an SSH directory listing on behalf
  * of a dialog that no longer exists - and, in tests, landed that request in
- * whichever case happened to be running when it fired.
+ * whichever case happened to be running when it fired. The blur timer is the
+ * same story with a shorter fuse: it reopens nothing, but it mutates state on
+ * an unmounted dialog.
  */
 onBeforeUnmount(() => {
   if (autocompleteTimer) clearTimeout(autocompleteTimer)

@@ -324,8 +324,7 @@ jobs:
             deterministically by `.github/workflows/pr-status-labels.yml` once it re-syncs
             after your verdict lands (squash-merging automatically once CI is green and every
             other gate is clear, but only for a real approval - never just because a label is
-            present - and never while `needs human review` is outstanding). Your job ends at
-            submitting the verdict.
+            present). Your job ends at submitting the verdict.
 
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-

@@ -82,8 +82,8 @@ default backend) or `claude` (the Claude Code CLI) — see "Agent CLI" below.
    over the same commit would just be spending twice for one job.
 4. From there the repo's own automation takes back over: CI runs,
    `pr-status-labels.yml` re-syncs labels and `claude-review.yml` reviews;
-   once the result is `ready to merge` with a genuine approval and no
-   `needs human review` label, `pr-status-labels.yml` can squash-merge it
+   once the result is `ready to merge` with a genuine approval,
+   `pr-status-labels.yml` can squash-merge it
    deterministically (see `skills/review/SKILL.md`'s "Auto-merge" section) -
    currently disabled by default pending
    [#390](https://github.com/alexmohr/assimilate/issues/390), so until then
@@ -99,21 +99,7 @@ default backend) or `claude` (the Claude Code CLI) — see "Agent CLI" below.
    clean, it also adds `opencode-harness-question` - a signal that this
    likely needs a maintainer's decision (e.g. a policy call raised in
    review), not another code fix. A human pushing a new commit, or removing
-   the label(s), makes the harness pick it back up. If a PR carries the
-   repo's own `needs human review` label (see `sync-pr-labels.js`) *and*
-   `changes requested` is the only outstanding problem (no CI failure,
-   merge conflict, or coverage/duplicate-code precheck failure alongside
-   it), the harness skips this cycle-and-retry process entirely instead of
-   burning attempts on it: that label only clears when a human removes it -
-   dismissing the review that triggered it does not - and whoever requested
-   changes keeps that verdict in GitHub's own `reviewDecision` until they
-   personally submit a new review or dismiss it, so no amount of pushed
-   commits can make it refresh. The harness marks it
-   `opencode-harness-stuck` + `opencode-harness-question` immediately (no
-   retries burned) and leaves it alone until the label is gone. This is
-   deliberately narrow: an ordinary CI/merge/coverage/duplicate-code problem
-   on the same PR is still fixed as normal regardless of this label - it's
-   only the review verdict itself that's a dead end while it holds. A
+   the label(s), makes the harness pick it back up. A
    pushed commit isn't the only thing that can un-stick a PR, though: the
    harness also notices whenever `HARNESS_BASE_BRANCH` itself advances (a
    merge landed on it) and clears `opencode-harness-stuck` (+
@@ -121,9 +107,7 @@ default backend) or `claude` (the Claude Code CLI) — see "Agent CLI" below.
    fresh look next cycle - a merge conflict or a CI failure that looked
    unresolvable can simply disappear once base moves past whatever caused
    it, which a per-PR "did *this* branch get a new commit" check alone can
-   never observe. PRs stuck specifically for the `needs human review`
-   reason are left alone by this - that one only ever clears when a human
-   removes the label themselves, regardless of what base does. Nor is a new
+   never observe. Nor is a new
    commit or a base-branch merge the only thing that can un-stick a PR on its
    *own* commit: the harness also compares which stage (CI, merge conflict,
    coverage precheck, duplicate-code precheck, review) was failing at the

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO archive_dirs (archive_id, dir_path_id, chunk_no, entries) SELECT $1, unnest($2::bigint[]), unnest($3::int[]), unnest($4::bytea[]) ON CONFLICT (archive_id, dir_path_id, chunk_no) DO UPDATE SET entries = EXCLUDED.entries",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int4Array",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c972af44b2470ad663a6c3755932495c39b4a7fc111b1621930974d48032810c"
+}

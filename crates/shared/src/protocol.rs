@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::str::FromStr;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -13,8 +11,19 @@ use crate::types::{
 };
 
 /// The kind of repository operation being performed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    utoipa::ToSchema,
+    TS,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum RepoOpKind {
     /// Backup operation initiated by the agent.
@@ -32,15 +41,6 @@ pub enum RepoOpKind {
     /// Compact the repository, reclaiming space freed by a prior operation
     /// (e.g. an archive deletion).
     CompactRepo,
-}
-
-impl FromStr for RepoOpKind {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_value(serde_json::Value::String(s.to_owned()))
-            .map_err(|e| format!("invalid RepoOpKind: {e}"))
-    }
 }
 
 /// An active operation on a repository, including its queued depth.
@@ -799,12 +799,11 @@ mod tests {
 
     #[test]
     fn agent_to_server_export_ready_round_trips() {
-        let msg = AgentToServer::ExportReady {
+        assert_round_trips(&AgentToServer::ExportReady {
             request_id: "req-4".into(),
             success: true,
             error_message: None,
-        };
-        assert_round_trips(&msg);
+        });
     }
 
     #[test]
@@ -819,22 +818,20 @@ mod tests {
 
     #[test]
     fn agent_to_server_key_import_result_round_trips() {
-        let msg = AgentToServer::KeyImportResult {
+        assert_round_trips(&AgentToServer::KeyImportResult {
             request_id: "req-6".into(),
             success: true,
             error_message: None,
-        };
-        assert_round_trips(&msg);
+        });
     }
 
     #[test]
     fn agent_to_server_passphrase_changed_round_trips() {
-        let msg = AgentToServer::PassphraseChanged {
+        assert_round_trips(&AgentToServer::PassphraseChanged {
             request_id: "req-7".into(),
             success: true,
             error_message: None,
-        };
-        assert_round_trips(&msg);
+        });
     }
 
     #[test]
@@ -948,5 +945,23 @@ mod tests {
             archive_name: "server-daily-2024-01-01T02:00:00".to_owned(),
         };
         assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn repo_op_kind_from_str_round_trips() {
+        use std::str::FromStr;
+
+        let variants = [
+            (RepoOpKind::AgentBackup, "agent_backup"),
+            (RepoOpKind::AgentCheck, "agent_check"),
+            (RepoOpKind::AgentVerify, "agent_verify"),
+            (RepoOpKind::ServerSync, "server_sync"),
+            (RepoOpKind::BreakLock, "break_lock"),
+            (RepoOpKind::DeleteArchive, "delete_archive"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(RepoOpKind::from_str(expected).unwrap(), variant);
+        }
+        assert!(RepoOpKind::from_str("invalid").is_err());
     }
 }

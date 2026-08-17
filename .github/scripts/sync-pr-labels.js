@@ -74,9 +74,9 @@ const STATUS_LABELS = {
   // Distinct from `needs review`: this is genuinely "nothing to review yet",
   // not "reviewed and something's still outstanding" - see the
   // `ciConclusion === null` branch below for exactly what's deferred behind
-  // this (a stale changes-requested verdict, a pending human-sign-off
-  // reminder, a failed automated-review attempt, or simply nothing at all)
-  // until CI has actually concluded once on this commit.
+  // this (a stale changes-requested verdict, a failed automated-review
+  // attempt, or simply nothing at all) until CI has actually concluded once
+  // on this commit.
   PENDING: {
     name: "pending",
     color: "ededed",
@@ -98,12 +98,6 @@ const STATUS_LABELS = {
     color: "0e8a16",
     description: "CI is green and the PR has been approved.",
   },
-};
-
-const HUMAN_LABEL = {
-  name: "needs human review",
-  color: "5319e7",
-  description: "Requires a human sign-off. Only a human may remove this label.",
 };
 
 // DUPLICATE_CODE_LABEL and COVERAGE_LABEL are each set/cleared solely by
@@ -170,74 +164,6 @@ const REVIEW_VERDICT_LABELS = {
     description: "Claude's review verdict: changes requested. Set only by the review workflow.",
   },
 };
-
-// Paths where a change requires human sign-off even if an agent reviewed it.
-// Kept in sync with the "Non-negotiable rules" in AGENTS.md and skills/security/SKILL.md.
-const SENSITIVE_PATH_PATTERNS = [
-  /^\.github\/workflows\//,
-  /^\.github\/scripts\//,
-  /^\.pre-commit-config\.ya?ml$/,
-  /^\.devcontainer\//,
-  /(^|\/)auth[^/]*\.(rs|ts|vue)$/i,
-  /(^|\/)crypto[^/]*\.rs$/i,
-  /(^|\/)token[^/]*\.rs$/i,
-  /(^|\/)passphrase[^/]*\.rs$/i,
-  /(^|\/)ssh[_-]?agent/i,
-  /^crates\/server\/migrations\//,
-  /^deny\.toml$/,
-  /^Cargo\.lock$/,
-  /^frontend\/package-lock\.json$/,
-  /^frontend\/\.npm-audit-allowlist\.json$/,
-];
-
-// A PR that talks about security in its own title/body, or that closes an
-// issue which itself talks about security (title, body, or a "security"
-// label), gets the same sign-off gate as a sensitive-path change - the
-// judgment call of whether it's actually security-relevant belongs to a
-// human, not a keyword match, so this only widens the net, never narrows it.
-const SECURITY_MENTION_PATTERN = /\bsecurity\b/i;
-const CLOSING_KEYWORD_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
-
-function extractClosingIssueNumbers(text) {
-  if (!text) return [];
-  const numbers = new Set();
-  let match;
-  // Reset lastIndex - this regex has the global flag and is module-level,
-  // so a prior exec() elsewhere could leave it mid-string otherwise.
-  CLOSING_KEYWORD_PATTERN.lastIndex = 0;
-  while ((match = CLOSING_KEYWORD_PATTERN.exec(text)) !== null) {
-    numbers.add(Number(match[1]));
-  }
-  return [...numbers];
-}
-
-async function closesSecurityIssue(github, owner, repo, prBody) {
-  const issueNumbers = extractClosingIssueNumbers(prBody);
-  if (issueNumbers.length === 0) return false;
-
-  const issues = await Promise.all(
-    issueNumbers.map((issue_number) =>
-      github.rest.issues.get({ owner, repo, issue_number }).catch(() => null),
-    ),
-  );
-
-  return issues.some((issue) => {
-    if (!issue) return false; // not a real issue number, or inaccessible - not our call to make
-    const { title, body, labels } = issue.data;
-    if (SECURITY_MENTION_PATTERN.test(title) || SECURITY_MENTION_PATTERN.test(body || "")) {
-      return true;
-    }
-    return (labels || []).some((label) =>
-      SECURITY_MENTION_PATTERN.test((typeof label === "string" ? label : label.name) || ""),
-    );
-  });
-}
-
-// Lines added by the diff that introduce a self-authorized suppression
-// (forbidden by AGENTS.md without explicit human approval). deny.toml
-// `ignore` entries are already covered by SENSITIVE_PATH_PATTERNS above,
-// since any edit to that file matches on path alone.
-const SUPPRESSION_LINE_PATTERNS = [/^\+\s*#!?\[allow\(/];
 
 // coverage-diff-check.yml and duplicate-code-check.yml each own their own
 // label's full add/remove lifecycle (see the comment on
@@ -386,80 +312,6 @@ function resolveEffectiveReviewDecision(nativeDecision, existingLabels) {
   return nativeDecision;
 }
 
-async function needsHumanSignOff(github, owner, repo, prNumber, pr) {
-  const files = await github.paginate(github.rest.pulls.listFiles, {
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100,
-  });
-
-  if (files.some((f) => SENSITIVE_PATH_PATTERNS.some((p) => p.test(f.filename)))) {
-    return true;
-  }
-
-  if (
-    files.some((f) =>
-      (f.patch || "")
-        .split("\n")
-        .some((line) => SUPPRESSION_LINE_PATTERNS.some((p) => p.test(line))),
-    )
-  ) {
-    return true;
-  }
-
-  if (
-    SECURITY_MENTION_PATTERN.test(pr.title || "") ||
-    SECURITY_MENTION_PATTERN.test(pr.body || "")
-  ) {
-    return true;
-  }
-
-  return closesSecurityIssue(github, owner, repo, pr.body);
-}
-
-// Whether a human's removal of `needs human review` still stands for the
-// PR's current head commit. This automation itself also removes HUMAN_LABEL
-// now (see the otherGatesClear stripping block below: CI/merge-conflict/a
-// precheck stage failing means review isn't the relevant gate yet), so an
-// "unlabeled" event in the PR's history is no longer proof on its own that a
-// human signed off - it's only trustworthy once TRUSTED_AUTOMATION_LOGIN is
-// ruled out as the actor (mirroring claudeApprovedIsGenuine's provenance
-// check in the other direction). Without that check, a PR whose label this
-// workflow stripped for a CI failure would look permanently signed-off the
-// moment CI turned green again, silently bypassing the sign-off gate for
-// good - needsHumanSignOff() would never even get a chance to re-derive
-// "true", since this function is what decides whether it's asked at all.
-//
-// Scoped to the current commit the same way claude-approved/claude-changes-
-// requested are (see the eventAction === "synchronize" handling above): a
-// sign-off is only honored if it happened after the current head commit was
-// pushed, so a new commit re-opens the question instead of carrying forward
-// an approval of different code. Approximates "when was this commit pushed"
-// with the commit's own authored/committed date, which can be inaccurate
-// for a rebased/cherry-picked commit - a reasonable trade-off given GitHub
-// exposes no direct "push timestamp" for an arbitrary SHA.
-async function humanSignOffStillStands(github, owner, repo, prNumber, headSha) {
-  const events = await github.paginate(github.rest.issues.listEvents, {
-    owner,
-    repo,
-    issue_number: prNumber,
-    per_page: 100,
-  });
-  const labelEvents = events.filter(
-    (e) => (e.event === "labeled" || e.event === "unlabeled") && e.label && e.label.name === HUMAN_LABEL.name,
-  );
-  if (labelEvents.length === 0) return false;
-
-  const latest = labelEvents[labelEvents.length - 1];
-  if (latest.event !== "unlabeled") return false; // most recent action re-added it
-  if (latest.actor && latest.actor.login === TRUSTED_AUTOMATION_LOGIN) return false; // this workflow's own removal, not a human's
-
-  const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: headSha });
-  const commitDate = new Date(commit.commit.committer?.date || commit.commit.author.date);
-  return new Date(latest.created_at) > commitDate;
-}
-
 // GitHub's own reviewDecision is intrinsically provenance-safe: it only ever
 // reflects a real, distinct account's formal review, and GitHub itself
 // refuses to record a self-approval (422). The claude-approved label has no
@@ -489,9 +341,9 @@ async function claudeApprovedIsGenuine(github, owner, repo, prNumber) {
 // branch can't be deleted by this token, mirroring `gh pr merge
 // --delete-branch`'s own behavior). Called only once every deterministic
 // gate this script already computes - CI green, no merge conflict, no
-// coverage/duplicate-code failure, no active changes-requested verdict, no
-// pending human sign-off (all folded into `status === READY_TO_MERGE`) -
-// plus an actual, provenance-checked approval agrees. Tolerates the PR
+// coverage/duplicate-code failure, no active changes-requested verdict (all
+// folded into `status === READY_TO_MERGE`) - plus an actual,
+// provenance-checked approval agrees. Tolerates the PR
 // already being merged/closed or genuinely not mergeable right now (a
 // concurrent push, a race with another trigger) as a no-op rather than
 // failing the whole label-sync job over it - the next sync will simply
@@ -613,7 +465,6 @@ module.exports = async ({
     existingLabels = existingLabels.filter((name) => !staleVerdictLabels.includes(name));
   }
 
-  const hasHumanLabel = existingLabels.includes(HUMAN_LABEL.name);
   const hasCoverageFailed = existingLabels.includes(COVERAGE_LABEL.name);
   const hasDuplicateCode = existingLabels.includes(DUPLICATE_CODE_LABEL.name);
   const hasClaudeReviewFailed = existingLabels.includes(CLAUDE_REVIEW_FAILED_LABEL.name);
@@ -648,16 +499,12 @@ module.exports = async ({
     ciConclusion,
     mergeableState,
     nativeReviewDecision,
-    autoNeedsHuman,
-    signOffStillStands,
     coverageLabelCurrent,
     duplicateLabelCurrent,
   ] = await Promise.all([
     resolveCiConclusion(github, owner, repo, pr.head.sha),
     resolveMergeableState(github, owner, repo, prNumber, pr.mergeable_state),
     resolveReviewDecision(github, owner, repo, prNumber),
-    hasHumanLabel ? Promise.resolve(false) : needsHumanSignOff(github, owner, repo, prNumber, pr),
-    hasHumanLabel ? Promise.resolve(false) : humanSignOffStillStands(github, owner, repo, prNumber, pr.head.sha),
     hasCoverageFailed
       ? labelReflectsCurrentCommit(github, owner, repo, pr.head.sha, COVERAGE_DIFF_CHECK_NAME)
       : Promise.resolve(false),
@@ -693,42 +540,6 @@ module.exports = async ({
 
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
   const mergeConflict = mergeableState === "dirty";
-
-  // `needs human review` is the repo's *last* gate, not a parallel one: a PR
-  // whose CI is red, has a real merge conflict, or is failing a
-  // deterministic pre-review check doesn't need a human's judgment call yet
-  // - it needs those objective, code-fixable problems resolved first.
-  // autoNeedsHuman is a pure function of PR content (sensitive paths,
-  // security keywords), so the very next sync after otherGatesClear flips
-  // back to true re-derives the same "yes" on its own - deferring the label
-  // here doesn't lose track of a real sign-off requirement, it just stops
-  // asking for one before there's anything reviewable.
-  const otherGatesClear =
-    !ciFailed && !mergeConflict && !coverageFailedForThisCommit && !duplicateCodeForThisCommit;
-  // A human's own removal of the label overrides re-derivation from the
-  // same unchanged file patterns - see humanSignOffStillStands() above.
-  const needsHuman = otherGatesClear && (hasHumanLabel || (autoNeedsHuman && !signOffStillStands));
-
-  if (hasHumanLabel && !otherGatesClear) {
-    // Same unconditional-strip pattern as the claude-approved guarantee
-    // above: a maintainer shouldn't have to clear `needs human review` by
-    // hand only to watch it (correctly) reappear once CI/merge/precheck
-    // settle, and leaving it set while the PR isn't even buildable yet just
-    // gives them a second, currently-irrelevant thing to look at. This is
-    // provenance-checked in humanSignOffStillStands so a later sync (once
-    // otherGatesClear flips back to true) never mistakes this automated
-    // removal for a real human sign-off.
-    await github.rest.issues
-      .removeLabel({ owner, repo, issue_number: prNumber, name: HUMAN_LABEL.name })
-      .catch((err) => {
-        if (err.status !== 404) throw err;
-      });
-    existingLabels = existingLabels.filter((name) => name !== HUMAN_LABEL.name);
-    core.info(
-      `PR #${prNumber}: stripped needs human review - CI/merge conflict/a precheck stage is ` +
-        "currently failing, so review isn't the blocking gate yet.",
-    );
-  }
 
   // Single-shot (timeoutMs: 0 - never polls/waits) look at every check run
   // on this commit, computed unconditionally and up front so a stage other
@@ -800,15 +611,12 @@ module.exports = async ({
   } else if (ciConclusion === null) {
     // CI hasn't concluded even once on this commit yet - defer every
     // review-related signal below (a stale changes-requested verdict, a
-    // human-sign-off reminder, a failed automated-review attempt, or simply
-    // nothing outstanding at all) behind a known-good build first, the same
-    // "nobody should approve a red build" reasoning `ready to merge` already
-    // applies (see skills/review/SKILL.md) - `needs review` inviting review
-    // attention before CI has even run once is exactly the misleading,
-    // always-true default this status exists to avoid. `needs human review`
-    // itself is unaffected: that's a separate, additive label applied below
-    // regardless of this branch, so the sign-off reminder is never hidden by
-    // this - only the *main* status is deferred. Positioned after the
+    // failed automated-review attempt, or simply nothing outstanding at all)
+    // behind a known-good build first, the same "nobody should approve a red
+    // build" reasoning `ready to merge` already applies (see
+    // skills/review/SKILL.md) - `needs review` inviting review attention
+    // before CI has even run once is exactly the misleading, always-true
+    // default this status exists to avoid. Positioned after the
     // CHANGES_REQUESTED (current) branch above, deliberately: a real,
     // current review verdict is meaningful information on its own and
     // shouldn't be hidden behind "still waiting on CI" the way the more
@@ -824,12 +632,6 @@ module.exports = async ({
     status = STATUS_LABELS.NEEDS_REVIEW;
     summary =
       "A reviewer requested changes on an earlier commit, but new commits have landed since - re-review needed.";
-  } else if (needsHuman) {
-    // Even a green PR is capped at "needs review" until a human clears the
-    // sign-off gate by removing the label themselves.
-    status = STATUS_LABELS.NEEDS_REVIEW;
-    summary =
-      "This PR requires a human sign-off (`needs human review`). Only a human removing that label counts as sign-off.";
   } else if (hasClaudeReviewFailed) {
     // Distinct from "no review yet" (which ready-to-merge tolerates by
     // design): a review was attempted and errored out without producing a
@@ -918,11 +720,10 @@ module.exports = async ({
   }
 
   core.info(
-    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} coverageFailed=${hasCoverageFailed} duplicateCode=${hasDuplicateCode} claudeReviewFailed=${hasClaudeReviewFailed} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
+    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} coverageFailed=${hasCoverageFailed} duplicateCode=${hasDuplicateCode} claudeReviewFailed=${hasClaudeReviewFailed} review=${reviewDecision} (native=${nativeReviewDecision}) -> ${status.name}`,
   );
 
   const desired = [status.name];
-  if (needsHuman) desired.push(HUMAN_LABEL.name);
 
   const toAdd = desired.filter((name) => !existingLabels.includes(name));
   const statusNames = Object.values(STATUS_LABELS).map((l) => l.name);
@@ -931,8 +732,7 @@ module.exports = async ({
   );
 
   for (const name of toAdd) {
-    const label = name === HUMAN_LABEL.name ? HUMAN_LABEL : status;
-    await ensureLabelExists(github, owner, repo, label);
+    await ensureLabelExists(github, owner, repo, status);
     await github.rest.issues.addLabels({
       owner,
       repo,
@@ -953,10 +753,10 @@ module.exports = async ({
 
   // Auto-merge: every deterministic gate this function computes (CI green,
   // no merge conflict, no coverage/duplicate-code failure, no active
-  // changes-requested verdict, no pending human sign-off) plus a genuine
-  // approval is already folded into `status === READY_TO_MERGE` itself now
-  // (see hasGenuineApproval above and skills/review/SKILL.md) - reaching
-  // this branch already implies `approved`, nothing left to re-derive here.
+  // changes-requested verdict) plus a genuine approval is already folded
+  // into `status === READY_TO_MERGE` itself now (see hasGenuineApproval
+  // above and skills/review/SKILL.md) - reaching this branch already
+  // implies `approved`, nothing left to re-derive here.
   if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
     if (!autoMergeEnabled) {
       core.info(

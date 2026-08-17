@@ -636,6 +636,39 @@ async fn clean_tables(pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
+    reset_system_settings(pool).await;
+}
+
+/// Restores `system_settings` to the state a freshly migrated database has.
+///
+/// These tests share one database, and unlike the other tables `system_settings`
+/// was never reset between them, so any test that writes a setting silently
+/// changed the behaviour of every test that ran afterwards. That is not
+/// hypothetical: the settings partial-update test persists
+/// `borg_query_timeout_secs = 120`, and `get_borg_timeout` consults the database
+/// setting *before* the `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` environment
+/// variable, so the borg-hang tests silently got a 120 s timeout instead of the
+/// 1 s they asked for and blew past their own wait. CI hid it by starting from an
+/// empty database every run; running the suite twice against one database, as one
+/// does locally, reproduced it every time.
+///
+/// Only `retention_days` and `session_idle_timeout_minutes` are seeded by
+/// migrations (`0001_schema.sql` and `20260707163000_account_security.sql`), so
+/// clearing the table and re-inserting those two reproduces a fresh database
+/// exactly.
+#[cfg(test)]
+async fn reset_system_settings(pool: &PgPool) {
+    sqlx::query("DELETE FROM system_settings")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO system_settings (key, value) VALUES ('retention_days', '7'), \
+         ('session_idle_timeout_minutes', '480')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// Inserts a repo directly into DB, bypassing the API (which requires SSH connectivity).

@@ -72,6 +72,11 @@ Each row has **Download** and, for administrators, **Restore to host** actions. 
 
 New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
+The index is stored one compressed record per directory rather than one row per file, which is how the browser reads it. This keeps the index small even for repositories with many archives of the same file tree — on a repository whose index had grown to 10 GB, the packed layout is roughly a quarter of the size. Directories with very large numbers of entries are split across several records so that a listing only reads the part it displays.
+
+!!! note "Indexes rebuild after upgrading"
+    The content index is derived data, so upgrading to a release that changes its storage layout discards the existing index instead of converting it. Archives are re-indexed automatically the next time they are browsed, or through **Full Resync**. Nothing else is lost: archive tags, backup reports, and the archives themselves are unaffected.
+
 ## Extracting Files
 
 To download a file from an archive:

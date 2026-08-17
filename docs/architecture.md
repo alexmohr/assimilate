@@ -149,6 +149,8 @@ The PostgreSQL schema contains the following key tables. Relationships are descr
 | `repos` | Borg repository definitions (SSH host/user/path, encrypted passphrase) |
 | `schedules` | Cron-based backup, check, and verify schedules linked to a repo and agent |
 | `archives` | Individual borg archive records created after each successful backup |
+| `archive_paths` | Directory paths appearing in a repository's content index, shared across that repository's archives |
+| `archive_dirs` | The content index itself: one LZ4-compressed record per archive directory, holding that directory's entries |
 | `tokens` | API tokens for programmatic access |
 | `system_events` | Audit log of significant server-side events |
 
@@ -157,4 +159,5 @@ The PostgreSQL schema contains the following key tables. Relationships are descr
 - Each `agent` can have many `repos`; each `repo` belongs to one `agent`.
 - Each `repo` can have many `schedules` (one per schedule type: backup, check, verify).
 - Each successful backup creates one `archive` row linked to its `repo`.
+- Each `archive` can have many `archive_dirs` rows, one per directory it contains (more if a directory is large enough to be split into several records). Deleting an archive cascades to them, and any `archive_paths` row left unreferenced is collected at the same time.
 - `system_events` are pruned automatically according to the configured retention policy.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+pub mod codec;
+
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
@@ -15,6 +17,7 @@ use crate::{
     api::archives::{
         ContentEntry, LOCK_WAIT_SECS, classify_borg_error, get_repo_env, normalize_path,
     },
+    archive_index::codec::DirEntry,
     background_tasks::BackgroundTaskTracker,
     borg::Borg,
     error::ApiError,
@@ -436,144 +439,135 @@ async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
     Ok(raw)
 }
 
+/// Directory children grouped by their parent directory path, ready to be
+/// encoded into one blob per directory.
 struct ExpandedArchiveEntries {
-    paths: Vec<String>,
-    parent_paths: Vec<String>,
-    entry_types: Vec<String>,
-    sizes: Vec<i64>,
-    mtimes: Vec<String>,
-    modes: Vec<String>,
-    path_values: Vec<String>,
+    /// `(directory path, children in listing order)` for every directory that
+    /// has at least one child.
+    dirs: Vec<(String, Vec<DirEntry>)>,
+    /// Number of distinct entries seen, including synthesised ancestors.
+    entry_count: i64,
 }
 
-/// Flattens the raw `borg list` entries into parallel column vectors ready
-/// for bulk insert, synthesising any missing ancestor directories along the
-/// way (borg only lists the leaf entries actually present in the archive).
+/// Splits a normalised path into its parent directory and final segment.
+fn split_parent(path: &str) -> (&str, &str) {
+    path.rfind('/')
+        .map_or(("", path), |i| (&path[..i], &path[i.saturating_add(1)..]))
+}
+
+/// Groups the raw `borg list` entries under their parent directories,
+/// synthesising any missing ancestor directories along the way (borg only lists
+/// the leaf entries actually present in the archive) and sorting each
+/// directory's children into listing order.
 fn expand_entries_with_ancestors(raw: Vec<ContentEntry>) -> ExpandedArchiveEntries {
-    let mut paths: Vec<String> = Vec::new();
-    let mut parent_paths: Vec<String> = Vec::new();
-    let mut entry_types: Vec<String> = Vec::new();
-    let mut sizes: Vec<i64> = Vec::new();
-    let mut mtimes: Vec<String> = Vec::new();
-    let mut modes: Vec<String> = Vec::new();
-
+    let mut children: HashMap<String, Vec<DirEntry>> = HashMap::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut path_values: HashSet<String> = HashSet::new();
 
-    let mut add =
-        |path: String, parent: String, etype: String, size: i64, mtime: String, mode: String| {
-            path_values.insert(path.clone());
-            path_values.insert(parent.clone());
-
-            if seen.insert(path.clone()) {
-                paths.push(path);
-                parent_paths.push(parent);
-                entry_types.push(etype);
-                sizes.push(size);
-                mtimes.push(mtime);
-                modes.push(mode);
-            }
-        };
-
-    for entry in raw {
-        if entry.path.is_empty() {
-            continue;
+    let mut add = |path: &str, entry_type: String, size: i64, mtime: String, mode: String| {
+        if !seen.insert(path.to_owned()) {
+            return;
         }
+        let (parent, name) = split_parent(path);
+        children
+            .entry(parent.to_owned())
+            .or_default()
+            .push(DirEntry {
+                name: name.to_owned(),
+                entry_type,
+                size,
+                mtime,
+                mode,
+            });
+    };
 
-        // Ensure all ancestor directories are present.
-        let segments: Vec<&str> = entry.path.split('/').collect();
-        for depth in 1..segments.len() {
-            let dir_path = segments.get(..depth).unwrap_or(&[]).join("/");
-            let dir_parent = if depth == 1 {
-                String::new()
-            } else {
-                segments
-                    .get(..depth.saturating_sub(1))
-                    .unwrap_or(&[])
-                    .join("/")
-            };
+    raw.into_iter()
+        .filter(|entry| !entry.path.is_empty())
+        .for_each(|entry| {
+            // Ensure all ancestor directories are present.
+            entry.path.match_indices('/').for_each(|(index, _)| {
+                add(
+                    entry.path.get(..index).unwrap_or_default(),
+                    "d".to_owned(),
+                    0,
+                    String::new(),
+                    String::new(),
+                );
+            });
+
             add(
-                dir_path,
-                dir_parent,
-                "d".to_string(),
-                0,
-                String::new(),
-                String::new(),
+                &entry.path,
+                entry.entry_type,
+                entry.size,
+                entry.mtime,
+                entry.mode,
             );
-        }
+        });
 
-        let parent = entry
-            .path
-            .rfind('/')
-            .map_or_else(String::new, |i| entry.path[..i].to_string());
-        add(
-            entry.path,
-            parent,
-            entry.entry_type,
-            entry.size,
-            entry.mtime,
-            entry.mode,
-        );
-    }
+    let entry_count = i64::try_from(seen.len()).unwrap_or(i64::MAX);
+    let dirs = children
+        .into_iter()
+        .map(|(dir, mut entries)| {
+            codec::sort_for_listing(&mut entries);
+            (dir, entries)
+        })
+        .collect();
 
-    ExpandedArchiveEntries {
-        paths,
-        parent_paths,
-        entry_types,
-        sizes,
-        mtimes,
-        modes,
-        path_values: path_values.into_iter().collect(),
-    }
+    ExpandedArchiveEntries { dirs, entry_count }
 }
 
-/// Inserts the flattened archive-file rows in chunks rather than one giant
+/// Maximum number of entries packed into a single `archive_dirs` row. A
+/// directory with more children than this spills into further chunks, so no
+/// single row grows unbounded and a limited listing only reads the chunks it
+/// needs.
+const CHUNK_ENTRIES: usize = 2000;
+
+/// One encoded chunk, ready for insertion.
+struct DirChunk {
+    dir_path_id: i64,
+    chunk_no: i32,
+    entries: Vec<u8>,
+}
+
+/// Encodes each directory's children into [`CHUNK_ENTRIES`]-sized compressed
+/// chunks.
+fn encode_dir_chunks(dir_path_id: i64, entries: &[DirEntry]) -> Vec<DirChunk> {
+    entries
+        .chunks(CHUNK_ENTRIES)
+        .enumerate()
+        .map(|(index, chunk)| DirChunk {
+            dir_path_id,
+            chunk_no: i32::try_from(index).unwrap_or(i32::MAX),
+            entries: codec::encode(chunk),
+        })
+        .collect()
+}
+
+/// Inserts the encoded directory blobs in chunks rather than one giant
 /// statement: archives with millions of files would otherwise build a
 /// single query large enough to trip slow-statement alerts and statement
 /// timeouts.
-struct ArchiveFileColumns<'a> {
-    path_ids: &'a [i64],
-    parent_path_ids: &'a [i64],
-    entry_types: &'a [String],
-    sizes: &'a [i64],
-    mtimes: &'a [String],
-    modes: &'a [String],
-}
-
-async fn insert_archive_files_chunked(
+async fn insert_archive_dirs_chunked(
     pool: &PgPool,
     archive_id: i64,
-    columns: &ArchiveFileColumns<'_>,
+    chunks: &[DirChunk],
 ) -> Result<(), ApiError> {
-    let ArchiveFileColumns {
-        path_ids,
-        parent_path_ids,
-        entry_types,
-        sizes,
-        mtimes,
-        modes,
-    } = *columns;
+    for batch in chunks.chunks(INSERT_CHUNK) {
+        let dir_path_ids: Vec<i64> = batch.iter().map(|chunk| chunk.dir_path_id).collect();
+        let chunk_nos: Vec<i32> = batch.iter().map(|chunk| chunk.chunk_no).collect();
+        let entries: Vec<Vec<u8>> = batch.iter().map(|chunk| chunk.entries.clone()).collect();
 
-    let mut offset = 0;
-    while offset < path_ids.len() {
-        let end = offset.saturating_add(INSERT_CHUNK).min(path_ids.len());
         sqlx::query!(
-            "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, \
-             mtime, mode) SELECT $1, unnest($2::bigint[]), unnest($3::bigint[]), \
-             unnest($4::text[]), unnest($5::bigint[]), unnest($6::text[]), unnest($7::text[]) ON \
-             CONFLICT DO NOTHING",
+            "INSERT INTO archive_dirs (archive_id, dir_path_id, chunk_no, entries) SELECT $1, \
+             unnest($2::bigint[]), unnest($3::int[]), unnest($4::bytea[]) ON CONFLICT \
+             (archive_id, dir_path_id, chunk_no) DO UPDATE SET entries = EXCLUDED.entries",
             archive_id,
-            path_ids.get(offset..end).unwrap_or(&[]) as &[i64],
-            parent_path_ids.get(offset..end).unwrap_or(&[]) as &[i64],
-            entry_types.get(offset..end).unwrap_or(&[]) as &[String],
-            sizes.get(offset..end).unwrap_or(&[]) as &[i64],
-            mtimes.get(offset..end).unwrap_or(&[]) as &[String],
-            modes.get(offset..end).unwrap_or(&[]) as &[String],
+            &dir_path_ids,
+            &chunk_nos,
+            &entries,
         )
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-        offset = end;
     }
     Ok(())
 }
@@ -591,54 +585,91 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     let raw = borg_list_archive_entries(&borg_repo, &env, archive_name, on_progress, task_registry)
         .await?;
 
-    let ExpandedArchiveEntries {
-        paths,
-        parent_paths,
-        entry_types,
-        sizes,
-        mtimes,
-        modes,
-        path_values,
-    } = expand_entries_with_ancestors(raw);
+    let ExpandedArchiveEntries { dirs, entry_count } = expand_entries_with_ancestors(raw);
 
-    let file_count = i64::try_from(paths.len()).unwrap_or(i64::MAX);
-    let path_id_map = ensure_archive_paths(pool, repo_id, &path_values).await?;
-    let path_id = |path: &str| -> Result<i64, ApiError> {
-        path_id_map
-            .get(path)
-            .copied()
-            .ok_or_else(|| ApiError::Internal(format!("missing archive path id for {path}")))
-    };
+    // Only directory paths need an id: a file's name lives inside its parent's blob.
+    let dir_paths: Vec<String> = dirs.iter().map(|(dir, _)| dir.clone()).collect();
+    let path_id_map = ensure_archive_paths(pool, repo_id, &dir_paths).await?;
 
-    let path_ids: Vec<i64> = paths
+    let chunks: Vec<DirChunk> = dirs
         .iter()
-        .map(|path| path_id(path))
-        .collect::<Result<_, _>>()?;
-    let parent_path_ids: Vec<i64> = parent_paths
-        .iter()
-        .map(|path| path_id(path))
-        .collect::<Result<_, _>>()?;
+        .map(|(dir, entries)| {
+            path_id_map
+                .get(dir)
+                .copied()
+                .ok_or_else(|| ApiError::Internal(format!("missing archive path id for {dir}")))
+                .map(|dir_path_id| encode_dir_chunks(dir_path_id, entries))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
 
-    insert_archive_files_chunked(
-        pool,
-        archive_id,
-        &ArchiveFileColumns {
-            path_ids: &path_ids,
-            parent_path_ids: &parent_path_ids,
-            entry_types: &entry_types,
-            sizes: &sizes,
-            mtimes: &mtimes,
-            modes: &modes,
-        },
-    )
-    .await?;
+    insert_archive_dirs_chunked(pool, archive_id, &chunks).await?;
 
-    Ok(file_count)
+    Ok(entry_count)
+}
+
+/// Fetches the stored chunks for one directory in listing order, stopping as
+/// soon as `limit` entries have been collected.
+///
+/// Chunks are read in batches sized from [`CHUNK_ENTRIES`], so the common case
+/// of a directory that fits in one chunk costs exactly one round trip. The loop
+/// keeps going if a batch turns out to hold fewer entries than expected, which
+/// keeps the read correct for rows written when [`CHUNK_ENTRIES`] had a
+/// different value.
+async fn fetch_dir_entries(
+    pool: &PgPool,
+    archive_id: i64,
+    dir_path_id: i64,
+    limit: usize,
+) -> Result<Vec<DirEntry>, ApiError> {
+    let mut entries: Vec<DirEntry> = Vec::new();
+    let mut offset: i64 = 0;
+
+    while entries.len() < limit {
+        let remaining = limit.saturating_sub(entries.len());
+        let wanted = remaining.div_ceil(CHUNK_ENTRIES).max(1);
+        let batch = i64::try_from(wanted).unwrap_or(i64::MAX);
+
+        let blobs = sqlx::query_scalar!(
+            "SELECT entries FROM archive_dirs WHERE archive_id = $1 AND dir_path_id = $2 ORDER BY \
+             chunk_no OFFSET $3 LIMIT $4",
+            archive_id,
+            dir_path_id,
+            offset,
+            batch,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)?;
+
+        let fetched = i64::try_from(blobs.len()).unwrap_or(i64::MAX);
+
+        entries.extend(
+            blobs
+                .iter()
+                .map(|blob| codec::decode(blob))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| ApiError::Internal(format!("corrupt archive directory index: {e}")))?
+                .into_iter()
+                .flatten(),
+        );
+
+        if fetched < batch {
+            break;
+        }
+        offset = offset.saturating_add(fetched);
+    }
+
+    entries.truncate(limit);
+    Ok(entries)
 }
 
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the database query fails.
+/// Returns [`ApiError::Database`] if the database query fails, or
+/// [`ApiError::Internal`] if a stored directory blob cannot be decoded.
 pub async fn query_dir(
     pool: &PgPool,
     repo_id: i64,
@@ -646,15 +677,6 @@ pub async fn query_dir(
     parent_path: &str,
     limit: i64,
 ) -> Result<Vec<ContentEntry>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        path: String,
-        entry_type: String,
-        size: i64,
-        mtime: String,
-        mode: String,
-    }
-
     let archive_id = sqlx::query_scalar!(
         "SELECT id FROM archives WHERE repo_id = $1 AND name = $2",
         repo_id,
@@ -668,7 +690,7 @@ pub async fn query_dir(
         return Ok(Vec::new());
     };
 
-    let parent_path_id = sqlx::query_scalar!(
+    let dir_path_id = sqlx::query_scalar!(
         "SELECT id FROM archive_paths WHERE repo_id = $1 AND path = $2",
         repo_id,
         parent_path,
@@ -677,31 +699,25 @@ pub async fn query_dir(
     .await
     .map_err(ApiError::Database)?;
 
-    let Some(parent_path_id) = parent_path_id else {
+    let Some(dir_path_id) = dir_path_id else {
         return Ok(Vec::new());
     };
 
-    let rows = sqlx::query_as!(
-        Row,
-        "SELECT p.path, f.entry_type, f.size, f.mtime, f.mode FROM archive_files f JOIN \
-         archive_paths p ON p.id = f.path_id WHERE f.archive_id = $1 AND f.parent_path_id = $2 \
-         ORDER BY f.entry_type DESC, p.path ASC LIMIT $3",
-        archive_id,
-        parent_path_id,
-        limit,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    let limit = usize::try_from(limit).unwrap_or(0);
+    let entries = fetch_dir_entries(pool, archive_id, dir_path_id, limit).await?;
 
-    Ok(rows
+    Ok(entries
         .into_iter()
-        .map(|r| ContentEntry {
-            entry_type: r.entry_type,
-            path: r.path,
-            size: r.size,
-            mtime: r.mtime,
-            mode: r.mode,
+        .map(|entry| ContentEntry {
+            path: if parent_path.is_empty() {
+                entry.name
+            } else {
+                format!("{parent_path}/{}", entry.name)
+            },
+            entry_type: entry.entry_type,
+            size: entry.size,
+            mtime: entry.mtime,
+            mode: entry.mode,
         })
         .collect())
 }
@@ -709,6 +725,27 @@ pub async fn query_dir(
 #[cfg(test)]
 mod tests {
     use shared::types::IndexStatus;
+
+    use super::*;
+
+    fn content_entry(path: &str, entry_type: &str) -> ContentEntry {
+        ContentEntry {
+            entry_type: entry_type.to_owned(),
+            path: path.to_owned(),
+            size: 10,
+            mtime: "2026-06-05T12:00:00.000000".to_owned(),
+            mode: "-rw-r--r--".to_owned(),
+        }
+    }
+
+    fn dir_names(expanded: &ExpandedArchiveEntries, dir: &str) -> Vec<String> {
+        expanded
+            .dirs
+            .iter()
+            .find(|(path, _)| path == dir)
+            .map(|(_, entries)| entries.iter().map(|e| e.name.clone()).collect())
+            .unwrap_or_default()
+    }
 
     #[test]
     fn index_status_parses_known_values() {
@@ -725,38 +762,117 @@ mod tests {
 
     #[test]
     fn parent_path_for_root_file() {
-        let path = "README.md";
-        let parent = path
-            .rfind('/')
-            .map_or_else(String::new, |i| path[..i].to_string());
-        assert_eq!(parent, "");
+        assert_eq!(split_parent("README.md"), ("", "README.md"));
     }
 
     #[test]
     fn parent_path_for_nested_file() {
-        let path = "home/user/docs/file.txt";
-        let parent = path
-            .rfind('/')
-            .map_or_else(String::new, |i| path[..i].to_string());
-        assert_eq!(parent, "home/user/docs");
+        assert_eq!(
+            split_parent("home/user/docs/file.txt"),
+            ("home/user/docs", "file.txt")
+        );
     }
 
     #[test]
     fn ancestor_synthesis_produces_all_dirs() {
         // A single deep file should produce 3 synthetic directory entries.
-        let path = "a/b/c/file.txt";
-        let segments: Vec<&str> = path.split('/').collect();
-        let mut dirs: Vec<String> = Vec::new();
-        for depth in 1..segments.len() {
-            dirs.push(segments.get(..depth).unwrap_or(&[]).join("/"));
-        }
-        assert_eq!(dirs, vec!["a", "a/b", "a/b/c"]);
+        let expanded = expand_entries_with_ancestors(vec![content_entry("a/b/c/file.txt", "-")]);
+
+        let mut dirs: Vec<&str> = expanded.dirs.iter().map(|(dir, _)| dir.as_str()).collect();
+        dirs.sort_unstable();
+
+        assert_eq!(dirs, ["", "a", "a/b", "a/b/c"]);
+        assert_eq!(dir_names(&expanded, ""), ["a"]);
+        assert_eq!(dir_names(&expanded, "a"), ["b"]);
+        assert_eq!(dir_names(&expanded, "a/b"), ["c"]);
+        assert_eq!(dir_names(&expanded, "a/b/c"), ["file.txt"]);
+        assert_eq!(expanded.entry_count, 4);
     }
 
     #[test]
     fn empty_path_skipped() {
         // The archive root "." normalises to "" and must not produce a DB row.
-        let path = "";
-        assert_eq!(path, "");
+        let expanded = expand_entries_with_ancestors(vec![content_entry("", "d")]);
+
+        assert_eq!(expanded.dirs.len(), 0);
+        assert_eq!(expanded.entry_count, 0);
+    }
+
+    #[test]
+    fn duplicate_paths_are_indexed_once() {
+        let expanded = expand_entries_with_ancestors(vec![
+            content_entry("dir/file.txt", "-"),
+            content_entry("dir/file.txt", "-"),
+        ]);
+
+        assert_eq!(dir_names(&expanded, "dir"), ["file.txt"]);
+        assert_eq!(expanded.entry_count, 2);
+    }
+
+    #[test]
+    fn a_synthesised_ancestor_does_not_displace_the_real_entry() {
+        // "a" is synthesised from "a/f" first; borg's own listing of "a" arrives later
+        // and must not add a second entry for the same path.
+        let expanded =
+            expand_entries_with_ancestors(vec![content_entry("a/f", "-"), content_entry("a", "d")]);
+
+        assert_eq!(dir_names(&expanded, ""), ["a"]);
+        assert_eq!(expanded.entry_count, 2);
+    }
+
+    #[test]
+    fn children_are_sorted_directories_first_then_by_name() {
+        let expanded = expand_entries_with_ancestors(vec![
+            content_entry("top/zebra.txt", "-"),
+            content_entry("top/alpha.txt", "-"),
+            content_entry("top/sub/nested.txt", "-"),
+        ]);
+
+        assert_eq!(
+            dir_names(&expanded, "top"),
+            ["sub", "alpha.txt", "zebra.txt"]
+        );
+    }
+
+    #[test]
+    fn entries_are_split_into_bounded_chunks() {
+        let entries: Vec<DirEntry> = (0..CHUNK_ENTRIES.saturating_mul(2).saturating_add(1))
+            .map(|i| DirEntry {
+                name: format!("file_{i}"),
+                entry_type: "-".to_owned(),
+                size: 0,
+                mtime: String::new(),
+                mode: String::new(),
+            })
+            .collect();
+
+        let chunks = encode_dir_chunks(7, &entries);
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(
+            chunks.iter().map(|c| c.chunk_no).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert!(chunks.iter().all(|c| c.dir_path_id == 7));
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|c| codec::decode(&c.entries).unwrap().len())
+                .sum::<usize>(),
+            entries.len()
+        );
+    }
+
+    #[test]
+    fn a_directory_that_fits_produces_one_chunk() {
+        let entries = vec![DirEntry {
+            name: "only".to_owned(),
+            entry_type: "-".to_owned(),
+            size: 1,
+            mtime: String::new(),
+            mode: String::new(),
+        }];
+
+        assert_eq!(encode_dir_chunks(1, &entries).len(), 1);
     }
 }

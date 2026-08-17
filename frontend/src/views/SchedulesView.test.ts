@@ -3,15 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { mockApiClientRw } from '../test-utils/sharedMocks'
 
-vi.mock('../api/client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-  },
-}))
+vi.mock('../api/client', () => mockApiClientRw())
 
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({

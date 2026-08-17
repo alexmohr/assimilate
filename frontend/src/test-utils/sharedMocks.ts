@@ -26,6 +26,22 @@ export function mockApiClient(): { apiClient: { get: ReturnType<typeof vi.fn> } 
   return { apiClient: { get: vi.fn() } }
 }
 
+/**
+ * The client mocked across every verb, for views that write as well as read.
+ * `mockApiClient` above stays read-only so a test that only lists something
+ * cannot accidentally assert on a request it never makes.
+ */
+export function mockApiClientRw(): {
+  apiClient: {
+    get: ReturnType<typeof vi.fn>
+    post: ReturnType<typeof vi.fn>
+    put: ReturnType<typeof vi.fn>
+    delete: ReturnType<typeof vi.fn>
+  }
+} {
+  return { apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }
+}
+
 export function mockFormatBytes(): { formatBytes: (bytes: number) => string } {
   return { formatBytes: (bytes: number): string => `${bytes} B` }
 }

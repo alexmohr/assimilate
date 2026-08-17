@@ -8835,3 +8835,117 @@ async fn deleting_all_repo_archive_data_clears_the_content_index(pool: PgPool) {
     assert_eq!(paths, 0);
     assert_eq!(dirs, 0);
 }
+
+/// The `(archives.id, archive_paths.id)` pair a seeded directory was stored under.
+#[cfg(test)]
+async fn archive_and_dir_path_ids(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    dir_path: &str,
+) -> (i64, i64) {
+    let archive_id: i64 =
+        sqlx::query_scalar("SELECT id FROM archives WHERE repo_id = $1 AND name = $2")
+            .bind(repo_id)
+            .bind(archive_name)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let dir_path_id: i64 =
+        sqlx::query_scalar("SELECT id FROM archive_paths WHERE repo_id = $1 AND path = $2")
+            .bind(repo_id)
+            .bind(dir_path)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    (archive_id, dir_path_id)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn reindexing_an_archive_replaces_stale_chunks_instead_of_merging(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    // An earlier indexing pass packed the directory into three chunks, as it would
+    // have with a smaller CHUNK_ENTRIES.
+    let first_pass: Vec<DirEntry> = (0..30)
+        .map(|i| dir_entry(&format!("old_{i:03}"), "-"))
+        .collect();
+    seed_archive_dir(&pool, repo.id, "daily-1", "dir", &first_pass, 10).await;
+
+    let (archive_id, dir_path_id) =
+        archive_and_dir_path_ids(&pool, repo.id, "daily-1", "dir").await;
+
+    // A later pass over the same archive produces fewer entries in a single chunk.
+    // Merging would leave chunks 1 and 2 behind for the reader to append.
+    let second_pass: Vec<DirEntry> = (0..5)
+        .map(|i| dir_entry(&format!("new_{i:03}"), "-"))
+        .collect();
+    server::archive_index::replace_archive_dirs(&pool, archive_id, &[(dir_path_id, second_pass)])
+        .await
+        .unwrap();
+
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM archive_dirs WHERE archive_id = $1")
+        .bind(archive_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1, "stale chunk rows from the earlier pass survived");
+
+    let entries = server::archive_index::query_dir(&pool, repo.id, "daily-1", "dir", 1000)
+        .await
+        .unwrap();
+    let names: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "dir/new_000",
+            "dir/new_001",
+            "dir/new_002",
+            "dir/new_003",
+            "dir/new_004"
+        ]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn replacing_one_archive_leaves_other_archives_untouched(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-1",
+        "dir",
+        &[dir_entry("a", "-")],
+        2000,
+    )
+    .await;
+    seed_archive_dir(
+        &pool,
+        repo.id,
+        "daily-2",
+        "dir",
+        &[dir_entry("b", "-")],
+        2000,
+    )
+    .await;
+
+    let (archive_id, dir_path_id) =
+        archive_and_dir_path_ids(&pool, repo.id, "daily-1", "dir").await;
+    server::archive_index::replace_archive_dirs(
+        &pool,
+        archive_id,
+        &[(dir_path_id, vec![dir_entry("c", "-")])],
+    )
+    .await
+    .unwrap();
+
+    let replaced = server::archive_index::query_dir(&pool, repo.id, "daily-1", "dir", 100)
+        .await
+        .unwrap();
+    let untouched = server::archive_index::query_dir(&pool, repo.id, "daily-2", "dir", 100)
+        .await
+        .unwrap();
+
+    assert_eq!(replaced.first().unwrap().path, "dir/c");
+    assert_eq!(untouched.first().unwrap().path, "dir/b");
+}

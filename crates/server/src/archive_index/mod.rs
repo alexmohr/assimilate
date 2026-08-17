@@ -542,6 +542,46 @@ fn encode_dir_chunks(dir_path_id: i64, entries: &[DirEntry]) -> Vec<DirChunk> {
         .collect()
 }
 
+/// Replaces every stored directory blob for `archive_id`.
+///
+/// Indexing an archive is a *replace*, not a merge. A re-index is a supported
+/// path - a `failed` or interrupted job is picked up again by a later full
+/// resync - and simply upserting would leave behind chunk rows that the new pass
+/// no longer produces. A directory that previously spanned more chunks than it
+/// does now (which happens when [`CHUNK_ENTRIES`] changes between deploys, the
+/// same skew [`fetch_dir_entries`] is written to tolerate on the read side)
+/// would keep its trailing rows, and a read has no way to tell a stale chunk
+/// from a live one: it would append the leftovers to the end of the listing.
+/// Clearing the archive's rows first makes that impossible.
+///
+/// The delete and the inserts are deliberately not wrapped in one transaction:
+/// an archive with millions of entries would hold it open for the whole indexing
+/// run. It does not need to be atomic, because `run_indexing_impl` holds the job
+/// in `indexing` for the duration and the API only serves the stored index for
+/// archives whose job reached `done` - anything else falls back to reading the
+/// archive live from borg, so a half-written index is never observable.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn replace_archive_dirs(
+    pool: &PgPool,
+    archive_id: i64,
+    dirs: &[(i64, Vec<DirEntry>)],
+) -> Result<(), ApiError> {
+    sqlx::query!("DELETE FROM archive_dirs WHERE archive_id = $1", archive_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+
+    let chunks: Vec<DirChunk> = dirs
+        .iter()
+        .flat_map(|(dir_path_id, entries)| encode_dir_chunks(*dir_path_id, entries))
+        .collect();
+
+    insert_archive_dirs_chunked(pool, archive_id, &chunks).await
+}
+
 /// Inserts the encoded directory blobs in chunks rather than one giant
 /// statement: archives with millions of files would otherwise build a
 /// single query large enough to trip slow-statement alerts and statement
@@ -591,21 +631,18 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     let dir_paths: Vec<String> = dirs.iter().map(|(dir, _)| dir.clone()).collect();
     let path_id_map = ensure_archive_paths(pool, repo_id, &dir_paths).await?;
 
-    let chunks: Vec<DirChunk> = dirs
-        .iter()
+    let resolved: Vec<(i64, Vec<DirEntry>)> = dirs
+        .into_iter()
         .map(|(dir, entries)| {
             path_id_map
-                .get(dir)
+                .get(&dir)
                 .copied()
                 .ok_or_else(|| ApiError::Internal(format!("missing archive path id for {dir}")))
-                .map(|dir_path_id| encode_dir_chunks(dir_path_id, entries))
+                .map(|dir_path_id| (dir_path_id, entries))
         })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect();
+        .collect::<Result<_, _>>()?;
 
-    insert_archive_dirs_chunked(pool, archive_id, &chunks).await?;
+    replace_archive_dirs(pool, archive_id, &resolved).await?;
 
     Ok(entry_count)
 }
@@ -747,6 +784,18 @@ mod tests {
             .unwrap_or_default()
     }
 
+    /// The entry stored for `name` inside `dir`, so a test can assert on the
+    /// metadata that was kept and not just on which paths survived.
+    fn dir_entry_named(expanded: &ExpandedArchiveEntries, dir: &str, name: &str) -> DirEntry {
+        expanded
+            .dirs
+            .iter()
+            .find(|(path, _)| path == dir)
+            .and_then(|(_, entries)| entries.iter().find(|entry| entry.name == name))
+            .cloned()
+            .unwrap()
+    }
+
     #[test]
     fn index_status_parses_known_values() {
         assert_eq!("indexing".parse(), Ok(IndexStatus::Indexing));
@@ -810,12 +859,40 @@ mod tests {
     }
 
     #[test]
-    fn a_synthesised_ancestor_does_not_displace_the_real_entry() {
-        // "a" is synthesised from "a/f" first; borg's own listing of "a" arrives later
-        // and must not add a second entry for the same path.
+    fn borg_listing_a_directory_before_its_contents_keeps_the_real_metadata() {
+        // The normal ordering: borg lists "a" itself, then what is inside it, so the
+        // placeholder synthesised while expanding "a/f" loses to the entry already
+        // recorded and the directory keeps borg's own metadata.
+        let expanded =
+            expand_entries_with_ancestors(vec![content_entry("a", "d"), content_entry("a/f", "-")]);
+
+        let stored = dir_entry_named(&expanded, "", "a");
+        assert_eq!(stored.mtime, "2026-06-05T12:00:00.000000");
+        assert_eq!(stored.mode, "-rw-r--r--");
+        assert_eq!(stored.size, 10);
+        assert_eq!(expanded.entry_count, 2);
+    }
+
+    #[test]
+    fn a_synthesised_ancestor_wins_when_it_is_recorded_first() {
+        // The reverse ordering: "a" is synthesised as a placeholder while expanding
+        // "a/f", so borg's own later entry for "a" is dropped entirely - metadata
+        // included - because `add` keeps the first write for a path. Such a directory
+        // lists with a blank mtime/mode instead of borg's values.
+        //
+        // This precedence predates the per-directory blob layout: the old code had the
+        // same `seen` short-circuit, and its insert used ON CONFLICT DO NOTHING. It is
+        // pinned here rather than changed.
         let expanded =
             expand_entries_with_ancestors(vec![content_entry("a/f", "-"), content_entry("a", "d")]);
 
+        let stored = dir_entry_named(&expanded, "", "a");
+        assert_eq!(stored.entry_type, "d");
+        assert_eq!(stored.mtime, "");
+        assert_eq!(stored.mode, "");
+        assert_eq!(stored.size, 0);
+
+        // Either way the path is recorded exactly once.
         assert_eq!(dir_names(&expanded, ""), ["a"]);
         assert_eq!(expanded.entry_count, 2);
     }

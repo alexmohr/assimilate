@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { SRC, vueFiles } from './test-utils/vueFiles'
 
 /**
  * Every dialog in the app goes through `BaseModal`, which supplies the focus
@@ -14,21 +15,7 @@ import { join, relative, resolve } from 'node:path'
  * F-22).
  */
 
-const SRC = resolve(process.cwd(), 'src')
 const BASE_MODAL = join(SRC, 'components', 'BaseModal.vue')
-
-function vueFiles(): string[] {
-  const out: string[] = []
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name)
-      if (entry.isDirectory()) walk(full)
-      else if (entry.name.endsWith('.vue')) out.push(full)
-    }
-  }
-  walk(SRC)
-  return out.sort()
-}
 
 const FILES = vueFiles()
 

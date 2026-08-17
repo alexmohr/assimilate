@@ -5,8 +5,15 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { formatDateShort, relativeTime } from '../utils/format'
-import { scheduleRunStatus, type ScheduleHealthEntry } from '../utils/scheduleHealth'
+import {
+  scheduleIssuesFromEntries,
+  scheduleRunStatus,
+  withErrorTitles,
+  type ScheduleHealthEntry,
+} from '../utils/scheduleHealth'
+import EntityStatusBadges from './EntityStatusBadges.vue'
 import type { ScheduleRow } from '../types/schedule'
 
 /**
@@ -26,6 +33,20 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ open: []; run: [] }>()
+
+const router = useRouter()
+
+/**
+ * The same chips the schedule cards carried, from the same helper: an Overdue
+ * or Failed chip is a link into the filtered activity log, not decoration.
+ * Rendering a plain badge here dropped that, which is what
+ * hosts.spec.ts's "Failed chip navigates to the filtered activity log" is for.
+ */
+const issues = computed(() =>
+  withErrorTitles(scheduleIssuesFromEntries([...props.health], props.schedule.id, router), [
+    ...props.health,
+  ]),
+)
 
 const isOverdue = computed(() => props.health.some((h) => h.is_overdue))
 const hasFailed = computed(() => props.health.some((h) => scheduleRunStatus(h) === 'failed'))
@@ -63,21 +84,11 @@ const lastRun = computed(() => {
     </button>
     <span class="agent-row-when">{{ schedule.cron_expression }}</span>
     <span class="agent-row-sub">{{ repoName }}</span>
-    <span
-      v-if="!schedule.enabled"
-      class="badge badge--neutral"
-      >Disabled</span
-    >
-    <span
-      v-if="isOverdue"
-      class="badge badge--warning"
-      >Overdue</span
-    >
-    <span
-      v-else-if="hasFailed"
-      class="badge badge--danger"
-      >Failed</span
-    >
+    <EntityStatusBadges
+      :notable="!schedule.enabled"
+      notable-label="Disabled"
+      :issues="issues"
+    />
     <span class="agent-row-stats">
       <span>last {{ lastRun }}</span>
       <span v-if="schedule.next_run_at && schedule.enabled">

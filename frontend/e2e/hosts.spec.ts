@@ -156,8 +156,8 @@ test.describe('Hosts management', () => {
     await page.goto('/agents/web-server-01?tab=schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.schedule-card').filter({ hasText: 'server-daily' })
-    const failedChip = card.locator('.entity-issue-chip.sev-danger')
+    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
+    const failedChip = row.locator('.entity-issue-chip.sev-danger')
     await expect(failedChip).toBeVisible()
 
     await failedChip.click()

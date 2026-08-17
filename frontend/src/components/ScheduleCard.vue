@@ -87,29 +87,6 @@ function scheduleTypeLabel(t: ScheduleType): string {
 </template>
 
 <style scoped>
-.schedule-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow var(--duration-base),
-    border-color var(--duration-base);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.schedule-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.schedule-card-notable {
-  background: var(--bg-hover);
-}
-
 .schedule-card-highlighted {
   border-color: var(--warning);
 }

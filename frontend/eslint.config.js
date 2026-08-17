@@ -81,6 +81,7 @@ export default tseslint.config(
       'eslint-rules/**/*.js',
       'public/**/*.js',
       'src/**/*.test.ts',
+      'src/test-utils/**/*.ts',
       'e2e/**/*.ts',
     ],
     languageOptions: {

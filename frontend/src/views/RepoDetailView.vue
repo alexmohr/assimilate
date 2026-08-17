@@ -188,7 +188,7 @@ onMounted(async () => {
 
 <template>
   <div class="repo-detail">
-    <nav class="breadcrumb-nav">
+    <nav class="detail-breadcrumb">
       <RouterLink
         to="/repos"
         class="crumb-link"
@@ -303,34 +303,6 @@ onMounted(async () => {
 }
 
 /* Breadcrumb nav */
-.breadcrumb-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  font-size: var(--fs-base);
-}
-
-.crumb-link {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.crumb-link:hover {
-  color: var(--accent-hover);
-}
-
-.crumb-sep {
-  color: var(--text-muted);
-}
-
-.crumb-current {
-  color: var(--text-primary);
-  font-weight: 600;
-  font-family: var(--mono);
-}
-
 /* States */
 
 .state-error {

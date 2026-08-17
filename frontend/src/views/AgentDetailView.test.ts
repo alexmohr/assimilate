@@ -574,7 +574,7 @@ describe('AgentDetailView — schedules tab', () => {
       },
     ])
 
-    expect(wrapper.find('.badge--neutral').text()).toBe('Disabled')
+    expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
     expect(wrapper.find('.agent-row-stripe--muted').exists()).toBe(true)
   })
 
@@ -636,8 +636,35 @@ describe('AgentDetailView — schedules tab', () => {
     await flushPromises()
     await openSchedulesTab(wrapper)
 
-    expect(wrapper.find('.badge--warning').text()).toBe('Overdue')
+    const chip = wrapper.find('.entity-issue-chip.sev-warning')
+    expect(chip.text()).toBe('Overdue')
     expect(wrapper.find('.rows .agent-row').classes()).not.toContain('agent-row--highlighted')
+  })
+
+  // The chips are links into the filtered activity log, not decoration. An
+  // earlier revision of the row rendered plain badges and silently dropped
+  // that; only the e2e suite noticed.
+  it('navigates to the filtered activity log from a Failed chip', async () => {
+    setupApiWithHealth(overdueSchedule, [
+      { ...overdueHealth[0], is_overdue: false, last_status: 'failed' },
+    ])
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openSchedulesTab(wrapper)
+
+    const chip = wrapper.find('.entity-issue-chip.sev-danger')
+    expect(chip.text()).toBe('Failed')
+    await chip.trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe(
+      '/activity?category=backup&schedule_id=1&status=failed',
+    )
   })
 
   it('highlights overdue schedule rows when the health=overdue query param is set', async () => {

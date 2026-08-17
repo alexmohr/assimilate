@@ -565,7 +565,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 <template>
   <div class="host-detail">
-    <nav class="breadcrumb">
+    <nav class="detail-breadcrumb">
       <RouterLink
         to="/agents"
         class="crumb-link"
@@ -839,34 +839,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   max-width: 1100px;
 }
 
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  font-size: var(--fs-base);
-}
-
-.crumb-link {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.crumb-link:hover {
-  color: var(--accent-hover);
-}
-
-.crumb-sep {
-  color: var(--text-muted);
-}
-
-.crumb-current {
-  color: var(--text-primary);
-  font-weight: 600;
-  font-family: var(--mono);
-}
-
 .state-error {
   color: var(--danger);
 }
@@ -883,32 +855,5 @@ watch(wsStatus, (newStatus, oldStatus) => {
   to {
     opacity: 1;
   }
-}
-
-.token-warning {
-  color: var(--warning);
-  font-size: var(--fs-base);
-  font-weight: 500;
-  margin-bottom: 0.75rem;
-}
-
-.token-box {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem 1rem;
-}
-
-.token-text {
-  flex: 1;
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  color: var(--success);
-  word-break: break-all;
-  background: transparent;
-  padding: 0;
 }
 </style>

@@ -23,7 +23,7 @@ test.describe('Agent detail', () => {
     // The header is the identity, and it stays put across every tab.
     await expect(page.locator('.agent-hostname')).toHaveText('web-server-01')
 
-    const tiles = page.locator('.tile-label')
+    const tiles = page.locator('.tile .stat-label')
     await expect(tiles).toHaveText(['Last backup', 'Next run', 'Repositories', 'Recent runs'])
 
     // The outcome strip is the success tile: one cell per run, not a

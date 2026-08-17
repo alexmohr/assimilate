@@ -1170,32 +1170,6 @@ watch(
   gap: 0.75rem;
 }
 
-.token-warning {
-  color: var(--warning);
-  font-size: var(--fs-base);
-  font-weight: 500;
-}
-
-.token-box {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem 1rem;
-}
-
-.token-text {
-  flex: 1;
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  color: var(--success);
-  word-break: break-all;
-  background: transparent;
-  padding: 0;
-}
-
 .card-top-badges {
   display: flex;
   align-items: center;

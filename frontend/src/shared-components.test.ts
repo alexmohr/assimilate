@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { SRC, vueFiles } from './test-utils/vueFiles'
 
 /**
  * The panel, badge, table, tab and segmented-control styles live once, in
@@ -14,21 +15,7 @@ import { join, relative, resolve } from 'node:path'
  * See `docs/contributing/ui-design-audit.md` (F-06 to F-11, F-14, F-26, F-27).
  */
 
-const SRC = resolve(process.cwd(), 'src')
 const STYLE_CSS = readFileSync(join(SRC, 'style.css'), 'utf-8')
-
-function vueFiles(): string[] {
-  const out: string[] = []
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name)
-      if (entry.isDirectory()) walk(full)
-      else if (entry.name.endsWith('.vue')) out.push(full)
-    }
-  }
-  walk(SRC)
-  return out.sort()
-}
 
 /** Properties a top-level `.name { ... }` rule sets, per class name. */
 function ruleProperties(css: string): Map<string, Set<string>> {
@@ -96,6 +83,11 @@ const OWNED = [
   'info-actions',
   'field-inline',
   'field-label-row',
+  'detail-breadcrumb',
+  'schedule-card',
+  'crumb-link',
+  'crumb-sep',
+  'crumb-current',
   'stat-label',
   'stat-value',
   'stat-sub',

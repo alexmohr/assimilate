@@ -647,7 +647,7 @@ watch(activeTab, (tab) => {
 
 <template>
   <div class="schedule-detail">
-    <nav class="breadcrumb">
+    <nav class="detail-breadcrumb">
       <RouterLink
         to="/schedules"
         class="crumb-link"
@@ -1346,34 +1346,6 @@ watch(activeTab, (tab) => {
 .schedule-detail {
   color: var(--text-primary);
   max-width: 900px;
-}
-
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  font-size: var(--fs-base);
-}
-
-.crumb-link {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.crumb-link:hover {
-  color: var(--accent-hover);
-}
-
-.crumb-sep {
-  color: var(--text-muted);
-}
-
-.crumb-current {
-  color: var(--text-primary);
-  font-weight: 600;
-  font-family: var(--mono);
 }
 
 .error-banner {

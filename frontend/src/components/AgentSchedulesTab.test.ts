@@ -74,6 +74,17 @@ describe('AgentSchedulesTab', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/schedules/100/run', { agent_ids: [7] })
   })
 
+  it.each([['Open'], ['Nightly']])('opens the schedule from %s', async (label) => {
+    const wrapper = mount()
+    const target =
+      label === 'Open'
+        ? wrapper.findAll('button').find((b) => b.text().trim() === 'Open')
+        : wrapper.find('.agent-row-name')
+    await target!.trigger('click')
+
+    expect(wrapper.emitted('open')).toHaveLength(1)
+  })
+
   it('surfaces a failed run request', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(new Error('repo locked'))
     const wrapper = mount()

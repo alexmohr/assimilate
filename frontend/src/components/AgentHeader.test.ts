@@ -100,6 +100,54 @@ describe('AgentHeader', () => {
   })
 
   it.each([
+    ['Activity log', 'activityLog'],
+    ['Upgrade agent', 'deploy'],
+  ])('emits %s from the visible row', async (label, event) => {
+    const wrapper = mount({}, { deployLabel: 'Upgrade' })
+    await wrapper
+      .findAll('.agent-actions > button')
+      .find((b) => b.text().trim() === label)!
+      .trigger('click')
+
+    expect(wrapper.emitted(event)).toHaveLength(1)
+  })
+
+  // Escape and a click anywhere else both close the menu; a menu that only
+  // closes by pressing its own toggle again is a trap.
+  it('closes the menu on Escape', async () => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+    expect(wrapper.findAll('.agent-menu-item').length).toBeGreaterThan(0)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+
+    expect(wrapper.findAll('.agent-menu-item')).toHaveLength(0)
+  })
+
+  it('closes the menu on a click outside it', async () => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await flushPromises()
+
+    expect(wrapper.findAll('.agent-menu-item')).toHaveLength(0)
+  })
+
+  it('leaves the menu open when the click is inside it', async () => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+
+    wrapper
+      .find('.agent-menu-item')
+      .element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await flushPromises()
+
+    expect(wrapper.findAll('.agent-menu-item').length).toBeGreaterThan(0)
+  })
+
+  it.each([
     ['Edit identity', 'editIdentity'],
     ['Deploy SSH key', 'deploySshKey'],
     ['Regenerate token', 'regenerateToken'],
@@ -164,6 +212,27 @@ describe('AgentHeader', () => {
       expect(meta).not.toContain('agent')
       expect(meta).not.toContain('rev')
       expect(meta).toContain('added')
+    })
+
+    it.each([
+      ['Adopt', 'adopt'],
+      ['Merge into...', 'merge'],
+    ])('emits %s', async (label, event) => {
+      const wrapper = mount(IMPORTED)
+      await wrapper
+        .findAll('.agent-actions > button')
+        .find((b) => b.text().trim() === label)!
+        .trigger('click')
+
+      expect(wrapper.emitted(event)).toHaveLength(1)
+    })
+
+    it('reaches the activity log through the menu instead', async () => {
+      const wrapper = mount(IMPORTED)
+      await openMenu(wrapper)
+      await wrapper.find('.agent-menu-item').trigger('click')
+
+      expect(wrapper.emitted('activityLog')).toHaveLength(1)
     })
 
     it('offers no agent-only actions in the menu', async () => {

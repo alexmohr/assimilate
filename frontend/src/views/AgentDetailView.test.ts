@@ -69,6 +69,7 @@ vi.mock('../components/AgentDeployDialog.vue', () => ({
 }))
 
 import { apiClient } from '../api/client'
+import { useEscapeKey } from '../composables/useEscapeKey'
 
 const mockAgent = {
   id: 1,
@@ -1286,6 +1287,133 @@ describe('AgentDetailView - tab structure and settings', () => {
 
     expect(openModals(wrapper)).toHaveLength(1)
     expect(wrapper.find('input[placeholder="hostname"]').exists()).toBe(true)
+  })
+
+  // A successful run is a link to what it produced.
+  it('opens the archive list for a successful backup', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'backups' })
+
+    const successRow = wrapper
+      .findAll('[id^="report-"]')
+      .find((r) => r.find('button.agent-row-name').exists())
+    await successRow!.find('button.agent-row-name').trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toContain('/repos/10')
+    expect(router.currentRoute.value.fullPath).toContain('tab=archives')
+    expect(router.currentRoute.value.fullPath).toContain('archive=')
+  })
+
+  // The link only appears when the preview is hiding something, so this needs
+  // more runs than the preview shows.
+  it('follows the Overview preview through to the full tab', async () => {
+    const manyReports = Array.from({ length: 8 }, (_, i) => ({
+      ...mockReports[0],
+      id: 100 + i,
+      finished_at: `2026-06-0${(i % 8) + 1}T10:00:00Z`,
+    }))
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/agents/test-host/reports') return Promise.resolve({ data: manyReports })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const backupsLink = wrapper
+      .findAll('.section-link')
+      .find((l) => l.text().includes('View all 8'))
+    expect(backupsLink).toBeDefined()
+    await backupsLink!.trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+    ).$router
+    expect(router.currentRoute.value.query.tab).toBe('backups')
+  })
+
+  it('opens the deploy dialog from the header', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/system/version')
+        return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+
+    await wrapper
+      .findAll('.agent-actions > button')
+      .find((b) => b.text().includes('Upgrade'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(true)
+  })
+
+  async function openSshKeyDialog(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Deploy SSH key')!
+      .trigger('click')
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(1)
+  }
+
+  it('closes the SSH key dialog from its footer', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Close')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  // Dismissing (backdrop, the dialog's own close) is wired separately from the
+  // footer button, so a dialog can close cleanly one way and stick the other.
+  it('closes the SSH key dialog when it is dismissed', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    await dismissModal(wrapper)
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('closes the SSH key dialog on Escape', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    // useEscapeKey is mocked in this file, so the registered callback has to be
+    // invoked directly. Only the dialog that is actually open has a true ref.
+    const registration = vi
+      .mocked(useEscapeKey)
+      .mock.calls.find(([active]) => (active as { value: boolean }).value === true)
+    expect(registration).toBeDefined()
+    registration![1]()
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
   })
 
   it('deploys an SSH key from a dialog', async () => {

@@ -193,6 +193,28 @@ describe('AgentOverviewTab', () => {
       expect(wrapper.emitted('showTab')).toEqual([['schedules']])
     })
 
+    it('asks the view to open a schedule from the preview', async () => {
+      const wrapper = mount()
+      await wrapper.find('.agent-row-name').trigger('click')
+      expect(wrapper.emitted('openSchedule')).toHaveLength(1)
+    })
+
+    it('asks the view to open a backup from the preview', async () => {
+      const wrapper = mount()
+      // Scoped to a backup row: the schedule rows above use the same class.
+      await wrapper.find('[id^="report-"] button.agent-row-name').trigger('click')
+      expect(wrapper.emitted('openReport')).toHaveLength(1)
+    })
+
+    it('switches to the backups tab from its View all link', async () => {
+      const wrapper = mount({
+        reports: Array.from({ length: 8 }, (_, i) => report({ id: i + 1 })),
+      })
+      const link = wrapper.findAll('.section-link').find((l) => l.text().includes('View all 8'))
+      await link!.trigger('click')
+      expect(wrapper.emitted('showTab')).toEqual([['backups']])
+    })
+
     // A run still in flight is shown by the progress card above, not as a
     // finished entry in the history below it.
     it('leaves in-flight runs out of the recent backups list', () => {

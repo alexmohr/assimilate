@@ -60,9 +60,15 @@ pub enum CodecError {
     UnknownEscape(char),
 }
 
-/// Orders entries the way a directory listing is presented: directories first
-/// (borg's `d` sorts above `-`, `l` and the other type characters when compared
-/// in reverse), then by name.
+/// Orders entries the way a directory listing is presented: descending by borg's
+/// type character, then by name.
+///
+/// Reversing the type comparison puts directories (`d`) above regular files
+/// (`-`), which is the distinction the browser shows. It is a byte ordering
+/// rather than a real "directories first" rule, though, so the rarer type
+/// characters land wherever their byte happens to fall: `s`, `p` and `l` sort
+/// above `d`, and `b` and `c` between `d` and `-`. That is the same ordering the
+/// `ORDER BY entry_type DESC` this replaced produced, so listings are unchanged.
 ///
 /// Encoding applies this order so that chunk order is listing order, letting a
 /// limited listing read only the leading chunks.
@@ -250,6 +256,26 @@ mod tests {
 
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["alpha-dir", "beta", "alpha", "zebra"]);
+    }
+
+    #[test]
+    fn ordering_is_descending_by_type_byte_not_strictly_directories_first() {
+        // Pins the surprise in `listing_order`: the reversed comparison is on the
+        // raw type byte, so a symlink (`l`, 0x6c) outranks a directory (`d`, 0x64)
+        // and a block device (`b`, 0x62) falls between a directory and a regular
+        // file (`-`, 0x2d). Inherited from the `ORDER BY entry_type DESC` this
+        // replaced, so it is recorded rather than changed.
+        let mut entries = vec![
+            entry("regular", "-", 1),
+            entry("directory", "d", 0),
+            entry("symlink", "l", 0),
+            entry("blockdev", "b", 0),
+        ];
+
+        sort_for_listing(&mut entries);
+
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["symlink", "directory", "blockdev", "regular"]);
     }
 
     #[test]

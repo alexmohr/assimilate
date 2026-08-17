@@ -582,18 +582,40 @@ NEWEST_WEB01_ARCHIVE=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tA
      ORDER BY br.started_at DESC LIMIT 1")
 api GET "/api/repos/$REPO_DAILY_ID/archives/$NEWEST_WEB01_ARCHIVE/contents" > /dev/null
 
+# Wait on the indexing job's own status rather than on archive_dirs having rows.
+# replace_archive_dirs deletes the archive's rows and re-inserts them in batches
+# without a wrapping transaction, so a row count can be non-zero while the index
+# is still half-written; the job only reaches 'done' once indexing has finished,
+# which is the same signal the API uses before serving the stored index.
 INDEX_WAIT=0
+INDEX_STATUS=""
 while [ "$INDEX_WAIT" -lt 60 ]; do
-    INDEXED_DIRS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-        "SELECT COUNT(*) FROM archive_dirs d JOIN archives a ON a.id = d.archive_id \
+    INDEX_STATUS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+        "SELECT j.status FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id \
          WHERE a.repo_id = $REPO_DAILY_ID AND a.name = '$NEWEST_WEB01_ARCHIVE'")
-    if [ "$INDEXED_DIRS" -gt 0 ]; then
-        break
-    fi
+    case "$INDEX_STATUS" in
+        done) break ;;
+        failed)
+            echo "archive content indexing for '$NEWEST_WEB01_ARCHIVE' failed" >&2
+            exit 1
+            ;;
+        *) ;;
+    esac
     sleep 1
     INDEX_WAIT=$((INDEX_WAIT + 1))
 done
-if [ "${INDEXED_DIRS:-0}" -eq 0 ]; then
+if [ "$INDEX_STATUS" != "done" ]; then
+    echo "archive content index for '$NEWEST_WEB01_ARCHIVE' did not finish indexing" \
+        "(last status: ${INDEX_STATUS:-none})" >&2
+    exit 1
+fi
+
+# The job is done, so the blobs are fully written: check the packed layout really
+# was populated and the demo browser has something to show.
+INDEXED_DIRS=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM archive_dirs d JOIN archives a ON a.id = d.archive_id \
+     WHERE a.repo_id = $REPO_DAILY_ID AND a.name = '$NEWEST_WEB01_ARCHIVE'")
+if [ "$INDEXED_DIRS" -eq 0 ]; then
     echo "archive content index for '$NEWEST_WEB01_ARCHIVE' never populated archive_dirs" >&2
     exit 1
 fi

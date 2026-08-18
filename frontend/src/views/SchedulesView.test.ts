@@ -812,7 +812,7 @@ describe('SchedulesView', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
-      if (url.startsWith('/stats/activity?days=30&limit=')) {
+      if (url.startsWith('/stats/activity?days=30&limit_per_schedule=')) {
         return Promise.resolve({
           data: [
             {
@@ -866,7 +866,7 @@ describe('SchedulesView', () => {
 
     // The backend applies this limit per schedule_id (not to the result set
     // overall), so a flat 10 is correct regardless of how many schedules exist.
-    expect(activityUrl).toBe('/stats/activity?days=30&limit=10')
+    expect(activityUrl).toBe('/stats/activity?days=30&limit_per_schedule=10')
   })
 
   it('still renders the schedules list when the activity feed request fails', async () => {

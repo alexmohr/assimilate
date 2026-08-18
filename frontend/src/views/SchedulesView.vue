@@ -332,7 +332,7 @@ async function fetchAll(): Promise<void> {
       apiClient
         .get<
           ScheduleActivityEntry[]
-        >(`/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit=${RUN_HISTORY_BARS}`)
+        >(`/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit_per_schedule=${RUN_HISTORY_BARS}`)
         .catch(() => ({ data: [] as ScheduleActivityEntry[] })),
     ])
     schedules.value = schRes.data

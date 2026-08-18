@@ -4,10 +4,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
-import { formatDateShort } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -17,15 +16,12 @@ import { useElapsedClock } from '../composables/useElapsedTimer'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
-import { AlertTriangle, ExternalLink } from '@lucide/vue'
-import ToggleSwitch from '../components/ToggleSwitch.vue'
-import ScheduleAdvancedTab from '../components/ScheduleAdvancedTab.vue'
-import ScheduleLogsTab from '../components/ScheduleLogsTab.vue'
+import ScheduleHeader from '../components/ScheduleHeader.vue'
+import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
+import ScheduleSettingsTab from '../components/ScheduleSettingsTab.vue'
 import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
-import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import BackupProgressCard from '../components/BackupProgressCard.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -34,7 +30,14 @@ import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResp
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
+import { isScheduleSettingsSection, type ScheduleSettingsSection } from '../utils/scheduleSettings'
 
+/**
+ * A schedule's detail page: a persistent header, then three tabs - Overview,
+ * Backups (backup type only), Settings - following the same shape as the
+ * agent detail page. Create mode has no status to show yet, so it skips
+ * straight to Settings.
+ */
 interface ScheduleTarget {
   agent_id: number
   execution_order: number
@@ -78,8 +81,8 @@ const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
 
-// The Advanced tab's per-agent overrides, grouped so the tab component takes
-// one v-model instead of seven.
+// The Advanced section's per-agent overrides, grouped so the tab component
+// takes one v-model instead of seven.
 const agentOverrides = ref<ScheduleAgentOverrides>({
   usePerHostExcludes: false,
   perHostExcludes: {},
@@ -89,9 +92,6 @@ const agentOverrides = ref<ScheduleAgentOverrides>({
   perAgentPreCmds: {},
   perAgentPostCmds: {},
 })
-
-const showAgentDropdown = ref(false)
-const agentDropdownRef = ref<HTMLElement | null>(null)
 
 interface ArchiveProgressData {
   hostname: string
@@ -129,15 +129,26 @@ const estimatedRemainingSecs = computed<number | null>(() => {
   return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
 })
 
-type TabId = 'settings' | 'advanced' | 'logs' | 'backups'
+type TabId = 'overview' | 'backups' | 'settings'
 const activeTab = computed<TabId>({
   get() {
+    if (isCreate.value) return 'settings'
     const t = route.query.tab
-    if (t === 'advanced' || t === 'logs' || t === 'backups') return t
-    return 'settings'
+    if (t === 'backups' && isBackup.value) return 'backups'
+    if (t === 'settings') return 'settings'
+    return 'overview'
   },
   set(val: TabId) {
     router.replace({ query: { ...route.query, tab: val } })
+  },
+})
+
+const settingsSection = computed<ScheduleSettingsSection>({
+  get() {
+    return isScheduleSettingsSection(route.query.section) ? route.query.section : 'general'
+  },
+  set(val: ScheduleSettingsSection) {
+    router.replace({ query: { ...route.query, section: val } })
   },
 })
 
@@ -153,10 +164,18 @@ const scheduleType = computed(() =>
 )
 const isBackup = computed(() => scheduleType.value === 'backup')
 
+/**
+ * A single "Settings" tab in create mode rather than a whole Overview/Backups
+ * strip - there is nothing to show status for yet, and nowhere else the
+ * create form could go.
+ */
 const visibleTabs = computed<TabOption<TabId>[]>(() => {
-  const tabs: TabOption<TabId>[] = [{ id: 'settings', label: 'Settings' }]
-  if (isBackup.value) tabs.push({ id: 'advanced', label: 'Advanced' })
-  if (isBackup.value && !isCreate.value) tabs.push({ id: 'backups', label: 'Backups' })
+  if (isCreate.value) return [{ id: 'settings', label: 'Settings' }]
+  const tabs: TabOption<TabId>[] = [{ id: 'overview', label: 'Overview' }]
+  // No count badge: `reports` is capped at 20 until the tab is opened, so a
+  // count shown up front would silently undercount everything past the cap.
+  if (isBackup.value) tabs.push({ id: 'backups', label: 'Backups' })
+  tabs.push({ id: 'settings', label: 'Settings' })
   return tabs
 })
 
@@ -165,6 +184,23 @@ const agentMap = computed(() => {
   agents.value.forEach((c) => m.set(c.id, c))
   return m
 })
+
+function scheduleTypeLabel(t: ScheduleType): string {
+  switch (t) {
+    case 'backup':
+      return 'Backup'
+    case 'check':
+      return 'Integrity Check'
+    case 'verify':
+      return 'Verify (extract dry-run)'
+  }
+}
+
+const headerTypeLabel = computed(() => scheduleTypeLabel(scheduleType.value))
+const headerCronSummary = computed(
+  () => cronToHuman(form.value.cron_expression) ?? form.value.cron_expression,
+)
+const repoName = computed(() => repo.value?.name ?? null)
 
 const form = ref<ScheduleFormState>({
   name: '',
@@ -203,57 +239,18 @@ function healthForAgent(agentId: number): HealthSummaryResponse | null {
   return scheduleHealth.value.find((h) => h.hostname === hostname) ?? null
 }
 
+const overdueTargetCount = computed(
+  () => selectedAgentIds.value.filter((id) => healthForAgent(id)?.is_overdue).length,
+)
+
 function connectivityNote(agentId: number): string {
   const agent = agentMap.value.get(agentId)
   if (!agent || !isAgentOffline(agent)) return ''
   return `Agent offline (${lastSeenText(agent)})`
 }
 
-function multiSelectLabel(): string {
-  if (selectedAgentIds.value.length === 0) return 'Select agents...'
-  if (selectedAgentIds.value.length === 1) return agentLabel(selectedAgentIds.value[0])
-  return `${selectedAgentIds.value.length} agents selected`
-}
-
-function toggleAgentSelection(id: number): void {
-  if (selectedAgentIds.value.includes(id)) {
-    selectedAgentIds.value = selectedAgentIds.value.filter((x) => x !== id)
-  } else {
-    selectedAgentIds.value = [...selectedAgentIds.value, id]
-  }
-}
-
-function moveAgentUp(index: number): void {
-  if (index === 0) return
-  const ids = [...selectedAgentIds.value]
-  ;[ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]
-  selectedAgentIds.value = ids
-}
-
-function moveAgentDown(index: number): void {
-  if (index >= selectedAgentIds.value.length - 1) return
-  const ids = [...selectedAgentIds.value]
-  ;[ids[index], ids[index + 1]] = [ids[index + 1], ids[index]]
-  selectedAgentIds.value = ids
-}
-
-function handleClickOutside(event: MouseEvent): void {
-  if (
-    showAgentDropdown.value &&
-    agentDropdownRef.value &&
-    !agentDropdownRef.value.contains(event.target as Node)
-  ) {
-    showAgentDropdown.value = false
-  }
-}
-
 onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
   loadData()
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleClickOutside)
 })
 
 function populateForm(s: ScheduleRow): void {
@@ -628,20 +625,10 @@ watch(
   },
 )
 watch(activeTab, (tab) => {
-  if ((tab === 'logs' || tab === 'backups') && !isCreate.value) {
+  if (tab === 'backups' && !isCreate.value) {
     loadReports().catch(() => undefined)
   }
 })
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity Check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
-}
 </script>
 
 <template>
@@ -663,37 +650,6 @@ function scheduleTypeLabel(t: ScheduleType): string {
       </span>
     </nav>
 
-    <div class="page-header">
-      <h1 class="page-title">
-        <template v-if="isCreate">New Schedule</template>
-        <template v-else-if="schedule">
-          {{ schedule.name || `${scheduleTypeLabel(schedule.schedule_type)} Schedule` }}
-        </template>
-        <template v-else>Schedule</template>
-      </h1>
-      <div
-        v-if="!isCreate && schedule"
-        class="header-actions"
-      >
-        <button
-          v-if="backupRunning"
-          class="btn btn-sm btn-danger"
-          :disabled="cancelLoading"
-          @click="cancelBackup"
-        >
-          {{ cancelLoading ? '...' : 'Cancel Backup' }}
-        </button>
-        <button
-          v-else
-          class="btn btn-sm btn-primary"
-          :disabled="runNowLoading"
-          @click="runNow()"
-        >
-          {{ runNowLoading ? '...' : 'Run Now' }}
-        </button>
-      </div>
-    </div>
-
     <div
       v-if="error"
       class="error-banner"
@@ -707,536 +663,58 @@ function scheduleTypeLabel(t: ScheduleType): string {
     />
 
     <template v-if="schedule || isCreate">
+      <ScheduleHeader
+        v-if="!isCreate && schedule"
+        :schedule="schedule"
+        :type-label="headerTypeLabel"
+        :cron-summary="headerCronSummary"
+        :backup-running="backupRunning"
+        :run-now-loading="runNowLoading"
+        :cancel-loading="cancelLoading"
+        :overdue-count="overdueTargetCount"
+        @run-now="runNow()"
+        @cancel-backup="cancelBackup"
+        @logs="goToLogs"
+        @delete="showDeleteDialog = true"
+      />
+      <div
+        v-else
+        class="page-header"
+      >
+        <h1 class="page-title">New Schedule</h1>
+      </div>
+
       <BaseTabs
         v-model="activeTab"
         :tabs="visibleTabs"
         label="Schedule sections"
-      >
-        <template
-          v-if="!isCreate"
-          #trailing
-        >
-          <button
-            type="button"
-            class="tab tab-link"
-            @click="goToLogs"
-          >
-            Logs
-            <ExternalLink :size="12" />
-          </button>
-        </template>
-      </BaseTabs>
+      />
 
-      <!-- Settings Tab -->
-      <div
-        v-if="activeTab === 'settings'"
-        class="tab-content"
-      >
-        <div class="form-stack">
-          <!-- Schedule Name -->
-          <div class="panel">
-            <h3 class="info-title">General</h3>
-            <div class="field">
-              <label class="field-label">Name</label>
-              <input
-                v-model="form.name"
-                type="text"
-                class="input"
-                placeholder="e.g. Daily web server backup"
-              />
-              <span class="field-hint">Optional display name for this schedule</span>
-            </div>
-          </div>
-
-          <!-- Create-only: target selection -->
-          <div
-            v-if="isCreate"
-            class="panel"
-          >
-            <h3 class="info-title">Target</h3>
-
-            <!-- Multi-select for hosts -->
-            <div class="field">
-              <label class="field-label">Hosts <span class="required">*</span></label>
-              <div
-                ref="agentDropdownRef"
-                class="multi-select-wrapper"
-              >
-                <button
-                  type="button"
-                  class="multi-select-trigger"
-                  :class="{ open: showAgentDropdown }"
-                  @click.stop="showAgentDropdown = !showAgentDropdown"
-                >
-                  <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
-                </button>
-                <div
-                  v-if="showAgentDropdown"
-                  class="multi-select-dropdown"
-                >
-                  <label
-                    v-for="c in agents"
-                    :key="c.id"
-                    class="multi-select-item"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="selectedAgentIds.includes(c.id)"
-                      @change="toggleAgentSelection(c.id)"
-                    />
-                    <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
-                  </label>
-                </div>
-              </div>
-              <span class="field-hint">The agents that will execute this schedule</span>
-            </div>
-
-            <!-- On Failure -->
-            <div class="field">
-              <label class="field-label">On Failure</label>
-              <select
-                v-model="onFailure"
-                class="input form-select"
-              >
-                <option value="stop">Stop</option>
-                <option value="continue">Continue</option>
-              </select>
-              <span class="field-hint">
-                Whether to stop or continue to the next agent when one fails.
-              </span>
-            </div>
-
-            <!-- Ordering (2+ hosts) -->
-            <div
-              v-if="selectedAgentIds.length > 1"
-              class="field"
-            >
-              <label class="field-label">Execution Order</label>
-              <div class="order-list">
-                <div
-                  v-for="(agentId, idx) in selectedAgentIds"
-                  :key="agentId"
-                  class="order-item"
-                >
-                  <span class="order-index">{{ idx + 1 }}</span>
-                  <span class="order-name">{{ agentLabel(agentId) }}</span>
-                  <div class="order-actions">
-                    <button
-                      type="button"
-                      class="order-btn"
-                      :disabled="idx === 0"
-                      title="Move up"
-                      @click="moveAgentUp(idx)"
-                    >
-                      ▲
-                    </button>
-                    <button
-                      type="button"
-                      class="order-btn"
-                      :disabled="idx === selectedAgentIds.length - 1"
-                      title="Move down"
-                      @click="moveAgentDown(idx)"
-                    >
-                      ▼
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="field">
-              <label class="field-label">Repository <span class="required">*</span></label>
-              <select
-                v-model.number="selectedRepoId"
-                class="input form-select"
-              >
-                <option
-                  :value="null"
-                  disabled
-                >
-                  Select a repository...
-                </option>
-                <option
-                  v-for="r in repos"
-                  :key="r.id"
-                  :value="r.id"
-                >
-                  {{ r.name }}
-                </option>
-              </select>
-              <span class="field-hint">The borg repository to back up to</span>
-            </div>
-            <div class="field">
-              <label class="field-label">Schedule Type</label>
-              <select
-                v-model="selectedType"
-                class="input form-select"
-              >
-                <option value="backup">Backup</option>
-                <option value="check">Integrity Check</option>
-                <option value="verify">Verify (extract dry-run)</option>
-              </select>
-              <span class="field-hint">
-                Backup creates archives; Check validates repo integrity; Verify tests
-                extractability.
-              </span>
-            </div>
-          </div>
-
-          <!-- Edit-only: info card -->
-          <div
-            v-if="!isCreate && schedule"
-            class="info-card"
-          >
-            <h3 class="info-title">Schedule Info</h3>
-            <div class="info-row info-row-targets">
-              <span class="info-label">Targets</span>
-              <span
-                v-if="selectedAgentIds.length === 0"
-                class="info-value"
-                >—</span
-              >
-              <div
-                v-else
-                class="target-health-list"
-              >
-                <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
-                  class="target-health-row"
-                >
-                  <span class="target-health-name">{{ agentLabel(agentId) }}</span>
-                  <template v-if="healthForAgent(agentId)?.is_overdue">
-                    <span class="target-health-badge">
-                      <AlertTriangle :size="12" />
-                      Overdue
-                    </span>
-                    <span
-                      v-if="connectivityNote(agentId)"
-                      class="target-health-note"
-                    >
-                      {{ connectivityNote(agentId) }}
-                    </span>
-                    <button
-                      class="btn btn-sm btn-ghost"
-                      :disabled="retryingAgentId === agentId"
-                      @click="runNow(agentId)"
-                    >
-                      {{ retryingAgentId === agentId ? '...' : 'Retry' }}
-                    </button>
-                  </template>
-                </div>
-              </div>
-            </div>
-            <div class="info-row">
-              <span class="info-label">On Failure</span>
-              <span class="info-value">
-                {{ schedule.on_failure === 'continue' ? 'Continue' : 'Stop' }}
-              </span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Repository</span>
-              <span class="info-value">{{
-                repo?.name ??
-                (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned')
-              }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Type</span>
-              <span class="info-value">{{ scheduleTypeLabel(schedule.schedule_type) }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Next Run</span>
-              <span class="info-value">{{ formatDateShort(schedule.next_run_at) ?? 'N/A' }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Last Run</span>
-              <span class="info-value">{{ formatDateShort(schedule.last_run_at) ?? 'Never' }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Cron (human)</span>
-              <span class="info-value">{{
-                cronToHuman(form.cron_expression) ?? form.cron_expression
-              }}</span>
-            </div>
-            <BackupProgressCard
-              v-if="backupRunning"
-              :badge="backupHostname"
-              :archive-name="backupArchiveName"
-              :elapsed-secs="backupElapsedSecs"
-              :estimated-remaining-secs="estimatedRemainingSecs"
-              :progress="archiveProgress"
-            />
-          </div>
-
-          <!-- Edit-only: target settings card -->
-          <div
-            v-if="!isCreate"
-            class="panel"
-          >
-            <h3 class="info-title">Target Settings</h3>
-
-            <!-- Multi-select for hosts -->
-            <div class="field">
-              <label class="field-label">Hosts</label>
-              <div
-                ref="agentDropdownRef"
-                class="multi-select-wrapper"
-              >
-                <button
-                  type="button"
-                  class="multi-select-trigger"
-                  :class="{ open: showAgentDropdown }"
-                  @click.stop="showAgentDropdown = !showAgentDropdown"
-                >
-                  <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
-                </button>
-                <div
-                  v-if="showAgentDropdown"
-                  class="multi-select-dropdown"
-                >
-                  <label
-                    v-for="c in agents"
-                    :key="c.id"
-                    class="multi-select-item"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="selectedAgentIds.includes(c.id)"
-                      @change="toggleAgentSelection(c.id)"
-                    />
-                    <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div class="field">
-              <label class="field-label">Repository</label>
-              <select
-                v-model.number="selectedRepoId"
-                class="input form-select"
-              >
-                <option
-                  v-for="r in repos"
-                  :key="r.id"
-                  :value="r.id"
-                >
-                  {{ r.name }}
-                </option>
-              </select>
-            </div>
-
-            <!-- On Failure -->
-            <div class="field">
-              <label class="field-label">On Failure</label>
-              <select
-                v-model="onFailure"
-                class="input form-select"
-              >
-                <option value="stop">Stop</option>
-                <option value="continue">Continue</option>
-              </select>
-            </div>
-
-            <!-- Ordering (2+ hosts) -->
-            <div
-              v-if="selectedAgentIds.length > 1"
-              class="field"
-            >
-              <label class="field-label">Execution Order</label>
-              <div class="order-list">
-                <div
-                  v-for="(agentId, idx) in selectedAgentIds"
-                  :key="agentId"
-                  class="order-item"
-                >
-                  <span class="order-index">{{ idx + 1 }}</span>
-                  <span class="order-name">{{ agentLabel(agentId) }}</span>
-                  <div class="order-actions">
-                    <button
-                      type="button"
-                      class="order-btn"
-                      :disabled="idx === 0"
-                      title="Move up"
-                      @click="moveAgentUp(idx)"
-                    >
-                      ▲
-                    </button>
-                    <button
-                      type="button"
-                      class="order-btn"
-                      :disabled="idx === selectedAgentIds.length - 1"
-                      title="Move down"
-                      @click="moveAgentDown(idx)"
-                    >
-                      ▼
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel">
-            <h3 class="info-title">Timing</h3>
-            <div class="field">
-              <label class="field-label">Schedule</label>
-              <CronBuilder v-model="form.cron_expression" />
-            </div>
-            <div class="field field-inline">
-              <label class="field-label">Enabled</label>
-              <ToggleSwitch v-model="form.enabled" />
-            </div>
-          </div>
-
-          <template v-if="isBackup">
-            <div class="panel">
-              <h3 class="info-title">Backup Paths</h3>
-              <div
-                v-if="selectedAgentIds.length > 1"
-                class="field field-inline"
-              >
-                <label class="field-label">Configure per agent</label>
-                <ToggleSwitch v-model="usePerHostPaths" />
-              </div>
-
-              <div
-                v-if="!usePerHostPaths"
-                class="field"
-              >
-                <textarea
-                  v-model="form.backup_sources"
-                  class="input area-input"
-                  placeholder="Directories to back up, one per line"
-                  spellcheck="false"
-                />
-                <span class="field-hint">
-                  Leave empty to use the default paths configured for this agent.
-                </span>
-              </div>
-
-              <div
-                v-else
-                class="per-host-paths"
-              >
-                <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
-                  class="per-host-entry"
-                >
-                  <label class="field-label">{{ agentLabel(agentId) }}</label>
-                  <textarea
-                    :value="perHostSources[agentId] ?? ''"
-                    class="input area-input area-input-sm"
-                    placeholder="Directories to back up, one per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                </div>
-                <span class="field-hint">
-                  Leave an agent empty to use its default backup paths.
-                </span>
-              </div>
-            </div>
-
-            <div class="panel">
-              <h3 class="info-title">Retention</h3>
-              <div class="retention-grid">
-                <div class="field">
-                  <label class="field-label">Hourly</label>
-                  <input
-                    v-model.number="form.keep_hourly"
-                    type="number"
-                    min="0"
-                    class="input"
-                  />
-                </div>
-                <div class="field">
-                  <label class="field-label">Daily</label>
-                  <input
-                    v-model.number="form.keep_daily"
-                    type="number"
-                    min="0"
-                    class="input"
-                  />
-                </div>
-                <div class="field">
-                  <label class="field-label">Weekly</label>
-                  <input
-                    v-model.number="form.keep_weekly"
-                    type="number"
-                    min="0"
-                    class="input"
-                  />
-                </div>
-                <div class="field">
-                  <label class="field-label">Monthly</label>
-                  <input
-                    v-model.number="form.keep_monthly"
-                    type="number"
-                    min="0"
-                    class="input"
-                  />
-                </div>
-                <div class="field">
-                  <label class="field-label">Yearly</label>
-                  <input
-                    v-model.number="form.keep_yearly"
-                    type="number"
-                    min="0"
-                    class="input"
-                  />
-                </div>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <!-- Advanced Tab (backup only) -->
-      <div
-        v-if="activeTab === 'advanced' && isBackup"
-        class="tab-content"
-      >
-        <!--
-          Bound one-way on purpose: ScheduleAdvancedTab edits the fields of
-          these objects in place and never replaces either one, so the tab is
-          writing into this view's own state. v-model would only add an update
-          handler that never fires.
-        -->
-        <ScheduleAdvancedTab
-          :form="form"
-          :overrides="agentOverrides"
+      <div class="tab-content">
+        <ScheduleOverviewTab
+          v-if="activeTab === 'overview' && schedule"
+          :schedule="schedule"
+          :repo-name="repoName"
+          :cron-summary="headerCronSummary"
           :agent-ids="selectedAgentIds"
           :agent-label="agentLabel"
-        />
-      </div>
-
-      <!-- Logs Tab -->
-      <div
-        v-if="activeTab === 'logs'"
-        class="tab-content"
-      >
-        <ScheduleLogsTab
+          :health-for-agent="healthForAgent"
+          :connectivity-note="connectivityNote"
+          :retrying-agent-id="retryingAgentId"
           :reports="reports"
-          :loading="reportsLoading"
-          :error="reportsError"
           :agents="agentMap"
+          :backup-running="backupRunning"
+          :backup-hostname="backupHostname"
+          :backup-archive-name="backupArchiveName"
+          :backup-elapsed-secs="backupElapsedSecs"
+          :estimated-remaining-secs="estimatedRemainingSecs"
+          :archive-progress="archiveProgress"
+          @retry="runNow($event)"
+          @open-backups="activeTab = 'backups'"
         />
-      </div>
 
-      <!-- Backups Tab -->
-      <div
-        v-if="activeTab === 'backups'"
-        class="tab-content"
-      >
         <ScheduleBackupsTab
+          v-else-if="activeTab === 'backups'"
           v-model:selected="selectedBackupReport"
           :reports="reports"
           :loading="reportsLoading"
@@ -1244,11 +722,29 @@ function scheduleTypeLabel(t: ScheduleType): string {
           :agents="agentMap"
           :repo-id="schedule?.repo_id ?? null"
         />
+
+        <ScheduleSettingsTab
+          v-else-if="activeTab === 'settings'"
+          v-model:section="settingsSection"
+          v-model:form="form"
+          v-model:overrides="agentOverrides"
+          v-model:selected-agent-ids="selectedAgentIds"
+          v-model:selected-repo-id="selectedRepoId"
+          v-model:selected-type="selectedType"
+          v-model:on-failure="onFailure"
+          v-model:use-per-host-paths="usePerHostPaths"
+          v-model:per-host-sources="perHostSources"
+          :is-create="isCreate"
+          :is-backup="isBackup"
+          :agents="agents"
+          :repos="repos"
+          :agent-label="agentLabel"
+        />
       </div>
 
       <!-- Save bar -->
       <div
-        v-if="activeTab !== 'logs' && activeTab !== 'backups'"
+        v-if="activeTab === 'settings'"
         class="save-bar"
       >
         <div
@@ -1269,29 +765,6 @@ function scheduleTypeLabel(t: ScheduleType): string {
         >
           {{ saving ? 'Saving...' : isCreate ? 'Create Schedule' : 'Save Changes' }}
         </button>
-      </div>
-
-      <!-- Danger Zone -->
-      <div
-        v-if="!isCreate && activeTab === 'settings'"
-        class="info-card danger-zone"
-      >
-        <h3 class="info-title">Danger Zone</h3>
-        <div class="danger-body">
-          <div class="danger-info">
-            <span class="danger-heading">Delete Schedule</span>
-            <span class="danger-desc">
-              Permanently delete this schedule and all associated backup reports. This cannot be
-              undone.
-            </span>
-          </div>
-          <button
-            class="btn btn-sm btn-danger"
-            @click="showDeleteDialog = true"
-          >
-            Delete Schedule
-          </button>
-        </div>
       </div>
     </template>
 
@@ -1328,127 +801,13 @@ function scheduleTypeLabel(t: ScheduleType): string {
 </template>
 
 <style scoped>
-/* Not a tab: it leaves the page. Pushed to the end and kept muted so it does
-   not read as a fourth section. */
-.tab-link {
-  margin-left: auto;
-  color: var(--text-muted);
-  gap: 0.35rem;
-  display: inline-flex;
-  align-items: center;
-}
-
-.tab-link:hover {
-  color: var(--text-primary);
-}
-
 .schedule-detail {
   color: var(--text-primary);
-  max-width: 900px;
+  max-width: 1100px;
 }
 
-.info-card,
-.info-title {
-  margin: 0 0 1rem;
-}
-
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.4rem 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.info-row:last-child {
-  border-bottom: none;
-}
-
-.info-label {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
-.info-value {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.info-row-targets {
-  align-items: flex-start;
-}
-
-.target-health-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  align-items: flex-end;
-}
-
-.target-health-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.target-health-name {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.target-health-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--warning);
-  background: var(--warning-subtle);
-  padding: 0.15rem 0.5rem;
-  border-radius: var(--radius-sm);
-}
-
-.target-health-note {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-}
-
-.required {
-  color: var(--danger);
-}
-
-.field-hint {
-  display: block;
-  margin-top: 0.25rem;
-}
-
-.input,
-.form-select {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-  outline: none;
-  transition: border-color var(--duration-base);
-  box-sizing: border-box;
-}
-
-.input:focus,
-.form-select:focus {
-  border-color: var(--accent);
-}
-
-.retention-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
+.tab-content {
+  margin-top: 1rem;
 }
 
 .save-bar {
@@ -1465,172 +824,4 @@ function scheduleTypeLabel(t: ScheduleType): string {
   font-size: var(--fs-sm);
   color: var(--danger);
 }
-
-/* Multi-select */
-.multi-select-wrapper {
-  position: relative;
-}
-
-.multi-select-trigger {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-  outline: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  transition: border-color var(--duration-base);
-  box-sizing: border-box;
-  text-align: left;
-}
-
-.multi-select-trigger:hover,
-.multi-select-trigger.open {
-  border-color: var(--accent);
-}
-
-.multi-select-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.multi-select-arrow {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.multi-select-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  padding: 0.4rem;
-  z-index: 100;
-  max-height: 220px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.multi-select-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.5rem;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-  transition: background var(--duration-fast);
-}
-
-.multi-select-item:hover {
-  background: var(--bg-hover);
-}
-
-.multi-select-item input[type='checkbox'] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.multi-select-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Segmented control */
-
-/* Ordering list */
-.order-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.order-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.6rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.order-index {
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  color: var(--text-muted);
-  min-width: 1.2rem;
-  text-align: center;
-}
-
-.order-name {
-  flex: 1;
-  font-size: var(--fs-base);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.order-actions {
-  display: flex;
-  gap: 0.2rem;
-  flex-shrink: 0;
-}
-
-.order-btn {
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--fs-lg);
-  cursor: pointer;
-  transition:
-    background var(--duration-fast),
-    color var(--duration-fast);
-  line-height: 1;
-}
-
-.order-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.order-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-/* Danger zone */
-
-/* Sits directly after the settings form here, so it needs breathing room the
-   other detail views get from their surrounding grid. */
-.danger-zone {
-  margin-top: 2rem;
-}
-
-/* Dialog */
-
-/* Backups tab layout */
 </style>

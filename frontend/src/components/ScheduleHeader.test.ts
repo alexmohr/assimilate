@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+import { describe, expect, it } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { renderWithPlugins } from '../test-utils'
+import ScheduleHeader from './ScheduleHeader.vue'
+import type { ScheduleRow } from '../types/schedule'
+
+const SCHEDULE = {
+  id: 1,
+  name: 'Nightly production backup',
+  schedule_type: 'backup',
+  enabled: true,
+} as unknown as ScheduleRow
+
+function mount(
+  scheduleOverrides: Record<string, unknown> = {},
+  props: Record<string, unknown> = {},
+) {
+  return renderWithPlugins(ScheduleHeader, {
+    props: {
+      schedule: { ...SCHEDULE, ...scheduleOverrides },
+      typeLabel: 'Backup',
+      cronSummary: 'Daily at 02:00',
+      backupRunning: false,
+      runNowLoading: false,
+      cancelLoading: false,
+      overdueCount: 0,
+      ...props,
+    },
+  })
+}
+
+async function openMenu(wrapper: ReturnType<typeof mount>) {
+  await wrapper.find('.schedule-menu-toggle').trigger('click')
+  await flushPromises()
+}
+
+function menuLabels(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('.schedule-menu-item').map((i) => i.text().trim())
+}
+
+describe('ScheduleHeader', () => {
+  it('falls back to the type label when the schedule has no name', () => {
+    const wrapper = mount({ name: null })
+    expect(wrapper.find('.schedule-name').text()).toBe('Backup')
+  })
+
+  it('uses the schedule name when set', () => {
+    const wrapper = mount()
+    expect(wrapper.find('.schedule-name').text()).toBe('Nightly production backup')
+  })
+
+  it('shows Enabled or Disabled', () => {
+    expect(mount({ enabled: true }).find('.badge--success').text()).toContain('Enabled')
+    expect(mount({ enabled: false }).find('.badge--neutral').text()).toContain('Disabled')
+  })
+
+  it('shows a Running badge only while a backup is in flight', () => {
+    expect(mount({}, { backupRunning: true }).find('.badge--accent').text()).toContain('Running')
+    expect(mount({}, { backupRunning: false }).find('.badge--accent').exists()).toBe(false)
+  })
+
+  it('shows an overdue-target count only when targets are overdue', () => {
+    const wrapper = mount({}, { overdueCount: 2 })
+    expect(wrapper.find('.badge--warning').text()).toBe('2 targets overdue')
+    expect(mount({}, { overdueCount: 0 }).find('.badge--warning').exists()).toBe(false)
+  })
+
+  it('singularizes a single overdue target', () => {
+    expect(mount({}, { overdueCount: 1 }).find('.badge--warning').text()).toBe('1 target overdue')
+  })
+
+  it('shows Run Now when nothing is running and emits runNow', async () => {
+    const wrapper = mount()
+    const btn = wrapper.findAll('button').find((b) => b.text() === 'Run Now')
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.emitted('runNow')).toHaveLength(1)
+  })
+
+  it('shows Cancel Backup while running and emits cancelBackup', async () => {
+    const wrapper = mount({}, { backupRunning: true })
+    const btn = wrapper.findAll('button').find((b) => b.text() === 'Cancel Backup')
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.emitted('cancelBackup')).toHaveLength(1)
+  })
+
+  it('hides Logs and Delete until the overflow menu is opened', async () => {
+    const wrapper = mount()
+    expect(wrapper.findAll('.schedule-menu-item')).toHaveLength(0)
+
+    await openMenu(wrapper)
+
+    expect(menuLabels(wrapper)).toEqual(['Logs', 'Delete schedule'])
+  })
+
+  it.each([
+    ['Logs', 'logs'],
+    ['Delete schedule', 'delete'],
+  ])('emits %s from the menu and closes it', async (label, event) => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.schedule-menu-item')
+      .find((i) => i.text().trim() === label)!
+      .trigger('click')
+
+    expect(wrapper.emitted(event)).toHaveLength(1)
+    expect(wrapper.findAll('.schedule-menu-item')).toHaveLength(0)
+  })
+
+  it('closes the menu on Escape', async () => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+    expect(wrapper.findAll('.schedule-menu-item').length).toBeGreaterThan(0)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+
+    expect(wrapper.findAll('.schedule-menu-item')).toHaveLength(0)
+  })
+
+  it('closes the menu on a click outside it', async () => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await flushPromises()
+
+    expect(wrapper.findAll('.schedule-menu-item')).toHaveLength(0)
+  })
+})

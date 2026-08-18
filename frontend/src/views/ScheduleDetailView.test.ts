@@ -183,11 +183,40 @@ async function renderAndStartBackup(): Promise<ReturnType<typeof renderWithPlugi
   return wrapper
 }
 
+/** Switches to the Settings tab, where the save bar and its form live. */
+async function goToSettings(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
+  await wrapper
+    .findAll('.tab')
+    .find((t) => t.text() === 'Settings')!
+    .trigger('click')
+  await flushPromises()
+}
+
+/** Switches to a settings sub-nav section; assumes the Settings tab is already active. */
+async function goToSection(
+  wrapper: ReturnType<typeof renderWithPlugins>,
+  label: string,
+): Promise<void> {
+  await wrapper
+    .findAll('.settings-nav-item')
+    .find((b) => b.text() === label)!
+    .trigger('click')
+  await flushPromises()
+}
+
+/** Reads a `dt`/`dd` pair out of the Overview tab's info-grid by its label. */
+function infoValueFor(wrapper: ReturnType<typeof renderWithPlugins>, label: string): string {
+  const dts = wrapper.findAll('.info-grid dt')
+  const dt = dts.find((d) => d.text() === label)
+  return dt!.element.nextElementSibling!.textContent ?? ''
+}
+
 async function renderEditModeAndSave(): Promise<ReturnType<typeof renderWithPlugins>> {
   setupEditMode()
   mockApiClient.put.mockResolvedValue({ data: mockSchedule })
   const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
   await flushPromises()
+  await goToSettings(wrapper)
 
   const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
   await saveBtn!.trigger('click')
@@ -210,60 +239,104 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.text()).toContain('Backup')
   })
 
-  it('renders page title with schedule type', async () => {
+  it('renders the header with the schedule type when it has no name', async () => {
     const wrapper = await createEditWrapper()
 
-    expect(wrapper.find('h1').text()).toContain('Backup Schedule')
+    expect(wrapper.find('h1').text()).toBe('Backup')
   })
 
-  it('shows agent and repo in info card', async () => {
+  it('opens on the Overview tab and shows agent and repo in the info summary', async () => {
     const wrapper = await createEditWrapper()
 
     expect(wrapper.text()).toContain('Web Server')
     expect(wrapper.text()).toContain('server-daily')
   })
 
-  it('displays next run date in info card', async () => {
+  it('shows the next run date in the info summary', async () => {
     const wrapper = await createEditWrapper()
 
-    const infoRows = wrapper.findAll('.info-row')
-    const nextRunRow = infoRows.find((r) => r.text().includes('Next Run'))
-    expect(nextRunRow).toBeTruthy()
-    expect(nextRunRow!.text()).not.toContain('\u2014')
+    expect(infoValueFor(wrapper, 'Next Run')).not.toContain('—')
   })
 
-  it('displays human-readable cron in info card', async () => {
+  it('shows a human-readable cron in the info summary', async () => {
     const wrapper = await createEditWrapper()
 
     expect(wrapper.text()).toContain('human(0 2 * * *)')
   })
 
-  it('shows retention fields for backup type', async () => {
-    const wrapper = await createEditWrapper()
+  it('shows an em dash for a null next_run_at', async () => {
+    setupEditMode({ ...mockSchedule, next_run_at: null })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
 
-    expect(wrapper.text()).toContain('Retention')
+    expect(infoValueFor(wrapper, 'Next Run')).toContain('—')
+  })
+
+  it('shows Never for a null last_run_at', async () => {
+    setupEditMode({ ...mockSchedule, last_run_at: null })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(infoValueFor(wrapper, 'Last Run')).toContain('Never')
+  })
+
+  it('shows retention fields under Settings > Retention for a backup schedule', async () => {
+    const wrapper = await createEditWrapper()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Retention')
+
     expect(wrapper.text()).toContain('Daily')
     expect(wrapper.text()).toContain('Weekly')
     expect(wrapper.text()).toContain('Monthly')
-    expect(wrapper.text()).toContain('Yearly')
   })
 
-  it('has Advanced tab for backup type', async () => {
+  it('shows weekly retention values on the Retention section', async () => {
+    const weeklySchedule = {
+      ...mockSchedule,
+      cron_expression: '0 3 * * 0',
+      keep_daily: 0,
+      keep_weekly: 52,
+      keep_monthly: 12,
+      keep_yearly: 5,
+    }
+    setupEditMode(weeklySchedule)
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Retention')
+
+    const retentionGrid = wrapper.find('.retention-grid')
+    expect(retentionGrid.exists()).toBe(true)
+    const inputs = retentionGrid.findAll('input[type="number"]')
+    const weeklyInput = inputs[2]
+    expect(weeklyInput.element.value).toBe('52')
+  })
+
+  it('has an Advanced section under Settings for a backup schedule', async () => {
     const wrapper = await createEditWrapper()
+    await goToSettings(wrapper)
 
-    const tabs = wrapper.findAll('.tab')
-    expect(tabs.some((t) => t.text() === 'Advanced')).toBe(true)
+    const sections = wrapper.findAll('.settings-nav-item').map((b) => b.text())
+    expect(sections).toContain('Advanced')
   })
 
-  it('shows and saves the remote rate limit field on the Advanced tab', async () => {
+  it('does not show an Advanced section for a check-type schedule', async () => {
+    setupEditMode(mockCheckSchedule)
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+
+    const sections = wrapper.findAll('.settings-nav-item').map((b) => b.text())
+    expect(sections).not.toContain('Advanced')
+  })
+
+  it('shows and saves the remote rate limit field on the Advanced section', async () => {
     setupEditMode()
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
-
-    const tabs = wrapper.findAll('.tab')
-    await tabs.find((t) => t.text() === 'Advanced')!.trigger('click')
-    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Advanced')
 
     expect(wrapper.text()).toContain('Remote Rate Limit')
     const rateLimitInput = wrapper
@@ -295,6 +368,8 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   it('does not show Advanced tab for check type', async () => {
+    // Advanced is a Settings sub-nav section now rather than a top-level tab,
+    // so it must never appear in the tab strip - for any schedule type.
     setupEditMode(mockCheckSchedule)
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
     await flushPromises()
@@ -303,11 +378,12 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(tabs.some((t) => t.text() === 'Advanced')).toBe(false)
   })
 
-  it('shows Save Changes button', async () => {
+  it('shows Save Changes only on the Settings tab', async () => {
     const wrapper = await createEditWrapper()
 
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
-    expect(saveBtn).toBeTruthy()
+    expect(wrapper.find('.save-bar').exists()).toBe(false)
+    await goToSettings(wrapper)
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Save Changes')).toBeTruthy()
   })
 
   it('calls PUT on save', async () => {
@@ -354,52 +430,13 @@ describe('ScheduleDetailView - edit mode', () => {
     mockApiClient.put.mockRejectedValue(new Error('Server error'))
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
+    await goToSettings(wrapper)
 
     const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
     await saveBtn!.trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.error-inline').exists()).toBe(true)
-  })
-
-  it('shows em dash for null next_run_at', async () => {
-    setupEditMode({ ...mockSchedule, next_run_at: null })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    const infoRows = wrapper.findAll('.info-row')
-    const nextRunRow = infoRows.find((r) => r.text().includes('Next Run'))
-    expect(nextRunRow!.text()).toContain('\u2014')
-  })
-
-  it('shows em dash for null last_run_at', async () => {
-    setupEditMode({ ...mockSchedule, last_run_at: null })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    const infoRows = wrapper.findAll('.info-row')
-    const lastRunRow = infoRows.find((r) => r.text().includes('Last Run'))
-    expect(lastRunRow!.text()).toContain('\u2014')
-  })
-
-  it('shows weekly retention schedule for weekly backup config', async () => {
-    const weeklySchedule = {
-      ...mockSchedule,
-      cron_expression: '0 3 * * 0',
-      keep_daily: 0,
-      keep_weekly: 52,
-      keep_monthly: 12,
-      keep_yearly: 5,
-    }
-    setupEditMode(weeklySchedule)
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    const retentionGrid = wrapper.find('.retention-grid')
-    expect(retentionGrid.exists()).toBe(true)
-    const inputs = retentionGrid.findAll('input[type="number"]')
-    const weeklyInput = inputs[2]
-    expect(weeklyInput.element.value).toBe('52')
   })
 
   it('shows Run Now and no Cancel Backup button when nothing is running', async () => {
@@ -491,6 +528,8 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
+    // Header badge: one target overdue.
+    expect(wrapper.text()).toContain('1 target overdue')
     expect(wrapper.text()).toContain('Overdue')
     expect(wrapper.text()).toContain('Agent offline (last seen')
 
@@ -551,10 +590,21 @@ describe('ScheduleDetailView - create mode', () => {
     expect(wrapper.text()).toContain('New')
   })
 
-  it('shows agent and repo dropdowns', async () => {
+  it('shows only the Settings tab - there is no status yet to give Overview or Backups content', async () => {
     setupCreateMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
+
+    const tabs = wrapper.findAll('.tab')
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0].text()).toBe('Settings')
+  })
+
+  it('shows agent and repo pickers under the Targets section', async () => {
+    setupCreateMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
+    await flushPromises()
+    await goToSection(wrapper, 'Targets')
 
     expect(wrapper.text()).toContain('Select agents...')
     expect(wrapper.text()).toContain('server-daily')
@@ -577,14 +627,6 @@ describe('ScheduleDetailView - create mode', () => {
 
     const createBtn = wrapper.findAll('button').find((b) => b.text() === 'Create Schedule')
     expect(createBtn).toBeTruthy()
-  })
-
-  it('does not show info card in create mode', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    expect(wrapper.find('.info-card').exists()).toBe(false)
   })
 })
 
@@ -621,7 +663,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     schedule_id: 1,
   }
 
-  it('BackupStarted with matching schedule_id shows BACKUP IN PROGRESS card', async () => {
+  it('BackupStarted with matching schedule_id shows the live progress card', async () => {
     const wrapper = await createEditWrapper()
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
@@ -651,7 +693,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
-  it('BackupCompleted with matching schedule_id hides BACKUP IN PROGRESS card', async () => {
+  it('BackupCompleted with matching schedule_id hides the live progress card', async () => {
     const wrapper = await createActiveBackupWrapper()
 
     wsHandlers['BackupCompleted']?.({
@@ -826,6 +868,14 @@ describe('ScheduleDetailView - Backups tab', () => {
     return wrapper
   }
 
+  async function goToBackups(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text() === 'Backups')!
+      .trigger('click')
+    await flushPromises()
+  }
+
   it('shows Backups tab button for backup-type schedule in edit mode', async () => {
     const wrapper = await createBackupsWrapper([])
 
@@ -874,9 +924,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       },
     ])
 
-    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
-    await backupsTab!.trigger('click')
-    await flushPromises()
+    await goToBackups(wrapper)
 
     expect(wrapper.text()).toContain('No backup archives found')
   })
@@ -912,9 +960,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       },
     ])
 
-    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
-    await backupsTab!.trigger('click')
-    await flushPromises()
+    await goToBackups(wrapper)
 
     const texts = wrapper.text()
     expect(texts).toContain('test-archive-2026-06-02')
@@ -938,9 +984,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       },
     ])
 
-    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
-    await backupsTab!.trigger('click')
-    await flushPromises()
+    await goToBackups(wrapper)
 
     const archiveRow = wrapper.find('.archive-row')
     await archiveRow.trigger('click')
@@ -963,11 +1007,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       },
     ])
 
-    expect(wrapper.find('.save-bar').exists()).toBe(true)
-
-    const backupsTab = wrapper.findAll('.tab').find((t) => t.text() === 'Backups')
-    await backupsTab!.trigger('click')
-    await flushPromises()
+    await goToBackups(wrapper)
 
     expect(wrapper.find('.save-bar').exists()).toBe(false)
   })
@@ -990,6 +1030,49 @@ describe('ScheduleDetailView - Backups tab', () => {
   })
 })
 
+describe('ScheduleDetailView - header actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function openMenu(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
+    await wrapper.find('.schedule-menu-toggle').trigger('click')
+    await flushPromises()
+  }
+
+  it('reaches the delete confirmation through the header overflow menu', async () => {
+    const wrapper = await createEditWrapper()
+    await openMenu(wrapper)
+
+    const deleteItem = wrapper
+      .findAll('.schedule-menu-item')
+      .find((i) => i.text() === 'Delete schedule')
+    expect(deleteItem).toBeTruthy()
+    await deleteItem!.trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('This action cannot be undone.')
+  })
+
+  it('navigates to the activity log filtered by schedule from the Logs menu item', async () => {
+    const wrapper = await createEditWrapper()
+    await openMenu(wrapper)
+
+    await wrapper
+      .findAll('.schedule-menu-item')
+      .find((i) => i.text() === 'Logs')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.$route.fullPath).toBe('/activity?category=backup&schedule_id=1')
+  })
+})
+
 describe('ScheduleDetailView - delete confirmation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -997,9 +1080,10 @@ describe('ScheduleDetailView - delete confirmation', () => {
 
   async function openDeleteDialog(): Promise<ReturnType<typeof renderWithPlugins>> {
     const wrapper = await createEditWrapper()
+    await wrapper.find('.schedule-menu-toggle').trigger('click')
     await wrapper
-      .findAll('button')
-      .find((b) => b.text().trim() === 'Delete Schedule')!
+      .findAll('.schedule-menu-item')
+      .find((b) => b.text().trim() === 'Delete schedule')!
       .trigger('click')
     await flushPromises()
     return wrapper
@@ -1092,11 +1176,8 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
-    await wrapper
-      .findAll('.tab')
-      .find((t) => t.text() === 'Advanced')!
-      .trigger('click')
-    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Advanced')
     return wrapper
   }
 

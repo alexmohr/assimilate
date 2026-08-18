@@ -1534,9 +1534,15 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     expect(wrapper.find('.form-error').exists()).toBe(true)
   })
 
-  it('navigates to this agent’s activity log', async () => {
+  it('navigates to this agent’s activity log from the overflow menu', async () => {
     const wrapper = await render()
-    await clickAction(wrapper, 'Activity log')
+    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Activity log')!
+      .trigger('click')
+    await flushPromises()
 
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
       .$router

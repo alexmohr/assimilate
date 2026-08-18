@@ -31,18 +31,20 @@ test.describe('Schedule backups tab - archive browser', () => {
     await expect(page.getByRole('tab', { name: 'Backups' })).toBeVisible()
   })
 
-  test('save bar is hidden on Backups tab', async ({ page }) => {
+  test('save bar shows only on the Settings tab', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
-    // Save bar should be visible initially (Settings tab)
+    // Overview is the default tab: no form, no save bar.
+    await expect(page.locator('.save-bar')).not.toBeVisible()
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.waitForTimeout(500)
     await expect(page.locator('.save-bar')).toBeVisible()
 
     await page.getByRole('tab', { name: 'Backups' }).click()
     await page.waitForTimeout(500)
-
-    // Save bar should be hidden
     await expect(page.locator('.save-bar')).not.toBeVisible()
   })
 

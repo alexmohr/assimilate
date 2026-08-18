@@ -13,10 +13,10 @@ import type { AgentRow } from '../types/agent'
 /**
  * The agent detail page's identity block, shown above the tab strip and so
  * present on every tab. Actions are graded rather than listed: one accented
- * slot for the thing that is actionable right now, one plain button for
- * navigation, and everything rare or destructive behind the overflow menu.
- * Before this the same eight controls rendered as eight identical ghost
- * buttons in one row, with Activity Log indistinguishable from Restart Agent.
+ * slot for the thing that is actionable right now, everything else - including
+ * navigation like Activity log - behind the overflow menu. Before this the
+ * same eight controls rendered as eight identical ghost buttons in one row,
+ * with Activity Log indistinguishable from Restart Agent.
  */
 const props = defineProps<{
   agent: AgentRow
@@ -162,12 +162,6 @@ const canRestart = computed(
         >
           {{ deployLabel }} agent
         </button>
-        <button
-          class="btn btn-sm"
-          @click="emit('activityLog')"
-        >
-          Activity log
-        </button>
       </template>
 
       <button
@@ -187,7 +181,6 @@ const canRestart = computed(
         role="menu"
       >
         <button
-          v-if="isImported"
           class="agent-menu-item"
           role="menuitem"
           type="button"
@@ -195,7 +188,7 @@ const canRestart = computed(
         >
           Activity log
         </button>
-        <template v-else>
+        <template v-if="!isImported">
           <button
             class="agent-menu-item"
             role="menuitem"

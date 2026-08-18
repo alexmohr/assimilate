@@ -99,6 +99,15 @@ describe('ScheduleOverviewTab', () => {
     expect(wrapper.emitted('retry')).toEqual([[10]])
   })
 
+  it('gives the actively-backing-up target an accent stripe', () => {
+    const wrapper = mount({
+      backupRunning: true,
+      backupHostname: 'web-server-01',
+    })
+    const targetRow = wrapper.findAll('.agent-row').find((r) => r.text().includes('web-server-01'))
+    expect(targetRow!.find('.agent-row-stripe').classes()).toContain('agent-row-stripe--accent')
+  })
+
   it('shows an Overdue badge and a Retry button on the target row itself, not just in the attention banner', async () => {
     const wrapper = mount({
       healthForAgent: (id: number): HealthSummaryResponse | null =>

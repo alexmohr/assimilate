@@ -1227,6 +1227,10 @@
     background: var(--danger);
   }
 
+  .agent-row-stripe--accent {
+    background: var(--accent);
+  }
+
   .agent-row-stripe--muted {
     background: var(--text-muted);
   }

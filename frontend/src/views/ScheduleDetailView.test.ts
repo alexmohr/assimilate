@@ -894,6 +894,19 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
+  it('resolves the live backup hostname to the agent display name, matching agentLabel', async () => {
+    const wrapper = await createEditWrapper()
+    wsHandlers['BackupStarted']?.(startedPayload)
+    await nextTick()
+
+    // mockAgents' id 10 has hostname 'web-server-01' and display_name 'Web Server' -
+    // the badge must show the display name, not the raw WS hostname, so it lines up
+    // with ScheduleOverviewTab's agentLabel(id)-based accent-stripe match.
+    expect(wrapper.find('.live-log-card').text()).toContain('Web Server')
+    const targetRow = wrapper.findAll('.agent-row').find((r) => r.text().includes('Web Server'))
+    expect(targetRow!.find('.agent-row-stripe').classes()).toContain('agent-row-stripe--accent')
+  })
+
   it('BackupCompleted with matching schedule_id hides the live progress card', async () => {
     const wrapper = await createActiveBackupWrapper()
 

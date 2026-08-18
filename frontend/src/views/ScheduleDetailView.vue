@@ -548,8 +548,9 @@ onMessage('BackupStarted', (payload) => {
     !(repo.value != null && payload.target_name === repo.value.name)
   )
     return
+  const agent = agents.value.find((a) => a.hostname === payload.hostname)
   backupRunning.value = true
-  backupHostname.value = payload.hostname
+  backupHostname.value = agent?.display_name ?? payload.hostname
   backupArchiveName.value = payload.archive_name ?? null
   archiveProgress.value = null
   backupStartedAt.value = Date.now()

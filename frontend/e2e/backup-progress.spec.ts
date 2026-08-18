@@ -331,7 +331,7 @@ test.describe('backup progress card — mid-backup page load', () => {
 
     // The started_at was 30 s ago, so elapsed should be ≥ 25 s.
     await expect(page.locator('.progress-body')).toContainText('Elapsed', { timeout: 3_000 })
-    const elapsedText = await page.locator('.progress-row').first().textContent()
+    const elapsedText = await page.locator('.live-stat-row').first().textContent()
     const match = /(\d+)s/.exec(elapsedText ?? '')
     expect(match).not.toBeNull()
     expect(Number(match![1])).toBeGreaterThan(20)

@@ -132,10 +132,12 @@ test.describe('Archive browsing & diff journey', () => {
     const repoSelect = page.locator('.repo-selector select')
     await expect(repoSelect).toBeVisible({ timeout: 15_000 })
 
+    await repoSelect.selectOption({ index: 1 })
+
+    // The two-pane layout mounts with the repository, so the placeholder is
+    // the state between picking a repository and picking an archive.
     const browserPanel = page.locator('.browser-panel')
     await expect(browserPanel).toContainText('Select an archive to browse its contents.')
-
-    await repoSelect.selectOption({ index: 1 })
 
     const archiveRow = page.locator('.archives-panel .td-mono').first()
     await expect(archiveRow).toBeVisible({ timeout: 15_000 })

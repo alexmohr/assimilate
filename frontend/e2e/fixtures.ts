@@ -182,7 +182,7 @@ export async function expandAllArchiveGroups(page: Page): Promise<void> {
   // collapsed for the rest of the test. Wait out the spinner explicitly
   // first.
   await page
-    .locator('.state-msg-sm .spinner')
+    .locator('.state-msg-sm .spinner-icon')
     .waitFor({ state: 'hidden', timeout: 20_000 })
     .catch(() => {})
 

@@ -9,6 +9,12 @@ on:
     types: [completed]
   issue_comment:
     types: [created]
+  # The actual primary path for "needs review" landing - see the gate's own
+  # comment below and sync-pr-labels.js's dispatchOnNeedsReview for why the
+  # `labeled` trigger above can't be trusted to fire for the automated label
+  # add that normally puts a PR into this state.
+  repository_dispatch:
+    types: [needs-review]
 
 permissions:
   contents: read
@@ -22,15 +28,32 @@ jobs:
   gate:
     name: Check if a review is actually needed
     runs-on: ubuntu-latest
-    # Only ever proceed for: the "needs review" label landing, a non-draft
-    # push to an existing PR, CI finishing on a PR, or a /claude-review
-    # comment from someone with write access (an open author_association
-    # check here is an open invitation to burn quota on a public repo).
+    # Only ever proceed for: a `needs-review` repository_dispatch (the
+    # automated label add landing), the "needs review" label landing by hand,
+    # a non-draft push to an existing PR, CI finishing on a PR, or a
+    # /claude-review comment from someone with write access (an open
+    # author_association check here is an open invitation to burn quota on a
+    # public repo).
     #
-    # workflow_run (CI completing) is kept as a defense-in-depth backup, but
-    # has proven unreliable in practice for this repo's own same-repo PR
-    # branches - observed to never fire even once across dozens of
-    # `pull_request`-triggered CI completions on a real PR. pull_request_target's
+    # repository_dispatch (fired by sync-pr-labels.js itself, see
+    # dispatchOnNeedsReview there) is the actual primary path into this
+    # workflow, not the `labeled` trigger below: GitHub does not fire a new
+    # workflow run for an event produced by the calling workflow's own
+    # GITHUB_TOKEN (this is what stops accidental recursive workflow runs),
+    # and the "needs review" label is always added via pr-status-labels.yml's
+    # GITHUB_TOKEN - so `pull_request_target: labeled` below can never
+    # actually fire for that automated add. It's kept only for a human
+    # manually adding the label by hand (a real user token isn't subject to
+    # that restriction), which is not the normal flow but harmless to also
+    # accept. Before repository_dispatch existed, this looked like "the
+    # review job only starts once the label is removed and re-added" -
+    # removing+re-adding is a `labeled` event from a real token, which is
+    # exactly why that workaround appeared to fix it.
+    #
+    # workflow_run (CI completing) is kept as a second defense-in-depth
+    # backup, but has proven unreliable in practice for this repo's own
+    # same-repo PR branches - observed to never fire even once across dozens
+    # of `pull_request`-triggered CI completions on a real PR. pull_request_target's
     # own `synchronize` action is a first-party GitHub event tied directly to
     # the push itself rather than a second-order "did another workflow
     # complete" signal, so it's the primary path for re-reviewing after new
@@ -42,7 +65,7 @@ jobs:
     # an external PR author fully controls themselves; see the "check"
     # step below.
     if: >-
-      (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'needs review') || (github.event_name == 'pull_request_target' && github.event.action == 'synchronize' && !github.event.pull_request.draft) || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
+      (github.event_name == 'repository_dispatch' && github.event.action == 'needs-review') || (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'needs review') || (github.event_name == 'pull_request_target' && github.event.action == 'synchronize' && !github.event.pull_request.draft) || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
         contains(github.event.comment.body, '/claude-review'))
@@ -133,6 +156,8 @@ jobs:
               if (prs.length > 0) number = prs[0].number;
             } else if (context.eventName === "issue_comment") {
               number = context.payload.issue.number;
+            } else if (context.eventName === "repository_dispatch") {
+              number = context.payload.client_payload.pr_number;
             } else {
               number = context.payload.pull_request.number;
             }

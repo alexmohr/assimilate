@@ -267,7 +267,12 @@ Claude can't use it to approve a PR). Everything else goes through `gh`
 instead: `claude_args` in `claude-review.yml` grants Bash access to a
 specific set of subcommands (not blanket Bash access) — `gh pr diff`/`gh pr
 view`/`git log`/`git diff`/`git show` to actually see the change, `gh pr
-review`/`gh pr edit` for the verdict — and a `GH_TOKEN` env var on that step
+review`/`gh pr edit` for the verdict — plus `Read`/`Grep`/`Glob` against the
+already-checked-out PR worktree, so a review of a large, many-file diff can
+check a claim against the actual source instead of every such attempt being
+denied (which on a big enough diff was observed to burn the entire turn
+budget on nothing but denials, ending with `is_error: false` and no verdict
+ever submitted — see PR #425). A `GH_TOKEN` env var on that step
 authenticates `gh`. The prompt tells Claude to start with `gh pr diff`/`gh
 pr view` before forming an opinion, to use `gh pr review
 --approve|--request-changes` for the native verdict path and `gh pr edit

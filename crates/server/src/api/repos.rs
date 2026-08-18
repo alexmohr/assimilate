@@ -2588,6 +2588,19 @@ async fn partition_archives_to_sync<'a>(
 
     let removed = match mode {
         SyncMode::Existing => {
+            // A `borg list` that comes back empty while the DB still has archive
+            // records on file is far more likely to mean the repo is temporarily
+            // unreachable, relocated, or otherwise misreporting than that every
+            // archive genuinely vanished upstream. Treat it as a hard error rather
+            // than pruning every existing archive (and its backup reports): see
+            // the matching guard in `run_borg_list_with_retry` for malformed JSON.
+            if borg_names.is_empty() && !known_names.is_empty() {
+                return Err(ApiError::Internal(format!(
+                    "borg list returned 0 archives but {} were previously known for this \
+                     repository; refusing to prune all archive records",
+                    known_names.len()
+                )));
+            }
             let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
             let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
             if removed > 0 {

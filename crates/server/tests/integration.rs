@@ -218,6 +218,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             post(server::api::schedules::run_schedule_now),
         )
         .route(
+            "/api/schedules/{id}/cancel",
+            post(server::api::schedules::cancel_running_backup),
+        )
+        .route(
             "/api/config/export",
             get(server::api::config_io::export_config),
         )
@@ -5044,6 +5048,60 @@ async fn test_run_schedule_now_allows_duplicate_agent_ids() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 }
 
+/// Regression test for: `cancel_running_backup`'s offline-agent fallback (the
+/// branch that cancels the backup report directly in the DB when
+/// `registry.send_to` fails because no agent is connected) had no dedicated
+/// test. The test registry is always empty in this suite, so `send_to`
+/// deterministically fails for every hostname, which is exactly the
+/// condition this branch exists for - asserts the in-progress backup report
+/// is marked cancelled rather than merely checking the HTTP status.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_cancel_running_backup_marks_report_cancelled_when_agent_offline() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "cancel-offline-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('cancel-offline-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let backup_report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status) VALUES \
+         ($1, $2, NOW(), NOW(), 'started') RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = json_request(
+        "POST",
+        &format!("/api/schedules/{schedule_id}/cancel"),
+        None,
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let status: String = sqlx::query_scalar("SELECT status FROM backup_reports WHERE id = $1")
+        .bind(backup_report_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        status, "cancelled",
+        "offline-agent fallback must cancel the in-progress backup report"
+    );
+}
+
 // -- archive resync reliability --
 
 /// Regression test for: repos with no backups getting stuck in "Listing archives..." forever.
@@ -5105,6 +5163,137 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     assert!(
         !importing,
         "importing must be cleared even when borg info hangs"
+    );
+}
+
+/// Seeds a repo with one already-synced archive: an agent, a successful
+/// backup report, an `archives` row, and matching `repo_stats` totals.
+#[cfg(test)]
+async fn seed_synced_archive(pool: &PgPool, repo_id: i64, agent_host: &str, archive_name: &str) {
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ($1, 'hash') RETURNING id",
+    )
+    .bind(agent_host)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind(archive_name)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) ON CONFLICT (repo_id, name) DO \
+         UPDATE SET name = EXCLUDED.name",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_stats (repo_id, archive_count, deduplicated_size) VALUES ($1, 1, \
+         247700000000) ON CONFLICT (repo_id) DO UPDATE SET archive_count = \
+         EXCLUDED.archive_count, deduplicated_size = EXCLUDED.deduplicated_size",
+    )
+    .bind(repo_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Regression test for: a full resync that got back an unexpectedly empty
+/// `borg list` result (e.g. a transient SSH hiccup or a relocated/misconfigured
+/// repo path) used to prune every known archive and backup report for the
+/// repo, zeroing "Archives" and "Last Backup" in the UI while the repo's
+/// deduplicated size (read separately from `borg info`'s local cache) stayed
+/// unchanged. The sync must now refuse to prune when `borg list` reports zero
+/// archives but the DB already knows about some, surfacing an import error
+/// instead of silently wiping the archive history.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() {
+    let _borg_lock = borg_binary_lock().await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 100000,
+      "total_csize": 50000,
+      "unique_csize": 50000,
+      "total_chunks": 10,
+      "total_unique_chunks": 10
+    }
+  }
+}"#;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, info_repo_json, info_repo_json, "", "").await;
+
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "spurious-empty-list-repo").await;
+    seed_synced_archive(&pool, repo_id, "spurious-host", "keep-me").await;
+
+    let req = json_request(
+        "POST",
+        &format!("/api/repos/{repo_id}/sync?build_index=true"),
+        None,
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    wait_for_import_completion(&pool, repo_id).await;
+
+    let import_error: Option<String> =
+        sqlx::query_scalar("SELECT error FROM repo_import_state WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        import_error.is_some_and(|e| e.contains("refusing to prune")),
+        "sync must surface an import error instead of silently succeeding"
+    );
+
+    let archive_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM archives WHERE repo_id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        archive_count, 1,
+        "existing archive record must not be pruned"
+    );
+
+    let backup_report_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        backup_report_count, 1,
+        "existing backup report must not be pruned"
+    );
+
+    let stats_archive_count: i32 =
+        sqlx::query_scalar("SELECT archive_count FROM repo_stats WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stats_archive_count, 1,
+        "repo_stats.archive_count must not be zeroed out by the aborted sync"
     );
 }
 

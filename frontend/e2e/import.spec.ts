@@ -185,10 +185,16 @@ test('Cancel Import cancels a live resync under borg lock contention', async ({ 
     await expect(page.locator('.import-status-msg')).not.toBeVisible()
     await expect(page.locator('.repo-status-badge')).toHaveText(/enabled/i, { timeout: 30_000 })
 
-    const logsRes = await page.request.get('/api/logs?limit=200&search=repo%20sync%20cancelled')
-    expect(logsRes.ok()).toBeTruthy()
-    const logs = (await logsRes.json()) as Array<{ message: string }>
-    expect(logs.some((entry) => entry.message.includes('repo sync cancelled'))).toBeTruthy()
+    // Check the durable system_events table rather than /api/logs: that
+    // endpoint serves a small, capacity-bounded in-memory ring buffer fed by
+    // every tracing event server-wide (WS agent traffic, tunnel retries,
+    // scheduler ticks, every API request) across the whole e2e run, so the
+    // entry we want can be evicted by unrelated log volume before this
+    // request lands even though the cancellation itself succeeded.
+    const eventsRes = await page.request.get('/api/stats/system-events?limit=100')
+    expect(eventsRes.ok()).toBeTruthy()
+    const events = (await eventsRes.json()) as Array<{ message: string }>
+    expect(events.some((entry) => entry.message.includes('repo sync cancelled'))).toBeTruthy()
   } finally {
     dockerExec(container, `rm -f ${lockFile}`)
   }

@@ -260,6 +260,27 @@ describe('RepoCreateDialog', () => {
       await flushPromises()
     }
 
+    /**
+     * Click the browser entry with the given label ('..' for the parent
+     * entry, a directory name otherwise). Waits for the entry to actually
+     * appear rather than querying once right after the triggering
+     * `flushPromises()`: a single flush isn't always enough for the
+     * reactive re-render to land before the next synchronous DOM query,
+     * particularly under coverage instrumentation's extra scheduling
+     * overhead, which previously made this an intermittent failure.
+     */
+    async function clickEntry(label: string): Promise<void> {
+      const entry = await vi.waitFor(() => {
+        const el = [...document.body.querySelectorAll<HTMLElement>('.entry-name')].find(
+          (e) => e.textContent === label,
+        )
+        if (!el) throw new Error(`no browser entry labelled "${label}"`)
+        return el
+      })
+      entry.parentElement?.click()
+      await flushPromises()
+    }
+
     it('will not browse before an SSH host is known', () => {
       mount()
       expect(dialogButton('Browse').disabled).toBe(true)
@@ -305,11 +326,7 @@ describe('RepoCreateDialog', () => {
       await openBrowser('/backup')
 
       vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/backup/repos', []) as never)
-      const entry = [...document.body.querySelectorAll<HTMLElement>('.entry-name')].find(
-        (e) => e.textContent === 'repos',
-      )
-      entry?.parentElement?.click()
-      await flushPromises()
+      await clickEntry('repos')
 
       expect(apiClient.post).toHaveBeenLastCalledWith(
         '/ssh/list-dir',
@@ -322,11 +339,7 @@ describe('RepoCreateDialog', () => {
       await openBrowser('/backup/repos')
 
       vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/backup') as never)
-      const up = [...document.body.querySelectorAll<HTMLElement>('.entry-name')].find(
-        (e) => e.textContent === '..',
-      )
-      up?.parentElement?.click()
-      await flushPromises()
+      await clickEntry('..')
 
       expect(apiClient.post).toHaveBeenLastCalledWith(
         '/ssh/list-dir',

@@ -1255,6 +1255,10 @@ pub struct ExecBorgRequest {
 )]
 /// Execute a borg command against the repository (admin only).
 ///
+/// After `compact`, `prune`, `delete`, `recreate`, or `rename`, the cached
+/// repository stats and archive list are refreshed from borg so the UI
+/// doesn't keep showing pre-command values.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -1314,6 +1318,41 @@ pub async fn exec_borg(
     let exit_code = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    // These subcommands can change the archive list and/or the repo's actual
+    // disk usage (e.g. `compact` reclaims space `borg info` won't reflect
+    // until re-queried). Without this, the cached `repo_stats` row silently
+    // drifts from reality until the next unrelated sync happens to run.
+    if matches!(
+        subcommand,
+        BorgSubcommand::Compact
+            | BorgSubcommand::Prune
+            | BorgSubcommand::Delete
+            | BorgSubcommand::Recreate
+            | BorgSubcommand::Rename
+    ) && (exit_code == 0 || exit_code == 1)
+    {
+        match sync_existing_archives(
+            &state.pool,
+            &state.encryption_key,
+            repo_id,
+            &state.ui_broadcast,
+            &state.background_task_tracker,
+            &state.task_registry,
+        )
+        .await
+        {
+            Ok(_) => state
+                .ui_broadcast
+                .send(shared::protocol::ServerToUi::DataChanged),
+            Err(e) => warn!(
+                repo_id,
+                subcommand = %subcommand,
+                error = %e,
+                "failed to refresh repo stats after admin borg command"
+            ),
+        }
+    }
 
     Ok(Json(ExecBorgResponse {
         stdout,

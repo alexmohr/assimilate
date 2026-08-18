@@ -194,6 +194,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             post(server::api::repos::sync_repo),
         )
         .route(
+            "/api/repos/{repo_id}/exec",
+            post(server::api::repos::exec_borg),
+        )
+        .route(
             "/api/repos/{repo_id}/reset-import",
             post(server::api::repos::reset_import),
         )
@@ -1417,6 +1421,86 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     // cleared here, before dropping the borg binary lock, same as other
     // tests that mutate process-global borg-related env vars.
     unsafe { std::env::remove_var("FAKE_BORG_COMPACT_EXIT") };
+}
+
+/// Reproduces the reported bug: an admin runs `compact` through the Borg
+/// Console (`/exec`), which reclaims real disk space on the repository, but
+/// the Overview page kept showing the pre-compact `deduplicated_size`
+/// because `exec_borg` never refreshed the cached `repo_stats` row.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_exec_borg_compact_refreshes_stale_repo_stats() {
+    use tokio::time::{Duration, timeout};
+
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    // The fake repo currently has 0 archives and a fresh `borg info` shows
+    // 0 bytes of actual disk usage - the state right after a real compact
+    // has genuinely reclaimed the space.
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "exec-compact-repo").await;
+
+    // Seed `repo_stats` with a large stale `deduplicated_size`, simulating a
+    // repo that was compacted directly on the storage box (or via an
+    // earlier console command) without the app ever re-querying `borg info`.
+    sqlx::query(
+        "INSERT INTO repo_stats (repo_id, original_size, compressed_size, deduplicated_size, \
+         total_chunks, unique_chunks, archive_count) VALUES ($1, 45400000, 15900000, \
+         265000000000, 0, 0, 0)",
+    )
+    .bind(repo_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = json_request(
+        "POST",
+        &format!("/api/repos/{repo_id}/exec"),
+        Some(json!({ "args": ["compact"] })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // A `compact` through the console should trigger a `borg list` + `borg
+    // info` refresh just like a full resync does.
+    wait_for_calls_log_count(&borg_dir, "list", 1).await;
+    wait_for_calls_log_count(&borg_dir, "info", 1).await;
+
+    let deduplicated_size: i64 = timeout(Duration::from_secs(10), async {
+        loop {
+            let size: i64 =
+                sqlx::query_scalar("SELECT deduplicated_size FROM repo_stats WHERE repo_id = $1")
+                    .bind(repo_id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if size == 0 {
+                return size;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("deduplicated_size should be refreshed to reflect the post-compact borg info output");
+    assert_eq!(deduplicated_size, 0);
 }
 
 #[tokio::test]

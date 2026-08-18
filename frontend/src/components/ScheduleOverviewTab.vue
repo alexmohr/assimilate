@@ -85,11 +85,18 @@ const backupPreview = computed(() =>
     .slice(0, BACKUP_PREVIEW_COUNT),
 )
 
-function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' {
+/**
+ * Same mapping AgentBackupRow uses, including the muted fallback: a settled
+ * report that is neither a success, a warning nor a failure is a cancelled
+ * one, and painting that green would contradict the neutral "cancelled"
+ * badge sitting next to it in the same row.
+ */
+function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' {
   const status = normalizeBackupStatus(r.status)
-  if (status === 'failed') return 'danger'
+  if (status === 'success') return 'success'
   if (status === 'warning') return 'warning'
-  return 'success'
+  if (status === 'failed') return 'danger'
+  return 'muted'
 }
 </script>
 

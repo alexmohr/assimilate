@@ -178,4 +178,29 @@ describe('ScheduleOverviewTab', () => {
     await wrapper.find('.section-link').trigger('click')
     expect(wrapper.emitted('openBackups')).toHaveLength(1)
   })
+
+  it('gives a cancelled backup a muted stripe, not a success-green one', () => {
+    // `filterSettledReports` keeps cancelled runs (only pending/started are
+    // dropped), so they do reach this preview - and the badge beside the
+    // stripe renders them in a neutral tone. A green stripe would say the
+    // opposite of the badge in the same row.
+    const wrapper = mount({
+      reports: [
+        {
+          id: 1,
+          agent_id: 10,
+          status: 'cancelled',
+          finished_at: '2026-08-18T02:06:41Z',
+          original_size: 0,
+          duration_secs: 12,
+        },
+      ] as unknown as ReportRow[],
+    })
+
+    const row = wrapper.findAll('.agent-row').find((r) => r.text().includes('cancelled'))
+    expect(row).toBeTruthy()
+    const stripe = row!.find('.agent-row-stripe')
+    expect(stripe.classes()).toContain('agent-row-stripe--muted')
+    expect(stripe.classes()).not.toContain('agent-row-stripe--success')
+  })
 })

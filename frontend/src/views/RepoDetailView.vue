@@ -232,7 +232,7 @@ onMounted(async () => {
       <!-- Overview Tab -->
       <div
         v-if="activeTab === 'overview'"
-        class="tab-content"
+        class="tab-content fade-in"
       >
         <RepoOverviewCard
           :repo="repo"
@@ -273,7 +273,7 @@ onMounted(async () => {
       <!-- Archives Tab -->
       <div
         v-if="activeTab === 'archives'"
-        class="tab-content"
+        class="tab-content fade-in"
       >
         <RepoArchivesTab
           ref="archivesTab"
@@ -289,7 +289,7 @@ onMounted(async () => {
       <!-- Schedules Tab. Self-loads when the tab is first opened. -->
       <div
         v-if="activeTab === 'schedules'"
-        class="tab-content"
+        class="tab-content fade-in"
       >
         <RepoSchedulesTab :repo-id="repoId" />
       </div>
@@ -302,25 +302,7 @@ onMounted(async () => {
   max-width: 1200px;
 }
 
-/* Breadcrumb nav */
 /* States */
 
-.state-error {
-  color: var(--danger);
-}
-
 /* Tab bar */
-
-.tab-content {
-  animation: fadeIn 0.15s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
 </style>

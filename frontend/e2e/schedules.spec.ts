@@ -21,7 +21,7 @@ async function openOverdueScheduleCard(
   await page.goto('/schedules')
   await page.waitForLoadState('networkidle')
 
-  const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+  const card = page.locator('.entity-card', { hasText: 'server-daily' })
   const overdueChip = card.locator('.entity-issue-chip.sev-warning')
   return { card, overdueChip }
 }
@@ -62,12 +62,12 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
     const runningPill = card.locator('.entity-running-pill')
     await expect(runningPill).toBeVisible()
     await expect(runningPill).toContainText('Running')
 
-    const otherCard = page.locator('.schedule-card', { hasText: 'database-hourly' })
+    const otherCard = page.locator('.entity-card', { hasText: 'database-hourly' })
     await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
   })
 
@@ -95,7 +95,7 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
     const failedChip = card.locator('.entity-issue-chip.sev-danger')
     await expect(failedChip).toBeVisible()
 
@@ -117,7 +117,7 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
     const warningChip = card.locator('.entity-issue-chip', { hasText: 'Warning' })
     await expect(warningChip).toBeVisible()
 
@@ -264,9 +264,9 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator(`.schedule-card[data-schedule-id="${scheduleId}"]`)
+    const card = page.locator(`.entity-card[data-schedule-id="${scheduleId}"]`)
     await expect(card.locator('.schedule-toggle-label')).toHaveText('Enabled')
-    await expect(card).not.toHaveClass(/schedule-card-notable/)
+    await expect(card).not.toHaveClass(/entity-card--notable/)
 
     await page.route(`**/api/schedules/${scheduleId}`, async (route) => {
       if (route.request().method() !== 'PUT') return route.fallback()
@@ -289,7 +289,7 @@ test.describe('Schedules management', () => {
     expect(putResponse.request().postDataJSON()).toMatchObject({ enabled: false })
 
     await expect(card.locator('.schedule-toggle-label')).toHaveText('Disabled')
-    await expect(card).toHaveClass(/schedule-card-notable/)
+    await expect(card).toHaveClass(/entity-card--notable/)
     await expect(card.locator('.entity-status-pill')).toHaveText('Disabled')
   })
 
@@ -300,7 +300,7 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules/new')
     await page.waitForLoadState('networkidle')
 
-    const targetCard = page.locator('.form-card', { hasText: 'Target' })
+    const targetCard = page.locator('.panel', { hasText: 'Target' })
 
     await targetCard.locator('.multi-select-trigger').click()
     await targetCard.getByText('Production Web Server').click()

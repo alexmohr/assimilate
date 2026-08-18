@@ -404,15 +404,6 @@ onMounted(() => {
   height: 40px;
 }
 
-.collapsed .brand {
-  padding: 0;
-}
-
-.collapsed .brand-icon {
-  width: 40px;
-  height: 40px;
-}
-
 .collapse-toggle {
   display: flex;
   align-items: center;

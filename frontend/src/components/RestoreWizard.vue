@@ -185,7 +185,7 @@ function cancelDownload(): void {
       <label class="field-label">Select Archive</label>
       <select
         v-model="selectedArchiveName"
-        class="input select-input full-width"
+        class="input"
       >
         <option
           :value="null"
@@ -381,15 +381,6 @@ function cancelDownload(): void {
   margin-top: 0.4rem;
 }
 
-.select-input {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.55rem 0.75rem;
-  font-size: var(--fs-base);
-}
-
 .full-width {
   width: 100%;
 }
@@ -407,8 +398,7 @@ function cancelDownload(): void {
 }
 
 .textarea-input:focus,
-.text-input:focus,
-.select-input:focus {
+.text-input:focus {
   outline: none;
   border-color: var(--accent);
 }

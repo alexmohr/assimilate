@@ -8,8 +8,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
  * An info card that flips between a read-only view and an inline edit form.
  *
  * The read/edit/error/Cancel-Save shell was repeated verbatim for every
- * editable settings card; only the two bodies ever differed. See
- * docs/contributing/ui-design-audit.md (F-24).
+ * editable settings card; only the two bodies ever differed.
  */
 defineProps<{
   title: string

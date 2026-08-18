@@ -57,4 +57,19 @@ const days = defineModel<T>('days', { required: true })
   background: var(--bg-base);
   color: var(--text-primary);
 }
+
+/* The dashboard carried this on its own copy of the controls before they were
+   extracted here; without it the select and the segmented buttons stay on one
+   row and overflow the panel on a phone. */
+@media (max-width: 640px) {
+  .chart-range-controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .chart-range-select {
+    flex: 1;
+    min-width: 0;
+  }
+}
 </style>

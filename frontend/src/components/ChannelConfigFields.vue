@@ -11,8 +11,7 @@ import type { ChannelType, EmailConfig, WebhookConfig } from '../types/notificat
 /**
  * The transport-specific fields of a notification channel. The add wizard and
  * the edit dialog carried two near-identical copies of this markup, differing
- * only in whether the labels are marked required. See
- * docs/contributing/ui-design-audit.md (F-24).
+ * only in whether the labels are marked required.
  */
 defineProps<{
   channelType: ChannelType
@@ -182,36 +181,10 @@ defineExpose({ validate, reset, result })
 </template>
 
 <style scoped>
-.field-row {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.field-row .field {
-  flex: 1;
-  margin-bottom: 0;
-}
-
-.field-narrow {
-  max-width: 120px;
-  flex: 0 0 120px !important;
-}
-
 .smtp-validation-result {
   margin-left: 0.5rem;
   padding: 0.25rem 0.5rem;
   border-radius: var(--radius-sm);
   font-size: var(--fs-sm);
-}
-
-.test-success {
-  background: color-mix(in srgb, var(--success) 15%, transparent);
-  color: var(--success);
-}
-
-.test-failure {
-  background: var(--danger-subtle);
-  color: var(--danger);
 }
 </style>

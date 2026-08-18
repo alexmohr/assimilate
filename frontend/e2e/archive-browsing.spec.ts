@@ -56,7 +56,7 @@ test.describe('Archive browsing & diff journey', () => {
     await page.waitForTimeout(1000)
 
     await expect(page.locator('.browser-title').filter({ hasText: /Files/ })).toBeVisible()
-    await expect(page.locator('.archive-breadcrumb')).toBeVisible()
+    await expect(page.locator('.path-crumbs')).toBeVisible()
 
     const browserPanel = page.locator('.browser-panel').last()
     await expect(browserPanel).toBeVisible()
@@ -96,7 +96,7 @@ test.describe('Archive browsing & diff journey', () => {
       .click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.archive-breadcrumb').getByText('~')).toBeVisible()
+    await expect(page.locator('.path-crumbs').getByText('~')).toBeVisible()
   })
 
   test('clicking a directory in file browser navigates into it', async ({ page }) => {
@@ -118,7 +118,62 @@ test.describe('Archive browsing & diff journey', () => {
     await tmpEntry.click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.archive-breadcrumb')).toContainText('tmp')
+    await expect(page.locator('.path-crumbs')).toContainText('tmp')
+  })
+
+  // The standalone /archives page reaches the same browser through
+  // ArchiveFileBrowser; it used to carry its own copy of the browser's markup
+  // and state machine, with no coverage of either.
+  test('standalone archives page browses the selected archive', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/archives')
+    await page.waitForURL('/archives')
+
+    const repoSelect = page.locator('.repo-selector select')
+    await expect(repoSelect).toBeVisible({ timeout: 15_000 })
+
+    await repoSelect.selectOption({ index: 1 })
+
+    // The two-pane layout mounts with the repository, so the placeholder is
+    // the state between picking a repository and picking an archive.
+    const browserPanel = page.locator('.browser-panel')
+    await expect(browserPanel).toContainText('Select an archive to browse its contents.')
+
+    const archiveRow = page.locator('.archives-panel .td-mono').first()
+    await expect(archiveRow).toBeVisible({ timeout: 15_000 })
+    await archiveRow.click()
+
+    // Indexing an archive's contents on first access can take a while.
+    await expect(browserPanel.locator('.browser-title')).toContainText('Files', {
+      timeout: 30_000,
+    })
+    await expect(browserPanel.locator('.path-crumbs').getByText('~')).toBeVisible({
+      timeout: 30_000,
+    })
+    await expect(browserPanel.getByText('Name')).toBeVisible({ timeout: 30_000 })
+  })
+
+  test('standalone archives page navigates into a directory', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/archives')
+    await page.waitForURL('/archives')
+
+    const repoSelect = page.locator('.repo-selector select')
+    await expect(repoSelect).toBeVisible({ timeout: 15_000 })
+    await repoSelect.selectOption({ index: 1 })
+
+    const archiveRow = page.locator('.archives-panel .td-mono').first()
+    await expect(archiveRow).toBeVisible({ timeout: 15_000 })
+    await archiveRow.click()
+
+    // The demo backs up a mktemp -d directory, so the archive root's sole
+    // entry is "tmp".
+    const browserPanel = page.locator('.browser-panel')
+    const tmpEntry = browserPanel.getByText('tmp', { exact: true })
+    await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
+    await tmpEntry.click()
+
+    await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp')
   })
 
   test('archive tags API endpoint is accessible and returns structured data', async ({ page }) => {

@@ -10,9 +10,8 @@ import { SRC, vueFiles } from './test-utils/vueFiles'
  * Every dialog in the app goes through `BaseModal`, which supplies the focus
  * trap, Escape handling, scroll lock, focus restore and dialog semantics.
  *
- * The frontend previously carried 43 hand-rolled `.overlay > .dialog` blocks
- * with none of that. See `docs/contributing/ui-design-audit.md` (F-12, F-21,
- * F-22).
+ * A hand-rolled `.overlay > .dialog` gets none of that, and the omission is
+ * invisible until someone reaches the dialog by keyboard.
  */
 
 const BASE_MODAL = join(SRC, 'components', 'BaseModal.vue')

@@ -4,86 +4,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-
-const router = useRouter()
-
-function goHome(): void {
-  router.push('/')
-}
+import ErrorPage from '../components/ErrorPage.vue'
 </script>
 
 <template>
-  <div class="error-page">
-    <div class="error-card">
-      <div class="error-code">404</div>
-      <h1 class="error-title">Page not found</h1>
-      <p class="error-message">The page you're looking for doesn't exist or has been moved.</p>
-      <button
-        class="error-btn"
-        @click="goHome"
-      >
-        Back to Dashboard
-      </button>
-    </div>
-  </div>
+  <ErrorPage
+    code="404"
+    tone="accent"
+    title="Page not found"
+    message="The page you're looking for doesn't exist or has been moved."
+  />
 </template>
-
-<style scoped>
-.error-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  background: var(--bg-base);
-  padding: 1rem;
-}
-
-.error-card {
-  text-align: center;
-  max-width: 420px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 3rem 2rem;
-  box-shadow: var(--shadow-lg);
-}
-
-.error-code {
-  font-size: var(--fs-3xl);
-  font-weight: 800;
-  color: var(--accent);
-  line-height: 1;
-  margin-bottom: 0.5rem;
-}
-
-.error-title {
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 0.5rem;
-}
-
-.error-message {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-  margin: 0 0 1.5rem;
-  line-height: 1.5;
-}
-
-.error-btn {
-  padding: 0.625rem 1.25rem;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-base);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--duration-base);
-}
-
-.error-btn:hover {
-  background: var(--accent-hover);
-}
-</style>

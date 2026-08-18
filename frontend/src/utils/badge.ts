@@ -5,8 +5,7 @@ import { normalizeBackupStatus } from './backupStatus'
 
 /**
  * The tones the shared `.badge` component supports. Defined in
- * `src/style.css`; see `docs/contributing/ui-design-audit.md` (F-08) for why
- * there is exactly one badge.
+ * `src/style.css`; there is exactly one badge.
  */
 export type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'neutral'
 

@@ -218,7 +218,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title">Backup Calendar</h2>
+      <h2 class="panel-title panel-title--truncate">Backup Calendar</h2>
       <select
         v-model="selectedRepoId"
         class="input cal-select"
@@ -405,13 +405,6 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 
 .panel-header {
   min-width: 0;
-}
-
-.panel-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cal-select {

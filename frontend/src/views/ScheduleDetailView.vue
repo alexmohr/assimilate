@@ -280,17 +280,6 @@ function populateForm(s: ScheduleRow): void {
   onFailure.value = s.on_failure
 }
 
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity Check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
-}
-
 async function loadData(): Promise<void> {
   await run(async () => {
     if (isCreate.value) {
@@ -643,6 +632,16 @@ watch(activeTab, (tab) => {
     loadReports().catch(() => undefined)
   }
 })
+function scheduleTypeLabel(t: ScheduleType): string {
+  switch (t) {
+    case 'backup':
+      return 'Backup'
+    case 'check':
+      return 'Integrity Check'
+    case 'verify':
+      return 'Verify (extract dry-run)'
+  }
+}
 </script>
 
 <template>
@@ -733,9 +732,9 @@ watch(activeTab, (tab) => {
         v-if="activeTab === 'settings'"
         class="tab-content"
       >
-        <div class="form-grid">
+        <div class="form-stack">
           <!-- Schedule Name -->
-          <div class="form-card">
+          <div class="panel">
             <h3 class="info-title">General</h3>
             <div class="field">
               <label class="field-label">Name</label>
@@ -752,7 +751,7 @@ watch(activeTab, (tab) => {
           <!-- Create-only: target selection -->
           <div
             v-if="isCreate"
-            class="form-card"
+            class="panel"
           >
             <h3 class="info-title">Target</h3>
 
@@ -974,7 +973,7 @@ watch(activeTab, (tab) => {
           <!-- Edit-only: target settings card -->
           <div
             v-if="!isCreate"
-            class="form-card"
+            class="panel"
           >
             <h3 class="info-title">Target Settings</h3>
 
@@ -1081,7 +1080,7 @@ watch(activeTab, (tab) => {
             </div>
           </div>
 
-          <div class="form-card">
+          <div class="panel">
             <h3 class="info-title">Timing</h3>
             <div class="field">
               <label class="field-label">Schedule</label>
@@ -1094,7 +1093,7 @@ watch(activeTab, (tab) => {
           </div>
 
           <template v-if="isBackup">
-            <div class="form-card">
+            <div class="panel">
               <h3 class="info-title">Backup Paths</h3>
               <div
                 v-if="selectedAgentIds.length > 1"
@@ -1146,7 +1145,7 @@ watch(activeTab, (tab) => {
               </div>
             </div>
 
-            <div class="form-card">
+            <div class="panel">
               <h3 class="info-title">Retention</h3>
               <div class="retention-grid">
                 <div class="field">
@@ -1348,30 +1347,7 @@ watch(activeTab, (tab) => {
   max-width: 900px;
 }
 
-.error-banner {
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  color: var(--danger);
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
-  margin-bottom: 1rem;
-  font-size: var(--fs-base);
-}
-
-.form-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
 .info-card,
-.form-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
 .info-title {
   margin: 0 0 1rem;
 }
@@ -1469,30 +1445,6 @@ watch(activeTab, (tab) => {
   border-color: var(--accent);
 }
 
-.area-input {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.area-input-sm {
-  min-height: 56px;
-}
-
-.per-host-paths {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.per-host-entry {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
 .retention-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1512,12 +1464,6 @@ watch(activeTab, (tab) => {
 .error-inline {
   font-size: var(--fs-sm);
   color: var(--danger);
-}
-
-.save-success {
-  font-size: var(--fs-sm);
-  color: var(--success);
-  font-weight: 600;
 }
 
 /* Multi-select */
@@ -1687,9 +1633,4 @@ watch(activeTab, (tab) => {
 /* Dialog */
 
 /* Backups tab layout */
-
-.data-table tr.selected td {
-  background: var(--accent-subtle);
-  color: var(--text-primary);
-}
 </style>

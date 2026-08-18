@@ -135,19 +135,6 @@ async function confirmMerge(): Promise<void> {
 </template>
 
 <style scoped>
-.toggle-row {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: center;
-  margin-top: 0.5rem;
-}
-
-.toggle-row-label {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-}
-
 .checkbox {
   width: 16px;
   height: 16px;

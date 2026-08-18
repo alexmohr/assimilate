@@ -172,6 +172,6 @@ test('repos page lists seeded repositories', async ({ page }) => {
 test('schedules page lists seeded schedules', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/schedules')
-  // Demo seeds at least one schedule (cards rendered with .schedule-card class)
-  await expect(page.locator('.schedule-card').first()).toBeVisible({ timeout: 10_000 })
+  // Demo seeds at least one schedule (cards rendered with .entity-card class)
+  await expect(page.locator('.entity-card').first()).toBeVisible({ timeout: 10_000 })
 })

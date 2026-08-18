@@ -42,7 +42,7 @@ const expanded = ref(false)
     </button>
     <pre
       v-if="expanded"
-      class="error-pre"
+      :class="props.tone === 'warning' ? 'warning-pre' : 'error-pre'"
       >{{ message }}</pre
     >
   </div>
@@ -78,26 +78,6 @@ const expanded = ref(false)
 }
 
 .card-error.tone-warning .error-toggle {
-  color: var(--warning);
-}
-
-.error-pre {
-  background: var(--bg-input);
-  border: 1px solid var(--danger-subtle);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.75rem;
-  font-size: var(--fs-xs);
-  font-family: var(--mono);
-  color: var(--danger);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 150px;
-  overflow-y: auto;
-  margin: 0;
-}
-
-.card-error.tone-warning .error-pre {
-  border-color: var(--warning-subtle);
   color: var(--warning);
 }
 </style>

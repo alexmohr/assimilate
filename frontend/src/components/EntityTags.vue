@@ -13,7 +13,7 @@ import type { TagRow } from '../types/tag'
 /**
  * Tag editor for a repository or an agent. Both had a verbatim copy of this
  * markup and these four handlers, differing only in the endpoint and the tag
- * scope. See docs/contributing/ui-design-audit.md (F-26).
+ * scope.
  */
 const props = defineProps<{
   /** Which tag namespace to list and create in. */
@@ -187,20 +187,9 @@ defineExpose({ reload: load })
 </template>
 
 <style scoped>
-.muted {
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-}
-
 .color-input {
   width: 2.5rem;
   padding: 0.1rem;
   cursor: pointer;
-}
-
-.input-sm {
-  padding: 0.3rem 0.5rem;
-  font-size: var(--fs-sm);
-  width: auto;
 }
 </style>

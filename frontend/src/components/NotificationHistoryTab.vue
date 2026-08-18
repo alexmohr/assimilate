@@ -16,7 +16,7 @@ import type {
 
 /**
  * The delivery log: one row per attempt, expanding to show the payload and
- * any error. See docs/contributing/ui-design-audit.md (F-24).
+ * any error.
  */
 const props = defineProps<{
   deliveries: NotificationDelivery[]
@@ -56,7 +56,7 @@ function formatPayload(payload: unknown): string {
   />
   <div
     v-else
-    class="table-wrapper"
+    class="table-wrap table-wrap--framed"
   >
     <table class="data-table data-table-expandable">
       <thead>
@@ -97,7 +97,7 @@ function formatPayload(payload: unknown): string {
             </td>
             <td
               data-label="Error"
-              class="mono cell-error"
+              class="mono cell-truncate"
             >
               {{ d.error_message ?? '\u2014' }}
             </td>
@@ -114,7 +114,7 @@ function formatPayload(payload: unknown): string {
                   class="detail-block"
                 >
                   <span class="detail-block-label">Error</span>
-                  <pre class="detail-pre error-pre">{{ d.error_message }}</pre>
+                  <pre class="error-pre">{{ d.error_message }}</pre>
                 </div>
                 <div class="detail-block">
                   <span class="detail-block-label">Payload</span>
@@ -130,12 +130,6 @@ function formatPayload(payload: unknown): string {
 </template>
 
 <style scoped>
-.table-wrapper {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
 .col-expand {
   width: 2rem;
   padding-right: 0 !important;
@@ -150,10 +144,6 @@ function formatPayload(payload: unknown): string {
 
 .delivery-row:hover td {
   background: var(--bg-hover);
-}
-
-.data-table tbody tr:last-child td {
-  border-bottom: none;
 }
 
 .expand-chevron {
@@ -191,21 +181,6 @@ function formatPayload(payload: unknown): string {
   color: var(--text-muted);
 }
 
-.detail-pre {
-  margin: 0;
-  padding: 0.6rem 0.75rem;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
 .detail-pre.error-pre {
   color: var(--danger);
 }
@@ -215,13 +190,6 @@ function formatPayload(payload: unknown): string {
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-sm);
   font-weight: 500;
-}
-
-.cell-error {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .status-sent {
@@ -243,7 +211,7 @@ function formatPayload(payload: unknown): string {
    row instead of scrolling horizontally, so long values (errors, payloads)
    wrap in place rather than forcing the whole table wider than the viewport. */
 @media (max-width: 640px) {
-  .table-wrapper {
+  .table-wrap {
     overflow-x: visible;
     border: none;
   }
@@ -297,7 +265,7 @@ function formatPayload(payload: unknown): string {
     color: var(--text-muted);
   }
 
-  .data-table-expandable .cell-error {
+  .data-table-expandable .cell-truncate {
     max-width: none;
     overflow: visible;
     text-overflow: clip;

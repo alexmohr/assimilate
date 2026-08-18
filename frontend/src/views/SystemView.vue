@@ -936,11 +936,6 @@ async function resetSystem(): Promise<void> {
   gap: 0.25rem;
 }
 
-.setting-input-group .form-input {
-  width: 100%;
-  max-width: 300px;
-}
-
 .retention-input {
   max-width: 120px !important;
 }
@@ -950,12 +945,6 @@ async function resetSystem(): Promise<void> {
   align-items: center;
   gap: 0.75rem;
   padding-top: 0.5rem;
-}
-
-.save-success {
-  font-size: var(--fs-base);
-  color: var(--success);
-  font-weight: 500;
 }
 
 .database-total {
@@ -977,10 +966,6 @@ async function resetSystem(): Promise<void> {
 .data-table th:first-child,
 .data-table td:first-child {
   text-align: left;
-}
-
-.data-table tbody tr:last-child td {
-  border-bottom: 0;
 }
 
 .storage-name {

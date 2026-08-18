@@ -237,15 +237,29 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const cards = wrapper.findAll('.schedule-card')
+    const cards = wrapper.findAll('.entity-card')
     const enabledCard = cards.find((c) => c.text().includes('server-daily'))
     const disabledCard = cards.find((c) => c.text().includes('media-weekly'))
 
     expect(enabledCard!.find('.entity-status-pill').exists()).toBe(false)
-    expect(enabledCard!.classes()).not.toContain('schedule-card-notable')
+    expect(enabledCard!.classes()).not.toContain('entity-card--notable')
 
     expect(disabledCard!.find('.entity-status-pill').text()).toBe('Disabled')
-    expect(disabledCard!.classes()).toContain('schedule-card-notable')
+    expect(disabledCard!.classes()).toContain('entity-card--notable')
+  })
+
+  it('opens a schedule when its card is clicked', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
+    await card!.trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe('/schedules/1')
   })
 
   it('renders schedule type badges', async () => {
@@ -271,7 +285,7 @@ describe('SchedulesView', () => {
     await flushPromises()
 
     const healthyCard = wrapper
-      .findAll('.schedule-card')
+      .findAll('.entity-card')
       .find((c) => c.text().includes('server-daily'))
     expect(healthyCard!.find('.entity-badge-row').exists()).toBe(false)
   })
@@ -289,7 +303,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
     expect(card!.find('.entity-issue-chip.sev-warning').text()).toBe('Overdue')
     expect(card!.find('.entity-issue-chip.sev-danger').text()).toBe('Failed')
   })
@@ -299,7 +313,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
     expect(card!.find('.entity-issue-chip.sev-danger').attributes('title')).toBe(
       'Connection refused',
     )
@@ -310,7 +324,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
     await card!.find('.entity-issue-chip.sev-danger').trigger('click')
     await flushPromises()
 
@@ -332,7 +346,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('database-hourly'))
     await card!.find('.entity-issue-chip.sev-warning').trigger('click')
     await flushPromises()
 
@@ -615,7 +629,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('server-daily'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
     expect(card!.find('.schedule-toggle-label').text()).toBe('Enabled')
 
     await card!.find('button[role="switch"]').trigger('click')
@@ -634,7 +648,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('media-weekly'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('media-weekly'))
     expect(card!.find('.schedule-toggle-label').text()).toBe('Disabled')
 
     await card!.find('button[role="switch"]').trigger('click')
@@ -657,7 +671,7 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('server-daily'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
     await card!.find('button[role="switch"]').trigger('click')
     await flushPromises()
 

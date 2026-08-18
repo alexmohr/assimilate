@@ -296,7 +296,7 @@ onMounted(() => {
 
     <div
       v-else
-      class="table-wrapper"
+      class="table-wrap table-wrap--framed"
     >
       <table class="data-table">
         <thead>
@@ -607,20 +607,6 @@ onMounted(() => {
   max-width: 1100px;
 }
 
-.state-error {
-  color: var(--danger);
-}
-
-.table-wrapper {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.data-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
 .data-table tbody tr:hover td {
   background: var(--bg-hover);
 }
@@ -651,16 +637,6 @@ onMounted(() => {
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
 .status-text {
   font-size: var(--fs-sm);
   color: var(--text-secondary);
@@ -674,51 +650,9 @@ onMounted(() => {
   text-decoration: underline;
 }
 
-.error-pre {
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  color: var(--danger);
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem 1rem;
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .row-actions {
   display: flex;
   gap: 0.25rem;
-}
-
-.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.field-row {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.field-row .field {
-  flex: 1;
-  margin-bottom: 0;
-}
-
-.field-narrow {
-  max-width: 120px;
-  flex: 0 0 120px !important;
 }
 
 .field-checkbox {

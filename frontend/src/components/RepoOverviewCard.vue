@@ -15,6 +15,7 @@ import { cronToHuman } from '../utils/cron'
 import { repoOpLabel } from '../utils/repoOp'
 import BaseModal from './BaseModal.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
+import EditFormActions from './EditFormActions.vue'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 
 interface EditForm {
@@ -369,17 +370,17 @@ async function resetImport(): Promise<void> {
           </span>
           <div
             v-if="repo.importing && repo.import_total > 0"
-            class="import-progress"
+            class="progress-row"
           >
-            <div class="import-progress-track">
+            <div class="progress-track">
               <div
-                class="import-progress-bar"
+                class="progress-bar"
                 :style="{
                   width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%`,
                 }"
               ></div>
             </div>
-            <span class="import-progress-label">
+            <span class="progress-label">
               {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
             </span>
           </div>
@@ -524,27 +525,13 @@ async function resetImport(): Promise<void> {
             <span class="field-hint">Cron expression for automatic disk sync</span>
           </div>
         </div>
-        <div
-          v-if="editError"
-          class="form-error"
-        >
-          {{ editError }}
-        </div>
-        <div class="edit-actions">
-          <button
-            class="btn btn-ghost"
-            @click="cancelEdit"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-primary"
-            :disabled="editLoading"
-            @click="saveEdit"
-          >
-            {{ editLoading ? 'Saving...' : 'Save Changes' }}
-          </button>
-        </div>
+        <EditFormActions
+          :saving="editLoading"
+          :error="editError"
+          save-label="Save Changes"
+          @cancel="cancelEdit"
+          @save="saveEdit"
+        />
       </div>
     </template>
   </div>
@@ -627,63 +614,6 @@ async function resetImport(): Promise<void> {
 </template>
 
 <style scoped>
-.info-card-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 1rem;
-  margin-bottom: 1.25rem;
-}
-
-.info-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.edit-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border);
-}
-
-.import-progress {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.4rem;
-}
-
-.import-progress-track {
-  flex: 1;
-  height: 4px;
-  background: var(--border);
-  border-radius: var(--radius-pill);
-  overflow: hidden;
-}
-
-.import-progress-bar {
-  height: 100%;
-  background: var(--accent);
-  border-radius: var(--radius-pill);
-  transition: width var(--duration-value) ease;
-}
-
-.import-progress-label {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 .import-status-msg {
   font-size: var(--fs-sm);
   color: var(--text-muted);
@@ -691,64 +621,9 @@ async function resetImport(): Promise<void> {
   word-break: break-word;
 }
 
-.passphrase-warning {
-  color: var(--warning);
-  font-size: var(--fs-base);
-  font-weight: 500;
-  margin-bottom: 0.75rem;
-}
-
-.passphrase-box {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem 1rem;
-}
-
-.passphrase-text {
-  flex: 1;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  color: var(--text-primary);
-  word-break: break-all;
-  background: transparent;
-  padding: 0;
-}
-
 .current-op-running {
   color: var(--warning);
   font-weight: 500;
-}
-
-.field-full {
-  grid-column: 1 / -1;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 1rem;
-}
-
-.field-narrow {
-  max-width: 120px;
-}
-
-.toggle-row {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 0.5rem;
-}
-
-.toggle-row-label {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
 }
 
 .ssh-host-key {
@@ -764,11 +639,5 @@ async function resetImport(): Promise<void> {
   font-size: var(--fs-sm);
   line-height: 1.5;
   word-break: break-all;
-}
-
-.break-lock-warning {
-  color: var(--danger);
-  font-size: var(--fs-base);
-  line-height: 1.5;
 }
 </style>

@@ -84,7 +84,7 @@ async function interceptAgentPage(
 }
 
 async function agentCard(page: Page): ReturnType<Page['locator']> {
-  const card = page.locator('.card-hostname').filter({ hasText: 'fixture-agent' })
+  const card = page.locator('.card-name').filter({ hasText: 'fixture-agent' })
   await expect(card).toBeVisible({ timeout: 10_000 })
   return card
 }

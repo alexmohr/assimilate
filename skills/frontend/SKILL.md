@@ -23,7 +23,7 @@ Use when:
 * **Build verification is MANDATORY.** After ANY change to frontend code, run `npm run build` in `frontend/` and confirm it exits successfully before considering the task complete. A broken production build is never acceptable.
 * **Never submit template expressions that contain syntax errors.** Common mistakes: unbalanced quotes in attribute bindings, invalid JavaScript in `v-if`/`v-for`/`:prop` expressions, missing commas in object literals inside templates. If unsure, run `npm run build` to verify.
 * Write or update unit/component tests for any non-trivial frontend logic change.
-* **Use the design tokens.** Never write a literal `font-size`, `border-radius` or transition duration — take it from `frontend/src/style.css`. `frontend/src/design-tokens.test.ts` enforces this and will fail CI on a literal or on a `var()` that references an undefined token. See the "Design tokens" section below.
+* **Use the design tokens and the shared components.** Never write a literal `font-size`, `border-radius` or transition duration, and never re-declare a class `frontend/src/style.css` already owns — see `skills/ui-design/SKILL.md`.
 
 ## Workflow
 
@@ -43,34 +43,13 @@ For end-to-end tests (Playwright, `frontend/e2e/`), see `skills/testing/SKILL.md
 * [ ] No `.npm-audit-allowlist.json` entries added without human approval
 * [ ] Non-trivial logic changes have unit/component test coverage
 
-## Design tokens
+## Design and reuse
 
-All visual constants live in `frontend/src/style.css` and are enforced by `frontend/src/design-tokens.test.ts`. The audit that produced them is `docs/contributing/ui-design-audit.md`.
-
-* **Type scale** — `--fs-2xs` `--fs-xs` `--fs-sm` `--fs-base` `--fs-md` `--fs-lg` `--fs-xl`, plus `--fs-2xl` / `--fs-3xl` for decorative numerals only (error codes, score rings). Never a literal `rem` value. The `--fs-*` name is deliberate: Tailwind's theme already owns `--text-*` to drive its `text-*` utilities, so reusing those names would make one token resolve to two different values depending on how it was reached.
-* **Radius** — `--radius-sm`, `--radius`, `--radius-pill`. Literal `50%` (a circle) and `0` (a deliberate square edge) are the only exceptions.
-* **Duration** — `--duration-fast` (0.1s), `--duration-base` (0.15s, the default for hover/state feedback), `--duration-slow` (0.3s), `--duration-value` (0.4s, for progress fills and chart sweeps). Keyframe `animation` timings are exempt; `transition` is not.
-* **Colour** — every colour comes from a token defined in both `:root` and `.dark`. A `var(--x, fallback)` with a hardcoded fallback is a bug: if `--x` exists the fallback is dead, and if it does not the value silently stops following the theme.
-* **Focus** — a single `:focus-visible` rule in `@layer base` covers every control. It is wrapped in `:where()` so it carries zero specificity. Do not add per-component focus styling, and do not use `outline: none` without `:focus-visible` handling (the global rule survives `outline: none` on `:focus`, which is why the pattern is safe).
-* **Motion** — `@media (prefers-reduced-motion: reduce)` in `@layer base` neutralises every animation and transition. Do not add motion that bypasses it.
-
-## Shared components
-
-These live in `frontend/src/style.css` or `frontend/src/components/`. Never re-declare one in a scoped `<style>` block — `frontend/src/shared-components.test.ts` fails the build if a scoped rule sets a property the shared rule already sets. Adding a *new* property (a widget needing `min-width: 0` on its panel) is fine.
-
-* **Dialogs** — `BaseModal`. It supplies `role="dialog"`, `aria-modal`, Escape, the focus trap, the scroll lock and focus restore. Use its `form` prop when a submit button in the footer must submit fields in the body. For a yes/no destructive prompt use `ConfirmDeleteDialog`; for a form use `ModalFormActions` in the `#footer` slot. Never hand-roll an overlay.
-* **Panels** — `.panel`, plus `.panel--sectioned` for the ruled-header/flush-body variant. Headings are `.panel-title` (sentence case, primary ink).
-* **Badges** — `.badge` with one of `.badge--success|warning|danger|info|accent|neutral`, chosen through `src/utils/badge.ts`. Add `.badge-dot` for live state (Online, Running); omit it for classification (Manual, Admin). `.badge--pulse` marks work in flight.
-* **Tables** — `.data-table`, wrapped in `.table-wrap`. `.data-table--compact` only for wide numeric grids.
-* **Tabs and segmented controls** — `BaseTabs` and `BaseSegmented`. Both carry the ARIA roles and keyboard behaviour; a hand-rolled row of buttons does not.
-* **Empty states** — `EmptyState`, with an action wherever one would resolve the emptiness. `.state-msg` is for errors and for `.state-msg--inline` inside dashboard widgets, not for "nothing here yet".
-* **Forms** — `.field` / `.field-label` / `.input`, and `.form-error` / `.form-success` for messages. Every text-shaped control (`input`, `select`, `textarea`) carries `.input`; checkboxes and radios do not.
-* **Toggles** — `ToggleSwitch` for a setting that applies on change. A native checkbox only inside a multi-select list, or in a form with an explicit Save.
-* **Icons** — `@lucide/vue` only, never an HTML entity or a literal glyph. Sizes are 12 (inline with small text), 14 (inline and in controls), 16 (headings), 20 (section headers), 40 (empty states).
-* **Busy labels** — three periods, `'Saving...'`, not an ellipsis character.
-* **Info cards** — `.info-card` with `.info-title`, `.info-grid` (`dt`/`dd` rows) and `.info-actions` for the ruled button footer. This is the detail views' settings surface; `.panel` is for list containers. A card that flips between a read-only view and an inline edit form is `EditableInfoCard`, which owns the Edit/Cancel/Save shell and leaves the parent the two bodies and the save call.
-* **Inline fields** — `.field field-inline` puts a control beside its label instead of under it (used for toggles); `.field-label-row` shares a label's row with a secondary control.
-* **Per-agent overrides** — `PerAgentFields`, for a schedule form section that can be configured separately per selected agent.
+The design tokens, the shared classes in `frontend/src/style.css` and the
+component catalogue live in `skills/ui-design/SKILL.md`. Read it before writing
+CSS or building anything a user sees — most of what you need already exists,
+and `design-tokens.test.ts`, `shared-components.test.ts` and
+`ui-conventions.test.ts` fail CI when it is rebuilt instead of reused.
 
 ## `local/no-string-literal-control-flow` ESLint rule
 

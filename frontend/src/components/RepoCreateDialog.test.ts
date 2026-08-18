@@ -397,7 +397,7 @@ describe('RepoCreateDialog', () => {
       await openBrowser('/backup/repos')
 
       vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/backup') as never)
-      const crumbs = [...document.body.querySelectorAll<HTMLElement>('.breadcrumb')]
+      const crumbs = [...document.body.querySelectorAll<HTMLElement>('.crumb')]
       crumbs[1]?.click()
       await flushPromises()
 

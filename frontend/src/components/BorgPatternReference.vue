@@ -5,46 +5,94 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 /**
- * Static cheat sheet for borg's exclude-pattern prefixes, shown inline next to
- * a pattern textarea. See docs/contributing/ui-design-audit.md (F-24).
+ * Static cheat sheet for borg's exclude-pattern prefixes. `inline` sits under a
+ * pattern textarea, `sidebar` is the sticky column on the global excludes page.
+ * Both used to carry their own copy of the markup, and the two copies had
+ * already drifted apart in which examples they listed.
  */
+
+interface PatternEntry {
+  pattern: string
+  meaning: string
+}
+
+interface PatternSection {
+  title: string
+  /** The prefix the section documents, rendered as code beside the title. */
+  prefix?: string
+  entries: PatternEntry[]
+}
+
+withDefaults(defineProps<{ variant?: 'inline' | 'sidebar' }>(), { variant: 'inline' })
+
+const SECTIONS: readonly PatternSection[] = [
+  {
+    title: 'Shell Patterns (default)',
+    entries: [
+      { pattern: '*.cache', meaning: 'any file ending in .cache' },
+      { pattern: 'home/*/Downloads', meaning: 'Downloads in any home dir' },
+      { pattern: '*.{jpg,png}', meaning: 'multiple extensions' },
+    ],
+  },
+  {
+    title: 'Path Prefix',
+    prefix: 'pp:',
+    entries: [
+      { pattern: 'pp:__pycache__', meaning: 'any path component named __pycache__' },
+      { pattern: 'pp:/proc', meaning: 'exact path prefix /proc' },
+    ],
+  },
+  {
+    title: 'Regex',
+    prefix: 're:',
+    entries: [
+      { pattern: 're:\\.git/objects/', meaning: 'regex match anywhere in path' },
+      { pattern: 're:/tmp/[^/]+\\.sock$', meaning: 'socket files in /tmp' },
+    ],
+  },
+  {
+    title: 'Fnmatch',
+    prefix: 'fm:',
+    entries: [{ pattern: 'fm:*.log', meaning: 'fnmatch pattern (case-sensitive)' }],
+  },
+]
 </script>
 
 <template>
-  <div class="ref-panel">
+  <div
+    class="ref-panel"
+    :class="`ref-panel--${variant}`"
+  >
     <div class="ref-title">Borg Pattern Syntax</div>
-    <div class="ref-section">
-      <div class="ref-section-title">Shell Patterns (default)</div>
-      <div class="ref-entry"><code>*.cache</code> <span>any file ending in .cache</span></div>
-      <div class="ref-entry">
-        <code>home/*/Downloads</code> <span>Downloads in any home dir</span>
+    <div
+      v-for="section in SECTIONS"
+      :key="section.title"
+      class="ref-section"
+    >
+      <div class="group-label ref-section-title">
+        {{ section.title }}
+        <code v-if="section.prefix">{{ section.prefix }}</code>
+      </div>
+      <div
+        v-for="entry in section.entries"
+        :key="entry.pattern"
+        class="ref-entry"
+      >
+        <code>{{ entry.pattern }}</code>
+        <span>{{ entry.meaning }}</span>
       </div>
     </div>
-    <div class="ref-section">
-      <div class="ref-section-title">Path Prefix <code>pp:</code></div>
-      <div class="ref-entry">
-        <code>pp:__pycache__</code>
-        <span>any path component named __pycache__</span>
-      </div>
-    </div>
-    <div class="ref-section">
-      <div class="ref-section-title">Regex <code>re:</code></div>
-      <div class="ref-entry">
-        <code>re:\.git/objects/</code> <span>regex match anywhere in path</span>
-      </div>
-    </div>
-    <div class="ref-section">
-      <div class="ref-section-title">Fnmatch <code>fm:</code></div>
-      <div class="ref-entry">
-        <code>fm:*.log</code> <span>fnmatch pattern (case-sensitive)</span>
-      </div>
+    <div
+      v-if="$slots.note"
+      class="ref-note"
+    >
+      <slot name="note" />
     </div>
   </div>
 </template>
 
 <style scoped>
 .ref-panel {
-  margin-top: 0.5rem;
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -52,6 +100,22 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.ref-panel--inline {
+  margin-top: 0.5rem;
+}
+
+/* The excludes page shows it as a sticky column beside the editor. */
+.ref-panel--sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  gap: 1rem;
+  position: sticky;
+  top: 1rem;
 }
 
 .ref-title {
@@ -64,18 +128,20 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
   border-bottom: 1px solid var(--border);
 }
 
+.ref-panel--sidebar .ref-title {
+  font-size: var(--fs-base);
+  padding-bottom: 0.75rem;
+}
+
 .ref-section {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
 }
 
-.ref-section-title {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.ref-panel--sidebar .ref-section-title {
+  font-size: var(--fs-xs);
+  margin-bottom: 0.2rem;
 }
 
 .ref-section-title code {
@@ -93,6 +159,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
   gap: 0.5rem;
 }
 
+/* The sidebar is too narrow for a code/meaning pair on one line. */
+.ref-panel--sidebar .ref-entry {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.1rem;
+}
+
 .ref-entry code {
   font-family: var(--mono);
   font-size: var(--fs-xs);
@@ -102,8 +175,28 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
   border-radius: var(--radius-sm);
 }
 
+.ref-panel--sidebar .ref-entry code {
+  font-size: var(--fs-sm);
+  display: inline-block;
+  background: var(--bg-base);
+  padding: 0.15rem 0.4rem;
+}
+
 .ref-entry span {
   font-size: var(--fs-2xs);
   color: var(--text-muted);
+}
+
+.ref-note {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.ref-panel--sidebar .ref-entry span {
+  font-size: var(--fs-xs);
+  padding-left: 0.25rem;
 }
 </style>

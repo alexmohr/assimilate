@@ -124,14 +124,14 @@ const hasDetail = computed(
       v-if="warnings.length > 0"
       class="detail-block"
     >
-      <strong class="detail-label detail-label--warning">Warnings</strong>
+      <strong class="group-label group-label--warning detail-label">Warnings</strong>
       <pre class="detail-output">{{ warnings.join('\n') }}</pre>
     </div>
     <div
       v-if="report.error_message && status !== 'warning'"
       class="detail-block"
     >
-      <strong class="detail-label detail-label--danger">Error</strong>
+      <strong class="group-label group-label--danger detail-label">Error</strong>
       <pre class="detail-output detail-output--danger">{{ report.error_message }}</pre>
     </div>
   </div>
@@ -161,19 +161,9 @@ const hasDetail = computed(
   min-width: 0;
 }
 
+/* The shared label plus the space this block wants under it. */
 .detail-label {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  display: block;
   margin-bottom: 0.25rem;
-}
-
-.detail-label--warning {
-  color: var(--warning);
-}
-
-.detail-label--danger {
-  color: var(--danger);
 }
 
 .detail-output {

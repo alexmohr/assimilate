@@ -8,7 +8,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
  * A labelled block per selected agent, used by the schedule form's per-agent
  * overrides. The same "one column of agent-labelled fields plus a hint"
  * markup was repeated for excludes, file change patterns and commands.
- * See docs/contributing/ui-design-audit.md (F-24).
  */
 defineProps<{
   agentIds: number[]
@@ -41,16 +40,4 @@ defineSlots<{
   </div>
 </template>
 
-<style scoped>
-.per-host-paths {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.per-host-entry {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-</style>
+<style scoped></style>

@@ -8,11 +8,9 @@ import { SRC, vueFiles } from './test-utils/vueFiles'
 
 /**
  * The panel, badge, table, tab and segmented-control styles live once, in
- * `src/style.css`. Before the audit each was copy-pasted into every view that
- * used it, and the copies had drifted into visually distinct variants:
- * 12 panels, 9 badges, 7 tables, 4 segmented controls, 3 tab bars.
- *
- * See `docs/contributing/ui-design-audit.md` (F-06 to F-11, F-14, F-26, F-27).
+ * `src/style.css`. A second copy in a scoped block is not a second copy for
+ * long: it drifts, and the drift is invisible in review because the two
+ * declarations are in different files. See `skills/ui-design/SKILL.md`.
  */
 
 const STYLE_CSS = readFileSync(join(SRC, 'style.css'), 'utf-8')
@@ -40,9 +38,9 @@ function scopedRules(file: string): Map<string, Set<string>> {
 }
 
 /**
- * Classes that `style.css` owns. A scoped block redefining one of these
- * silently wins on specificity, which is how ScheduleDetailView ended up with
- * a Delete button that hovered differently from every other Delete button.
+ * Classes that `style.css` owns. A scoped block redefining one of these wins
+ * on specificity without saying so, so the component quietly stops matching
+ * every other instance of the same control.
  */
 const OWNED = [
   'btn',
@@ -83,30 +81,151 @@ const OWNED = [
   'info-actions',
   'field-inline',
   'field-label-row',
+  // Promote a class here once a second file needs it, and delete both scoped
+  // copies; the two checks below then keep it that way.
   'detail-breadcrumb',
-  'schedule-card',
+  'entity-card',
   'crumb-link',
   'crumb-sep',
   'crumb-current',
   'stat-label',
   'stat-value',
   'stat-sub',
+  'group-label',
+  'path-crumbs',
+  'crumb',
+  'crumb-last',
+  'td-name',
+  'name-text',
+  'entry-icon',
+  'td-action',
+  'filter-input',
+  'card-grid',
+  'card-top',
+  'card-info',
+  'card-name',
+  'card-meta',
+  'card-stats',
+  'card-actions',
+  'meta-pill',
+  'stat',
+  'filter-toggle',
+  'filter-badge',
+  'sort-controls',
+  'sort-label',
+  'filters',
+  'filter-row',
+  'filter-group',
+  'filter-label',
+  'row-count',
+  'form-grid',
+  'form-stack',
+  'field-full',
+  'field-narrow',
+  'field-row',
+  'toggle-row',
+  'toggle-row-label',
+  'token-notice',
+  'token-warning',
+  'token-box',
+  'token-text',
+  'passphrase-warning',
+  'passphrase-box',
+  'passphrase-text',
+  'info-card-header',
+  'info-header-actions',
+  'edit-form',
+  'edit-actions',
+  'error-banner',
+  'error-page',
+  'error-card',
+  'error-code',
+  'error-title',
+  'error-source',
+  'error-message',
+  'muted',
+  'select-input',
+  'input-sm',
+  'search-input',
+  'table-wrap',
+  'cell-ts',
+  'cell-date',
+  'cell-host',
+  'cell-size',
+  'cell-mono',
+  'cell-muted',
+  'cell-truncate',
+  'loading-row',
+  'chart-desc',
+  'area-input',
+  'area-input-sm',
+  'paths-list',
+  'path-item',
+  'per-host-paths',
+  'per-host-entry',
+  'test-success',
+  'test-failure',
+  'deploy-result',
+  'result-ok',
+  'save-success',
+  'break-lock-warning',
+  'host-link',
+  'match-ok',
+  'match-warn',
+  'dropdown-arrow',
+  'progress-track',
+  'progress-bar',
+  'progress-row',
+  'progress-label',
+  'panel-title--truncate',
+  'pulse-dot',
+  'spinning',
+  'fade-in',
+  'detail-pre',
+  'error-pre',
+  'warning-pre',
 ]
+
+/**
+ * Animations are declared once, in `style.css`. A scoped `@keyframes` is
+ * rewritten by the SFC compiler to a component-private name, so a second copy
+ * is invisible to review but doubles the CSS and lets the two drift.
+ * `BaseSkeleton`'s shimmer is genuinely its own.
+ */
+const SHARED_KEYFRAMES = ['spin', 'pulse', 'fade-in']
+
+/** The exact declarations a top-level `.name { ... }` rule makes, normalised. */
+function scopedDeclarations(file: string): Map<string, string> {
+  const text = readFileSync(file, 'utf-8')
+  const styles = [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const flat = styles.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '')
+  const out = new Map<string, string>()
+  for (const m of flat.matchAll(/^\.([a-zA-Z][\w-]*)[ \t]*\{([^{}]*)\}/gm)) {
+    const decls = m[2]
+      .split(';')
+      .map((d) => d.trim().replace(/\s+/g, ' '))
+      .filter((d) => d && !d.startsWith('/*'))
+      .sort()
+      .join('; ')
+    if (decls) out.set(m[1], decls)
+  }
+  return out
+}
 
 const FILES = vueFiles()
 
 describe('shared components', () => {
   it('defines the shared component classes exactly once, in style.css', () => {
     for (const cls of OWNED) {
-      expect(STYLE_CSS).toMatch(new RegExp(`^\\s*\\.${cls}\\s*\\{`, 'm'))
+      expect(STYLE_CSS).toMatch(new RegExp(`^\\s*\\.${cls}\\s*[,{]`, 'm'))
     }
   })
 
   it('has no scoped stylesheet re-declaring a shared component property', () => {
     // Adding a local layout property to a shared class is fine - a widget may
     // need `min-width: 0` on its panel. Re-declaring a property the shared
-    // rule already sets is not: it silently wins on specificity, which is how
-    // one Delete button ended up hovering differently from every other one.
+    // rule already sets is not: the local value wins on specificity, so that
+    // one instance stops matching the rest.
     const shared = ruleProperties(STYLE_CSS)
     const offenders: string[] = []
     for (const file of FILES) {
@@ -158,6 +277,44 @@ describe('shared components', () => {
         if (new RegExp(`class="[^"]*(?:^|")?(?:\\s|")${cls}(?:\\s|")`).test(` ${text}`)) {
           offenders.push(`${relative(SRC, file)}: ${cls}`)
         }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('declares each shared animation once, in style.css', () => {
+    for (const name of SHARED_KEYFRAMES) {
+      expect(STYLE_CSS).toMatch(new RegExp(`@keyframes\\s+${name}\\s*\\{`))
+    }
+    const offenders: string[] = []
+    for (const file of FILES) {
+      const text = readFileSync(file, 'utf-8')
+      const styles = [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)]
+        .map((m) => m[1])
+        .join('')
+      for (const name of SHARED_KEYFRAMES) {
+        if (new RegExp(`@keyframes\\s+${name}\\s*\\{`).test(styles)) {
+          offenders.push(`${relative(SRC, file)}: @keyframes ${name}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('has no rule copy-pasted verbatim between two scoped stylesheets', () => {
+    // The property-level check above catches a partial override of a shared
+    // class. This catches the other half: two components declaring the same
+    // rule under the same name, before either is shared. A rule promoted to
+    // `style.css` is deleted from both callers, so this stays at zero.
+    const seen = new Map<string, string>()
+    const offenders: string[] = []
+    for (const file of FILES) {
+      const name = relative(SRC, file)
+      for (const [cls, decls] of scopedDeclarations(file)) {
+        const key = `${cls}|${decls}`
+        const first = seen.get(key)
+        if (first) offenders.push(`.${cls}: ${first} and ${name}`)
+        else seen.set(key, name)
       }
     }
     expect(offenders).toEqual([])

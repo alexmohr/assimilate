@@ -53,20 +53,20 @@ describe('ScheduleCard', () => {
 
   it('marks a disabled schedule', () => {
     const wrapper = mount({ schedule: { ...SCHEDULE, enabled: false } })
-    expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-notable')
+    expect(wrapper.find('.entity-card').classes()).toContain('entity-card--notable')
     expect(wrapper.text()).toContain('Disabled')
   })
 
   it('highlights only when the caller asks', () => {
-    expect(mount().find('.schedule-card').classes()).not.toContain('schedule-card-highlighted')
-    expect(mount({ highlighted: true }).find('.schedule-card').classes()).toContain(
-      'schedule-card-highlighted',
+    expect(mount().find('.entity-card').classes()).not.toContain('entity-card--highlighted')
+    expect(mount({ highlighted: true }).find('.entity-card').classes()).toContain(
+      'entity-card--highlighted',
     )
   })
 
   it('emits select when the card is clicked', async () => {
     const wrapper = mount()
-    await wrapper.find('.schedule-card').trigger('click')
+    await wrapper.find('.entity-card').trigger('click')
     expect(wrapper.emitted('select')).toBeTruthy()
   })
 
@@ -86,7 +86,7 @@ describe('ScheduleCard', () => {
       {},
       { title: 'custom title', meta: '<span class="hosts">2 agents</span>' },
     )
-    expect(wrapper.find('.card-hostname').text()).toBe('custom title')
+    expect(wrapper.find('.card-name').text()).toBe('custom title')
     expect(wrapper.find('.hosts').text()).toBe('2 agents')
   })
 })

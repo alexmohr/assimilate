@@ -14,7 +14,7 @@ import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/schedul
 /**
  * The backup schedule's Advanced tab: borg options, exclude patterns, file
  * change patterns and hook commands, each of which can be overridden per agent
- * on a multi-host schedule. See docs/contributing/ui-design-audit.md (F-24).
+ * on a multi-host schedule.
  */
 defineProps<{
   agentIds: number[]
@@ -28,8 +28,8 @@ const refOpen = ref(false)
 </script>
 
 <template>
-  <div class="form-grid">
-    <div class="form-card">
+  <div class="form-stack">
+    <div class="panel">
       <h3 class="info-title">Options</h3>
       <div class="field field-inline">
         <label class="field-label">Canary Verification</label>
@@ -55,7 +55,7 @@ const refOpen = ref(false)
       </div>
     </div>
 
-    <div class="form-card">
+    <div class="panel">
       <h3 class="info-title">Exclude Patterns</h3>
       <div
         v-if="agentIds.length > 1"
@@ -116,7 +116,7 @@ const refOpen = ref(false)
       </div>
     </div>
 
-    <div class="form-card">
+    <div class="panel">
       <h3 class="info-title">File Change Patterns</h3>
       <div
         v-if="agentIds.length > 1"
@@ -157,7 +157,7 @@ const refOpen = ref(false)
       </div>
     </div>
 
-    <div class="form-card">
+    <div class="panel">
       <h3 class="info-title">Commands</h3>
       <div
         v-if="agentIds.length > 1"
@@ -222,31 +222,6 @@ const refOpen = ref(false)
 </template>
 
 <style scoped>
-.form-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.form-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.area-input {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.area-input-sm {
-  min-height: 56px;
-}
-
 .cmd-area {
   min-height: 60px;
   resize: vertical;

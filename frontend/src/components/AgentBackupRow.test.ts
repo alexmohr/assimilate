@@ -128,8 +128,8 @@ describe('AgentBackupRow', () => {
         showDetail: true,
         expanded: true,
       })
-      expect(wrapper.find('.detail-label--warning').exists()).toBe(true)
-      expect(wrapper.find('.detail-label--danger').exists()).toBe(false)
+      expect(wrapper.find('.group-label--warning').exists()).toBe(true)
+      expect(wrapper.find('.group-label--danger').exists()).toBe(false)
     })
 
     // The Overview preview is a summary, not a log reader.

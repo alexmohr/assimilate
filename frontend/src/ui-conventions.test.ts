@@ -2,34 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { relative } from 'node:path'
+import { SRC, sourceFiles, vueFiles } from './test-utils/vueFiles'
 
 /**
  * Conventions for forms, icons and empty/loading states.
- *
- * See `docs/contributing/ui-design-audit.md` (F-13, F-15, F-16, F-17).
  */
 
-const SRC = resolve(process.cwd(), 'src')
-
-function sourceFiles(ext: string[]): string[] {
-  const out: string[] = []
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (entry.name !== 'generated') walk(full)
-      } else if (ext.some((e) => entry.name.endsWith(e))) {
-        out.push(full)
-      }
-    }
-  }
-  walk(SRC)
-  return out.sort()
-}
-
-const VUE = sourceFiles(['.vue']).filter((f) => !f.endsWith('.test.vue'))
+const VUE = vueFiles().filter((f) => !f.endsWith('.test.vue'))
 
 /** Attribute text of every opening tag of the given names, quote-aware. */
 function openingTags(text: string, names: string[]): string[] {
@@ -152,11 +133,10 @@ describe('state conventions', () => {
 
 describe('view size', () => {
   it('keeps every view under the size at which shared styles get re-declared', () => {
-    // F-24: five views were over 2,000 lines and the largest was 3,359. Every
-    // duplication in Part II of the audit lived in a file like that, because a
-    // 1,000-line scoped stylesheet is where re-declaring `.panel` feels
-    // cheaper than importing it. Split on a tab or dialog boundary rather than
-    // raising this number.
+    // A 1,000-line scoped stylesheet is where re-declaring `.panel` starts to
+    // feel cheaper than importing it, so oversized views are where duplication
+    // collects. Split on a tab or dialog boundary rather than raising this
+    // number.
     const LIMIT = 1800
     const offenders: string[] = []
     for (const f of VUE) {

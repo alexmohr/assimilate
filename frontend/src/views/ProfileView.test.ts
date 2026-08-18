@@ -537,6 +537,28 @@ describe('ProfileView', () => {
       await flushPromises()
     }
 
+    // An empty token list is a place to start, not a dead end: the state
+    // says what a token is for and offers the same action as the header
+    // button, rather than a bare centred sentence.
+    it('offers token creation from the empty state', async () => {
+      mockGetTokens()
+      const wrapper = renderWithPlugins(ProfileView)
+      await flushPromises()
+      await clickApiTokensTab(wrapper)
+
+      const empty = wrapper.find('.empty-state')
+      expect(empty.find('.empty-title').text()).toBe('No API tokens yet')
+      expect(empty.find('.empty-description').text()).toContain(
+        'authenticate without your password',
+      )
+
+      await empty.find('.empty-action').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.modal-dialog').exists()).toBe(true)
+      expect(wrapper.find('.modal-title').text()).toContain('Token')
+    })
+
     it('creates a token from the name typed in the dialog', async () => {
       mockGetTokens()
       vi.mocked(apiClient.post).mockResolvedValue({
@@ -578,10 +600,10 @@ describe('ProfileView', () => {
     it('reveals the plaintext once, with a copy action', async () => {
       const wrapper = await createTokenSuccessfully()
 
-      expect(wrapper.find('.token-value').text()).toBe('tok_secret')
+      expect(wrapper.find('.token-text').text()).toBe('tok_secret')
       // Addressed by container: this file's useClipboard mock is always
       // truthy, so the button reads "Copied" rather than "Copy" here.
-      const copy = wrapper.find('.token-display button')
+      const copy = wrapper.find('.token-box button')
       expect(copy.exists()).toBe(true)
       await copy.trigger('click')
       await flushPromises()
@@ -594,7 +616,7 @@ describe('ProfileView', () => {
       await close!.trigger('click')
       await flushPromises()
 
-      expect(wrapper.find('.token-value').exists()).toBe(false)
+      expect(wrapper.find('.token-text').exists()).toBe(false)
     })
 
     it('reports a create failure without revealing a token', async () => {
@@ -607,7 +629,7 @@ describe('ProfileView', () => {
       await findInModal(wrapper, 'Create')!.trigger('click')
       await flushPromises()
 
-      expect(wrapper.find('.token-value').exists()).toBe(false)
+      expect(wrapper.find('.token-text').exists()).toBe(false)
       expect(wrapper.find('.modal-dialog').text()).toContain('Failed to create token')
     })
   })

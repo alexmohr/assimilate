@@ -41,7 +41,7 @@ function mount(props: Record<string, unknown> = {}) {
 
 describe('ScheduleBackupsTab', () => {
   it('shows a spinner while loading', () => {
-    expect(mount({ loading: true }).find('.reports-loading').exists()).toBe(true)
+    expect(mount({ loading: true }).find('.loading-row').exists()).toBe(true)
   })
 
   it('shows the error instead of the browser', () => {
@@ -84,7 +84,7 @@ describe('ScheduleBackupsTab', () => {
 
   it('says so when the schedule has produced no archives', () => {
     const wrapper = mount({ reports: [report({ archive_name: null })] })
-    expect(wrapper.find('.empty-state').text()).toContain('No backup archives found')
+    expect(wrapper.find('.state-msg').text()).toContain('No backup archives found')
   })
 
   it('reports the clicked archive up to the view, which owns the selection', async () => {

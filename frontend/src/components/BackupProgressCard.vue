@@ -24,7 +24,7 @@ defineProps<{
 <template>
   <div class="live-log-card">
     <div class="live-log-header">
-      <span class="live-log-pulse" />
+      <span class="pulse-dot pulse-dot--success" />
       <span class="live-log-title">Backup in progress</span>
       <span
         v-if="badge"
@@ -40,38 +40,38 @@ defineProps<{
         Waiting for progress...
       </div>
       <template v-else>
-        <div class="progress-row">
-          <span class="progress-label">Elapsed</span>
-          <span class="progress-value">{{ formatDuration(elapsedSecs) }}</span>
+        <div class="live-stat-row">
+          <span class="live-stat-label">Elapsed</span>
+          <span class="live-stat-value">{{ formatDuration(elapsedSecs) }}</span>
         </div>
         <div
           v-if="estimatedRemainingSecs !== null"
-          class="progress-row"
+          class="live-stat-row"
         >
-          <span class="progress-label">Est. remaining</span>
-          <span class="progress-value">{{ formatDuration(estimatedRemainingSecs) }}</span>
+          <span class="live-stat-label">Est. remaining</span>
+          <span class="live-stat-value">{{ formatDuration(estimatedRemainingSecs) }}</span>
         </div>
-        <div class="progress-row">
-          <span class="progress-label">Files</span>
-          <span class="progress-value">{{ progress.nfiles.toLocaleString() }}</span>
+        <div class="live-stat-row">
+          <span class="live-stat-label">Files</span>
+          <span class="live-stat-value">{{ progress.nfiles.toLocaleString() }}</span>
         </div>
-        <div class="progress-row">
-          <span class="progress-label">Data</span>
-          <span class="progress-value">{{ formatBytes(progress.originalSize) }}</span>
+        <div class="live-stat-row">
+          <span class="live-stat-label">Data</span>
+          <span class="live-stat-value">{{ formatBytes(progress.originalSize) }}</span>
         </div>
         <div
           v-if="archiveName"
-          class="progress-row"
+          class="live-stat-row"
         >
-          <span class="progress-label">Archive</span>
-          <span class="progress-value progress-mono">{{ archiveName }}</span>
+          <span class="live-stat-label">Archive</span>
+          <span class="live-stat-value progress-mono">{{ archiveName }}</span>
         </div>
         <div
           v-if="progress.currentPath"
-          class="progress-row progress-row-wrap"
+          class="live-stat-row live-stat-row-wrap"
         >
-          <span class="progress-label">Current file</span>
-          <span class="progress-value progress-path">{{ progress.currentPath }}</span>
+          <span class="live-stat-label">Current file</span>
+          <span class="live-stat-value progress-path">{{ progress.currentPath }}</span>
         </div>
       </template>
     </div>
@@ -111,25 +111,6 @@ defineProps<{
   font-family: var(--mono);
 }
 
-.live-log-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--success);
-  animation: pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
 .live-log-empty {
   padding: 0.75rem 1rem;
   color: var(--text-muted);
@@ -140,24 +121,24 @@ defineProps<{
   padding: 0.5rem 0;
 }
 
-.progress-row {
+.live-stat-row {
   display: flex;
   gap: 1rem;
   padding: 0.2rem 1rem;
   font-size: var(--fs-base);
 }
 
-.progress-label {
+.live-stat-label {
   color: var(--text-muted);
   min-width: 9rem;
   flex-shrink: 0;
 }
 
-.progress-value {
+.live-stat-value {
   color: var(--text-primary);
 }
 
-.progress-row-wrap {
+.live-stat-row-wrap {
   align-items: flex-start;
 }
 

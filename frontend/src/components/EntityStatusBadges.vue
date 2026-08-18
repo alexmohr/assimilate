@@ -32,7 +32,7 @@ defineProps<{
       class="entity-running-pill"
       :title="runningLabel"
     >
-      <span class="entity-running-pulse" />
+      <span class="pulse-dot pulse-dot--accent" />
       {{ runningLabel ?? 'Running' }}
     </span>
     <button
@@ -121,24 +121,5 @@ defineProps<{
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.entity-running-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-  animation: entity-running-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes entity-running-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
 }
 </style>

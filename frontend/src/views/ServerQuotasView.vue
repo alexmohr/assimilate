@@ -226,7 +226,7 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 
     <div
       v-else
-      class="table-wrap"
+      class="table-wrap table-wrap--framed"
     >
       <table class="data-table">
         <thead>
@@ -374,7 +374,7 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
           <option value="disable_schedule">Disable schedule</option>
         </select>
       </div>
-      <div class="field toggle-row">
+      <div class="field toggle-row toggle-row--spread">
         <span class="field-label">Enabled</span>
         <ToggleSwitch v-model="editForm.enabled" />
       </div>
@@ -395,12 +395,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 <style scoped>
 .server-quotas-page {
   max-width: 1000px;
-}
-
-.table-wrap {
-  overflow-x: auto;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
 }
 
 .quota-card-list {
@@ -434,12 +428,6 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 .quota-card-stats {
   display: flex;
   gap: 1.5rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
 }
 
 .quota-card-thresholds {
@@ -476,15 +464,5 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 
 .data-table {
   min-width: 640px;
-}
-
-.muted {
-  color: var(--text-muted);
-}
-
-.toggle-row {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
 }
 </style>

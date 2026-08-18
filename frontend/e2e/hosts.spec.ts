@@ -28,7 +28,7 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    await page.locator('.host-card').filter({ hasText: 'web-server-01' }).first().click()
+    await page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first().click()
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/agents\//)
@@ -45,7 +45,7 @@ test.describe('Hosts management', () => {
     // agent binary that reports its own version once connected (showing "Upgrade" or
     // nothing instead of "Deploy").
     const deployBtn = page
-      .locator('.host-card')
+      .locator('.entity-card')
       .filter({ hasText: 'unassigned-01' })
       .locator('.card-actions button', { hasText: /Deploy|Upgrade/ })
       .first()
@@ -82,7 +82,7 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
+    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
 
     const failedChip = card.locator('.entity-issue-chip.sev-danger')
     await expect(failedChip).toBeVisible()
@@ -115,7 +115,7 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
+    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
 
     const overdueChip = card.locator('.entity-issue-chip.sev-warning')
     await expect(overdueChip).toBeVisible()
@@ -134,12 +134,12 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
+    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
     const runningPill = card.locator('.entity-running-pill')
     await expect(runningPill).toBeVisible()
     await expect(runningPill).toContainText('server-daily')
 
-    const otherCard = page.locator('.host-card').filter({ hasText: 'db-server-01' }).first()
+    const otherCard = page.locator('.entity-card').filter({ hasText: 'db-server-01' }).first()
     await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
   })
 

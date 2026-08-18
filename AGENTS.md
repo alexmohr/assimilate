@@ -35,6 +35,7 @@ The rules below apply to *every* task. Task-specific instructions live under `sk
 |---|---|
 | Any `.rs` file, `Cargo.toml`, `crates/*`, `lints/*` | `skills/rust/SKILL.md` |
 | Any `frontend/**/*.{vue,ts,tsx,js,css}` | `skills/frontend/SKILL.md` |
+| Any user-visible UI change, or writing CSS | `skills/ui-design/SKILL.md` |
 | SQL queries, migrations, `crates/server/tests/db_queries.rs`, sqlx macros | `skills/database/SKILL.md` |
 | Writing/modifying any test, or any feature work (every feature needs tests) | `skills/testing/SKILL.md` |
 | Auth, tokens, passphrases, crypto, SSH forwarding, input validation | `skills/security/SKILL.md` |

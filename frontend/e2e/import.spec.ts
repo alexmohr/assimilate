@@ -317,8 +317,14 @@ test('import-status-msg appears with live status text during resync', async ({ p
   // WebSocket ImportProgress messages must populate the status message element
   const statusMsg = page.locator('.import-status-msg')
   await expect(statusMsg).toBeVisible({ timeout: 30_000 })
-  // "listing" = initial, "discovering" = streaming count, "importing" = per-archive loop
-  await expect(statusMsg).toHaveText(/listing|discovering|importing|saving|refreshing/i, {
+  // The server's phases, in the order `crates/server/src/api/repos.rs` emits
+  // them: "Listing archives", "Importing N archives", "Loading metadata for
+  // '<archive>' (n/total)", "Saving N backup reports", "Refreshing repository
+  // statistics". The per-archive loading phase was missing from this list, and
+  // it is the one that dominates the window - the demo repo has 15 archives, so
+  // whether the assertion happened to land on one of the shorter phases was
+  // timing, which is what made this test flaky rather than wrong.
+  await expect(statusMsg).toHaveText(/listing|discovering|importing|loading|saving|refreshing/i, {
     timeout: 30_000,
   })
 

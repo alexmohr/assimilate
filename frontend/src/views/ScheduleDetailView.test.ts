@@ -110,6 +110,12 @@ const mockCheckSchedule = {
   post_backup_commands: [],
 }
 
+const mockVerifySchedule = {
+  ...mockSchedule,
+  id: 3,
+  schedule_type: 'verify',
+}
+
 const mockAgents = [
   { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
   { id: 11, hostname: 'db-server-01', display_name: null },
@@ -275,6 +281,17 @@ describe('ScheduleDetailView - edit mode', () => {
       '/schedules/1',
       expect.objectContaining({ rate_limit_kbps: 2000 }),
     )
+  })
+
+  it('names a verify schedule by what it does, not by its type word', async () => {
+    // "Verify" alone reads as a status check; the page says what borg is
+    // actually asked to do, and the heading falls back to it when the
+    // schedule has no name.
+    setupEditMode(mockVerifySchedule)
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '3' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Verify (extract dry-run)')
   })
 
   it('does not show Advanced tab for check type', async () => {

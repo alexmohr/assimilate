@@ -248,6 +248,20 @@ describe('SchedulesView', () => {
     expect(disabledCard!.classes()).toContain('entity-card--notable')
   })
 
+  it('opens a schedule when its card is clicked', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
+    await card!.trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe('/schedules/1')
+  })
+
   it('renders schedule type badges', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)

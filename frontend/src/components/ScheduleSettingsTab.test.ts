@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
 import { renderWithPlugins } from '../test-utils'
 import ScheduleSettingsTab from './ScheduleSettingsTab.vue'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
@@ -190,5 +191,99 @@ describe('ScheduleSettingsTab', () => {
     const wrapper = mount({ section: 'advanced' })
     expect(wrapper.text()).toContain('Exclude Patterns')
     expect(wrapper.text()).toContain('Remote Rate Limit')
+  })
+
+  it('closes the agent dropdown when clicking outside it', async () => {
+    const wrapper = mount({ section: 'targets' })
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    expect(wrapper.find('.multi-select-dropdown').exists()).toBe(true)
+
+    document.body.click()
+    await nextTick()
+
+    expect(wrapper.find('.multi-select-dropdown').exists()).toBe(false)
+  })
+
+  it('propagates a CronBuilder change into the form', async () => {
+    const form = baseForm()
+    const wrapper = mount({ form })
+    await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 3 * * *')
+    expect(form.cron_expression).toBe('0 3 * * *')
+  })
+
+  it('toggles Enabled from the General section', async () => {
+    const form = baseForm()
+    const wrapper = mount({ form })
+    await wrapper.find('button[role="switch"]').trigger('click')
+    expect(form.enabled).toBe(!DEFAULT_SCHEDULE_FORM_STATE.enabled)
+  })
+
+  it('changes the Schedule Type select in create mode', async () => {
+    const wrapper = mount({ isCreate: true })
+    await wrapper.find('select').setValue('check')
+    expect(wrapper.emitted('update:selectedType')?.at(-1)?.[0]).toBe('check')
+  })
+
+  it('changes the Repository select in the Targets section', async () => {
+    const repos = [...REPOS, { id: 21, name: 'archive-weekly' }] as unknown as Repo[]
+    const wrapper = mount({ section: 'targets', repos, selectedRepoId: 20 })
+    await wrapper.findAll('select')[0].setValue('21')
+    expect(wrapper.emitted('update:selectedRepoId')?.at(-1)?.[0]).toBe(21)
+  })
+
+  it('changes the On Failure select in the Targets section', async () => {
+    const wrapper = mount({ section: 'targets', onFailure: 'stop' })
+    await wrapper.findAll('select')[1].setValue('continue')
+    expect(wrapper.emitted('update:onFailure')?.at(-1)?.[0]).toBe('continue')
+  })
+
+  it('writes into the shared Backup Paths textarea', async () => {
+    const form = baseForm()
+    const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11], form })
+    await wrapper.find('textarea').setValue('/data\n/etc')
+    expect(form.backup_sources).toBe('/data\n/etc')
+  })
+
+  it('writes into a per-agent Backup Paths textarea', async () => {
+    const perHostSources: Record<number, string> = {}
+    const wrapper = mount({
+      section: 'targets',
+      selectedAgentIds: [10, 11],
+      usePerHostPaths: true,
+      perHostSources,
+    })
+    await wrapper.findAll('textarea')[0].setValue('/custom/path')
+    expect(perHostSources[10]).toBe('/custom/path')
+  })
+
+  it('writes into each retention field', async () => {
+    const form = baseForm()
+    const wrapper = mount({ section: 'retention', form })
+    const inputs = wrapper.findAll('.retention-grid input')
+    await inputs[0].setValue('48')
+    await inputs[1].setValue('14')
+    await inputs[2].setValue('8')
+    await inputs[3].setValue('24')
+    await inputs[4].setValue('20')
+
+    expect(form.keep_hourly).toBe(48)
+    expect(form.keep_daily).toBe(14)
+    expect(form.keep_weekly).toBe(8)
+    expect(form.keep_monthly).toBe(24)
+    expect(form.keep_yearly).toBe(20)
+  })
+
+  it('propagates ScheduleAdvancedTab updates for form and overrides', async () => {
+    const wrapper = mount({ section: 'advanced' })
+    const advancedTab = wrapper.findComponent({ name: 'ScheduleAdvancedTab' })
+    expect(advancedTab.exists()).toBe(true)
+
+    const newForm = { ...baseForm(), rate_limit_kbps: 500 }
+    const newOverrides = { ...baseOverrides(), usePerHostExcludes: true }
+    await advancedTab.vm.$emit('update:form', newForm)
+    await advancedTab.vm.$emit('update:overrides', newOverrides)
+
+    expect(wrapper.emitted('update:form')?.at(-1)?.[0]).toEqual(newForm)
+    expect(wrapper.emitted('update:overrides')?.at(-1)?.[0]).toEqual(newOverrides)
   })
 })

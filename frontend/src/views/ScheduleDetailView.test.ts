@@ -639,6 +639,107 @@ describe('ScheduleDetailView - edit mode', () => {
       expect.objectContaining({ agent_ids: [11, 10] }),
     )
   })
+
+  it('propagates form/overrides/per-host-sources updates emitted by the real Settings tab', async () => {
+    const wrapper = await createEditWrapper()
+    await goToSettings(wrapper)
+
+    const settingsTab = wrapper.findComponent({ name: 'ScheduleSettingsTab' })
+    expect(settingsTab.exists()).toBe(true)
+
+    const newForm = {
+      ...(settingsTab.props('form') as Record<string, unknown>),
+      name: 'Renamed via emit',
+    }
+    const newOverrides = {
+      ...(settingsTab.props('overrides') as Record<string, unknown>),
+      usePerHostExcludes: true,
+    }
+    await settingsTab.vm.$emit('update:form', newForm)
+    await settingsTab.vm.$emit('update:overrides', newOverrides)
+    await settingsTab.vm.$emit('update:perHostSources', { 10: '/custom/path' })
+
+    expect(settingsTab.props('form')).toEqual(newForm)
+    expect(settingsTab.props('overrides')).toEqual(newOverrides)
+    expect(settingsTab.props('perHostSources')).toEqual({ 10: '/custom/path' })
+  })
+
+  it('propagates repo and on-failure select changes from the real Settings tab into the save payload', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Targets')
+
+    const selects = wrapper.findAll('select')
+    await selects[0].setValue('21')
+    await selects[1].setValue('continue')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save Changes')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ repo_id: 21, on_failure: 'continue' }),
+    )
+  })
+
+  it('propagates the per-host-paths toggle and a per-host textarea into the save payload', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({
+          data: [
+            { agent_id: 10, execution_order: 0 },
+            { agent_id: 11, execution_order: 1 },
+          ],
+        })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Targets')
+
+    await wrapper.find('.toggle-switch-stub').setValue(true)
+    await nextTick()
+    await wrapper.find('.area-input-sm').setValue('/custom/backup/path')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save Changes')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({
+        backup_sources_per_agent: [{ agent_id: 10, paths: ['/custom/backup/path'] }],
+      }),
+    )
+  })
 })
 
 describe('ScheduleDetailView - create mode', () => {
@@ -703,6 +804,30 @@ describe('ScheduleDetailView - create mode', () => {
 
     const createBtn = wrapper.findAll('button').find((b) => b.text() === 'Create Schedule')
     expect(createBtn).toBeTruthy()
+  })
+
+  it('propagates the Schedule Type select into the create payload', async () => {
+    setupCreateMode()
+    mockApiClient.post.mockResolvedValue({ data: { id: 5 } })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
+    await flushPromises()
+
+    await wrapper.find('select').setValue('check')
+
+    await goToSection(wrapper, 'Targets')
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    await wrapper.findAll('.multi-select-item input[type="checkbox"]')[0].trigger('change')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Create Schedule')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      '/schedules',
+      expect.objectContaining({ schedule_type: 'check' }),
+    )
   })
 })
 

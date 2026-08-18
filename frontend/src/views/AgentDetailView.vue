@@ -822,6 +822,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
       v-if="showDeployDialog && agent"
       :hostname="agent.hostname"
       :agent-version="agent.agent_version ?? null"
+      :available-version="availableAgentVersion"
       :last-ssh-user="agent.last_ssh_user"
       @close="showDeployDialog = false"
       @deployed="

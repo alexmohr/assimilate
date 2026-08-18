@@ -4,15 +4,20 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { ArrowRight, Upload, KeyRound, CheckCircle, ChevronDown } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
 import BaseModal from './BaseModal.vue'
 
+const DEFAULT_INSTALL_PATH = '/usr/local/bin/assimilate-agent'
+
 const props = defineProps<{
   hostname: string
   agentVersion: string | null
+  /** The version installable from the server, when known - drives the version-transition summary. */
+  availableVersion?: string | null
   lastSshUser?: string | null
 }>()
 
@@ -27,11 +32,23 @@ useEscapeKey(visible, () => {
   emit('close')
 })
 
+const isUpgrade = computed(() => props.agentVersion !== null)
+// A build can be newer without the semantic version string changing (a dev
+// server compared by commit count) - the arrow-to-version layout only makes
+// sense when the two strings actually differ.
+const showAvailableVersion = computed(
+  () => !!props.availableVersion && props.availableVersion !== props.agentVersion,
+)
+
 const deployLoading = ref(false)
 const deployError = ref<string | null>(null)
 const fetchServiceLoading = ref(false)
 const fetchServiceError = ref<string | null>(null)
 const serviceContentTouched = ref(false)
+// Closed by default: the service unit is the largest thing in the dialog and
+// is rarely hand-edited, so it should not be the first thing a returning
+// user has to scroll past.
+const serviceUnitOpen = ref(false)
 const deployResult = ref<{
   success: boolean
   skipped: boolean
@@ -46,7 +63,7 @@ const deployForm = reactive({
   ssh_port: 22,
   ssh_password: '',
   server_url: '',
-  install_path: '/usr/local/bin/assimilate-agent',
+  install_path: DEFAULT_INSTALL_PATH,
   systemd_service_content: '',
 })
 
@@ -69,11 +86,18 @@ WantedBy=multi-user.target
 `
 }
 
+// Drives the Default / Customized badge on the collapsed disclosure, so a
+// user can tell whether there's anything non-standard inside without opening it.
+const hasCustomUnit = computed(() => {
+  const expected = defaultSystemdUnit(deployForm.install_path.trim() || DEFAULT_INSTALL_PATH)
+  return deployForm.systemd_service_content.trim() !== expected.trim()
+})
+
 onMounted(() => {
   deployForm.ssh_host = props.hostname
   deployForm.ssh_user = props.lastSshUser || 'root'
   deployForm.server_url = window.location.origin
-  deployForm.systemd_service_content = defaultSystemdUnit('/usr/local/bin/assimilate-agent')
+  deployForm.systemd_service_content = defaultSystemdUnit(DEFAULT_INSTALL_PATH)
   void loadExistingServiceUnit({ silent: true })
 })
 
@@ -112,7 +136,10 @@ function dialogTitle(): string {
 
 function submitLabel(): string {
   if (deployLoading.value) return 'Deploying...'
-  return props.agentVersion ? 'Upgrade Agent' : 'Deploy Agent'
+  if (isUpgrade.value) {
+    return showAvailableVersion.value ? `Upgrade to ${props.availableVersion}` : 'Upgrade Agent'
+  }
+  return 'Deploy Agent'
 }
 
 async function submitDeploy(): Promise<void> {
@@ -150,6 +177,7 @@ async function submitDeploy(): Promise<void> {
 <template>
   <BaseModal
     :open="true"
+    size="lg"
     @close="emit('close')"
   >
     <template #header="{ titleId }">
@@ -161,14 +189,56 @@ async function submitDeploy(): Promise<void> {
       </h2>
     </template>
     <template v-if="!deployResult?.success">
-      <p class="deploy-info">
-        Upload and install the agent binary on the target machine via SSH. Sudo is used
-        automatically if available; if you provide an SSH password it is also used for sudo.
-      </p>
-      <p class="deploy-note">
-        This will also install and enable the <code>assimilate-agent</code> systemd service on the
-        target machine. You can customize the service unit below.
-      </p>
+      <template v-if="isUpgrade">
+        <div class="upgrade-hero">
+          <div class="hero-version">
+            <span class="group-label">Installed</span>
+            <span class="value mono">{{ agentVersion }}</span>
+          </div>
+          <template v-if="showAvailableVersion">
+            <span class="hero-arrow">
+              <ArrowRight :size="16" />
+            </span>
+            <div class="hero-version">
+              <span class="group-label">Available</span>
+              <span class="value value--next mono">{{ availableVersion }}</span>
+            </div>
+          </template>
+          <span
+            v-else-if="availableVersion"
+            class="hero-note"
+            >A newer build is available.</span
+          >
+        </div>
+        <ul class="hero-lines">
+          <li>
+            <Upload :size="14" />
+            <span
+              >The new binary is uploaded over SSH and the <code>assimilate-agent</code> service is
+              restarted.</span
+            >
+          </li>
+          <li>
+            <KeyRound :size="14" />
+            <span>A new agent token is generated and written into the service unit.</span>
+          </li>
+          <li>
+            <CheckCircle :size="14" />
+            <span>Schedules, repositories and existing archives are untouched.</span>
+          </li>
+        </ul>
+      </template>
+      <template v-else>
+        <p class="deploy-info">
+          Upload and install the agent binary on the target machine via SSH. Sudo is used
+          automatically if available; if you provide an SSH password it is also used for sudo.
+        </p>
+        <p class="deploy-note">
+          This will also install and enable the <code>assimilate-agent</code> systemd service on the
+          target machine. You can customize the service unit below.
+        </p>
+      </template>
+
       <div class="field">
         <label class="field-label">SSH Host <span class="required">*</span></label>
         <input
@@ -231,36 +301,54 @@ async function submitDeploy(): Promise<void> {
       </div>
 
       <div class="field">
-        <div class="field-label-row">
-          <label class="field-label">Systemd Service Unit</label>
-          <button
-            class="btn btn-sm btn-ghost"
-            type="button"
-            :disabled="fetchServiceLoading || !deployForm.ssh_host"
-            @click="loadExistingServiceUnit()"
-          >
-            {{ fetchServiceLoading ? 'Loading...' : 'Load from remote' }}
-          </button>
-        </div>
-        <textarea
-          v-model="deployForm.systemd_service_content"
-          class="input mono service-textarea"
-          rows="12"
-          spellcheck="false"
-          @input="serviceContentTouched = true"
-        />
-        <span class="field-hint">
-          The <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code> environment variables
-          will be injected automatically if not present in custom content. When loaded from a remote
-          host, an existing token is shown as <code>[REDACTED]</code> and replaced with a newly
-          generated one on deploy.
-        </span>
-        <span
-          v-if="fetchServiceError"
-          class="field-hint field-hint-error"
+        <button
+          type="button"
+          class="disclosure-head"
+          :aria-expanded="serviceUnitOpen"
+          @click="serviceUnitOpen = !serviceUnitOpen"
         >
-          {{ fetchServiceError }}
-        </span>
+          <ChevronDown
+            :size="14"
+            class="disclosure-chevron"
+            :class="{ 'disclosure-chevron--open': serviceUnitOpen }"
+          />
+          <span class="disclosure-title">Systemd service unit</span>
+          <span class="badge badge--neutral">{{ hasCustomUnit ? 'Customized' : 'Default' }}</span>
+        </button>
+        <div
+          v-show="serviceUnitOpen"
+          class="disclosure-body"
+        >
+          <div class="disclosure-actions">
+            <button
+              class="btn btn-sm btn-ghost"
+              type="button"
+              :disabled="fetchServiceLoading || !deployForm.ssh_host"
+              @click="loadExistingServiceUnit()"
+            >
+              {{ fetchServiceLoading ? 'Loading...' : 'Load from remote' }}
+            </button>
+          </div>
+          <textarea
+            v-model="deployForm.systemd_service_content"
+            class="input mono service-textarea"
+            rows="12"
+            spellcheck="false"
+            @input="serviceContentTouched = true"
+          />
+          <span class="field-hint">
+            The <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code> environment variables
+            will be injected automatically if not present in custom content. When loaded from a
+            remote host, an existing token is shown as <code>[REDACTED]</code> and replaced with a
+            newly generated one on deploy.
+          </span>
+          <span
+            v-if="fetchServiceError"
+            class="field-hint field-hint-error"
+          >
+            {{ fetchServiceError }}
+          </span>
+        </div>
       </div>
       <div
         v-if="deployError"
@@ -280,17 +368,27 @@ async function submitDeploy(): Promise<void> {
       <div class="token-notice">
         <template v-if="deployResult.skipped">
           <p class="deploy-skipped-msg">
-            Agent is already at the latest version ({{ deployResult.available_version }}).
-            Deployment skipped.
+            Already on {{ deployResult.available_version }}. Nothing was changed and the token was
+            not rotated.
           </p>
         </template>
         <template v-else>
-          <p class="deploy-success-msg">Agent deployed and service started successfully.</p>
+          <p class="deploy-success-msg">
+            {{
+              isUpgrade
+                ? `Upgraded to ${deployResult.available_version ?? 'the latest version'}.`
+                : 'Agent deployed and service started successfully.'
+            }}
+          </p>
           <p
             v-if="deployResult.available_version"
             class="deploy-version-info"
           >
-            Deployed version: {{ deployResult.available_version }}
+            {{
+              isUpgrade
+                ? `${hostname} is running the new agent and has reconnected.`
+                : `Deployed version: ${deployResult.available_version}`
+            }}
           </p>
           <p class="token-warning">A new agent token was generated for this deployment:</p>
           <div class="token-box">
@@ -352,6 +450,75 @@ async function submitDeploy(): Promise<void> {
   border-radius: var(--radius-sm);
 }
 
+.upgrade-hero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--accent-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.85rem;
+}
+
+.hero-version {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.hero-version .value {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.hero-version .value--next {
+  color: var(--accent);
+}
+
+.hero-arrow {
+  color: var(--text-muted);
+  display: flex;
+  flex: none;
+}
+
+.hero-note {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.hero-lines {
+  margin: 0 0 1.25rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.hero-lines li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  font-size: var(--fs-base);
+  color: var(--text-secondary);
+}
+
+.hero-lines svg {
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--text-muted);
+}
+
+.hero-lines code {
+  font-size: var(--fs-xs);
+  background: var(--bg-card);
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--radius-sm);
+}
+
 .field-label-row {
   margin-bottom: 0.3rem;
 }
@@ -362,6 +529,51 @@ async function submitDeploy(): Promise<void> {
 
 .field-hint-error {
   color: var(--danger);
+}
+
+.disclosure-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.85rem;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  text-align: left;
+  transition: background var(--duration-base);
+}
+
+.disclosure-head:hover {
+  background: var(--bg-hover);
+}
+
+.disclosure-title {
+  flex: 1;
+}
+
+.disclosure-chevron {
+  color: var(--text-muted);
+  flex: none;
+  transition: transform var(--duration-base);
+}
+
+.disclosure-chevron--open {
+  transform: rotate(-180deg);
+}
+
+.disclosure-body {
+  margin-top: 0.6rem;
+}
+
+.disclosure-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.4rem;
 }
 
 .service-textarea {

@@ -196,7 +196,21 @@ test('deploy dialog prefills the last-used SSH user and auto-loads the remote un
   await page.getByRole('button', { name: 'Upgrade' }).click()
   await expect(page.getByRole('heading', { name: /Upgrade Agent/ })).toBeVisible()
 
+  // The version transition is the point of the dialog, so it leads the body.
+  const hero = page.locator('.upgrade-hero')
+  await expect(hero).toContainText('0.1.0')
+  await expect(hero).toContainText('0.2.0')
+  await expect(page.getByRole('button', { name: /^Upgrade to 0\.2\.0$/ })).toBeVisible()
+
   await expect(page.getByPlaceholder('root')).toHaveValue('deploy-user')
+
+  // The service unit editor is the largest control in the dialog and is
+  // rarely hand-edited, so it stays collapsed until asked for.
+  const unitToggle = page.getByRole('button', { name: /Systemd service unit/ })
+  await expect(unitToggle).toBeVisible()
+  await expect(page.locator('textarea.service-textarea')).toBeHidden()
+
+  await unitToggle.click()
   await expect(page.locator('textarea.service-textarea')).toHaveValue(
     /Environment=BORG_AGENT_TOKEN=\[REDACTED\]/,
   )

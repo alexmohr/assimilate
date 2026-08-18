@@ -1086,6 +1086,89 @@
     color: var(--text-muted);
   }
 
+  /* --- Overview tab ----------------------------------------------------
+     The landing-tab shape shared by AgentOverviewTab and ScheduleOverviewTab:
+     a warning-toned attention banner for what needs looking at, a tile grid
+     of key stats, and section headers introducing a preview list below.
+     Each caller's own attention-row trailing content (a link, a button) and
+     stat modifiers stay local, since those genuinely differ. */
+  .overview-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .attention {
+    border: 1px solid var(--warning);
+    background: var(--warning-subtle);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .attention-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: var(--fs-sm);
+    flex-wrap: wrap;
+  }
+
+  .attention-message {
+    color: var(--text-primary);
+  }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+    gap: 0.6rem;
+  }
+
+  .tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .section-title {
+    font-size: var(--fs-2xs);
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    margin: 0;
+  }
+
+  .section-link {
+    font: inherit;
+    font-size: var(--fs-xs);
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  .section-link:hover {
+    text-decoration: underline;
+  }
+
   /* --- Entity rows ---------------------------------------------------------
      One line per thing, for lists long enough that a card per entry stops
      fitting on a screen: a status stripe, a name, a time, stats pushed right,

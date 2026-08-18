@@ -297,55 +297,13 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
 </template>
 
 <style scoped>
-.overview-tab {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.attention {
-  border: 1px solid var(--warning);
-  background: var(--warning-subtle);
-  border-radius: var(--radius);
-  padding: 0.6rem 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.attention-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  font-size: var(--fs-sm);
-  flex-wrap: wrap;
-}
-
-.attention-message {
-  color: var(--text-primary);
-}
-
+/* Base .overview-tab / .attention / .tiles / .tile / .section-* shapes live
+   in style.css, shared with ScheduleOverviewTab. Only the attention row's
+   trailing link and the empty/truncate stat modifiers are this page's own. */
 .attention-link {
   margin-left: auto;
   font-size: var(--fs-xs);
   color: var(--accent);
-}
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-  gap: 0.6rem;
-}
-
-.tile {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.7rem 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
 }
 
 .stat-value--empty {
@@ -357,37 +315,5 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.section-title {
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  margin: 0;
-}
-
-.section-link {
-  font: inherit;
-  font-size: var(--fs-xs);
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-.section-link:hover {
-  text-decoration: underline;
 }
 </style>

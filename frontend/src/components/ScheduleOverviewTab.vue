@@ -4,16 +4,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import type { ScheduleRow } from '../types/schedule'
+import type { ReportRow } from '../types/report'
+import type { AgentRow } from '../types/agent'
+import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import { computed } from 'vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
 import { normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
 import BackupProgressCard from './BackupProgressCard.vue'
 import AgentRunStrip from './AgentRunStrip.vue'
-import type { ScheduleRow } from '../types/schedule'
-import type { ReportRow } from '../types/report'
-import type { AgentRow } from '../types/agent'
-import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 
 interface ArchiveProgressData {
   hostname: string
@@ -23,11 +23,11 @@ interface ArchiveProgressData {
 }
 
 /**
- * The landing tab for a schedule, which is what you see when a target missed
- * its run. It answers the questions the old "Schedule Info" card buried under
- * a wall of settings cards - is anything overdue, when did it last run, which
- * targets are healthy - and previews the backups the Backups tab holds in
- * full. Everything editable now lives under Settings.
+ * Replaces the old "Schedule Info" card, which was read-only status wedged
+ * between a wall of editable settings cards. This is a dedicated status
+ * screen instead: whether anything is overdue, the last/next run, every
+ * target's health, and a preview of what the Backups tab holds in full.
+ * Every editable field moved out to Settings.
  */
 const props = defineProps<{
   schedule: ScheduleRow
@@ -172,7 +172,9 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' {
     </div>
 
     <section v-if="agentIds.length > 0">
-      <h2 class="section-title">Targets</h2>
+      <div class="section-head">
+        <h2 class="section-title">Targets</h2>
+      </div>
       <div class="rows">
         <div
           v-for="(id, idx) in agentIds"
@@ -251,34 +253,10 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' {
 </template>
 
 <style scoped>
-.overview-tab {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.attention {
-  border: 1px solid var(--warning);
-  background: var(--warning-subtle);
-  border-radius: var(--radius);
-  padding: 0.6rem 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.attention-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  font-size: var(--fs-sm);
-  flex-wrap: wrap;
-}
-
-.attention-message {
-  color: var(--text-primary);
-}
-
+/* Base .overview-tab / .attention / .tiles / .tile / .section-* shapes live
+   in style.css, shared with AgentOverviewTab. Only the attention row's Retry
+   button and note, the warning stat modifier, and the target-order badge are
+   this page's own. */
 .attention-note {
   color: var(--text-muted);
   font-size: var(--fs-xs);
@@ -288,61 +266,8 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' {
   margin-left: auto;
 }
 
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-  gap: 0.6rem;
-}
-
-.tile {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.7rem 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
 .stat-sub--bad {
   color: var(--warning);
-}
-
-.section-title {
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  margin: 0 0 0.5rem;
-}
-
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.section-head .section-title {
-  margin: 0;
-}
-
-.section-link {
-  font: inherit;
-  font-size: var(--fs-xs);
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-.section-link:hover {
-  text-decoration: underline;
 }
 
 .agent-row-order {

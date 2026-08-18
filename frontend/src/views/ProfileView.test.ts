@@ -537,6 +537,28 @@ describe('ProfileView', () => {
       await flushPromises()
     }
 
+    // An empty token list is a place to start, not a dead end: the state
+    // says what a token is for and offers the same action as the header
+    // button, rather than a bare centred sentence.
+    it('offers token creation from the empty state', async () => {
+      mockGetTokens()
+      const wrapper = renderWithPlugins(ProfileView)
+      await flushPromises()
+      await clickApiTokensTab(wrapper)
+
+      const empty = wrapper.find('.empty-state')
+      expect(empty.find('.empty-title').text()).toBe('No API tokens yet')
+      expect(empty.find('.empty-description').text()).toContain(
+        'authenticate without your password',
+      )
+
+      await empty.find('.empty-action').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.modal-dialog').exists()).toBe(true)
+      expect(wrapper.find('.modal-title').text()).toContain('Token')
+    })
+
     it('creates a token from the name typed in the dialog', async () => {
       mockGetTokens()
       vi.mocked(apiClient.post).mockResolvedValue({

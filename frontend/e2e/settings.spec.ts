@@ -23,6 +23,26 @@ test.describe('Settings journey', () => {
     }).toPass({ timeout: 15_000 })
   })
 
+  // The demo seeds agent tokens, not personal API tokens, so this page is
+  // genuinely empty - the state has to say what a token is for and offer the
+  // way to make one, not just report the absence.
+  test('profile offers token creation from the empty API-token list', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/profile')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'API Tokens' }).click()
+
+    const empty = page.locator('.empty-state')
+    await expect(empty.locator('.empty-title')).toHaveText('No API tokens yet')
+    await expect(empty.locator('.empty-description')).toContainText(
+      'authenticate without your password',
+    )
+
+    await empty.locator('.empty-action').click()
+    await expect(page.locator('.modal-title')).toHaveText('Create API Token')
+  })
+
   test('notifications page shows configured channels', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/notifications')

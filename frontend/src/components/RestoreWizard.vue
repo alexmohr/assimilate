@@ -398,7 +398,11 @@ function cancelDownload(): void {
 }
 
 .textarea-input:focus,
-.text-input:focus,
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .text-input {
   background: var(--bg-card);
   border: 1px solid var(--border);

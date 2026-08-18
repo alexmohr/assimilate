@@ -1343,8 +1343,13 @@
     white-space: nowrap;
   }
 
+  /* The row's buttons: right-aligned, and laid out as a row so two or three
+     of them keep a gap rather than running together - `.btn` sets no margin
+     of its own. */
   .td-action {
     text-align: right;
+    display: inline-flex;
+    gap: 0.25rem;
   }
 
   /* A PrimeVue column filter input: `.input` sized down to fit a header row. */

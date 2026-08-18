@@ -26,40 +26,58 @@ function cronTimeToDisplay(hourNum: number, minNum: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
-export function cronToHuman(expr: string): string {
+/**
+ * The cron shapes this app understands, classified once so callers that need
+ * different projections of the same expression - a human-readable string
+ * here, an approximate interval in `cadence.ts` - don't each re-implement
+ * field parsing and shape detection and risk drifting out of sync.
+ */
+export type CronShape =
+  | { kind: 'hourly'; intervalHours: number }
+  | { kind: 'daily'; hourNum: number; minNum: number }
+  | { kind: 'weekly'; dow: string; hourNum: number; minNum: number }
+  | { kind: 'monthly'; dom: string; hourNum: number; minNum: number }
+
+export function classifyCron(expr: string): CronShape | null {
   const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return ''
+  if (parts.length !== 5) return null
 
   const [min, hour, dom, , dow] = parts
 
   const hourlyMatch = hour.match(/^\*\/(\d+)$/)
   if (hourlyMatch && min === CRON_TOP_OF_HOUR && dom === CRON_ANY && dow === CRON_ANY) {
-    const interval = parseInt(hourlyMatch[1], 10)
-    return interval === 1 ? 'Every hour' : `Every ${interval} hours`
+    return { kind: 'hourly', intervalHours: parseInt(hourlyMatch[1], 10) }
   }
 
   const minNum = parseInt(min, 10)
   const hourNum = parseInt(hour, 10)
-  if (isNaN(minNum) || isNaN(hourNum)) return ''
+  if (isNaN(minNum) || isNaN(hourNum)) return null
 
-  const time = cronTimeToDisplay(hourNum, minNum)
+  if (dom === CRON_ANY && dow === CRON_ANY) return { kind: 'daily', hourNum, minNum }
+  if (dom === CRON_ANY && dow !== CRON_ANY) return { kind: 'weekly', dow, hourNum, minNum }
+  if (dow === CRON_ANY && dom !== CRON_ANY) return { kind: 'monthly', dom, hourNum, minNum }
 
-  if (dom === CRON_ANY && dow === CRON_ANY) {
-    return `Daily at ${time}`
+  return null
+}
+
+export function cronToHuman(expr: string): string {
+  const shape = classifyCron(expr)
+  if (!shape) return ''
+
+  switch (shape.kind) {
+    case 'hourly':
+      return shape.intervalHours === 1 ? 'Every hour' : `Every ${shape.intervalHours} hours`
+    case 'daily':
+      return `Daily at ${cronTimeToDisplay(shape.hourNum, shape.minNum)}`
+    case 'weekly': {
+      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+      const days = shape.dow.split(',').map((d) => {
+        const n = parseInt(d, 10)
+        return dayNames[n] ?? d
+      })
+      return `${days.join(', ')} at ${cronTimeToDisplay(shape.hourNum, shape.minNum)}`
+    }
+    case 'monthly':
+      return `Monthly on day ${shape.dom} at ${cronTimeToDisplay(shape.hourNum, shape.minNum)}`
   }
-
-  if (dom === CRON_ANY && dow !== CRON_ANY) {
-    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-    const days = dow.split(',').map((d) => {
-      const n = parseInt(d, 10)
-      return dayNames[n] ?? d
-    })
-    return `${days.join(', ')} at ${time}`
-  }
-
-  if (dow === CRON_ANY && dom !== CRON_ANY) {
-    return `Monthly on day ${dom} at ${time}`
-  }
-
-  return ''
 }

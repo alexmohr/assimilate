@@ -16,6 +16,7 @@ import { useListSort } from '../composables/useListSort'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { cronIntervalSecs } from '../utils/cadence'
 import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -24,6 +25,7 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import AgentCoverageMeter from '../components/AgentCoverageMeter.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
@@ -43,6 +45,8 @@ interface HealthEntry {
   last_backup_at: string | null
   is_overdue: boolean
   last_error_message: string | null
+  cron_expression?: string | null
+  schedule_enabled?: boolean | null
 }
 
 interface AgentHealth {
@@ -51,6 +55,10 @@ interface AgentHealth {
   warning: number
   total: number
   last_error_message: string | null
+  /** Most recent completed backup across this host's schedules. */
+  mostRecentBackupAt: string | null
+  /** Shortest cadence among this host's enabled backup schedules, in seconds. */
+  minCadenceSecs: number | null
 }
 
 type SortField = 'hostname' | 'status' | 'last_seen' | 'version'
@@ -79,6 +87,7 @@ const isAdmin = computed(() => authStore.isAdmin)
 const agents = ref<AgentRow[]>([])
 const showHidden = ref(false)
 const machineScheduleCount = ref<Record<number, number>>({})
+const fleetScheduleCount = ref(0)
 const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -231,6 +240,41 @@ function agentHealthStatus(agent: AgentRow): AgentHealth | null {
   return healthByHost.value[agent.hostname] ?? null
 }
 
+function agentCoverage(agent: AgentRow): {
+  lastBackupAt: string | null
+  cadenceSecs: number | null
+} {
+  const h = agentHealthStatus(agent)
+  return { lastBackupAt: h?.mostRecentBackupAt ?? null, cadenceSecs: h?.minCadenceSecs ?? null }
+}
+
+interface FleetVersionCount {
+  version: string
+  count: number
+  current: boolean
+}
+
+const fleetSummary = computed(() => {
+  const total = agents.value.length
+  const online = agents.value.filter((a) => a.is_connected).length
+  const totalSchedules = fleetScheduleCount.value
+
+  const versionCounts = new Map<string, number>()
+  for (const a of agents.value) {
+    const v = a.agent_version ?? 'unknown'
+    versionCounts.set(v, (versionCounts.get(v) ?? 0) + 1)
+  }
+  const versions: FleetVersionCount[] = [...versionCounts.entries()]
+    .map(([version, count]) => ({
+      version,
+      count,
+      current: availableAgentVersion.value !== null && version === availableAgentVersion.value,
+    }))
+    .sort((a, b) => b.count - a.count)
+
+  return { total, online, totalSchedules, versions }
+})
+
 function agentIssues(agent: AgentRow): EntityIssue[] {
   const h = agentHealthStatus(agent)
   if (!h) return []
@@ -306,28 +350,41 @@ async function loadAgents(): Promise<void> {
       upcoming_schedules: [],
       repository_capacity: [],
     }
-    const [agentTagAssocRes, agentTagsRes, healthRes, scheduleCountsRes, overviewRes] =
-      await Promise.all([
-        apiClient
-          .get<AgentTagRow[]>('/agent-tags', { timeout: 8000 })
-          .catch(() => ({ data: [] as AgentTagRow[] })),
-        apiClient
-          .get<TagRow[]>('/tags', { params: { scope: 'host' }, timeout: 8000 })
-          .catch(() => ({ data: [] as TagRow[] })),
-        apiClient
-          .get<HealthEntry[]>('/stats/health', { timeout: 8000 })
-          .catch(() => ({ data: [] as HealthEntry[] })),
-        apiClient
-          .get<{ agent_id: number; count: number }[]>('/stats/schedule-counts', { timeout: 8000 })
-          .catch(() => ({ data: [] as { agent_id: number; count: number }[] })),
-        apiClient
-          .get<DashboardOverview>('/stats/dashboard-overview', { timeout: 8000 })
-          .catch(() => ({ data: emptyOverview })),
-      ])
+    const [
+      agentTagAssocRes,
+      agentTagsRes,
+      healthRes,
+      scheduleCountsRes,
+      schedulesRes,
+      overviewRes,
+    ] = await Promise.all([
+      apiClient
+        .get<AgentTagRow[]>('/agent-tags', { timeout: 8000 })
+        .catch(() => ({ data: [] as AgentTagRow[] })),
+      apiClient
+        .get<TagRow[]>('/tags', { params: { scope: 'host' }, timeout: 8000 })
+        .catch(() => ({ data: [] as TagRow[] })),
+      apiClient
+        .get<HealthEntry[]>('/stats/health', { timeout: 8000 })
+        .catch(() => ({ data: [] as HealthEntry[] })),
+      apiClient
+        .get<{ agent_id: number; count: number }[]>('/stats/schedule-counts', { timeout: 8000 })
+        .catch(() => ({ data: [] as { agent_id: number; count: number }[] })),
+      apiClient
+        .get<{ id: number }[]>('/schedules', { timeout: 8000 })
+        .catch(() => ({ data: [] as { id: number }[] })),
+      apiClient
+        .get<DashboardOverview>('/stats/dashboard-overview', { timeout: 8000 })
+        .catch(() => ({ data: emptyOverview })),
+    ])
     machineScheduleCount.value = {}
     scheduleCountsRes.data.forEach((entry) => {
       machineScheduleCount.value[entry.agent_id] = entry.count
     })
+    // Fleet-wide total is the distinct schedule count, not a sum of
+    // per-agent counts - a schedule targeting N agents would otherwise be
+    // counted N times.
+    fleetScheduleCount.value = schedulesRes.data.length
 
     allAgentTags.value = agentTagsRes.data
     const tagMap: Record<number, { name: string; color: string }[]> = {}
@@ -346,18 +403,36 @@ async function loadAgents(): Promise<void> {
           warning: 0,
           total: 0,
           last_error_message: null,
+          mostRecentBackupAt: null,
+          minCadenceSecs: null,
         }
       }
-      hMap[entry.hostname].total++
+      const host = hMap[entry.hostname]
+      host.total++
       const status = entry.last_status !== null ? normalizeBackupStatus(entry.last_status) : null
       if (status === 'failed') {
-        hMap[entry.hostname].failed++
+        host.failed++
         if (entry.last_error_message) {
-          hMap[entry.hostname].last_error_message = entry.last_error_message
+          host.last_error_message = entry.last_error_message
         }
       }
-      if (status === 'warning') hMap[entry.hostname].warning++
-      if (entry.is_overdue) hMap[entry.hostname].overdue++
+      if (status === 'warning') host.warning++
+      if (entry.is_overdue) host.overdue++
+
+      if (
+        entry.last_backup_at &&
+        (status === 'success' || status === 'warning') &&
+        (!host.mostRecentBackupAt || entry.last_backup_at > host.mostRecentBackupAt)
+      ) {
+        host.mostRecentBackupAt = entry.last_backup_at
+      }
+      if (entry.schedule_enabled && entry.cron_expression) {
+        const secs = cronIntervalSecs(entry.cron_expression)
+        if (secs !== null) {
+          host.minCadenceSecs =
+            host.minCadenceSecs === null ? secs : Math.min(host.minCadenceSecs, secs)
+        }
+      }
     })
     healthByHost.value = hMap
 
@@ -672,6 +747,31 @@ watch(
       </template>
     </div>
 
+    <div
+      v-if="!loading && agents.length > 0"
+      class="fleet-summary"
+    >
+      <div class="fleet-summary-row">
+        <span class="fleet-summary-title">Fleet</span>
+        <span class="fleet-summary-counts">
+          {{ fleetSummary.total }} agent{{ fleetSummary.total === 1 ? '' : 's' }} ·
+          {{ fleetSummary.online }} online · {{ fleetSummary.totalSchedules }} schedule{{
+            fleetSummary.totalSchedules === 1 ? '' : 's'
+          }}
+        </span>
+      </div>
+      <div class="fleet-version-row">
+        <span
+          v-for="v in fleetSummary.versions"
+          :key="v.version"
+          class="fleet-version-chip"
+          :class="{ 'fleet-version-chip-current': v.current }"
+        >
+          {{ v.version }}{{ v.current ? ' (current)' : '' }} × {{ v.count }}
+        </span>
+      </div>
+    </div>
+
     <BaseSpinner
       v-if="loading"
       size="lg"
@@ -735,6 +835,10 @@ watch(
             </span>
           </div>
         </div>
+        <AgentCoverageMeter
+          :last-backup-at="agentCoverage(agent).lastBackupAt"
+          :cadence-secs="agentCoverage(agent).cadenceSecs"
+        />
         <div class="card-stats">
           <div class="stat">
             <span class="stat-value">{{ scheduleCount(agent) }}</span>
@@ -1010,5 +1114,57 @@ watch(
 
 .hidden-toggle-label {
   white-space: nowrap;
+}
+
+.fleet-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1.1rem 1rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.fleet-summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.fleet-summary-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fleet-summary-counts {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-version-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.fleet-version-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.fleet-version-chip-current {
+  color: var(--success);
 }
 </style>

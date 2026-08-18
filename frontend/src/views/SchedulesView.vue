@@ -8,6 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
 import { formatDateShort } from '../utils/format'
+import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
@@ -28,17 +29,37 @@ import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
-import { type EntityIssue } from '../components/EntityStatusBadges.vue'
-import ScheduleCard from '../components/ScheduleCard.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
+import ScheduleTimelineRail, { type TimelineEntry } from '../components/ScheduleTimelineRail.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
+
+/**
+ * Local shape for `/stats/activity` responses, matching the wire fields of
+ * `db::ActivityRow` (not ts-rs generated - see the same pattern in
+ * DashboardView/ActivityLogView). Only the fields this view consumes.
+ */
+interface ScheduleActivityEntry {
+  id: number
+  started_at: string
+  duration_secs: number
+  status: string
+  schedule_id: number | null
+}
+
+const ACTIVITY_WINDOW_DAYS = 30
+// Matches RunHistoryStrip's default `maxBars` - each card only ever renders
+// this many of its most recent runs.
+const RUN_HISTORY_BARS = 10
 
 const schedules = ref<ScheduleRow[]>([])
 const repos = ref<Repo[]>([])
 const agents = ref<AgentRow[]>([])
 const health = ref<ScheduleHealthEntry[]>([])
+const activity = ref<ScheduleActivityEntry[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedules.')
 const router = useRouter()
 type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
@@ -201,6 +222,74 @@ const filteredSchedules = computed(() => {
   return list
 })
 
+const runsBySchedule = computed(() => {
+  const map = new Map<number, RunHistoryEntry[]>()
+  for (const entry of activity.value) {
+    if (entry.schedule_id === null) continue
+    const list = map.get(entry.schedule_id) ?? []
+    list.push({
+      id: entry.id,
+      startedAt: entry.started_at,
+      durationSecs: entry.duration_secs,
+      status: entry.status,
+    })
+    map.set(entry.schedule_id, list)
+  }
+  return map
+})
+
+type TimeBucketKey = 'now' | 'next6' | 'next24' | 'week' | 'later' | 'unscheduled' | 'paused'
+
+const TIME_BUCKETS: { key: TimeBucketKey; title: string }[] = [
+  { key: 'now', title: 'Due now' },
+  { key: 'next6', title: 'Next 6 hours' },
+  { key: 'next24', title: 'Next 24 hours' },
+  { key: 'week', title: 'This week' },
+  { key: 'later', title: 'Later' },
+  { key: 'unscheduled', title: 'Unscheduled' },
+  { key: 'paused', title: 'Paused' },
+]
+
+const HOUR_MS = 3_600_000
+const DAY_MS = 24 * HOUR_MS
+
+function timeBucketOf(s: EnrichedSchedule): TimeBucketKey {
+  if (!s.enabled) return 'paused'
+  if (!s.next_run_at) return 'unscheduled'
+  const ms = new Date(s.next_run_at).getTime() - Date.now()
+  if (ms <= 0) return 'now'
+  if (ms <= 6 * HOUR_MS) return 'next6'
+  if (ms <= DAY_MS) return 'next24'
+  if (ms <= 7 * DAY_MS) return 'week'
+  return 'later'
+}
+
+const groupedSchedules = computed(() => {
+  const buckets = new Map<TimeBucketKey, EnrichedSchedule[]>()
+  for (const s of filteredSchedules.value) {
+    const key = timeBucketOf(s)
+    const list = buckets.get(key) ?? []
+    list.push(s)
+    buckets.set(key, list)
+  }
+  return TIME_BUCKETS.map(({ key, title }) => ({
+    key,
+    title,
+    schedules: buckets.get(key) ?? [],
+  })).filter((group) => group.schedules.length > 0)
+})
+
+const railEntries = computed<TimelineEntry[]>(() =>
+  filteredSchedules.value
+    .filter((s) => s.enabled && s.next_run_at)
+    .map((s) => ({
+      id: s.id,
+      label: s.name || s.repo?.name || `Schedule #${s.id}`,
+      atIso: s.next_run_at as string,
+      host: s.repo?.ssh_host ?? null,
+    })),
+)
+
 // Enriches the shared chip set with SchedulesView-specific tooltips: this
 // page aggregates across every host a schedule targets, so a bare "Overdue"
 // or "Failed" chip benefits from a hover detail of which host and why.
@@ -231,16 +320,26 @@ function overdueMessage(entries: ScheduleHealthEntry[]): string {
 
 async function fetchAll(): Promise<void> {
   await run(async () => {
-    const [schRes, repoRes, agentsRes, healthRes] = await Promise.all([
+    const [schRes, repoRes, agentsRes, healthRes, activityRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<Repo[]>('/repos'),
       apiClient.get<AgentRow[]>('/agents'),
       apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
+      // The backend caps this per schedule (not the result set overall), so
+      // RUN_HISTORY_BARS alone is enough to guarantee every card gets its
+      // own last-N runs regardless of how many schedules exist or how often
+      // any one of them runs.
+      apiClient
+        .get<
+          ScheduleActivityEntry[]
+        >(`/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit=${RUN_HISTORY_BARS}`)
+        .catch(() => ({ data: [] as ScheduleActivityEntry[] })),
     ])
     schedules.value = schRes.data
     repos.value = repoRes.data
     agents.value = agentsRes.data
     health.value = healthRes.data
+    activity.value = activityRes.data
   })
 }
 
@@ -394,60 +493,103 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       @action="router.push('/schedules/new')"
     />
 
-    <div
-      v-else
-      class="card-grid"
-    >
-      <ScheduleCard
-        v-for="s in filteredSchedules"
-        :key="s.id"
-        :schedule="s"
-        :issues="scheduleIssues(s)"
-        :format-run="formatDateShort"
-        :running="s.isRunning"
-        spread-actions
-        :data-schedule-id="s.id"
-        @select="navigateToSchedule(s)"
+    <template v-else>
+      <ScheduleTimelineRail :entries="railEntries" />
+
+      <div
+        v-for="group in groupedSchedules"
+        :key="group.key"
+        class="schedule-group"
       >
-        <template #title>{{
-          s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
-        }}</template>
-        <template #meta>
-          <span class="meta-pill">
-            {{ s.target_hostnames.length }} agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
-          </span>
-        </template>
-        <template #actions>
-          <div class="schedule-toggle">
-            <ToggleSwitch
-              :model-value="s.enabled"
-              :disabled="toggleLoading === s.id"
-              :label="s.enabled ? 'Disable schedule' : 'Enable schedule'"
-              @update:model-value="toggleScheduleEnabled(s)"
+        <div class="schedule-group-header">
+          <h2 class="schedule-group-title">{{ group.title }}</h2>
+          <span class="schedule-group-count">{{ group.schedules.length }}</span>
+          <span class="schedule-group-rule"></span>
+        </div>
+        <div class="card-grid">
+          <div
+            v-for="s in group.schedules"
+            :key="s.id"
+            class="entity-card"
+            :class="{
+              'entity-card--notable': !s.enabled,
+              'entity-card--highlighted': s.overdueEntries.length > 0,
+            }"
+            :data-schedule-id="s.id"
+            @click="navigateToSchedule(s)"
+          >
+            <span class="card-name">{{
+              s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
+            }}</span>
+            <EntityStatusBadges
+              :notable="!s.enabled"
+              notable-label="Disabled"
+              :running="s.isRunning"
+              running-label="Running"
+              :issues="scheduleIssues(s)"
             />
-            <span class="schedule-toggle-label">{{ s.enabled ? 'Enabled' : 'Disabled' }}</span>
+            <div class="card-meta">
+              <span class="meta-pill">
+                {{ s.target_hostnames.length }} agent{{
+                  s.target_hostnames.length === 1 ? '' : 's'
+                }}
+              </span>
+              <span
+                class="badge badge--neutral"
+                :class="`type-${s.schedule_type ?? 'backup'}`"
+              >
+                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
+              </span>
+            </div>
+            <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />
+            <div class="card-stats">
+              <div class="stat">
+                <span class="stat-value">{{
+                  cronToHuman(s.cron_expression) ?? s.cron_expression
+                }}</span>
+                <span class="stat-label">Every</span>
+              </div>
+              <div class="stat stat-align-end">
+                <span class="stat-value">{{ formatDateShort(s.next_run_at) }}</span>
+                <span class="stat-label">Next run</span>
+              </div>
+            </div>
+            <div
+              class="card-actions"
+              @click.stop
+            >
+              <div class="schedule-toggle">
+                <ToggleSwitch
+                  :model-value="s.enabled"
+                  :disabled="toggleLoading === s.id"
+                  :label="s.enabled ? 'Disable schedule' : 'Enable schedule'"
+                  @update:model-value="toggleScheduleEnabled(s)"
+                />
+                <span class="schedule-toggle-label">{{ s.enabled ? 'Enabled' : 'Disabled' }}</span>
+              </div>
+              <button
+                v-if="s.isRunning"
+                class="btn btn-sm btn-danger"
+                :disabled="cancelLoading === s.id"
+                title="Cancel the running backup"
+                @click="cancelBackup(s)"
+              >
+                {{ cancelLoading === s.id ? '...' : 'Cancel' }}
+              </button>
+              <button
+                v-else
+                class="btn btn-sm btn-ghost"
+                :disabled="runNowLoading === s.id"
+                :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
+                @click="runNow(s)"
+              >
+                {{ runNowLoading === s.id ? '...' : 'Run' }}
+              </button>
+            </div>
           </div>
-          <button
-            v-if="s.isRunning"
-            class="btn btn-sm btn-danger"
-            :disabled="cancelLoading === s.id"
-            title="Cancel the running backup"
-            @click="cancelBackup(s)"
-          >
-            {{ cancelLoading === s.id ? '...' : 'Cancel' }}
-          </button>
-          <button
-            v-else
-            class="btn btn-sm btn-ghost"
-            :disabled="runNowLoading === s.id"
-            :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
-            @click="runNow(s)"
-          >
-            {{ runNowLoading === s.id ? '...' : 'Run' }}
-          </button>
-        </template>
-      </ScheduleCard>
-    </div>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -468,5 +610,46 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
+}
+
+.schedule-group + .schedule-group {
+  margin-top: 1.75rem;
+}
+
+.schedule-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.schedule-group-title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.schedule-group-count {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.schedule-group-rule {
+  flex-grow: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Local layout additions on top of the shared `.card-stats` rule (which only
+   sets `display`/`gap`) - this card shows just two stats, spread to the
+   card's full width instead of left-packed. */
+.card-stats {
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.stat-align-end {
+  align-items: flex-end;
 }
 </style>

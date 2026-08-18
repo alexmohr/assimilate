@@ -725,7 +725,7 @@ pub async fn storage_breakdown(
     tag = "Statistics",
     operation_id = "getActivity",
     params(
-        ("limit" = Option<i64>, Query, description = "Max entries to return"),
+        ("limit" = Option<i64>, Query, description = "Max entries (per schedule if days is set)"),
         ("days" = Option<i64>, Query, description = "Return entries from last N days"),
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
         ("hostname" = Option<String>, Query, description = "Filter by agent hostname"),
@@ -755,6 +755,7 @@ pub async fn activity(
             query.hostname.as_deref(),
             query.schedule_id,
             query.run_id.as_deref(),
+            query.limit,
         )
         .await?
     } else {

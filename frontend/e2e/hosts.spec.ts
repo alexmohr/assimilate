@@ -23,6 +23,20 @@ test.describe('Hosts management', () => {
     await expect(page.getByText('legacy-db-prod', { exact: true })).toBeVisible()
   })
 
+  test('hosts list shows the fleet summary band and a per-agent coverage meter', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.locator('.fleet-summary')).toBeVisible()
+    await expect(page.locator('.fleet-summary-counts')).toContainText('agent')
+
+    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
+    await expect(card.locator('.coverage-meter')).toBeVisible()
+  })
+
   test('clicking a host navigates to its detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')

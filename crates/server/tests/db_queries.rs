@@ -1846,7 +1846,7 @@ async fn activity_feed_days(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let activity = db::get_activity_feed_days(&pool, 7, None, None, None, None)
+    let activity = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(activity.len(), 1);
@@ -6318,25 +6318,140 @@ async fn activity_feed_days_test(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let all = db::get_activity_feed_days(&pool, 7, None, None, None, None)
+    let all = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
         .await
         .unwrap();
     assert_ne!(all.len(), 0);
 
-    let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None, None, None)
+    let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None, None, None, None)
         .await
         .unwrap();
     assert_eq!(with_repo.len(), 1);
 
-    let with_host = db::get_activity_feed_days(&pool, 7, None, Some("days-feed-host"), None, None)
-        .await
-        .unwrap();
+    let with_host =
+        db::get_activity_feed_days(&pool, 7, None, Some("days-feed-host"), None, None, None)
+            .await
+            .unwrap();
     assert_eq!(with_host.len(), 1);
 
-    let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"), None, None)
+    let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"), None, None, None)
         .await
         .unwrap();
     assert_eq!(no_match.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_limit(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "days-feed-limit-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, agent.id, repo.id).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let unbounded = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(unbounded.len(), 3);
+
+    let limited = db::get_activity_feed_days(&pool, 7, None, None, None, None, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(limited.len(), 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
+    // A frequently-running schedule must not crowd a quieter one out of the
+    // ranked window - the limit caps rows *per schedule_id*, not the result
+    // set overall.
+    let (busy_agent, busy_repo, busy_schedule) = create_test_schedule(&pool).await;
+    for _ in 0..5 {
+        insert_test_report_for_schedule(
+            &pool,
+            busy_agent.id,
+            busy_repo.id,
+            busy_schedule.id,
+            shared::types::BackupStatus::Success,
+        )
+        .await;
+    }
+
+    let quiet_agent = db::insert_agent(&pool, "quiet-sched-host", None, "hash", None)
+        .await
+        .unwrap();
+    let quiet_repo = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "quiet-sched-repo",
+            repo_path: "/backups/quiet-sched",
+            ssh_user: "user",
+            ssh_host: "host.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+    let quiet_schedule = db::insert_schedule(
+        &pool,
+        quiet_repo.id,
+        &ScheduleParams {
+            name: "quiet-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * 0",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 0,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    insert_test_report_for_schedule(
+        &pool,
+        quiet_agent.id,
+        quiet_repo.id,
+        quiet_schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+
+    let rows = db::get_activity_feed_days(&pool, 30, None, None, None, None, Some(2))
+        .await
+        .unwrap();
+
+    let busy_count = rows
+        .iter()
+        .filter(|r| r.schedule_id == Some(busy_schedule.id))
+        .count();
+    let quiet_count = rows
+        .iter()
+        .filter(|r| r.schedule_id == Some(quiet_schedule.id))
+        .count();
+    assert_eq!(busy_count, 2, "busy schedule should be capped at the limit");
+    assert_eq!(
+        quiet_count, 1,
+        "quiet schedule's single run must survive alongside the busy schedule's"
+    );
 }
 
 #[test]

@@ -38,6 +38,33 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('media-weekly').first()).toBeVisible()
   })
 
+  test('schedules list groups cards under at least one time-based section and shows a run-history strip', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // Every schedule falls into exactly one time bucket (or Paused), so with
+    // any seeded schedules present there is always at least one group header.
+    await expect(page.locator('.schedule-group-header').first()).toBeVisible()
+
+    const card = page.locator('.entity-card', { hasText: 'server-daily' }).first()
+    await expect(card.locator('.run-history')).toBeVisible()
+  })
+
+  test('schedules list shows the 24h collision rail above the groups', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // The seeded schedules span hourly to daily cadences, so at least one
+    // always has a next_run_at within the rail's 24h window.
+    const rail = page.locator('.timeline-rail')
+    await expect(rail).toBeVisible()
+    await expect(rail.locator('.timeline-tick').first()).toBeVisible()
+  })
+
   test('overdue schedule card shows an Overdue chip with a per-host detail tooltip', async ({
     page,
   }) => {

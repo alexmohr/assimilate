@@ -660,9 +660,16 @@ describe('SchedulesView', () => {
     )
     expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/enabled/i))
 
-    // Once the API confirms the flip, the badge disappears and the label updates.
-    expect(card!.find('.schedule-toggle-label').text()).toBe('Enabled')
-    expect(card!.find('.entity-status-pill').exists()).toBe(false)
+    // Once enabled, the schedule moves from the Paused group into a
+    // time-based one (its next_run_at is null, so "Unscheduled"), which
+    // remounts its card in a different .schedule-grid - re-query rather than
+    // reuse the pre-toggle `card` reference, which now points at a detached
+    // node. The badge disappears and the label updates.
+    const updatedCard = wrapper
+      .findAll('.entity-card')
+      .find((c) => c.text().includes('media-weekly'))
+    expect(updatedCard!.find('.schedule-toggle-label').text()).toBe('Enabled')
+    expect(updatedCard!.find('.entity-status-pill').exists()).toBe(false)
   })
 
   it('shows an error toast when toggling a schedule fails', async () => {
@@ -695,5 +702,187 @@ describe('SchedulesView', () => {
     await flushPromises()
 
     expect(wrapper.find('h1').text()).toBe('Schedules')
+  })
+
+  it('groups schedules into time-based sections, with disabled schedules in Paused', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    // The two enabled schedules' next_run_at is in the past relative to any
+    // real test-run clock, so both land in "Due now"; the disabled one is
+    // always "Paused" regardless of its next_run_at.
+    const titles = wrapper.findAll('.schedule-group-title').map((t) => t.text())
+    expect(titles).toContain('Due now')
+    expect(titles).toContain('Paused')
+
+    const dueNowGroup = wrapper
+      .findAll('.schedule-group')
+      .find((g) => g.find('.schedule-group-title').text() === 'Due now')
+    expect(dueNowGroup!.find('.schedule-group-count').text()).toBe('2')
+    expect(dueNowGroup!.text()).toContain('server-daily')
+    expect(dueNowGroup!.text()).toContain('database-hourly')
+
+    const pausedGroup = wrapper
+      .findAll('.schedule-group')
+      .find((g) => g.find('.schedule-group-title').text() === 'Paused')
+    expect(pausedGroup!.text()).toContain('media-weekly')
+  })
+
+  it('buckets schedules into Next 24 hours, This week, and Later by next_run_at', async () => {
+    const at = (hours: number): string => new Date(Date.now() + hours * 3600_000).toISOString()
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], next_run_at: at(12) }, // > 6h, <= 24h -> Next 24 hours
+            { ...mockSchedules[1], next_run_at: at(72) }, // > 24h, <= 7d -> This week
+            { ...mockSchedules[2], enabled: true, next_run_at: at(24 * 10) }, // > 7d -> Later
+          ],
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const groupFor = (title: string) =>
+      wrapper
+        .findAll('.schedule-group')
+        .find((g) => g.find('.schedule-group-title').text() === title)
+
+    expect(groupFor('Next 24 hours')!.text()).toContain('server-daily')
+    expect(groupFor('This week')!.text()).toContain('database-hourly')
+    expect(groupFor('Later')!.text()).toContain('media-weekly')
+  })
+
+  it('navigates to the schedule detail page when a card is clicked', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
+    await card!.trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/schedules/1')
+  })
+
+  it('shows the 24h collision rail for schedules due soon, flagging same-host collisions', async () => {
+    const soon = (hours: number): string => new Date(Date.now() + hours * 3600_000).toISOString()
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], repo_id: 20, next_run_at: soon(2) },
+            { ...mockSchedules[1], repo_id: 21, next_run_at: soon(2.1) },
+          ],
+        })
+      }
+      if (url === '/repos') {
+        return Promise.resolve({
+          data: [
+            { ...mockRepos[0], ssh_host: 'shared-box.example.com' },
+            { ...mockRepos[1], ssh_host: 'shared-box.example.com' },
+          ],
+        })
+      }
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.find('.timeline-rail').exists()).toBe(true)
+    expect(wrapper.findAll('.timeline-tick-collision')).toHaveLength(2)
+    expect(wrapper.find('.timeline-note').text()).toContain('shared-box.example.com')
+  })
+
+  it('renders the run-history strip for a schedule from the activity feed', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules')
+        return Promise.resolve({ data: mockSchedules.map((s) => ({ ...s })) })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
+      if (url.startsWith('/stats/activity?days=30&limit=')) {
+        return Promise.resolve({
+          data: [
+            {
+              id: 101,
+              started_at: '2026-05-30T02:00:00Z',
+              duration_secs: 300,
+              status: 'success',
+              schedule_id: 1,
+            },
+            {
+              id: 102,
+              started_at: '2026-05-29T02:00:00Z',
+              duration_secs: 45,
+              status: 'failed',
+              schedule_id: 1,
+            },
+          ],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
+    expect(card!.findAll('.run-bar')).toHaveLength(2)
+    expect(card!.text()).toContain('2 runs · 1 failed')
+
+    const otherCard = wrapper
+      .findAll('.entity-card')
+      .find((c) => c.text().includes('database-hourly'))
+    expect(otherCard!.text()).toContain('No runs yet')
+  })
+
+  it('caps the activity fetch at the run-history bar count, relying on the backend to cap per schedule', async () => {
+    let activityUrl: string | null = null
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules')
+        return Promise.resolve({ data: mockSchedules.map((s) => ({ ...s })) })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      if (url.startsWith('/stats/activity')) {
+        activityUrl = url
+        return Promise.resolve({ data: [] })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    // The backend applies this limit per schedule_id (not to the result set
+    // overall), so a flat 10 is correct regardless of how many schedules exist.
+    expect(activityUrl).toBe('/stats/activity?days=30&limit=10')
+  })
+
+  it('still renders the schedules list when the activity feed request fails', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules')
+        return Promise.resolve({ data: mockSchedules.map((s) => ({ ...s })) })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      if (url.startsWith('/stats/activity')) return Promise.reject(new Error('network error'))
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
+    expect(card!.text()).toContain('No runs yet')
   })
 })

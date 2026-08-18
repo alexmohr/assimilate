@@ -11,6 +11,7 @@ import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResp
 import { computed } from 'vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
 import { normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
+import { scheduleRunStatus } from '../utils/scheduleHealth'
 import { backupStatusBadgeClass } from '../utils/badge'
 import BackupProgressCard from './BackupProgressCard.vue'
 import AgentRunStrip from './AgentRunStrip.vue'
@@ -64,9 +65,17 @@ function lastBackupText(id: number): string {
   return at ? relativeTime(at) : 'never'
 }
 
+/**
+ * Goes through `scheduleRunStatus` rather than normalizing `last_status`
+ * here: the health endpoint LEFT JOINs the latest report, so a target that
+ * has never run comes back with a null `last_status`, and normalizing that
+ * directly would fall through to 'failed' and paint a brand new target red
+ * next to its own "last never" text. The helper reports null for "no run
+ * yet", which is what the schedule cards' failed/warning chips already use.
+ */
 function stripeFor(id: number): 'danger' | 'warning' | 'accent' | 'success' {
   const health = props.healthForAgent(id)
-  if (health && normalizeBackupStatus(health.last_status ?? '') === 'failed') return 'danger'
+  if (scheduleRunStatus(health) === 'failed') return 'danger'
   if (health?.is_overdue) return 'warning'
   if (props.backupRunning && props.backupHostname === props.agentLabel(id)) return 'accent'
   return 'success'

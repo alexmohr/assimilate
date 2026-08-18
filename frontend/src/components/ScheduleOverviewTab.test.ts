@@ -99,6 +99,22 @@ describe('ScheduleOverviewTab', () => {
     expect(wrapper.emitted('retry')).toEqual([[10]])
   })
 
+  it('gives a target whose last run only warned its own stripe, not a clean green one', () => {
+    const wrapper = mount({
+      healthForAgent: (): HealthSummaryResponse | null =>
+        ({
+          is_overdue: false,
+          last_status: 'warning',
+          last_backup_at: '2026-08-18T02:00:00Z',
+        }) as unknown as HealthSummaryResponse,
+    })
+
+    const row = wrapper.findAll('.agent-row').find((r) => r.text().includes('web-server-01'))
+    const stripe = row!.find('.agent-row-stripe')
+    expect(stripe.classes()).toContain('agent-row-stripe--warning')
+    expect(stripe.classes()).not.toContain('agent-row-stripe--success')
+  })
+
   it('does not mark a target that has never run as failed', () => {
     // /stats/health LEFT JOINs the latest report, so a target with no backup
     // yet comes back as a real health row with last_status null. Normalizing

@@ -72,11 +72,18 @@ function lastBackupText(id: number): string {
  * directly would fall through to 'failed' and paint a brand new target red
  * next to its own "last never" text. The helper reports null for "no run
  * yet", which is what the schedule cards' failed/warning chips already use.
+ *
+ * Both outcome-bearing statuses are mapped, not just 'failed': a target
+ * whose last run finished with warnings is not the same as a clean one, and
+ * the recent-backups preview below already gives that report its own colour.
+ * Overdue shares the warning colour, so its position relative to the
+ * warning check does not change what is rendered.
  */
 function stripeFor(id: number): 'danger' | 'warning' | 'accent' | 'success' {
   const health = props.healthForAgent(id)
-  if (scheduleRunStatus(health) === 'failed') return 'danger'
-  if (health?.is_overdue) return 'warning'
+  const status = scheduleRunStatus(health)
+  if (status === 'failed') return 'danger'
+  if (status === 'warning' || health?.is_overdue) return 'warning'
   if (props.backupRunning && props.backupHostname === props.agentLabel(id)) return 'accent'
   return 'success'
 }

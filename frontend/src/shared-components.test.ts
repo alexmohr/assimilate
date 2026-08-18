@@ -184,6 +184,10 @@ const OWNED = [
   'detail-pre',
   'error-pre',
   'warning-pre',
+  'settings-tab',
+  'settings-nav',
+  'settings-nav-item',
+  'settings-pane',
 ]
 
 /**

@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import ScheduleSettingsTab from './ScheduleSettingsTab.vue'
+import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleFormState, ScheduleAgentOverrides } from '../types/scheduleForm'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
@@ -15,26 +16,9 @@ const AGENTS = [
 
 const REPOS = [{ id: 20, name: 'server-daily' }] as unknown as Repo[]
 
+/** A fresh copy, never the shared constant itself - components under test mutate it in place. */
 function baseForm(): ScheduleFormState {
-  return {
-    name: '',
-    cron_expression: '0 2 * * *',
-    enabled: true,
-    canary_enabled: true,
-    exclude_patterns: '',
-    file_change_patterns: '',
-    ignore_global_excludes: false,
-    keep_hourly: 24,
-    keep_daily: 7,
-    keep_weekly: 4,
-    keep_monthly: 12,
-    keep_yearly: 10,
-    compact_enabled: true,
-    rate_limit_kbps: 0,
-    pre_backup_commands: '',
-    post_backup_commands: '',
-    backup_sources: '',
-  }
+  return { ...DEFAULT_SCHEDULE_FORM_STATE }
 }
 
 function baseOverrides(): ScheduleAgentOverrides {

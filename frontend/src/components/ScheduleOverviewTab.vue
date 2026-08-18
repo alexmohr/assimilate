@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
-import { normalizeBackupStatus } from '../utils/backupStatus'
+import { normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
 import BackupProgressCard from './BackupProgressCard.vue'
 import AgentRunStrip from './AgentRunStrip.vue'
@@ -77,12 +77,7 @@ function hostLabel(agentId: number | null): string {
   return agent?.display_name ?? agent?.hostname ?? `#${agentId ?? 0}`
 }
 
-const settledReports = computed(() =>
-  props.reports.filter((r) => {
-    const status = normalizeBackupStatus(r.status)
-    return status !== 'pending' && status !== 'started'
-  }),
-)
+const settledReports = computed(() => filterSettledReports(props.reports))
 
 const backupPreview = computed(() =>
   [...settledReports.value]

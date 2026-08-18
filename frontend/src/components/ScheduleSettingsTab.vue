@@ -441,70 +441,16 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.settings-tab {
-  display: flex;
-  gap: 1.25rem;
-  align-items: flex-start;
-}
-
-.settings-nav {
-  width: 150px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-nav-item {
-  font: inherit;
-  text-align: left;
-  font-size: var(--fs-sm);
-  padding: 0.35rem 0.6rem;
-  border: none;
-  border-left: 2px solid transparent;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.settings-nav-item:hover {
-  color: var(--text-primary);
-}
-
-.settings-nav-item[aria-current='true'] {
-  color: var(--accent);
-  font-weight: 600;
-  border-left-color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.settings-pane {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.required {
-  color: var(--danger);
-}
+/* The settings sub-nav shape (.settings-tab/-nav/-nav-item/-pane), .required
+   and the textarea sizes (.area-input/-sm) all live in style.css. What is
+   left here is this page's own: the retention grid, the host multi-select,
+   the execution-order list, and the mobile collapse that keeps the sub-nav
+   on one row. */
 
 .retention-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(90px, 100%), 1fr));
   gap: 0.75rem;
-}
-
-.area-input {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.area-input-sm {
-  min-height: 56px;
 }
 
 /* Multi-select */

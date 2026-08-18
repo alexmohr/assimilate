@@ -16,10 +16,12 @@ import { useElapsedClock } from '../composables/useElapsedTimer'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
+import { parseArchiveProgress } from '../utils/archiveProgress'
 import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
 import ScheduleSettingsTab from '../components/ScheduleSettingsTab.vue'
 import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
+import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type { AgentRow } from '../types/agent'
@@ -202,25 +204,11 @@ const headerCronSummary = computed(
 )
 const repoName = computed(() => repo.value?.name ?? null)
 
-const form = ref<ScheduleFormState>({
-  name: '',
-  cron_expression: '0 2 * * *',
-  enabled: true,
-  canary_enabled: true,
-  exclude_patterns: '',
-  file_change_patterns: '',
-  ignore_global_excludes: false,
-  keep_hourly: 24,
-  keep_daily: 7,
-  keep_weekly: 4,
-  keep_monthly: 12,
-  keep_yearly: 10,
-  compact_enabled: true,
-  rate_limit_kbps: 0,
-  pre_backup_commands: '',
-  post_backup_commands: '',
-  backup_sources: '',
-})
+// Spread rather than shared by reference: this ref is mutated in place
+// elsewhere (e.g. populateForm(), the backup_sources assignment below), and
+// DEFAULT_SCHEDULE_FORM_STATE is a module-level singleton every schedule page
+// instance imports.
+const form = ref<ScheduleFormState>({ ...DEFAULT_SCHEDULE_FORM_STATE })
 
 function agentLabel(id: number): string {
   const c = agents.value.find((x) => x.id === id)
@@ -550,23 +538,6 @@ async function cancelBackup(): Promise<void> {
     toastError(extractError(e))
   } finally {
     cancelLoading.value = false
-  }
-}
-
-interface BorgArchiveProgress {
-  type: 'archive_progress'
-  nfiles: number
-  original_size: number
-  path: string
-}
-
-function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
-  try {
-    const obj = JSON.parse(raw) as Record<string, unknown>
-    if (obj['type'] === 'archive_progress') return obj as unknown as BorgArchiveProgress
-    return null
-  } catch {
-    return null
   }
 }
 

@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatDateShort, formatDuration, relativeTime } from '../utils/format'
-import { normalizeBackupStatus } from '../utils/backupStatus'
+import { normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
 import BackupProgressCard from './BackupProgressCard.vue'
 import AgentRunStrip from './AgentRunStrip.vue'
@@ -51,12 +51,7 @@ const emit = defineEmits<{
   showTab: [tab: 'schedules' | 'backups']
 }>()
 
-const settledReports = computed(() =>
-  props.reports.filter((r) => {
-    const status = normalizeBackupStatus(r.status)
-    return status !== 'pending' && status !== 'started'
-  }),
-)
+const settledReports = computed(() => filterSettledReports(props.reports))
 
 const lastBackup = computed(
   () =>

@@ -4,10 +4,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref, onBeforeUnmount, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { MoreHorizontal } from '@lucide/vue'
 import { formatDate, relativeTime } from '../utils/format'
-import { useEscapeKey } from '../composables/useEscapeKey'
+import { useOverflowMenu } from '../composables/useOverflowMenu'
 import type { AgentRow } from '../types/agent'
 
 /**
@@ -41,31 +41,8 @@ const emit = defineEmits<{
 const isImported = computed(() => props.agent.is_imported)
 const isOnline = computed(() => props.agent.is_connected ?? false)
 
-const menuOpen = ref(false)
 const menuRoot = ref<HTMLElement | null>(null)
-
-useEscapeKey(menuOpen, () => {
-  menuOpen.value = false
-})
-
-function onDocumentPointerDown(e: PointerEvent): void {
-  if (!menuRoot.value?.contains(e.target as Node)) menuOpen.value = false
-}
-
-watch(menuOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onDocumentPointerDown)
-  else document.removeEventListener('pointerdown', onDocumentPointerDown)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown)
-})
-
-/** Runs a menu action and closes the menu, so no item has to remember to. */
-function fromMenu(action: () => void): void {
-  menuOpen.value = false
-  action()
-}
+const { menuOpen, runAndClose: fromMenu } = useOverflowMenu(menuRoot)
 
 /**
  * Restart is offered only where it can actually work. The agent reports

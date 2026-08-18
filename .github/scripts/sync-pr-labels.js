@@ -422,6 +422,13 @@ module.exports = async ({
   // logged either way, so turning this on later is a config change, not a
   // code change - see the "Auto-merge" section in skills/review/SKILL.md.
   autoMergeEnabled = false,
+  // Off by default - only pr-status-labels.yml's own call site turns this
+  // on. See the "notify claude-review.yml" comment below for why this can't
+  // just always be on: claude-review.yml calls this same function on itself
+  // (via pre-review-checks.js and its own post-review re-sync), and letting
+  // either of those dispatch would let a review job re-trigger a second,
+  // concurrent review of the same commit while the first is still running.
+  dispatchOnNeedsReview = false,
 }) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
@@ -747,6 +754,38 @@ module.exports = async ({
       .catch((err) => {
         if (err.status !== 404) throw err;
       });
+  }
+
+  // Notify claude-review.yml directly rather than relying on it to notice
+  // the label change itself. GitHub deliberately does not fire a new
+  // workflow run for an event (here, `labeled`) produced by the calling
+  // workflow's own GITHUB_TOKEN - this is what stops accidental recursive
+  // workflow runs, but it also means claude-review.yml's `pull_request_target:
+  // labeled` trigger can never actually fire for this addLabels call above,
+  // no matter how correctly it's configured. In practice this showed up as
+  // "the review job only starts once a human manually removes and re-adds
+  // the label" - a human's token isn't GITHUB_TOKEN, so that label event
+  // fires normally. `repository_dispatch` is explicitly exempted from the
+  // GITHUB_TOKEN restriction (same as `workflow_dispatch`), so firing one
+  // here closes the gap without needing a personal access token secret.
+  // Gated on the caller opting in (see dispatchOnNeedsReview above) and on
+  // this being a genuine transition (toAdd, not merely "still needs
+  // review") so it fires once per status change, mirroring what the
+  // `labeled` event would have done if it could.
+  if (dispatchOnNeedsReview && toAdd.includes(STATUS_LABELS.NEEDS_REVIEW.name)) {
+    try {
+      await github.rest.repos.createDispatchEvent({
+        owner,
+        repo,
+        event_type: "needs-review",
+        client_payload: { pr_number: prNumber },
+      });
+    } catch (err) {
+      // Don't let a notification failure take down the label sync itself -
+      // the PR still has the correct label and check run either way; worst
+      // case the review job needs a manual `/claude-review` nudge.
+      core.warning(`PR #${prNumber}: failed to dispatch needs-review event: ${err.message}`);
+    }
   }
 
   await createGateCheck(github, owner, repo, pr.head.sha, status, summary, pending);

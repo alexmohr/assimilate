@@ -74,4 +74,11 @@ jobs:
               // variables -> Actions -> Variables -> AUTO_MERGE_ENABLED =
               // "true") - see skills/review/SKILL.md's "Auto-merge" section.
               autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" === "true",
+              // This is the one call site allowed to notify claude-review.yml
+              // (see the comment on sync-pr-labels.js's dispatchOnNeedsReview
+              // param) - this workflow only ever runs in response to a real,
+              // externally-caused event (a push, a review, CI completing),
+              // never from inside claude-review.yml's own job, so there's no
+              // risk of a review job re-triggering itself via this dispatch.
+              dispatchOnNeedsReview: true,
             });

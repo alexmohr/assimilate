@@ -220,6 +220,17 @@ to it (or posted) as pre-known facts so it doesn't have to re-derive them.
 labeled `needs review`, on every non-draft push, and whenever CI finishes —
 but never spends a Claude turn until the pre-flight checks above have passed.
 
+The `needs review` transition itself is delivered via a `repository_dispatch`
+event (`sync-pr-labels.js`'s `dispatchOnNeedsReview`, fired only from
+`pr-status-labels.yml`'s own call site), not the plain `labeled` webhook
+event. GitHub does not fire a new workflow run for an event — including
+`labeled` — produced by the triggering workflow's own `GITHUB_TOKEN`, which
+is exactly how the label gets added; `pull_request_target: types: [labeled]`
+is kept as a secondary trigger only for a human adding the label by hand.
+Before this existed, the symptom looked like "the review job only starts if
+you remove and re-add the label" — doing that by hand uses a real user
+token, which isn't subject to the restriction.
+
 The workflow itself has two jobs: a small `gate` job, and the actual `review`
 job it feeds via `needs:`/`if:`. This exists because the `workflow_run: CI
 completed` trigger (and a plain push) fires on every open PR regardless of

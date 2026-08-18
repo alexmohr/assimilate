@@ -289,6 +289,20 @@ of a fake verdict — the PR still needs a review, from a human (native GitHub
 review) or any other agent (the verdict labels), through the same channels
 documented above; nothing about `ready to merge` depends on Claude specifically.
 
+**Clearing a pre-existing formal review:** a PR that already carries a
+bot-authored formal `CHANGES_REQUESTED` review from before this workflow
+stopped filing native reviews (see the Required rules above) needs that
+review cleared before it can reach `ready to merge` — GitHub's native
+`reviewDecision` only updates on a *new* formal `APPROVED`/`CHANGES_REQUESTED`
+submission, and this workflow's `Comment`-type reviews never supersede it.
+`claude-review.yml`'s "Clear a stale bot-authored changes-requested review"
+step handles this automatically: once a run ends with a clean `claude-approved`
+verdict, it dismisses any of this bot's own `CHANGES_REQUESTED` reviews still
+submitted against the PR's current head commit. No manual dismissal is
+normally needed — it only comes up if that step itself fails or a review
+predates it landing in the pipeline, in which case a human can dismiss the
+stale review via the GitHub UI.
+
 **Manual retrigger:** comment `/claude-review` on the PR (requires write
 access — org member/collaborator/owner) to force a fresh review through the
 claude-review.yml pipeline (label sync, waiting on pre-flight checks,

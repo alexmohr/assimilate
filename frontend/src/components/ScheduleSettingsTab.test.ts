@@ -122,6 +122,14 @@ describe('ScheduleSettingsTab', () => {
     expect(wrapper.emitted('update:selectedAgentIds')?.at(-1)?.[0]).toEqual([11])
   })
 
+  it('toggles an agent into selection from the dropdown', async () => {
+    const wrapper = mount({ section: 'targets', selectedAgentIds: [10] })
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    await wrapper.findAll('.multi-select-item input[type="checkbox"]')[1].trigger('change')
+
+    expect(wrapper.emitted('update:selectedAgentIds')?.at(-1)?.[0]).toEqual([10, 11])
+  })
+
   it('shows Execution Order only with more than one target', () => {
     expect(mount({ section: 'targets', selectedAgentIds: [10, 11] }).text()).toContain(
       'Execution Order',
@@ -137,6 +145,22 @@ describe('ScheduleSettingsTab', () => {
     await downButtons[0].trigger('click')
 
     expect(wrapper.emitted('update:selectedAgentIds')?.at(-1)?.[0]).toEqual([11, 10])
+  })
+
+  it('moves the second target up', async () => {
+    const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11] })
+    const upButtons = wrapper.findAll('.order-btn[title="Move up"]')
+    await upButtons[1].trigger('click')
+
+    expect(wrapper.emitted('update:selectedAgentIds')?.at(-1)?.[0]).toEqual([11, 10])
+  })
+
+  it('does nothing when moving the first target up or the last target down', async () => {
+    const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11] })
+    await wrapper.findAll('.order-btn[title="Move up"]')[0].trigger('click')
+    await wrapper.findAll('.order-btn[title="Move down"]')[1].trigger('click')
+
+    expect(wrapper.emitted('update:selectedAgentIds')).toBeUndefined()
   })
 
   it('switches between a shared and a per-agent backup paths editor', async () => {

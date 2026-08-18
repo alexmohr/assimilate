@@ -245,6 +245,15 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.find('h1').text()).toBe('Backup')
   })
 
+  it('labels a verify-type schedule correctly and hides the Backups tab', async () => {
+    setupEditMode(mockVerifySchedule)
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '3' } })
+    await flushPromises()
+
+    expect(wrapper.find('h1').text()).toBe('Verify (extract dry-run)')
+    expect(wrapper.findAll('.tab').some((t) => t.text() === 'Backups')).toBe(false)
+  })
+
   it('opens on the Overview tab and shows agent and repo in the info summary', async () => {
     const wrapper = await createEditWrapper()
 
@@ -562,6 +571,73 @@ describe('ScheduleDetailView - edit mode', () => {
     await flushPromises()
 
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
+  })
+
+  it('switches to the Backups tab from the Overview preview\'s "View all" link', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      original_size: 100,
+      duration_secs: 10,
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(
+      wrapper
+        .findAll('.tab')
+        .find((t) => t.attributes('aria-selected') === 'true')!
+        .text(),
+    ).toBe('Overview')
+
+    await wrapper.find('.section-link').trigger('click')
+    await flushPromises()
+
+    expect(
+      wrapper
+        .findAll('.tab')
+        .find((t) => t.attributes('aria-selected') === 'true')!
+        .text(),
+    ).toBe('Backups')
+  })
+
+  it('reorders targets from the real Settings tab and saves the new order', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({
+          data: [
+            { agent_id: 10, execution_order: 0 },
+            { agent_id: 11, execution_order: 1 },
+          ],
+        })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Targets')
+
+    await wrapper.find('.order-btn[title="Move down"]').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save Changes')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ agent_ids: [11, 10] }),
+    )
   })
 })
 

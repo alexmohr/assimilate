@@ -99,6 +99,24 @@ describe('ScheduleOverviewTab', () => {
     expect(wrapper.emitted('retry')).toEqual([[10]])
   })
 
+  it('shows an Overdue badge and a Retry button on the target row itself, not just in the attention banner', async () => {
+    const wrapper = mount({
+      healthForAgent: (id: number): HealthSummaryResponse | null =>
+        id === 10
+          ? ({ is_overdue: true, last_backup_at: null } as unknown as HealthSummaryResponse)
+          : null,
+    })
+
+    const targetRow = wrapper.findAll('.agent-row').find((r) => r.text().includes('web-server-01'))
+    expect(targetRow).toBeTruthy()
+    expect(targetRow!.find('.badge--warning').text()).toBe('Overdue')
+
+    const retryButton = targetRow!.findAll('button').find((b) => b.text() === 'Retry')
+    expect(retryButton).toBeTruthy()
+    await retryButton!.trigger('click')
+    expect(wrapper.emitted('retry')).toEqual([[10]])
+  })
+
   it('disables Retry for the agent currently retrying', () => {
     const wrapper = mount({
       healthForAgent: (): HealthSummaryResponse | null =>

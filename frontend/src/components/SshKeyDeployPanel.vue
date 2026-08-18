@@ -74,7 +74,7 @@ async function deploy(): Promise<void> {
             placeholder="e.g. 192.168.1.10"
           />
         </div>
-        <div class="deploy-row-fields">
+        <div class="field-row">
           <div class="field">
             <label class="field-label">SSH User</label>
             <input
@@ -148,45 +148,10 @@ async function deploy(): Promise<void> {
   margin-bottom: 0;
 }
 
-.deploy-row-fields {
-  display: flex;
-  gap: 1rem;
-}
-
-.deploy-row-fields .field {
-  flex: 1;
-}
-
-.field-narrow {
-  max-width: 120px;
-  flex: 0 0 120px !important;
-}
-
-.toggle-row {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: center;
-}
-
-.toggle-row-label {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-}
-
 .deploy-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-}
-
-.deploy-result {
-  font-size: var(--fs-sm);
-  font-weight: 500;
-}
-
-.result-ok {
-  color: var(--success);
 }
 
 .result-error {

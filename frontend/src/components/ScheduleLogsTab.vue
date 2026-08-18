@@ -11,8 +11,7 @@ import type { ReportRow } from '../types/report'
 import type { AgentRow } from '../types/agent'
 
 /**
- * The backup report table for one schedule. See
- * docs/contributing/ui-design-audit.md (F-24).
+ * The backup report table for one schedule.
  */
 const props = defineProps<{
   reports: ReportRow[]
@@ -31,7 +30,7 @@ function hostLabel(agentId: number | null): string {
 <template>
   <div
     v-if="loading"
-    class="reports-loading"
+    class="loading-row"
   >
     <BaseSpinner size="sm" />
   </div>
@@ -43,7 +42,7 @@ function hostLabel(agentId: number | null): string {
   </div>
   <div
     v-else-if="reports.length === 0"
-    class="empty-state"
+    class="state-msg state-msg--inline"
   >
     No backup reports found for this schedule.
   </div>
@@ -79,7 +78,7 @@ function hostLabel(agentId: number | null): string {
           </td>
           <td class="cell-dur">{{ formatDuration(r.duration_secs) }}</td>
           <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-          <td class="cell-error">
+          <td class="cell-truncate">
             <span
               v-if="r.error_message"
               class="error-snippet"
@@ -100,28 +99,6 @@ function hostLabel(agentId: number | null): string {
 </template>
 
 <style scoped>
-.reports-loading {
-  padding: 2rem 0;
-  display: flex;
-  justify-content: center;
-}
-
-.error-banner {
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  color: var(--danger);
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
-  margin-bottom: 1rem;
-  font-size: var(--fs-base);
-}
-
-.empty-state {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  padding: 1rem 0;
-}
-
 .report-row td {
   padding: 0.55rem 0.75rem;
   border-bottom: 1px solid var(--border-subtle);
@@ -132,28 +109,7 @@ function hostLabel(agentId: number | null): string {
   border-bottom: none;
 }
 
-.cell-ts {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
-}
-
-.cell-host {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
 .cell-dur,
-.cell-size {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
-}
-
-.cell-error {
-  max-width: 280px;
-}
-
 .error-snippet {
   font-family: var(--mono);
   font-size: var(--fs-xs);

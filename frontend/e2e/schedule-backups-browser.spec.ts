@@ -52,7 +52,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     // Either the archives panel title is visible (with data)
     // or the empty state message is shown (no archives yet)
     const panelTitle = page.locator('.panel-title').filter({ hasText: 'Archives' })
-    const emptyState = page.locator('.empty-state').filter({ hasText: 'No backup archives' })
+    const emptyState = page.locator('.state-msg').filter({ hasText: 'No backup archives' })
     await expect(panelTitle.or(emptyState).first()).toBeVisible({ timeout: 10_000 })
   })
 
@@ -77,12 +77,9 @@ test.describe('Schedule backups tab - archive browser', () => {
     }
 
     // The file browser should show with breadcrumb
-    await expect(page.locator('.archive-breadcrumb')).toBeVisible()
+    await expect(page.locator('.path-crumbs')).toBeVisible()
     await expect(
-      page
-        .locator('.archive-breadcrumb')
-        .getByText('~')
-        .or(page.locator('.archive-breadcrumb').getByText('/')),
+      page.locator('.path-crumbs').getByText('~').or(page.locator('.path-crumbs').getByText('/')),
     ).toBeVisible()
   })
 
@@ -112,7 +109,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     }
 
     // Breadcrumb should show root
-    const breadcrumb = page.locator('.archive-breadcrumb')
+    const breadcrumb = page.locator('.path-crumbs')
     await expect(breadcrumb).toBeVisible()
 
     // Try navigating into a directory if one exists

@@ -8,53 +8,22 @@ import { ref, computed, onMounted } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download, RefreshCw, Check, AlertTriangle } from '@lucide/vue'
+import { RefreshCw, Check, AlertTriangle } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
+import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
 import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
-import type { ContentsResponse, ContentEntryResponse } from '../types/generated'
+import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
-
-interface ArchiveEntry {
-  name: string
-  start: string
-  hostname: string
-  comment: string
-  original_size: number
-  deduplicated_size: number
-  matched: boolean | null
-  agent_hostname: string | null
-}
-
-interface BreadcrumbSegment {
-  label: string
-  path: string
-}
-
-// borg's raw `list` entry-type character ("d" directory, "-" regular file, "l"
-// symlink, ...); an external format contract, not app-owned domain state.
-const DIRECTORY_ENTRY_TYPE = 'd'
-
-const ROOT_PATH = '/'
-const CURRENT_DIR_MARKER = '.'
-const PARENT_DIR_MARKER = '..'
-
-type ArchiveIndexStatus = 'pending' | 'indexing' | 'done' | 'failed'
-
-function normalizeIndexStatus(status: string): ArchiveIndexStatus {
-  if (status === 'done') return 'done'
-  if (status === 'failed') return 'failed'
-  if (status === 'indexing') return 'indexing'
-  return 'pending'
-}
 
 const repos = ref<Repo[]>([])
 const reposLoading = ref(false)
@@ -66,47 +35,7 @@ const archivesLoading = ref(false)
 const archivesError = ref<string | null>(null)
 const selectedArchive = ref<ArchiveEntry | null>(null)
 
-const currentPath = ref('/')
-const contents = ref<ContentEntryResponse[]>([])
-const contentsLoading = ref(false)
-const contentsError = ref<string | null>(null)
-const indexing = ref(false)
 const showPassphraseDialog = ref(false)
-
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
-function stopPolling(): void {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-function startPolling(archiveName: string, pendingPath: string): void {
-  stopPolling()
-  pollTimer = setInterval(async () => {
-    if (selectedRepoId.value === null) return
-    try {
-      const res = await apiClient.get<{ status: string; error?: string }>(
-        `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
-      )
-      const status = normalizeIndexStatus(res.data.status)
-      if (status === 'done') {
-        stopPolling()
-        indexing.value = false
-        await loadContents(pendingPath)
-      } else if (status === 'failed') {
-        stopPolling()
-        indexing.value = false
-        contentsError.value = res.data.error ?? 'Archive indexing failed'
-      }
-    } catch (e: unknown) {
-      stopPolling()
-      indexing.value = false
-      contentsError.value = extractError(e)
-    }
-  }, 2000)
-}
 
 const sortedArchives = computed(() =>
   [...archives.value].sort((a, b) => b.start.localeCompare(a.start)),
@@ -117,98 +46,6 @@ const archiveFilters = ref({
   start: { value: '', matchMode: FilterMatchMode.CONTAINS },
   hostname: { value: '', matchMode: FilterMatchMode.CONTAINS },
   original_size: { value: '', matchMode: FilterMatchMode.CONTAINS },
-})
-
-const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
-  const path = currentPath.value
-  if (path === ROOT_PATH) return [{ label: '/', path: ROOT_PATH }]
-  const parts = path.replace(/^\//, '').split('/')
-  const segments: BreadcrumbSegment[] = [{ label: '~', path: '/' }]
-  let accumulated = ''
-  for (const part of parts) {
-    accumulated += `/${part}`
-    segments.push({ label: part, path: accumulated })
-  }
-  return segments
-})
-
-interface DisplayEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
-  displayName: string
-  isDir: boolean
-}
-
-const browserEntries = computed<DisplayEntry[]>(() => {
-  const currentDir = currentPath.value.replace(/^\//, '')
-  const dirList = contents.value
-    .filter((e) => e.type === DIRECTORY_ENTRY_TYPE && e.path !== currentDir)
-    .sort((a, b) => a.path.localeCompare(b.path))
-  const fileList = contents.value
-    .filter((e) => e.type !== DIRECTORY_ENTRY_TYPE)
-    .sort((a, b) => a.path.localeCompare(b.path))
-
-  const entries: DisplayEntry[] = []
-
-  const currentEntry = contents.value.find(
-    (e) => e.type === DIRECTORY_ENTRY_TYPE && e.path === currentDir,
-  )
-  if (currentEntry) {
-    entries.push({
-      type: currentEntry.type,
-      path: currentEntry.path,
-      size: Number(currentEntry.size),
-      mtime: currentEntry.mtime,
-      mode: currentEntry.mode,
-      displayName: '.',
-      isDir: true,
-    })
-  } else if (currentPath.value === ROOT_PATH) {
-    entries.push({
-      type: 'd',
-      path: '',
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '.',
-      isDir: true,
-    })
-  }
-
-  if (currentPath.value !== ROOT_PATH) {
-    const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
-    entries.push({
-      type: 'd',
-      path: parentPath,
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '..',
-      isDir: true,
-    })
-  }
-
-  return [
-    ...entries,
-    ...[...dirList, ...fileList].map((e) => ({
-      type: e.type,
-      path: e.path,
-      size: Number(e.size),
-      mtime: e.mtime,
-      mode: e.mode,
-      displayName: e.path.split('/').pop() ?? e.path,
-      isDir: e.type === DIRECTORY_ENTRY_TYPE,
-    })),
-  ]
-})
-
-const browserFilters = ref({
-  displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  size: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  mtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
 })
 
 async function loadRepos(): Promise<void> {
@@ -226,11 +63,10 @@ async function loadRepos(): Promise<void> {
 
 async function onRepoChange(): Promise<void> {
   archives.value = []
+  // Clearing the selection resets the browser: it watches `archive` and tears
+  // down its own polling and path state.
   selectedArchive.value = null
-  contents.value = []
-  currentPath.value = ROOT_PATH
   archivesError.value = null
-  contentsError.value = null
   if (selectedRepoId.value === null) return
   await loadArchives()
 }
@@ -247,71 +83,6 @@ async function loadArchives(): Promise<void> {
   } finally {
     archivesLoading.value = false
   }
-}
-
-async function selectArchive(archive: ArchiveEntry): Promise<void> {
-  stopPolling()
-  indexing.value = false
-  selectedArchive.value = archive
-  currentPath.value = ROOT_PATH
-  contents.value = []
-  contentsError.value = null
-  await loadContents(ROOT_PATH)
-}
-
-async function loadContents(path: string): Promise<void> {
-  if (selectedRepoId.value === null || !selectedArchive.value) return
-  contentsLoading.value = true
-  contentsError.value = null
-  const normalizedPath = path === ROOT_PATH ? ROOT_PATH : `/${path.replace(/^\//, '')}`
-  currentPath.value = normalizedPath
-  try {
-    const apiPath = normalizedPath === ROOT_PATH ? undefined : normalizedPath.replace(/^\//, '')
-    const res = await apiClient.get<ContentsResponse>(
-      `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
-      { params: apiPath ? { path: apiPath } : {} },
-    )
-    const { index_status, entries } = res.data
-    const status = normalizeIndexStatus(index_status)
-    if (status === 'done' || status === 'failed') {
-      indexing.value = false
-      contents.value = entries.filter(
-        (e) => e.path !== CURRENT_DIR_MARKER && e.path !== PARENT_DIR_MARKER,
-      )
-    } else {
-      indexing.value = true
-      contents.value = []
-      startPolling(selectedArchive.value.name, path)
-    }
-  } catch (e: unknown) {
-    contentsError.value = extractError(e)
-  } finally {
-    contentsLoading.value = false
-  }
-}
-
-function navigateTo(path: string): void {
-  loadContents(path)
-}
-
-function entryName(entry: ContentEntryResponse): string {
-  return entry.path.split('/').pop() ?? entry.path
-}
-
-function downloadEntry(entry: ContentEntryResponse): void {
-  if (selectedRepoId.value === null || !selectedArchive.value) return
-  const archiveName = encodeURIComponent(selectedArchive.value.name)
-  const encodedPath = encodeURIComponent(entry.path)
-  const isDir = entry.type === DIRECTORY_ENTRY_TYPE
-  const url = isDir
-    ? `/api/repos/${selectedRepoId.value}/archives/${archiveName}/export?path=${encodedPath}`
-    : `/api/repos/${selectedRepoId.value}/archives/${archiveName}/extract?path=${encodedPath}`
-  const a = document.createElement('a')
-  a.href = url
-  a.download = isDir ? `${entryName(entry)}.tar.lz4` : entryName(entry)
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
 }
 
 const showRestoreWizard = ref(false)
@@ -372,7 +143,7 @@ onMounted(loadRepos)
         <label class="selector-label">Repository</label>
         <select
           v-model="selectedRepoId"
-          class="input select-input"
+          class="input select-input select-input--lg"
           @change="onRepoChange"
         >
           <option
@@ -404,347 +175,198 @@ onMounted(loadRepos)
         </button>
       </div>
 
-      <div
-        v-if="selectedRepoId !== null"
-        class="main-layout"
-      >
-        <!-- Archive list -->
-        <div class="panel panel--sectioned archives-panel">
-          <div class="panel-header">
-            <span class="panel-title">Archives</span>
-            <div class="panel-actions">
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="archives.length < 1"
-                @click="showRestoreWizard = true"
-              >
-                Restore
-              </button>
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="archives.length < 2"
-                @click="showArchiveDiff = true"
-              >
-                Diff
-              </button>
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="archivesLoading"
-                aria-label="Refresh archives"
-                @click="loadArchives"
-              >
-                <RefreshCw
-                  :size="14"
-                  :class="{ spinning: archivesLoading }"
-                />
-              </button>
+      <ArchiveBrowserLayout v-if="selectedRepoId !== null">
+        <template #list>
+          <div class="panel panel--sectioned archives-panel">
+            <div class="panel-header">
+              <span class="panel-title">Archives</span>
+              <div class="panel-actions">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  :disabled="archives.length < 1"
+                  @click="showRestoreWizard = true"
+                >
+                  Restore
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  :disabled="archives.length < 2"
+                  @click="showArchiveDiff = true"
+                >
+                  Diff
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  :disabled="archivesLoading"
+                  aria-label="Refresh archives"
+                  @click="loadArchives"
+                >
+                  <RefreshCw
+                    :size="14"
+                    :class="{ spinning: archivesLoading }"
+                  />
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div
-            v-if="archivesLoading"
-            class="state-msg state-msg--inline"
-          >
-            <span class="spinner" />
-            Loading archives...
-          </div>
-          <div
-            v-else-if="archivesError"
-            class="state-msg state-error"
-          >
-            {{ archivesError }}
-          </div>
-          <div
-            v-else-if="archives.length === 0"
-            class="state-msg state-msg--inline"
-          >
-            No archives found.
-          </div>
-          <DataTable
-            v-else
-            v-model:filters="archiveFilters"
-            :value="sortedArchives"
-            :row-class="
-              (data: ArchiveEntry) =>
-                selectedArchive?.name === data.name ? 'selected clickable' : 'clickable'
-            "
-            filter-display="row"
-            table-class="data-table"
-            @row-click="(e: { data: ArchiveEntry }) => selectArchive(e.data)"
-          >
-            <Column
-              field="name"
-              header="Name"
-              :sortable="true"
-              :show-filter-menu="false"
+            <div
+              v-if="archivesLoading"
+              class="state-msg state-msg--inline"
             >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="input filter-input"
-                  type="text"
-                  placeholder="Filter..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-mono">{{ data.name }}</span>
-              </template>
-            </Column>
-            <Column
-              field="start"
-              header="Date"
-              :sortable="true"
-              :show-filter-menu="false"
+              <BaseSpinner size="sm" />
+              Loading archives...
+            </div>
+            <div
+              v-else-if="archivesError"
+              class="state-msg state-error"
             >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="input filter-input"
-                  type="text"
-                  placeholder="Filter..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-date">{{ formatDate(data.start) }}</span>
-              </template>
-            </Column>
-            <Column
-              field="hostname"
-              header="Host"
-              :sortable="true"
-              :show-filter-menu="false"
+              {{ archivesError }}
+            </div>
+            <div
+              v-else-if="archives.length === 0"
+              class="state-msg state-msg--inline"
             >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="input filter-input"
-                  type="text"
-                  placeholder="Filter..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <BaseHostLink
-                  v-if="data.matched === true && data.agent_hostname"
-                  :hostname="data.agent_hostname"
-                  class="host-link"
-                  @click.stop
-                />
-                <BaseHostLink
-                  v-else-if="data.matched !== true"
-                  :hostname="data.hostname"
-                  class="unmatched-host-link"
-                  @click.stop
-                />
-                <span
-                  v-else
-                  class="td-host"
-                  >{{ data.hostname }}</span
-                >
-              </template>
-            </Column>
-            <Column
-              field="matched"
-              header=""
-              style="width: 3rem"
+              No archives found.
+            </div>
+            <DataTable
+              v-else
+              v-model:filters="archiveFilters"
+              :value="sortedArchives"
+              :row-class="
+                (data: ArchiveEntry) =>
+                  selectedArchive?.name === data.name ? 'selected clickable' : 'clickable'
+              "
+              filter-display="row"
+              table-class="data-table"
+              @row-click="(e: { data: ArchiveEntry }) => (selectedArchive = e.data)"
             >
-              <template #body="{ data }">
-                <span
-                  v-if="data.matched === true"
-                  class="match-icon match-ok"
-                  title="Matched"
-                >
-                  <Check :size="14" />
-                </span>
-                <span
-                  v-else-if="data.matched !== true"
-                  class="match-icon match-warn"
-                  title="Unmatched"
-                >
-                  <AlertTriangle :size="14" />
-                </span>
-              </template>
-            </Column>
-            <Column
-              field="original_size"
-              header="Size"
-              :sortable="true"
-              :show-filter-menu="false"
-            >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="input filter-input"
-                  type="text"
-                  placeholder="Filter..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-size">{{ formatBytes(data.original_size) }}</span>
-              </template>
-            </Column>
-          </DataTable>
-        </div>
-
-        <!-- File browser -->
-        <div
-          v-if="selectedArchive"
-          class="panel panel--sectioned browser-panel"
-        >
-          <div class="panel-header">
-            <span class="panel-title">Files — {{ selectedArchive.name }}</span>
-          </div>
-
-          <div class="breadcrumb">
-            <button
-              v-for="(seg, i) in breadcrumbs"
-              :key="seg.path"
-              class="crumb"
-              :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
-              @click="navigateTo(seg.path)"
-            >
-              {{ seg.label }}
-            </button>
-          </div>
-
-          <BaseSpinner
-            v-if="contentsLoading"
-            size="sm"
-          />
-          <div
-            v-else-if="indexing"
-            class="state-msg state-msg--inline"
-          >
-            <BaseSpinner size="sm" />
-            Indexing archive contents — this only happens once...
-          </div>
-          <div
-            v-else-if="contentsError"
-            class="state-msg state-error"
-          >
-            {{ contentsError }}
-          </div>
-          <div
-            v-else-if="contents.length === 0"
-            class="state-msg state-msg--inline"
-          >
-            Empty directory.
-          </div>
-          <DataTable
-            v-else
-            v-model:filters="browserFilters"
-            :value="browserEntries"
-            :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
-            filter-display="row"
-            table-class="data-table browser-table"
-            @row-click="
-              (e: { data: DisplayEntry }) =>
-                e.data.isDir && e.data.displayName !== '.' && navigateTo(e.data.path)
-            "
-          >
-            <Column
-              field="displayName"
-              header="Name"
-              :sortable="true"
-              :show-filter-menu="false"
-            >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="input filter-input"
-                  type="text"
-                  placeholder="Filter name..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span
-                  class="td-name"
-                  :title="data.displayName"
-                >
-                  <Folder
-                    v-if="data.isDir"
-                    :size="16"
-                    class="entry-icon"
+              <Column
+                field="name"
+                header="Name"
+                :sortable="true"
+                :show-filter-menu="false"
+              >
+                <template #filter="{ filterModel, filterCallback }">
+                  <input
+                    v-model="filterModel.value"
+                    class="input filter-input"
+                    type="text"
+                    placeholder="Filter..."
+                    @input="filterCallback()"
                   />
-                  <File
+                </template>
+                <template #body="{ data }">
+                  <span class="td-mono">{{ data.name }}</span>
+                </template>
+              </Column>
+              <Column
+                field="start"
+                header="Date"
+                :sortable="true"
+                :show-filter-menu="false"
+              >
+                <template #filter="{ filterModel, filterCallback }">
+                  <input
+                    v-model="filterModel.value"
+                    class="input filter-input"
+                    type="text"
+                    placeholder="Filter..."
+                    @input="filterCallback()"
+                  />
+                </template>
+                <template #body="{ data }">
+                  <span class="td-date">{{ formatDate(data.start) }}</span>
+                </template>
+              </Column>
+              <Column
+                field="hostname"
+                header="Host"
+                :sortable="true"
+                :show-filter-menu="false"
+              >
+                <template #filter="{ filterModel, filterCallback }">
+                  <input
+                    v-model="filterModel.value"
+                    class="input filter-input"
+                    type="text"
+                    placeholder="Filter..."
+                    @input="filterCallback()"
+                  />
+                </template>
+                <template #body="{ data }">
+                  <BaseHostLink
+                    v-if="data.matched === true && data.agent_hostname"
+                    :hostname="data.agent_hostname"
+                    class="host-link"
+                    @click.stop
+                  />
+                  <BaseHostLink
+                    v-else-if="data.matched !== true"
+                    :hostname="data.hostname"
+                    class="unmatched-host-link"
+                    @click.stop
+                  />
+                  <span
                     v-else
-                    :size="16"
-                    class="entry-icon"
-                  />
-                  <span class="name-text">{{ data.displayName }}</span>
-                </span>
-              </template>
-            </Column>
-            <Column
-              field="size"
-              header="Size"
-              :sortable="true"
-              :show-filter-menu="false"
-              style="width: 6rem"
-            >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="input filter-input"
-                  type="text"
-                  placeholder="Filter size..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-size">{{ data.isDir ? '—' : formatBytes(data.size) }}</span>
-              </template>
-            </Column>
-            <Column
-              field="mtime"
-              header="Modified"
-              :sortable="true"
-              :show-filter-menu="false"
-              style="width: 10rem"
-            >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="input filter-input"
-                  type="text"
-                  placeholder="Filter date..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-date">{{ formatDate(data.mtime) }}</span>
-              </template>
-            </Column>
-            <Column
-              header=""
-              style="width: 3rem"
-            >
-              <template #body="{ data }">
-                <span class="td-action">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    :title="data.isDir ? 'Download as .tar.lz4' : 'Download'"
-                    @click.stop="downloadEntry(data)"
+                    class="td-host"
+                    >{{ data.hostname }}</span
                   >
-                    <Download :size="14" />
-                  </button>
-                </span>
-              </template>
-            </Column>
-          </DataTable>
-        </div>
+                </template>
+              </Column>
+              <Column
+                field="matched"
+                header=""
+                style="width: 3rem"
+              >
+                <template #body="{ data }">
+                  <span
+                    v-if="data.matched === true"
+                    class="match-icon match-ok"
+                    title="Matched"
+                  >
+                    <Check :size="14" />
+                  </span>
+                  <span
+                    v-else-if="data.matched !== true"
+                    class="match-icon match-warn"
+                    title="Unmatched"
+                  >
+                    <AlertTriangle :size="14" />
+                  </span>
+                </template>
+              </Column>
+              <Column
+                field="original_size"
+                header="Size"
+                :sortable="true"
+                :show-filter-menu="false"
+              >
+                <template #filter="{ filterModel, filterCallback }">
+                  <input
+                    v-model="filterModel.value"
+                    class="input filter-input"
+                    type="text"
+                    placeholder="Filter..."
+                    @input="filterCallback()"
+                  />
+                </template>
+                <template #body="{ data }">
+                  <span class="td-size">{{ formatBytes(data.original_size) }}</span>
+                </template>
+              </Column>
+            </DataTable>
+          </div>
+        </template>
 
-        <div
-          v-else
-          class="panel panel--sectioned browser-panel empty-browser"
-        >
-          <span class="muted">Select an archive to browse its contents.</span>
-        </div>
-      </div>
+        <template #browser>
+          <div class="panel panel--sectioned browser-panel">
+            <ArchiveFileBrowser
+              :repo-id="selectedRepoId"
+              :archive="selectedArchive"
+            />
+          </div>
+        </template>
+      </ArchiveBrowserLayout>
 
       <FileSearch
         :repo-id="selectedRepoId"
@@ -805,29 +427,9 @@ onMounted(loadRepos)
 </template>
 
 <style scoped>
-/* The refresh control spins while the request is in flight, replacing the
-   old "..." text swap. */
-.spinning {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .archives-view {
   max-width: 1300px;
   color: var(--text-primary);
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.muted {
-  color: var(--text-muted);
 }
 
 .repo-selector {
@@ -846,72 +448,14 @@ onMounted(loadRepos)
   white-space: nowrap;
 }
 
-.select-input {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.55rem 0.75rem;
-  font-size: var(--fs-base);
-  min-width: 280px;
-  transition: border-color var(--duration-base);
-}
-
-.select-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
 .muted-hint {
   font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
-.main-layout {
-  display: grid;
-  grid-template-columns: 480px 1fr;
-  gap: 1rem;
-  align-items: start;
-}
-
 .panel-actions {
   display: flex;
   gap: 0.25rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.5rem 1rem;
-  color: var(--text-muted);
-  font-weight: 600;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 0.6rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.data-table tr:last-child td {
-  border-bottom: none;
-}
-
-.data-table tr.clickable {
-  cursor: pointer;
-  transition: background var(--duration-fast);
-}
-
-.data-table tr.clickable:hover {
-  background: var(--bg-hover);
-}
-
-.data-table tr.selected td {
-  background: var(--accent-subtle);
-  color: var(--text-primary);
 }
 
 .td-mono {
@@ -923,25 +467,9 @@ onMounted(loadRepos)
   white-space: nowrap;
 }
 
-.td-date {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 .td-host {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-}
-
-.host-link {
-  font-size: var(--fs-sm);
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.host-link:hover {
-  text-decoration: underline;
 }
 
 .unmatched-host-link {
@@ -958,163 +486,9 @@ onMounted(loadRepos)
   font-size: var(--fs-md);
 }
 
-.match-ok {
-  color: var(--success);
-}
-
-.match-warn {
-  color: var(--warning);
-}
-
-.browser-table {
-  table-layout: fixed;
-}
-
-.td-name {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-}
-
-.name-text {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.td-size {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.td-action {
-  text-align: right;
-}
-
-.filter-input {
-  width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.35rem 0.5rem;
-  font-size: var(--fs-xs);
-}
-
-.filter-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.entry-icon {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.1rem;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.crumb {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  font-family: var(--mono);
-  padding: 0.15rem 0.3rem;
-  border-radius: var(--radius-sm);
-  transition:
-    background var(--duration-fast),
-    color var(--duration-fast);
-}
-
-.crumb:hover {
-  background: var(--accent-subtle);
-  color: var(--accent-hover);
-}
-
-.crumb-last {
-  color: var(--text-primary);
-  cursor: default;
-}
-
-.crumb-last:hover {
-  background: none;
-  color: var(--text-primary);
-}
-
-.crumb:not(.crumb-last)::after {
-  content: ' /';
-  color: var(--text-muted);
-  margin-left: 0.2rem;
-}
-
-.empty-browser {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  font-size: var(--fs-base);
-}
-
-.spinner {
-  display: inline-block;
-  width: 1rem;
-  height: 1rem;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* Buttons */
 
 .passphrase-btn {
   margin-left: auto;
-}
-
-.passphrase-warning {
-  color: var(--warning);
-  font-size: var(--fs-base);
-  font-weight: 500;
-  margin-bottom: 0.75rem;
-}
-
-.passphrase-box {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem 1rem;
-}
-
-.passphrase-text {
-  flex: 1;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  color: var(--text-primary);
-  word-break: break-all;
-  background: transparent;
-  padding: 0;
 }
 </style>

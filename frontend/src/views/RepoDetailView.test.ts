@@ -453,7 +453,7 @@ describe('RepoDetailView', () => {
     await flushPromises()
 
     expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
-    expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-notable')
+    expect(wrapper.find('.entity-card').classes()).toContain('entity-card--notable')
   })
 
   it("shows a Failed chip that navigates to the schedule's filtered activity log", async () => {
@@ -668,7 +668,7 @@ describe('RepoDetailView', () => {
       await wrapper.find('.archive-group-toggle').trigger('click')
       await flushPromises()
 
-      expect(wrapper.find('.empty-state').text()).toContain('Select an archive')
+      expect(wrapper.find('.browser-placeholder').text()).toContain('Select an archive')
 
       const rows = wrapper.findAll('.archive-row-detailed')
       const targetRow = rows.find((r) => r.text().includes(archiveA.name))!
@@ -688,7 +688,7 @@ describe('RepoDetailView', () => {
       confirmBtn!.click()
       await flushPromises()
 
-      expect(wrapper.find('.empty-state').text()).toContain('Select an archive')
+      expect(wrapper.find('.browser-placeholder').text()).toContain('Select an archive')
     })
   })
 

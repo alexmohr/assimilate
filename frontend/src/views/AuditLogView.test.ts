@@ -226,7 +226,7 @@ describe('AuditLogView', () => {
       const wrapper = mountView('admin')
       await flushPromises()
 
-      const inputs = wrapper.findAll('input.filter-input')
+      const inputs = wrapper.findAll('input.action-filter')
       expect(inputs.length).toBeGreaterThanOrEqual(1)
     })
 
@@ -272,7 +272,7 @@ describe('AuditLogView', () => {
       const wrapper = mountView('admin')
       await flushPromises()
 
-      const actionInput = wrapper.find('input.filter-input')
+      const actionInput = wrapper.find('input.action-filter')
       await actionInput.setValue('create')
 
       mockGet.mockClear()

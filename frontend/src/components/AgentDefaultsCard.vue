@@ -89,7 +89,7 @@ async function save(): Promise<void> {
     <template #view>
       <div class="defaults-groups">
         <div class="defaults-group">
-          <span class="defaults-label">Backup paths</span>
+          <span class="group-label group-label--lg">Backup paths</span>
           <div
             v-if="(agent.default_backup_paths ?? []).length > 0"
             class="paths-list"
@@ -110,7 +110,7 @@ async function save(): Promise<void> {
         </div>
 
         <div class="defaults-group">
-          <span class="defaults-label">Exclude patterns</span>
+          <span class="group-label group-label--lg">Exclude patterns</span>
           <div
             v-if="(agent.default_exclude_patterns ?? []).length > 0"
             class="paths-list"
@@ -131,7 +131,7 @@ async function save(): Promise<void> {
         </div>
 
         <div class="defaults-group">
-          <span class="defaults-label">File change patterns</span>
+          <span class="group-label group-label--lg">File change patterns</span>
           <div
             v-if="parseFileChangePatterns(agent.default_file_change_patterns_raw ?? '').length > 0"
             class="paths-list"
@@ -154,7 +154,7 @@ async function save(): Promise<void> {
         </div>
 
         <div class="defaults-group">
-          <span class="defaults-label">Pre-backup commands</span>
+          <span class="group-label group-label--lg">Pre-backup commands</span>
           <div
             v-if="agent.default_pre_backup_commands.length > 0"
             class="paths-list"
@@ -175,7 +175,7 @@ async function save(): Promise<void> {
         </div>
 
         <div class="defaults-group">
-          <span class="defaults-label">Post-backup commands</span>
+          <span class="group-label group-label--lg">Post-backup commands</span>
           <div
             v-if="agent.default_post_backup_commands.length > 0"
             class="paths-list"
@@ -205,7 +205,7 @@ async function save(): Promise<void> {
 
     <template #edit>
       <label
-        class="defaults-label"
+        class="group-label group-label--lg"
         for="defaults-paths"
         >Backup paths</label
       >
@@ -218,7 +218,7 @@ async function save(): Promise<void> {
       />
 
       <label
-        class="defaults-label"
+        class="group-label group-label--lg"
         for="defaults-excludes"
         >Exclude patterns</label
       >
@@ -230,7 +230,7 @@ async function save(): Promise<void> {
         spellcheck="false"
       />
 
-      <label class="defaults-label">File change patterns</label>
+      <label class="group-label group-label--lg">File change patterns</label>
       <FileChangePatternsEditor v-model="fcpText">
         <template #hint>
           Glob patterns matched against the full warning message, with actions:
@@ -242,7 +242,7 @@ async function save(): Promise<void> {
       </FileChangePatternsEditor>
 
       <label
-        class="defaults-label"
+        class="group-label group-label--lg"
         for="defaults-pre"
         >Pre-backup commands</label
       >
@@ -255,7 +255,7 @@ async function save(): Promise<void> {
       />
 
       <label
-        class="defaults-label"
+        class="group-label group-label--lg"
         for="defaults-post"
         >Post-backup commands</label
       >
@@ -271,11 +271,6 @@ async function save(): Promise<void> {
 </template>
 
 <style scoped>
-.muted {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-}
-
 .defaults-area {
   min-height: 80px;
   resize: vertical;
@@ -295,29 +290,6 @@ async function save(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-}
-
-.defaults-label {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  display: block;
-}
-
-.paths-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.path-item {
-  font-size: var(--fs-sm);
-  padding: 0.2rem 0.5rem;
-  background: var(--bg-input);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
 }
 
 .fcp-action-badge {

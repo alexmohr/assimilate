@@ -71,12 +71,31 @@ function mountView(): ReturnType<typeof mount> {
     global: {
       plugins: [createPinia(), createTestRouter()],
       stubs: {
-        DataTable: { template: '<div class="stub-datatable"><slot /></div>' },
+        // Renders one clickable row per value so tests can drive selection;
+        // the real PrimeVue table is exercised by its own component suites.
+        DataTable: {
+          props: ['value'],
+          emits: ['row-click'],
+          template: `<div class="stub-datatable">
+            <button
+              v-for="(row, i) in value ?? []"
+              :key="i"
+              class="stub-row"
+              @click="$emit('row-click', { data: row })"
+            />
+            <slot />
+          </div>`,
+        },
         Column: { template: '<div class="stub-column"><slot /></div>' },
         BaseSpinner: { template: '<div class="stub-spinner" />' },
         RestoreWizard: { template: '<div class="stub-restore" />' },
         ArchiveDiff: { template: '<div class="stub-diff" />' },
         FileSearch: { template: '<div class="stub-search" />' },
+        ArchiveFileBrowser: {
+          name: 'ArchiveFileBrowser',
+          props: ['repoId', 'archive'],
+          template: '<div class="stub-browser" />',
+        },
         Teleport: true,
       },
     },
@@ -93,6 +112,14 @@ async function pickFirstRepo(wrapper: ReturnType<typeof mount>): Promise<void> {
   }
   await select.trigger('change')
   await flushPromises()
+}
+
+function mockReposAndArchives(archives: unknown[] = ARCHIVES): void {
+  mockGet.mockImplementation((url: string) => {
+    if (url === '/repos') return Promise.resolve({ data: REPOS })
+    if (url.includes('/archives')) return Promise.resolve({ data: archives })
+    return Promise.resolve({ data: [] })
+  })
 }
 
 describe('ArchivesView', () => {
@@ -138,11 +165,7 @@ describe('ArchivesView', () => {
   })
 
   it('shows archive list with archive names including demo tags after repo selection', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === '/repos') return Promise.resolve({ data: REPOS })
-      if (url.includes('/archives')) return Promise.resolve({ data: ARCHIVES })
-      return Promise.resolve({ data: [] })
-    })
+    mockReposAndArchives()
 
     const wrapper = mountView()
     await flushPromises()
@@ -152,10 +175,7 @@ describe('ArchivesView', () => {
   })
 
   it('shows "No archives found." empty state when archives list is empty', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === '/repos') return Promise.resolve({ data: REPOS })
-      return Promise.resolve({ data: [] })
-    })
+    mockReposAndArchives([])
 
     const wrapper = mountView()
     await flushPromises()
@@ -165,11 +185,7 @@ describe('ArchivesView', () => {
   })
 
   it('fetches archives when repo is selected', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url === '/repos') return Promise.resolve({ data: REPOS })
-      if (url.includes('/archives')) return Promise.resolve({ data: ARCHIVES })
-      return Promise.resolve({ data: [] })
-    })
+    mockReposAndArchives()
 
     const wrapper = mountView()
     await flushPromises()
@@ -184,6 +200,58 @@ describe('ArchivesView', () => {
     await flushPromises()
 
     expect(wrapper.find('.state-error').exists()).toBe(true)
+  })
+
+  // The file browser itself lives in ArchiveFileBrowser, which RepoDetailView
+  // also uses; this view only picks the archive and hands it over. Before the
+  // dedup it carried its own copy of the browser's state machine and markup.
+  describe('file browser delegation', () => {
+    beforeEach(() => {
+      mockReposAndArchives()
+    })
+
+    it('mounts the shared browser for the selected repository', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+
+      const browser = wrapper.findComponent({ name: 'ArchiveFileBrowser' })
+      expect(browser.exists()).toBe(true)
+      expect(browser.props('repoId')).toBe(1)
+    })
+
+    it('hands over no archive until one is picked, so the browser shows its placeholder', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).toBe(null)
+    })
+
+    it('hands the clicked archive to the browser', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+
+      await wrapper.findAll('.stub-row')[1].trigger('click')
+
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).toEqual(
+        ARCHIVES[1],
+      )
+    })
+
+    it('drops the selection when the repository changes', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+      await wrapper.findAll('.stub-row')[0].trigger('click')
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).not.toBe(null)
+
+      await wrapper.find('select').trigger('change')
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).toBe(null)
+    })
   })
 
   describe('repository passphrase', () => {

@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useMobile } from '../composables/useMobile'
+import { useListSort } from '../composables/useListSort'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
 import { formatBytes, relativeTime } from '../utils/format'
@@ -17,6 +18,7 @@ import { Plus, Download, SlidersHorizontal, Database } from '@lucide/vue'
 import RepoCreateDialog from '../components/RepoCreateDialog.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import SortControls from '../components/SortControls.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import RepoQuotaMeter from '../components/RepoQuotaMeter.vue'
 import RepoQuotaSlice from '../components/RepoQuotaSlice.vue'
@@ -34,7 +36,13 @@ import {
 
 type AddTab = 'import' | 'create'
 type SortField = 'name' | 'size' | 'last_backup' | 'quota'
-type SortDir = 'asc' | 'desc'
+
+const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
+  { field: 'name', label: 'Name' },
+  { field: 'size', label: 'Size' },
+  { field: 'last_backup', label: 'Last Backup' },
+  { field: 'quota', label: 'Quota' },
+]
 type QuotaFilter = 'all' | 'at_risk' | 'no_quota'
 
 interface RepoTagRow {
@@ -70,8 +78,12 @@ const authStore = useAuthStore()
 const repos = ref<RepoWithStats[]>([])
 const { loading, error, run } = useAsyncAction()
 
-const sortField = ref<SortField>('name')
-const sortDir = ref<SortDir>('asc')
+const {
+  field: sortField,
+  direction: sortDir,
+  toggle: toggleSort,
+  sign: sortSign,
+} = useListSort<SortField>('name')
 const filterText = ref('')
 const filterTagIds = ref<number[]>([])
 const groupByTag = ref(false)
@@ -161,7 +173,7 @@ const filteredRepos = computed<RepoWithStats[]>(() => {
         cmp = (repoQuotaUtilization(a) ?? 0) - (repoQuotaUtilization(b) ?? 0)
         break
     }
-    return sortDir.value === 'desc' ? -cmp : cmp
+    return cmp * sortSign()
   })
 
   if (sortField.value === 'quota') {
@@ -301,15 +313,6 @@ const groupedRepos = computed<TagGroup[]>(() => {
   }
   return result
 })
-
-function toggleSort(field: SortField): void {
-  if (sortField.value === field) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    sortField.value = field
-    sortDir.value = 'asc'
-  }
-}
 
 function toggleTagFilter(tagId: number): void {
   const idx = filterTagIds.value.indexOf(tagId)
@@ -480,7 +483,7 @@ onMounted(loadRepos)
       />
       <button
         v-if="isMobile"
-        class="btn-filter-toggle"
+        class="filter-toggle"
         :class="{ active: filterTagIds.length > 0 || groupByTag || groupByHost }"
         @click="showMobileFilters = !showMobileFilters"
       >
@@ -540,38 +543,12 @@ onMounted(loadRepos)
         >
           Group by host
         </button>
-        <div class="sort-controls">
-          <span class="sort-label">Sort:</span>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'name' }"
-            @click="toggleSort('name')"
-          >
-            Name {{ sortField === 'name' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'size' }"
-            @click="toggleSort('size')"
-          >
-            Size {{ sortField === 'size' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'last_backup' }"
-            @click="toggleSort('last_backup')"
-          >
-            Last Backup
-            {{ sortField === 'last_backup' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'quota' }"
-            @click="toggleSort('quota')"
-          >
-            Quota {{ sortField === 'quota' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-        </div>
+        <SortControls
+          :field="sortField"
+          :direction="sortDir"
+          :options="SORT_OPTIONS"
+          @toggle="toggleSort"
+        />
       </template>
     </div>
 
@@ -676,15 +653,15 @@ onMounted(loadRepos)
 
         <div
           v-if="group.visibleCount > 0"
-          class="repo-grid"
+          class="card-grid"
         >
           <div
             v-for="entry in group.entries"
             :key="entry.repo.id"
-            class="repo-card"
+            class="entity-card"
             :class="{
-              'repo-card-notable': !entry.repo.enabled,
-              'repo-card-dim': !entry.visible,
+              'entity-card--notable': !entry.repo.enabled,
+              'entity-card--dim': !entry.visible,
             }"
             @click="navigateToRepo(entry.repo)"
           >
@@ -752,13 +729,13 @@ onMounted(loadRepos)
 
     <div
       v-else-if="!groupByTag"
-      class="repo-grid"
+      class="card-grid"
     >
       <div
         v-for="repo in filteredRepos"
         :key="repo.id"
-        class="repo-card"
-        :class="{ 'repo-card-notable': !repo.enabled }"
+        class="entity-card"
+        :class="{ 'entity-card--notable': !repo.enabled }"
         @click="navigateToRepo(repo)"
       >
         <div class="card-top">
@@ -787,15 +764,15 @@ onMounted(loadRepos)
         </div>
         <div
           v-if="repo.importing && repo.import_total > 0"
-          class="import-progress"
+          class="progress-row"
         >
-          <div class="import-progress-track">
+          <div class="progress-track">
             <div
-              class="import-progress-bar"
+              class="progress-bar"
               :style="{ width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%` }"
             ></div>
           </div>
-          <span class="import-progress-label">
+          <span class="progress-label">
             {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
           </span>
         </div>
@@ -865,12 +842,12 @@ onMounted(loadRepos)
           <h3 class="tag-group-title">{{ group.label }}</h3>
           <span class="tag-group-count">{{ group.repos.length }}</span>
         </div>
-        <div class="repo-grid">
+        <div class="card-grid">
           <div
             v-for="repo in group.repos"
             :key="`${group.label}-${repo.id}`"
-            class="repo-card"
-            :class="{ 'repo-card-notable': !repo.enabled }"
+            class="entity-card"
+            :class="{ 'entity-card--notable': !repo.enabled }"
             @click="navigateToRepo(repo)"
           >
             <div class="card-top">
@@ -899,17 +876,17 @@ onMounted(loadRepos)
             </div>
             <div
               v-if="repo.importing && repo.import_total > 0"
-              class="import-progress"
+              class="progress-row"
             >
-              <div class="import-progress-track">
+              <div class="progress-track">
                 <div
-                  class="import-progress-bar"
+                  class="progress-bar"
                   :style="{
                     width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%`,
                   }"
                 ></div>
               </div>
-              <span class="import-progress-label">
+              <span class="progress-label">
                 {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
               </span>
             </div>
@@ -980,132 +957,6 @@ onMounted(loadRepos)
   max-width: 1100px;
 }
 
-.toolbar {
-  flex-wrap: wrap;
-}
-
-.search-input {
-  width: 220px;
-}
-
-.btn-filter-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  cursor: pointer;
-  position: relative;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.btn-filter-toggle:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
-}
-
-.btn-filter-toggle.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.filter-badge {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.sort-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-left: auto;
-}
-
-.sort-label {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-right: 0.25rem;
-}
-
-.sort-controls .btn.active {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.repo-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 1rem;
-}
-
-.repo-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow var(--duration-base),
-    border-color var(--duration-base);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.repo-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.repo-card-notable {
-  background: var(--bg-hover);
-}
-
-.import-progress {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.import-progress-track {
-  flex: 1;
-  height: 6px;
-  background: var(--border);
-  border-radius: var(--radius-pill);
-  overflow: hidden;
-}
-
-.import-progress-bar {
-  height: 100%;
-  background: var(--accent);
-  border-radius: var(--radius-pill);
-  transition: width var(--duration-value) ease;
-}
-
-.import-progress-label {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 .import-status-inline {
   font-size: var(--fs-xs);
   color: var(--text-muted);
@@ -1122,30 +973,6 @@ onMounted(loadRepos)
   flex-shrink: 0;
 }
 
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.card-name {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .card-ssh {
   font-size: var(--fs-xs);
   color: var(--text-muted);
@@ -1155,57 +982,7 @@ onMounted(loadRepos)
   text-overflow: ellipsis;
 }
 
-.card-meta {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.meta-pill {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 500;
-  background: var(--bg-card);
-  color: var(--text-muted);
-  text-transform: lowercase;
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-/* Overlay & Dialog */
-
-.input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.browser-path-row .path-autocomplete-wrapper .input {
-  width: 100%;
-}
-
 /* Tag filter dropdown */
-
-.dropdown-arrow {
-  font-size: var(--fs-2xs);
-  margin-left: 0.15rem;
-}
-
-.tag-dropdown-item input[type='checkbox'] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  cursor: pointer;
-}
 
 /* Tag pills on cards */
 
@@ -1300,10 +1077,6 @@ onMounted(loadRepos)
   padding: 0.75rem;
   border-radius: var(--radius);
   background: var(--bg-hover);
-}
-
-.repo-card-dim {
-  opacity: 0.45;
 }
 
 .pool-header {

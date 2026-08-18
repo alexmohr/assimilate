@@ -558,7 +558,7 @@ async function fetchOverview(): Promise<void> {
             :key="`${backup.hostname}-${backup.target_name}`"
             class="active-backup-item"
           >
-            <span class="active-backup-pulse" />
+            <span class="pulse-dot pulse-dot--accent" />
             <span
               v-if="backup.schedule_name"
               class="active-backup-schedule"
@@ -871,15 +871,6 @@ async function fetchOverview(): Promise<void> {
     flex-direction: column;
     align-items: flex-start;
   }
-
-  .panel-timeline {
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .health-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .stat-card {
@@ -937,13 +928,6 @@ async function fetchOverview(): Promise<void> {
 .panel-header .panel-title {
   margin: 0;
   white-space: nowrap;
-}
-
-.chart-desc {
-  color: var(--text-muted);
-  font-size: var(--fs-2xs);
-  margin: 0 0 0.75rem;
-  line-height: 1.4;
 }
 
 /* Ring / Donut shared */
@@ -1150,25 +1134,6 @@ async function fetchOverview(): Promise<void> {
   color: var(--text-muted);
   font-size: var(--fs-xs);
   margin-left: auto;
-}
-
-.active-backup-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
 }
 
 .active-backup-sep {

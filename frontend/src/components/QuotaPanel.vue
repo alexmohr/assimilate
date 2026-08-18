@@ -11,6 +11,7 @@ import { extractError } from '../utils/error'
 import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import type { QuotaAction } from '../types/generated'
 import ToggleSwitch from './ToggleSwitch.vue'
+import EditFormActions from './EditFormActions.vue'
 
 interface QuotaData {
   warn_bytes: number
@@ -276,27 +277,12 @@ onMounted(loadQuota)
             <ToggleSwitch v-model="editForm.enabled" />
           </div>
         </div>
-        <div
-          v-if="editError"
-          class="form-error"
-        >
-          {{ editError }}
-        </div>
-        <div class="edit-actions">
-          <button
-            class="btn btn-ghost"
-            @click="cancelEdit"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-primary"
-            :disabled="editLoading"
-            @click="saveQuota"
-          >
-            {{ editLoading ? 'Saving...' : 'Save' }}
-          </button>
-        </div>
+        <EditFormActions
+          :saving="editLoading"
+          :error="editError"
+          @cancel="cancelEdit"
+          @save="saveQuota"
+        />
       </div>
     </template>
   </div>
@@ -308,19 +294,6 @@ onMounted(loadQuota)
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.5rem;
-}
-
-.info-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.25rem;
-}
-
-.info-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
 }
 
 .info-title {
@@ -387,51 +360,5 @@ onMounted(loadQuota)
 .quota-details dd {
   margin: 0;
   color: var(--text-primary);
-}
-
-.muted {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.edit-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 1rem;
-}
-
-.field-full {
-  grid-column: 1 / -1;
-}
-
-.toggle-row {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: center;
-  margin-top: 0.5rem;
-}
-
-.toggle-row-label {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-}
-
-.edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border);
 }
 </style>

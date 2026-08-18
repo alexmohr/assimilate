@@ -534,7 +534,7 @@ function filterByRun(runId: string): void {
         class="live-session-card"
       >
         <div class="live-session-header">
-          <span class="live-session-pulse" />
+          <span class="pulse-dot pulse-dot--success" />
           <span class="live-session-title">Live backup output</span>
           <span class="live-session-meta">{{ session.hostname }} → {{ session.target_name }}</span>
         </div>
@@ -563,7 +563,7 @@ function filterByRun(runId: string): void {
 
         <button
           v-if="isMobile"
-          class="btn-filter-toggle"
+          class="filter-toggle"
           :class="{ active: hasActiveFilters }"
           @click="showMobileFilters = !showMobileFilters"
         >
@@ -581,7 +581,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Machine</label>
               <select
                 v-model="filterMachine"
-                class="input select-input"
+                class="input input-sm select-input"
               >
                 <option value="">All Machines</option>
                 <option
@@ -598,7 +598,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Schedule</label>
               <select
                 v-model="filterScheduleId"
-                class="input select-input"
+                class="input input-sm select-input"
               >
                 <option :value="null">All Schedules</option>
                 <option
@@ -632,7 +632,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Target</label>
               <select
                 v-model="filterTarget"
-                class="input select-input"
+                class="input input-sm select-input"
               >
                 <option value="all">All</option>
                 <option
@@ -649,7 +649,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Status</label>
               <select
                 v-model="filterStatus"
-                class="input select-input"
+                class="input input-sm select-input"
               >
                 <option value="all">All</option>
                 <option value="success">Success</option>
@@ -665,7 +665,7 @@ function filterByRun(runId: string): void {
               <input
                 v-model="filterFrom"
                 type="date"
-                class="input date-input"
+                class="input input-sm date-input"
               />
             </div>
 
@@ -674,7 +674,7 @@ function filterByRun(runId: string): void {
               <input
                 v-model="filterTo"
                 type="date"
-                class="input date-input"
+                class="input input-sm date-input"
               />
             </div>
           </template>
@@ -684,7 +684,7 @@ function filterByRun(runId: string): void {
               <label class="filter-label">Level</label>
               <select
                 v-model="logLevel"
-                class="input select-input"
+                class="input input-sm select-input"
               >
                 <option value="">All</option>
                 <option value="error">Error</option>
@@ -705,7 +705,7 @@ function filterByRun(runId: string): void {
                 <input
                   v-model="logSearch"
                   type="text"
-                  class="input search-input"
+                  class="input search-input search-input--icon"
                   placeholder="Filter messages..."
                 />
               </div>
@@ -900,7 +900,7 @@ function filterByRun(runId: string): void {
                   class="detail-section detail-warning-section"
                 >
                   <h3 class="detail-heading status-heading warning-heading">Warnings</h3>
-                  <pre class="status-pre warning-pre">{{ expandedDetail.warnings.join('\n') }}</pre>
+                  <pre class="warning-pre">{{ expandedDetail.warnings.join('\n') }}</pre>
                 </div>
                 <div
                   v-if="
@@ -910,7 +910,7 @@ function filterByRun(runId: string): void {
                   class="detail-section detail-error-section"
                 >
                   <h3 class="detail-heading status-heading error-heading">Error</h3>
-                  <pre class="status-pre error-pre">{{ expandedDetail.error_message }}</pre>
+                  <pre class="error-pre">{{ expandedDetail.error_message }}</pre>
                 </div>
               </div>
               <div
@@ -950,7 +950,7 @@ function filterByRun(runId: string): void {
               class="detail-panel"
               @click.stop
             >
-              <pre class="status-pre error-pre">{{ row.event.message }}</pre>
+              <pre class="error-pre">{{ row.event.message }}</pre>
             </div>
           </article>
         </template>
@@ -980,59 +980,6 @@ function filterByRun(runId: string): void {
   color: var(--text-primary);
 }
 
-.row-count {
-  font-size: var(--fs-base);
-  color: var(--text-muted);
-}
-
-.filters {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.875rem;
-}
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 1rem;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.filter-label {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.select-input,
-.date-input {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.4rem 0.6rem;
-  font-size: var(--fs-base);
-  outline: none;
-  transition: border-color var(--duration-base);
-}
-
-.select-input:focus,
-.date-input:focus {
-  border-color: var(--accent);
-}
-
 .btn-clear {
   padding: 0.4rem 0.9rem;
   border-radius: var(--radius-sm);
@@ -1050,43 +997,6 @@ function filterByRun(runId: string): void {
 .btn-clear:hover {
   color: var(--text-primary);
   border-color: var(--text-muted);
-}
-
-.btn-filter-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.4rem 0.75rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  cursor: pointer;
-  position: relative;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.btn-filter-toggle:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
-}
-
-.btn-filter-toggle.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.filter-badge {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
 }
 
 .loading,
@@ -1109,11 +1019,6 @@ function filterByRun(runId: string): void {
   letter-spacing: 0.05em;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
-}
-
-.cell-ts {
-  color: var(--text-muted);
-  white-space: nowrap;
 }
 
 .run-list {
@@ -1258,29 +1163,6 @@ function filterByRun(runId: string): void {
   font-size: var(--fs-sm);
 }
 
-.status-pre {
-  margin: 0;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.status-pre.error-pre {
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  color: var(--danger);
-}
-
-.status-pre.warning-pre {
-  background: var(--warning-subtle);
-  border: 1px solid var(--warning);
-  color: var(--warning);
-  max-height: 300px;
-  overflow-y: auto;
-}
-
 .detail-warning-section {
   flex: 1 1 100%;
 }
@@ -1349,22 +1231,6 @@ function filterByRun(runId: string): void {
   pointer-events: none;
 }
 
-.search-input {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.4rem 0.6rem 0.4rem 1.75rem;
-  font-size: var(--fs-base);
-  outline: none;
-  width: 100%;
-  transition: border-color var(--duration-base);
-}
-
-.search-input:focus {
-  border-color: var(--accent);
-}
-
 .log-panel {
   overflow-x: auto;
 }
@@ -1389,12 +1255,6 @@ function filterByRun(runId: string): void {
 
 .log-level-warn {
   background: color-mix(in srgb, var(--warning) 6%, transparent);
-}
-
-.cell-mono {
-  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-  font-size: var(--fs-sm);
-  white-space: nowrap;
 }
 
 .cell-target-log {
@@ -1484,25 +1344,6 @@ function filterByRun(runId: string): void {
   padding: 0.6rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-base);
-}
-
-.live-session-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--success);
-  animation: session-pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes session-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
 }
 
 .live-session-title {

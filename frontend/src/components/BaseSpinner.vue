@@ -84,10 +84,4 @@ withDefaults(defineProps<Props>(), {
   font-size: var(--fs-base);
   color: var(--text-muted);
 }
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 </style>

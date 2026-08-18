@@ -903,7 +903,7 @@ onMounted(() => {
             v-if="scopeRepos.length > 0"
             class="scope-section"
           >
-            <span class="scope-section-title">Repositories</span>
+            <span class="group-label group-label--lg scope-section-title">Repositories</span>
             <label
               v-for="opt in filteredScopeOptions(scopeRepos)"
               :key="'r' + opt.id"
@@ -921,7 +921,7 @@ onMounted(() => {
             v-if="scopeAgents.length > 0"
             class="scope-section"
           >
-            <span class="scope-section-title">Hosts</span>
+            <span class="group-label group-label--lg scope-section-title">Hosts</span>
             <label
               v-for="opt in filteredScopeOptions(scopeAgents)"
               :key="'c' + opt.id"
@@ -939,7 +939,7 @@ onMounted(() => {
             v-if="scopeSchedules.length > 0"
             class="scope-section"
           >
-            <span class="scope-section-title">Schedules</span>
+            <span class="group-label group-label--lg scope-section-title">Schedules</span>
             <label
               v-for="opt in filteredScopeOptions(scopeSchedules)"
               :key="'s' + opt.id"
@@ -1156,7 +1156,7 @@ onMounted(() => {
           v-if="scopeRepos.length > 0"
           class="scope-section"
         >
-          <span class="scope-section-title">Repositories</span>
+          <span class="group-label group-label--lg scope-section-title">Repositories</span>
           <label
             v-for="opt in filteredScopeOptions(scopeRepos)"
             :key="'r' + opt.id"
@@ -1174,7 +1174,7 @@ onMounted(() => {
           v-if="scopeAgents.length > 0"
           class="scope-section"
         >
-          <span class="scope-section-title">Hosts</span>
+          <span class="group-label group-label--lg scope-section-title">Hosts</span>
           <label
             v-for="opt in filteredScopeOptions(scopeAgents)"
             :key="'c' + opt.id"
@@ -1192,7 +1192,7 @@ onMounted(() => {
           v-if="scopeSchedules.length > 0"
           class="scope-section"
         >
-          <span class="scope-section-title">Schedules</span>
+          <span class="group-label group-label--lg scope-section-title">Schedules</span>
           <label
             v-for="opt in filteredScopeOptions(scopeSchedules)"
             :key="'s' + opt.id"
@@ -1223,10 +1223,6 @@ onMounted(() => {
 <style scoped>
 .notifications-view {
   max-width: 1100px;
-}
-
-.state-error {
-  color: var(--danger);
 }
 
 .channels-list {
@@ -1275,16 +1271,6 @@ onMounted(() => {
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius-sm);
   font-size: var(--fs-sm);
-}
-
-.test-success {
-  background: color-mix(in srgb, var(--success) 15%, transparent);
-  color: var(--success);
-}
-
-.test-failure {
-  background: var(--danger-subtle);
-  color: var(--danger);
 }
 
 .channel-meta {
@@ -1386,12 +1372,8 @@ onMounted(() => {
   gap: 0.25rem;
 }
 
+/* The shared group label plus the space this list wants under it. */
 .scope-section-title {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
   margin-bottom: 0.2rem;
 }
 
@@ -1414,11 +1396,6 @@ onMounted(() => {
 }
 
 /* Form */
-
-.field-row .field {
-  flex: 1;
-  margin-bottom: 0;
-}
 
 .form-hint-warning {
   background: color-mix(in srgb, var(--warning) 12%, transparent);

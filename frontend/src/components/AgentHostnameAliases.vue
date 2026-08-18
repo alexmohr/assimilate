@@ -13,7 +13,6 @@ import type { AgentHostnamePattern } from '../types/agent'
 
 /**
  * Glob patterns that map archive hostnames onto this agent during import.
- * See docs/contributing/ui-design-audit.md (F-24).
  */
 const props = defineProps<{
   hostname: string
@@ -136,26 +135,6 @@ defineExpose({ reload: load })
 </template>
 
 <style scoped>
-.muted {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-}
-
-.paths-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.5rem;
-}
-
-.path-item {
-  font-size: var(--fs-sm);
-  padding: 0.2rem 0.5rem;
-  background: var(--bg-input);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-}
-
 .pattern-row {
   display: flex;
   align-items: center;
@@ -176,9 +155,6 @@ defineExpose({ reload: load })
 }
 
 .input-sm {
-  padding: 0.35rem 0.55rem;
-  font-size: var(--fs-sm);
-  width: auto;
   min-width: 140px;
 }
 </style>

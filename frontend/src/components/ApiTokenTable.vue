@@ -63,21 +63,8 @@ defineEmits<{
 </template>
 
 <style scoped>
-.data-table tr:last-child td {
-  border-bottom: none;
-}
-
-.data-table tr:hover td {
-  background: var(--bg-hover);
-}
-
 .cell-name {
   font-weight: 600;
   color: var(--text-primary);
-}
-
-.cell-date {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
 }
 </style>

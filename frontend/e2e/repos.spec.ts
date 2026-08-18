@@ -10,7 +10,7 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const repoCards = page.locator('.repo-card')
+    const repoCards = page.locator('.entity-card')
     await expect(repoCards.first()).toBeVisible()
 
     const text = await page.locator('body').innerText()
@@ -49,7 +49,7 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const firstCard = page.locator('.repo-card').first()
+    const firstCard = page.locator('.entity-card').first()
     await expect(firstCard).toBeVisible()
     await firstCard.click()
     await page.waitForLoadState('networkidle')
@@ -91,7 +91,7 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const chip = page.locator('.repo-card .entity-issue-chip.sev-warning').first()
+    const chip = page.locator('.entity-card .entity-issue-chip.sev-warning').first()
     await expect(chip).toBeVisible()
     await expect(chip).toContainText('unmatched')
 
@@ -154,12 +154,12 @@ test.describe('Repositories management journey', () => {
 
     // Each demo repo also has its own quota configured, so its card shows a usage bar
     // on its own scale rather than the shared pool scale.
-    await expect(page.locator('.repo-card .quota-meter').first()).toBeVisible()
+    await expect(page.locator('.entity-card .quota-meter').first()).toBeVisible()
 
     // media-weekly's demo quota (warn_bytes: 1) is always in a breached state, so it
     // should still be visible as an at-risk repo once the filter narrows the view.
     await page.locator('.quota-fchip', { hasText: 'At risk' }).click()
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('.repo-card', { hasText: 'media-weekly' })).toBeVisible()
+    await expect(page.locator('.entity-card', { hasText: 'media-weekly' })).toBeVisible()
   })
 })

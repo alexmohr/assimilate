@@ -8,10 +8,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
 import { formatDateShort } from '../utils/format'
-import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
+import { useListSort } from '../composables/useListSort'
 import { useToast } from '../composables/useToast'
 import { useScheduleRun } from '../composables/useScheduleRun'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -27,7 +27,9 @@ import {
 import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import SortControls from '../components/SortControls.vue'
+import { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import ScheduleCard from '../components/ScheduleCard.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -40,13 +42,23 @@ const health = ref<ScheduleHealthEntry[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedules.')
 const router = useRouter()
 type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
-type SortDir = 'asc' | 'desc'
+
+const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
+  { field: 'agent', label: 'Agent' },
+  { field: 'next_run', label: 'Next Run' },
+  { field: 'last_run', label: 'Last Run' },
+  { field: 'type', label: 'Type' },
+]
 type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
 type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
 
-const sortField = ref<SortField>('agent')
-const sortDir = ref<SortDir>('asc')
+const {
+  field: sortField,
+  direction: sortDir,
+  toggle: toggleSort,
+  sign: sortSign,
+} = useListSort<SortField>('agent')
 const filterStatus = ref<FilterStatus>('all')
 const filterType = ref<FilterType>('all')
 const filterText = ref('')
@@ -183,20 +195,11 @@ const filteredSchedules = computed(() => {
         cmp = a.schedule_type.localeCompare(b.schedule_type)
         break
     }
-    return sortDir.value === 'desc' ? -cmp : cmp
+    return cmp * sortSign()
   })
 
   return list
 })
-
-function toggleSort(field: SortField): void {
-  if (sortField.value === field) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    sortField.value = field
-    sortDir.value = 'asc'
-  }
-}
 
 // Enriches the shared chip set with SchedulesView-specific tooltips: this
 // page aggregates across every host a schedule targets, so a bare "Overdue"
@@ -328,7 +331,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       />
       <button
         v-if="isMobile"
-        class="btn-filter-toggle"
+        class="filter-toggle"
         :class="{
           active: filterStatus !== 'all' || filterType !== 'all' || filterHealth !== 'all',
         }"
@@ -343,7 +346,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       <template v-if="!isMobile || showMobileFilters">
         <select
           v-model="filterStatus"
-          class="input select-input"
+          class="input select-input select-input--sm"
         >
           <option value="all">All</option>
           <option value="enabled">Enabled</option>
@@ -351,7 +354,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         </select>
         <select
           v-model="filterType"
-          class="input select-input"
+          class="input select-input select-input--sm"
         >
           <option value="all">All types</option>
           <option value="backup">Backup</option>
@@ -360,7 +363,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         </select>
         <select
           v-model="filterHealth"
-          class="input select-input"
+          class="input select-input select-input--sm"
         >
           <option value="all">All health</option>
           <option value="success">Passed only</option>
@@ -368,39 +371,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           <option value="failed">Failed only</option>
           <option value="overdue">Overdue only</option>
         </select>
-        <div class="sort-controls">
-          <span class="sort-label">Sort:</span>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'agent' }"
-            @click="toggleSort('agent')"
-          >
-            Agent {{ sortField === 'agent' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'next_run' }"
-            @click="toggleSort('next_run')"
-          >
-            Next Run
-            {{ sortField === 'next_run' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'last_run' }"
-            @click="toggleSort('last_run')"
-          >
-            Last Run
-            {{ sortField === 'last_run' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'type' }"
-            @click="toggleSort('type')"
-          >
-            Type {{ sortField === 'type' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-        </div>
+        <SortControls
+          :field="sortField"
+          :direction="sortDir"
+          :options="SORT_OPTIONS"
+          @toggle="toggleSort"
+        />
       </template>
     </div>
 
@@ -420,57 +396,28 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 
     <div
       v-else
-      class="schedule-grid"
+      class="card-grid"
     >
-      <div
+      <ScheduleCard
         v-for="s in filteredSchedules"
         :key="s.id"
-        class="schedule-card"
-        :class="{ 'schedule-card-notable': !s.enabled }"
+        :schedule="s"
+        :issues="scheduleIssues(s)"
+        :format-run="formatDateShort"
+        :running="s.isRunning"
+        spread-actions
         :data-schedule-id="s.id"
-        @click="navigateToSchedule(s)"
+        @select="navigateToSchedule(s)"
       >
-        <span class="card-hostname">{{
+        <template #title>{{
           s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
-        }}</span>
-        <EntityStatusBadges
-          :notable="!s.enabled"
-          notable-label="Disabled"
-          :running="s.isRunning"
-          running-label="Running"
-          :issues="scheduleIssues(s)"
-        />
-        <div class="card-meta">
-          <span class="host-count">
+        }}</template>
+        <template #meta>
+          <span class="meta-pill">
             {{ s.target_hostnames.length }} agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
           </span>
-          <span
-            class="badge badge--neutral"
-            :class="`type-${s.schedule_type ?? 'backup'}`"
-          >
-            {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
-          </span>
-        </div>
-        <div class="card-stats">
-          <div class="stat">
-            <span class="stat-value">{{
-              cronToHuman(s.cron_expression) ?? s.cron_expression
-            }}</span>
-            <span class="stat-label">Schedule</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatDateShort(s.next_run_at) }}</span>
-            <span class="stat-label">Next run</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatDateShort(s.last_run_at) }}</span>
-            <span class="stat-label">Last run</span>
-          </div>
-        </div>
-        <div
-          class="card-actions"
-          @click.stop
-        >
+        </template>
+        <template #actions>
           <div class="schedule-toggle">
             <ToggleSwitch
               :model-value="s.enabled"
@@ -498,8 +445,8 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           >
             {{ runNowLoading === s.id ? '...' : 'Run' }}
           </button>
-        </div>
-      </div>
+        </template>
+      </ScheduleCard>
     </div>
   </div>
 </template>
@@ -509,156 +456,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   max-width: 1100px;
   overflow-x: hidden;
   min-width: 0;
-}
-
-.error-banner {
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  color: var(--danger);
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
-  margin-bottom: 1rem;
-  font-size: var(--fs-base);
-}
-
-.toolbar {
-  flex-wrap: wrap;
-}
-
-.search-input {
-  width: 220px;
-}
-
-.select-input {
-  width: auto;
-  min-width: 100px;
-}
-
-.btn-filter-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  cursor: pointer;
-  position: relative;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.btn-filter-toggle:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
-}
-
-.btn-filter-toggle.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.filter-badge {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.sort-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-left: auto;
-  overflow-x: auto;
-  flex-shrink: 0;
-}
-
-.sort-label {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-right: 0.25rem;
-}
-
-.sort-controls .btn.active {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.schedule-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-  gap: 1rem;
-}
-
-.card-hostname {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-meta {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.host-count {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-}
-
-.type-backup {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.type-check {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.type-verify {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.card-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-top: auto;
 }
 
 .schedule-toggle {

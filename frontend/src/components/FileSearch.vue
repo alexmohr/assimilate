@@ -114,7 +114,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <label class="field-label">Archive</label>
         <select
           v-model="selectedArchiveName"
-          class="input select-input"
+          class="input select-input select-input--md"
         >
           <option
             :value="null"
@@ -140,7 +140,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <input
           v-model.number="maxArchives"
           type="number"
-          class="input input-sm"
+          class="input input-sm max-archives-input"
           min="1"
           max="100"
         />
@@ -287,22 +287,7 @@ function handleKeydown(event: KeyboardEvent): void {
   min-width: 90px;
 }
 
-.select-input {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.45rem 0.65rem;
-  font-size: var(--fs-base);
-  min-width: 220px;
-}
-
-.select-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.input-sm {
+.max-archives-input {
   width: 80px;
 }
 
@@ -312,20 +297,6 @@ function handleKeydown(event: KeyboardEvent): void {
 
 .search-results {
   padding: 0 1.25rem 1.25rem;
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.cell-mono {
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-}
-
-.cell-muted {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
 }
 
 .results-summary {

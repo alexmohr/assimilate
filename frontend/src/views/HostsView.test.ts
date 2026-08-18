@@ -200,7 +200,7 @@ describe('HostsView', () => {
     const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
     await flushPromises()
 
-    const cards = wrapper.findAll('.host-card')
+    const cards = wrapper.findAll('.entity-card')
     const protectedCard = cards.find((c) => c.text().includes('protected-host'))
     expect(protectedCard?.find('.entity-running-pill').exists()).toBe(true)
     expect(protectedCard?.text()).toContain('Backing up: server-daily')
@@ -412,14 +412,14 @@ describe('HostsView issue rows', () => {
   it('shows an Offline pill and tints the card when the agent is disconnected', async () => {
     const wrapper = await mountSingleAgent({ is_connected: false })
 
-    expect(wrapper.find('.host-card').classes()).toContain('host-card-notable')
+    expect(wrapper.find('.entity-card').classes()).toContain('entity-card--notable')
     expect(wrapper.find('.entity-status-pill').text()).toBe('Offline')
   })
 
   it('shows nothing in the badge row for a healthy online agent with no issues', async () => {
     const wrapper = await mountSingleAgent({ is_connected: true })
 
-    expect(wrapper.find('.host-card').classes()).not.toContain('host-card-notable')
+    expect(wrapper.find('.entity-card').classes()).not.toContain('entity-card--notable')
     expect(wrapper.find('.entity-badge-row').exists()).toBe(false)
   })
 })

@@ -16,6 +16,7 @@ import { useArchiveDeletion } from '../composables/useArchiveDeletion'
 import ArchiveBrowserLayout from './ArchiveBrowserLayout.vue'
 import ArchiveFileBrowser from './ArchiveFileBrowser.vue'
 import BaseModal from './BaseModal.vue'
+import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
 
 const props = defineProps<{
@@ -203,7 +204,7 @@ defineExpose({
           v-if="archivesLoading"
           class="state-msg state-msg-sm"
         >
-          <span class="spinner" />
+          <BaseSpinner size="sm" />
           Loading archives...
         </div>
         <div
@@ -566,14 +567,6 @@ defineExpose({
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.archive-row:hover {
-  background: var(--bg-hover);
-}
-
-.archive-row.selected {
-  background: var(--accent-subtle);
-}
-
 .archive-row:hover .archive-row-delete,
 .archive-row.selected .archive-row-delete {
   opacity: 1;
@@ -641,41 +634,10 @@ defineExpose({
   background: var(--danger-subtle);
 }
 
-.spinner {
-  display: inline-block;
-  width: 1rem;
-  height: 1rem;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
 /* Carried over with the markup from RepoDetailView: scoped rules do not
    follow moved templates, so without these the filter input, host links and
    match icons rendered unstyled. */
 .archive-controls .filter-input {
   flex: 1;
-}
-
-.muted {
-  color: var(--text-muted);
-}
-
-.host-link {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.host-link:hover {
-  text-decoration: underline;
-}
-
-.match-ok {
-  color: var(--success);
-}
-
-.match-warn {
-  color: var(--warning);
 }
 </style>

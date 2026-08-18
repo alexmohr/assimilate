@@ -13,9 +13,10 @@ import { useApiTokens } from '../composables/useApiTokens'
 import { formatDate } from '../utils/format'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
-import { Trash2, Monitor, Sun, Moon } from '@lucide/vue'
+import { Trash2, Monitor, Sun, Moon, KeyRound } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import EmptyState from '../components/EmptyState.vue'
 import type {
   SessionListResponse,
   SessionResponse,
@@ -244,7 +245,7 @@ onMounted(async () => {
     <!-- Password Tab -->
     <div
       v-if="activeTab === 'password'"
-      class="tab-content"
+      class="tab-content fade-in"
     >
       <form
         class="password-form"
@@ -309,7 +310,7 @@ onMounted(async () => {
     <!-- Tokens Tab -->
     <div
       v-if="activeTab === 'tokens'"
-      class="tab-content"
+      class="tab-content fade-in"
     >
       <div class="tokens-header">
         <p class="tokens-desc">
@@ -334,22 +335,24 @@ onMounted(async () => {
         @delete="openDeleteToken"
       />
 
-      <div
+      <EmptyState
         v-else
-        class="empty-state"
-      >
-        No API tokens yet.
-      </div>
+        :icon="KeyRound"
+        title="No API tokens yet"
+        description="Create a token to let an external tool authenticate without your password."
+        action="Create Token"
+        @action="openCreateToken"
+      />
     </div>
 
     <!-- Two-Factor Auth Tab -->
     <div
       v-if="activeTab === 'totp'"
-      class="tab-content"
+      class="tab-content fade-in"
     >
       <div v-if="totpShowRecoveryCodes">
         <div class="recovery-codes-section">
-          <h3 class="section-title">Recovery Codes</h3>
+          <h3 class="totp-heading">Recovery Codes</h3>
           <p class="recovery-codes-warning">
             Save these recovery codes in a secure place. They can be used to access your account if
             you lose your authenticator device. Each code can only be used once.
@@ -373,7 +376,7 @@ onMounted(async () => {
 
       <div v-else-if="totpSetupData">
         <div class="totp-setup-section">
-          <h3 class="section-title">Set Up Two-Factor Authentication</h3>
+          <h3 class="totp-heading">Set Up Two-Factor Authentication</h3>
           <p class="totp-setup-desc">
             Scan the QR code below with your authenticator app (e.g., Google Authenticator, Authy).
           </p>
@@ -489,7 +492,7 @@ onMounted(async () => {
     <!-- Sessions Tab -->
     <div
       v-if="activeTab === 'sessions'"
-      class="tab-content"
+      class="tab-content fade-in"
     >
       <p class="sessions-desc">
         Active sessions for your account. You can revoke any session except your current one.
@@ -566,7 +569,7 @@ onMounted(async () => {
 
       <div
         v-else
-        class="empty-state"
+        class="state-msg"
       >
         No active sessions.
       </div>
@@ -575,7 +578,7 @@ onMounted(async () => {
     <!-- Appearance Tab -->
     <div
       v-if="activeTab === 'appearance'"
-      class="tab-content"
+      class="tab-content fade-in"
     >
       <div class="setting-row">
         <div class="setting-info">
@@ -644,10 +647,13 @@ onMounted(async () => {
           {{ createError }}
         </div>
       </template>
-      <template v-else>
+      <div
+        v-else
+        class="token-notice"
+      >
         <p class="token-warning">Copy this token now. It will not be shown again.</p>
-        <div class="token-display">
-          <code class="token-value">{{ newTokenPlaintext }}</code>
+        <div class="token-box">
+          <code class="token-text">{{ newTokenPlaintext }}</code>
           <button
             class="btn btn-sm btn-ghost"
             @click="copyToClipboard(newTokenPlaintext)"
@@ -655,7 +661,7 @@ onMounted(async () => {
             {{ tokenCopied ? 'Copied' : 'Copy' }}
           </button>
         </div>
-      </template>
+      </div>
 
       <template #footer>
         <button
@@ -753,19 +759,6 @@ onMounted(async () => {
   margin-bottom: 1.5rem;
 }
 
-.tab-content {
-  animation: fadeIn 0.15s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 .password-form {
   max-width: 380px;
 }
@@ -787,38 +780,6 @@ onMounted(async () => {
   color: var(--text-muted);
   padding: 2rem;
   text-align: center;
-}
-
-.empty-state {
-  color: var(--text-muted);
-  padding: 2rem;
-  text-align: center;
-  font-size: var(--fs-md);
-}
-
-.token-warning {
-  color: var(--warning);
-  font-size: var(--fs-base);
-  font-weight: 600;
-  margin-bottom: 0.75rem;
-}
-
-.token-display {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.token-value {
-  flex: 1;
-  font-size: var(--fs-sm);
-  font-family: var(--mono);
-  word-break: break-all;
-  color: var(--text-primary);
 }
 
 .setting-row {
@@ -923,7 +884,10 @@ onMounted(async () => {
   gap: 1rem;
 }
 
-.section-title {
+/* Heading over a block inside the two-factor tab. Named for where it is:
+   `.section-title` already means the mono eyebrow on the agent overview, and
+   one class name standing for two different headings is how the two drift. */
+.totp-heading {
   font-size: var(--fs-lg);
   font-weight: 600;
   margin: 0;
@@ -1004,14 +968,6 @@ onMounted(async () => {
   color: var(--text-muted);
   font-size: var(--fs-base);
   margin-bottom: 1rem;
-}
-
-.data-table tr:last-child td {
-  border-bottom: none;
-}
-
-.data-table tr:hover td {
-  background: var(--bg-hover);
 }
 
 .cell-type {

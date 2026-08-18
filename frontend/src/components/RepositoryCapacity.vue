@@ -19,7 +19,7 @@ defineProps<{ repositories: DashboardRepositoryCapacity[] }>()
     <h2 class="panel-title">Repository Capacity</h2>
     <div
       v-if="repositories.length === 0"
-      class="empty-state"
+      class="capacity-empty"
     >
       No enabled repositories
     </div>
@@ -74,7 +74,7 @@ defineProps<{ repositories: DashboardRepositoryCapacity[] }>()
 small,
 .quota-value,
 .history-value,
-.empty-state {
+.capacity-empty {
   color: var(--text-muted);
   font-size: var(--fs-2xs);
 }

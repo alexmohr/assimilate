@@ -431,12 +431,6 @@ async function resetAndSync(): Promise<void> {
   white-space: pre-line;
 }
 
-.break-lock-warning {
-  color: var(--danger);
-  font-size: var(--fs-base);
-  line-height: 1.5;
-}
-
 .danger-hint {
   font-size: var(--fs-2xs);
   color: var(--warning);

@@ -14,7 +14,7 @@ import type { AgentRow } from '../types/agent'
 /**
  * The destructive actions on a host, plus their confirmation dialogs.
  * Imported hosts get a different pair (hide / delete archives) from managed
- * ones (delete agent). See docs/contributing/ui-design-audit.md (F-24).
+ * ones (delete agent).
  */
 const props = defineProps<{ agent: AgentRow }>()
 

@@ -436,8 +436,17 @@ test.describe('backup progress card — mid-backup page load', () => {
     })
 
     await page.waitForTimeout(300)
-    await expect(page.locator('.live-log-output')).toHaveCount(0)
-    await expect(page.locator('.live-log-card')).not.toContainText('WARNING')
+
+    // `.live-log-output` never existed, so the original `toHaveCount(0)` here
+    // passed no matter what the card rendered. Assert on the card's actual
+    // shape instead: no <pre> anywhere inside it catches a raw log dump under
+    // any class name, and the waiting state proves nothing was parsed as
+    // progress.
+    const card = page.locator('.live-log-card')
+    await expect(card.locator('pre')).toHaveCount(0)
+    await expect(page.locator('.live-log-empty')).toBeVisible()
+    await expect(card).not.toContainText('WARNING')
+    await expect(card).not.toContainText('borg.archive')
   })
 
   test('BackupLog matched by schedule_id updates progress even without repo data loaded', async ({

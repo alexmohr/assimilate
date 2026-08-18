@@ -177,7 +177,7 @@ async function submitDeploy(): Promise<void> {
           placeholder="e.g. 192.168.1.10"
         />
       </div>
-      <div class="deploy-row-fields">
+      <div class="field-row">
         <div class="field">
           <label class="field-label">SSH User</label>
           <input
@@ -352,20 +352,6 @@ async function submitDeploy(): Promise<void> {
   border-radius: var(--radius-sm);
 }
 
-.deploy-row-fields {
-  display: flex;
-  gap: 1rem;
-}
-
-.deploy-row-fields .field {
-  flex: 1;
-}
-
-.field-narrow {
-  max-width: 120px;
-  flex: 0 0 120px;
-}
-
 .field-label-row {
   margin-bottom: 0.3rem;
 }
@@ -402,11 +388,5 @@ async function submitDeploy(): Promise<void> {
   font-size: var(--fs-base);
   color: var(--text-muted);
   font-family: var(--mono);
-}
-
-.token-notice {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
 }
 </style>

@@ -101,7 +101,7 @@ test('agents page shows imported placeholder agents', async ({ page }) => {
   // toBeVisible timeout covers both the API latency and Vue render time.
   await expect(
     page
-      .locator('.card-hostname')
+      .locator('.card-name')
       .filter({ hasText: /old-webserver|legacy-db-prod/ })
       .first(),
   ).toBeVisible({ timeout: 270_000 })
@@ -335,7 +335,7 @@ test('import-progress bar appears when archive count is known', async ({ page })
   await resyncBtn.click()
 
   // Progress bar only renders when import_total > 0; server-daily has archives so it must appear
-  const progressBar = page.locator('.import-progress-bar')
+  const progressBar = page.locator('.progress-bar')
   await expect(progressBar).toBeVisible({ timeout: 60_000 })
 
   // Bar must disappear after sync completes
@@ -379,7 +379,7 @@ test('status badge shows Enabled and no importing elements after resync complete
 
   // All importing UI elements must be gone after completion
   await expect(page.locator('.import-status-msg')).not.toBeVisible()
-  await expect(page.locator('.import-progress')).not.toBeVisible()
+  await expect(page.locator('.progress-row')).not.toBeVisible()
   await expect(statusBadge).toHaveText(/enabled/i)
 })
 
@@ -461,8 +461,11 @@ test('clicking an archive opens the file browser', async ({ page }) => {
   await expect(firstArchiveRow).toBeVisible({ timeout: 15_000 })
   await firstArchiveRow.click()
 
-  // File browser panel or breadcrumb must appear
-  await expect(
-    page.locator('.file-browser, .breadcrumb, .crumb, [class*="browser"]').first(),
-  ).toBeVisible({ timeout: 10_000 })
+  // `ArchiveFileBrowser` renders its header and path trail only once an
+  // archive is selected - before that it shows `.browser-placeholder`. The
+  // previous selector list could not fail: `.file-browser` never existed, but
+  // `[class*="browser"]` matched `.archive-file-browser`, which the tab mounts
+  // unconditionally, and `.breadcrumb` matches the page's own nav trail.
+  await expect(page.locator('.browser-title')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.path-crumbs')).toBeVisible()
 })

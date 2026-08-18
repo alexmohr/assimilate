@@ -160,33 +160,4 @@ onMounted(fetchTokens)
 .tokens-page {
   max-width: 900px;
 }
-
-.token-notice {
-  margin: 1rem 0;
-}
-
-.token-warning {
-  font-size: var(--fs-sm);
-  color: var(--warning);
-  font-weight: 600;
-  margin-bottom: 0.5rem;
-}
-
-.token-box {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.5rem 0.75rem;
-}
-
-.token-text {
-  flex: 1;
-  font-size: var(--fs-xs);
-  font-family: monospace;
-  word-break: break-all;
-  color: var(--text-primary);
-}
 </style>

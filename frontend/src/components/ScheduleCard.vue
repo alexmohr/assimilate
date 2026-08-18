@@ -16,8 +16,15 @@ withDefaults(
     formatRun: (value: string | null) => string
     /** Draws attention to a schedule the caller has flagged, e.g. overdue. */
     highlighted?: boolean
+    /** Marks a run currently in flight. */
+    running?: boolean
+    /**
+     * Pushes the first action to the opposite end of the footer, for a card
+     * whose actions row leads with a control rather than a button.
+     */
+    spreadActions?: boolean
   }>(),
-  { highlighted: false },
+  { highlighted: false, running: false, spreadActions: false },
 )
 
 defineEmits<{ select: [] }>()
@@ -36,19 +43,21 @@ function scheduleTypeLabel(t: ScheduleType): string {
 
 <template>
   <div
-    class="schedule-card"
+    class="entity-card"
     :class="{
-      'schedule-card-notable': !schedule.enabled,
-      'schedule-card-highlighted': highlighted,
+      'entity-card--notable': !schedule.enabled,
+      'entity-card--highlighted': highlighted,
     }"
     @click="$emit('select')"
   >
-    <span class="card-hostname">
+    <span class="card-name">
       <slot name="title">{{ schedule.name || `Schedule #${schedule.id}` }}</slot>
     </span>
     <EntityStatusBadges
       :notable="!schedule.enabled"
       notable-label="Disabled"
+      :running="running"
+      running-label="Running"
       :issues="issues"
     />
     <div class="card-meta">
@@ -79,6 +88,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
     <div
       v-if="$slots.actions"
       class="card-actions"
+      :class="{ 'card-actions--spread': spreadActions }"
       @click.stop
     >
       <slot name="actions" />
@@ -87,44 +97,6 @@ function scheduleTypeLabel(t: ScheduleType): string {
 </template>
 
 <style scoped>
-.schedule-card-highlighted {
-  border-color: var(--warning);
-}
-
-.card-hostname {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-meta {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: auto;
-}
-
 .type-backup {
   background: var(--success-subtle);
   color: var(--success);

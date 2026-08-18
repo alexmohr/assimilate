@@ -20,5 +20,7 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts"]
+  /* `src/test-utils/sourceFiles.ts` lives here rather than in the app project:
+     it is node-only test tooling, and `node:fs` needs the `node` types above. */
+  "include": ["vite.config.ts", "src/test-utils/sourceFiles.ts"]
 }

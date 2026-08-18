@@ -67,7 +67,7 @@ describe('RepoSchedulesTab', () => {
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    expect(wrapper.findAll('.schedule-card')).toHaveLength(1)
+    expect(wrapper.findAll('.entity-card')).toHaveLength(1)
     expect(wrapper.text()).toContain('nightly')
     expect(wrapper.text()).toContain('2 agents')
     expect(wrapper.find('.badge--neutral').text()).toBe('Backup')
@@ -80,7 +80,7 @@ describe('RepoSchedulesTab', () => {
 
     expect(wrapper.find('.empty-state').exists()).toBe(true)
     expect(wrapper.find('.empty-title').text()).toBe('No schedules yet')
-    expect(wrapper.findAll('.schedule-card')).toHaveLength(0)
+    expect(wrapper.findAll('.entity-card')).toHaveLength(0)
   })
 
   it('surfaces a load failure instead of an empty list', async () => {
@@ -97,8 +97,8 @@ describe('RepoSchedulesTab', () => {
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    const card = wrapper.find('.schedule-card')
-    expect(card.classes()).toContain('schedule-card-notable')
+    const card = wrapper.find('.entity-card')
+    expect(card.classes()).toContain('entity-card--notable')
     expect(wrapper.text()).toContain('Disabled')
   })
 
@@ -165,7 +165,7 @@ describe('RepoSchedulesTab', () => {
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    await wrapper.find('.schedule-card').trigger('click')
+    await wrapper.find('.entity-card').trigger('click')
     await flushPromises()
 
     expect(routerPush).toHaveBeenCalledWith('/schedules/7')

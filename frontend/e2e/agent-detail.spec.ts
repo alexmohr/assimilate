@@ -96,7 +96,7 @@ test.describe('Agent detail', () => {
     await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
     await expect(page).toHaveURL(/section=defaults/)
     await expect(page.locator('.info-title', { hasText: 'Backup defaults' })).toBeVisible()
-    await expect(page.locator('.defaults-label')).toHaveText([
+    await expect(page.locator('.group-label')).toHaveText([
       'Backup paths',
       'Exclude patterns',
       'File change patterns',

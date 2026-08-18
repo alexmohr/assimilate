@@ -108,7 +108,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">Action</label>
           <input
             v-model="filters.action"
-            class="input filter-input"
+            class="input input-sm action-filter"
             type="text"
             placeholder="e.g. create, update, delete"
           />
@@ -117,7 +117,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">User</label>
           <input
             v-model="filters.user"
-            class="input filter-input"
+            class="input input-sm"
             type="text"
             placeholder="Username"
           />
@@ -126,7 +126,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">From</label>
           <input
             v-model="filters.from"
-            class="input date-input"
+            class="input input-sm date-input"
             type="date"
           />
         </div>
@@ -134,7 +134,7 @@ onMounted(fetchAuditLog)
           <label class="filter-label">To</label>
           <input
             v-model="filters.to"
-            class="input date-input"
+            class="input input-sm date-input"
             type="date"
           />
         </div>
@@ -176,7 +176,7 @@ onMounted(fetchAuditLog)
 
     <div
       v-else
-      class="table-wrap"
+      class="table-wrap table-wrap--framed"
     >
       <DataTable
         v-model:expanded-rows="expandedRows"
@@ -267,7 +267,7 @@ onMounted(fetchAuditLog)
       <label class="filter-label">Rows per page</label>
       <select
         v-model="perPage"
-        class="input select-input"
+        class="input input-sm select-input"
       >
         <option
           v-for="opt in perPageOptions"
@@ -315,86 +315,10 @@ function actionBadgeClass(action: string): string {
   justify-content: space-between;
 }
 
-.row-count {
-  font-size: var(--fs-base);
-  color: var(--text-muted);
-}
-
-.filters {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem 1.25rem;
-}
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 1rem;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.filter-label {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.filter-input,
-.date-input {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.4rem 0.6rem;
-  font-size: var(--fs-base);
-  outline: none;
-  transition: border-color var(--duration-base);
-}
-
-.filter-input:focus,
-.date-input:focus {
-  border-color: var(--accent);
-}
-
 .filter-actions {
   display: flex;
   gap: 0.5rem;
   align-self: flex-end;
-}
-
-.select-input {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.4rem 0.6rem;
-  font-size: var(--fs-base);
-  outline: none;
-}
-
-.table-wrap {
-  overflow-x: auto;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.cell-ts {
-  color: var(--text-muted);
-  white-space: nowrap;
-  font-size: var(--fs-sm);
 }
 
 .cell-user {
@@ -419,24 +343,6 @@ function actionBadgeClass(action: string): string {
 .detail-expansion {
   padding: 1rem 1.5rem;
   background: var(--bg-base);
-}
-
-.detail-pre {
-  margin: 0;
-  padding: 0.75rem 1rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
-  font-family: var(--mono);
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-primary);
-}
-
-.muted {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
 }
 
 .per-page-selector {

@@ -16,7 +16,7 @@ import type { Repo, RepoWithStats } from '../types/repo'
  * Create-or-import dialog for a repository, including the remote folder
  * browser it uses to pick a path. Lifted out of `ReposView`, which also
  * carried an unreachable "edit" mode for it - repositories are edited from
- * their detail page. See docs/contributing/ui-design-audit.md (F-24).
+ * their detail page.
  */
 
 type CompressionType = 'lz4' | 'zstd' | 'none'
@@ -561,21 +561,17 @@ defineExpose({ reset })
         class="browser-panel"
       >
         <!-- Breadcrumbs -->
-        <div class="browser-breadcrumbs">
-          <span
+        <div class="path-crumbs">
+          <button
             v-for="(crumb, i) in breadcrumbs"
             :key="crumb.path"
-            class="breadcrumb"
-            :class="{ 'breadcrumb-last': i === breadcrumbs.length - 1 }"
+            type="button"
+            class="crumb"
+            :class="{ 'crumb-root': i === 0, 'crumb-last': i === breadcrumbs.length - 1 }"
             @click="i < breadcrumbs.length - 1 && navigateTo(crumb.path)"
           >
-            {{ crumb.label
-            }}<span
-              v-if="i > 0 && i < breadcrumbs.length - 1"
-              class="breadcrumb-sep"
-              >/</span
-            >
-          </span>
+            {{ crumb.label }}
+          </button>
           <button
             v-if="mode === 'create'"
             class="btn btn-xs btn-ghost browser-mkdir-btn"
@@ -741,24 +737,10 @@ defineExpose({ reset })
 </template>
 
 <style scoped>
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 1rem;
-}
-
 .form-grid-below {
   margin-top: 1.25rem;
   border-top: 1px solid var(--border);
   padding-top: 1rem;
-}
-
-.field-full {
-  grid-column: 1 / -1;
-}
-
-.field-narrow {
-  max-width: 120px;
 }
 
 .ssh-actions {
@@ -766,15 +748,6 @@ defineExpose({ reset })
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
-}
-
-.deploy-result {
-  font-size: var(--fs-sm);
-  font-weight: 500;
-}
-
-.result-ok {
-  color: var(--success);
 }
 
 .result-warn {
@@ -845,42 +818,6 @@ defineExpose({ reset })
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
-}
-
-.browser-breadcrumbs {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  font-size: var(--fs-sm);
-  font-family: var(--mono);
-}
-
-.breadcrumb {
-  cursor: pointer;
-  color: var(--accent);
-  transition: color var(--duration-base);
-}
-
-.breadcrumb:hover {
-  text-decoration: underline;
-}
-
-.breadcrumb-last {
-  color: var(--text-primary);
-  cursor: default;
-  font-weight: 600;
-}
-
-.breadcrumb-last:hover {
-  text-decoration: none;
-}
-
-.breadcrumb-sep {
-  color: var(--text-muted);
-  margin: 0 0.15rem;
 }
 
 .browser-mkdir-btn {

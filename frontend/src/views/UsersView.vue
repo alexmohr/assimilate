@@ -732,25 +732,9 @@ onMounted(fetchUsers)
   gap: 0.5rem;
 }
 
-.role-badge.admin {
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.role-badge.user {
-  color: var(--text-muted);
-  background: var(--bg-hover);
-}
-
 .date-cell {
   color: var(--text-secondary);
   font-size: var(--fs-sm);
-}
-
-.actions-cell {
-  display: flex;
-  gap: 0.375rem;
-  white-space: nowrap;
 }
 
 .col-date {

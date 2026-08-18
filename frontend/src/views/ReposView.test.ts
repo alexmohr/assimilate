@@ -201,15 +201,15 @@ describe('ReposView', () => {
     })
     await flushPromises()
 
-    const cards = wrapper.findAll('.repo-card')
+    const cards = wrapper.findAll('.entity-card')
     const enabledCard = cards.find((c) => c.text().includes('server-daily'))
     const disabledCard = cards.find((c) => c.text().includes('media-weekly'))
 
     expect(enabledCard!.find('.entity-status-pill').exists()).toBe(false)
-    expect(enabledCard!.classes()).not.toContain('repo-card-notable')
+    expect(enabledCard!.classes()).not.toContain('entity-card--notable')
 
     expect(disabledCard!.find('.entity-status-pill').text()).toBe('Disabled')
-    expect(disabledCard!.classes()).toContain('repo-card-notable')
+    expect(disabledCard!.classes()).toContain('entity-card--notable')
   })
 
   it('shows a clickable unmatched-archives chip that navigates to the Archives tab', async () => {
@@ -455,14 +455,14 @@ describe('ReposView', () => {
     await clickGroupByHost(wrapper)
     await clickButton(wrapper, (t) => t.startsWith('Size'))
 
-    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+    expect(wrapper.findAll('.entity-card .card-name').map((n) => n.text())).toEqual([
       'small',
       'medium',
       'large',
     ])
 
     await clickButton(wrapper, (t) => t.startsWith('Size'))
-    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+    expect(wrapper.findAll('.entity-card .card-name').map((n) => n.text())).toEqual([
       'large',
       'medium',
       'small',
@@ -492,7 +492,7 @@ describe('ReposView', () => {
     await clickGroupByHost(wrapper)
     await clickButton(wrapper, (t) => t.startsWith('Last Backup'))
 
-    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+    expect(wrapper.findAll('.entity-card .card-name').map((n) => n.text())).toEqual([
       'never',
       'oldest',
       'newest',
@@ -530,7 +530,7 @@ describe('ReposView', () => {
     const wrapper = await mountAsAdmin()
     await clickGroupByHost(wrapper)
 
-    const card = wrapper.findAll('.repo-card').find((c) => c.text().includes('server-daily'))
+    const card = wrapper.findAll('.entity-card').find((c) => c.text().includes('server-daily'))
     await card!.trigger('click')
     await flushPromises()
 
@@ -546,21 +546,21 @@ describe('ReposView', () => {
     await clickGroupByHost(wrapper)
 
     // Name-ascending is the default; the first click on the already-active field reverses it.
-    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+    expect(wrapper.findAll('.entity-card .card-name').map((n) => n.text())).toEqual([
       'database-hourly',
       'media-weekly',
       'server-daily',
     ])
 
     await clickButton(wrapper, (t) => t.startsWith('Name'))
-    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+    expect(wrapper.findAll('.entity-card .card-name').map((n) => n.text())).toEqual([
       'server-daily',
       'media-weekly',
       'database-hourly',
     ])
 
     await clickButton(wrapper, (t) => t.startsWith('Name'))
-    expect(wrapper.findAll('.repo-card .card-name').map((n) => n.text())).toEqual([
+    expect(wrapper.findAll('.entity-card .card-name').map((n) => n.text())).toEqual([
       'database-hourly',
       'media-weekly',
       'server-daily',
@@ -753,7 +753,7 @@ describe('ReposView quota filter chips', () => {
     })
     await flushPromises()
 
-    const cards = wrapper.findAll('.repo-card')
+    const cards = wrapper.findAll('.entity-card')
     const overWarnCard = cards.find((c) => c.text().includes('over-warn'))
     expect(overWarnCard!.find('.quota-meter').exists()).toBe(true)
     expect(overWarnCard!.text()).toContain('Warning')
@@ -848,13 +848,13 @@ describe('ReposView group by host', () => {
     await flushPromises()
 
     // Both cards still render (the group keeps its full picture)...
-    const cards = wrapper.findAll('.repo-card')
+    const cards = wrapper.findAll('.entity-card')
     expect(cards).toHaveLength(2)
     // ...but only the one that doesn't match the filter is dimmed.
     const healthyCard = cards.find((c) => c.text().includes('healthy-repo'))
-    expect(healthyCard!.classes()).toContain('repo-card-dim')
+    expect(healthyCard!.classes()).toContain('entity-card--dim')
     const atRiskCard = cards.find((c) => c.text().includes('at-risk-repo'))
-    expect(atRiskCard!.classes()).not.toContain('repo-card-dim')
+    expect(atRiskCard!.classes()).not.toContain('entity-card--dim')
   })
 
   it('sorts multiple host groups alphabetically by ssh_host', async () => {
@@ -897,7 +897,7 @@ describe('ReposView group by host', () => {
     const wrapper = await mountAsAdmin()
 
     const card = wrapper
-      .findAll('.repo-hostgrouped .repo-card')
+      .findAll('.repo-hostgrouped .entity-card')
       .find((c) => c.text().includes('server-daily'))
     await card!.trigger('click')
     await flushPromises()
@@ -1028,7 +1028,7 @@ describe('ReposView quota sort', () => {
     await clickGroupByHost(wrapper)
     await clickQuotaSort(wrapper)
 
-    const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
+    const names = wrapper.findAll('.entity-card .card-name').map((n) => n.text())
     expect(names).toEqual(['lightly-used', 'over-warn', 'unconfigured'])
   })
 
@@ -1055,7 +1055,7 @@ describe('ReposView quota sort', () => {
     await clickGroupByHost(wrapper)
     await clickQuotaSort(wrapper)
 
-    const names = wrapper.findAll('.repo-card .card-name').map((n) => n.text())
+    const names = wrapper.findAll('.entity-card .card-name').map((n) => n.text())
     expect(names.slice(0, 2)).toEqual(['lightly-used', 'over-warn'])
     expect(names.slice(2)).toEqual(expect.arrayContaining(['unconfigured', 'zero-ceiling']))
   })
@@ -1071,12 +1071,12 @@ describe('ReposView quota sort', () => {
     const atRiskChip = chips.find((c) => c.text().includes('At risk'))
     await atRiskChip!.trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('.repo-card')).toHaveLength(1)
+    expect(wrapper.findAll('.entity-card')).toHaveLength(1)
 
     const allChip = chips.find((c) => c.text().startsWith('All'))
     await allChip!.trigger('click')
     await flushPromises()
-    expect(wrapper.findAll('.repo-card')).toHaveLength(3)
+    expect(wrapper.findAll('.entity-card')).toHaveLength(3)
   })
 
   describe('create and import dialog', () => {
@@ -1152,7 +1152,7 @@ describe('ReposView quota sort', () => {
     it('adds an imported repository to the list immediately', async () => {
       setupApiSuccess()
       const wrapper = await mountAsAdmin()
-      const before = wrapper.findAll('.repo-card').length
+      const before = wrapper.findAll('.entity-card').length
 
       await dialog(wrapper).vm.$emit('imported', {
         id: 99,
@@ -1165,7 +1165,7 @@ describe('ReposView quota sort', () => {
       })
       await flushPromises()
 
-      expect(wrapper.findAll('.repo-card')).toHaveLength(before + 1)
+      expect(wrapper.findAll('.entity-card')).toHaveLength(before + 1)
       expect(wrapper.text()).toContain('freshly-imported')
     })
 

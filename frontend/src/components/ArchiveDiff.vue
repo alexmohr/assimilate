@@ -80,7 +80,7 @@ async function compare(): Promise<void> {
         <label class="field-label">Archive 1</label>
         <select
           v-model="archive1"
-          class="input select-input"
+          class="input"
         >
           <option
             :value="null"
@@ -101,7 +101,7 @@ async function compare(): Promise<void> {
         <label class="field-label">Archive 2</label>
         <select
           v-model="archive2"
-          class="input select-input"
+          class="input"
         >
           <option
             :value="null"
@@ -230,21 +230,6 @@ async function compare(): Promise<void> {
 .field-label {
   display: block;
   margin-bottom: 0.4rem;
-}
-
-.select-input {
-  width: 100%;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.55rem 0.75rem;
-  font-size: var(--fs-base);
-}
-
-.select-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .compare-btn {

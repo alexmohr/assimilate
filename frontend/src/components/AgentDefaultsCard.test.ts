@@ -52,7 +52,7 @@ describe('AgentDefaultsCard', () => {
     const wrapper = mount()
     expect(wrapper.findAll('.info-card')).toHaveLength(1)
     expect(wrapper.find('.info-title').text()).toBe('Backup defaults')
-    expect(wrapper.findAll('.defaults-label').map((l) => l.text())).toEqual([
+    expect(wrapper.findAll('.group-label').map((l) => l.text())).toEqual([
       'Backup paths',
       'Exclude patterns',
       'File change patterns',

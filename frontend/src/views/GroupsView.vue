@@ -504,11 +504,6 @@ onMounted(async () => {
   font-weight: 500;
 }
 
-.actions-cell {
-  display: flex;
-  gap: 0.375rem;
-}
-
 .modal-subtitle {
   font-size: var(--fs-sm);
   color: var(--text-secondary);

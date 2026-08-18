@@ -283,8 +283,8 @@ describe('AgentDetailView — backups tab', () => {
     expect(warningRow).toBeDefined()
     await warningRow!.find('button[aria-expanded]').trigger('click')
 
-    expect(wrapper.find('.detail-label--warning').exists()).toBe(true)
-    expect(wrapper.find('.detail-label--danger').exists()).toBe(false)
+    expect(wrapper.find('.group-label--warning').exists()).toBe(true)
+    expect(wrapper.find('.group-label--danger').exists()).toBe(false)
   })
 
   it('filters to only failed reports when Failed is clicked', async () => {

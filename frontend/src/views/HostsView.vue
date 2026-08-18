@@ -12,12 +12,14 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
 import { useMobile } from '../composables/useMobile'
+import { useListSort } from '../composables/useListSort'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import SortControls from '../components/SortControls.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
@@ -52,7 +54,13 @@ interface AgentHealth {
 }
 
 type SortField = 'hostname' | 'status' | 'last_seen' | 'version'
-type SortDir = 'asc' | 'desc'
+
+const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
+  { field: 'hostname', label: 'Name' },
+  { field: 'status', label: 'Status' },
+  { field: 'last_seen', label: 'Last Seen' },
+  { field: 'version', label: 'Version' },
+]
 type FilterStatus = 'all' | 'online' | 'offline'
 type CoverageFilter = 'all' | 'protected' | 'unassigned' | 'never-succeeded' | 'disabled-only'
 
@@ -75,8 +83,12 @@ const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
 
-const sortField = ref<SortField>('hostname')
-const sortDir = ref<SortDir>('asc')
+const {
+  field: sortField,
+  direction: sortDir,
+  toggle: toggleSort,
+  sign: sortSign,
+} = useListSort<SortField>('hostname')
 const filterStatus = ref<FilterStatus>(
   (route.query.status as FilterStatus) === 'online' ||
     (route.query.status as FilterStatus) === 'offline'
@@ -149,20 +161,11 @@ const filteredAgents = computed(() => {
         cmp = (a.agent_version ?? '').localeCompare(b.agent_version ?? '')
         break
     }
-    return sortDir.value === 'desc' ? -cmp : cmp
+    return cmp * sortSign()
   })
 
   return list
 })
-
-function toggleSort(field: SortField): void {
-  if (sortField.value === field) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    sortField.value = field
-    sortDir.value = 'asc'
-  }
-}
 
 const showAddDialog = ref(false)
 const addForm = reactive({ hostname: '', display_name: '' })
@@ -587,7 +590,7 @@ watch(
       />
       <button
         v-if="isMobile"
-        class="btn-filter-toggle"
+        class="filter-toggle"
         :class="{
           active: filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0,
         }"
@@ -602,7 +605,7 @@ watch(
       <template v-if="!isMobile || showMobileFilters">
         <select
           v-model="filterStatus"
-          class="input select-input"
+          class="input select-input select-input--sm"
         >
           <option value="all">All</option>
           <option value="online">Online</option>
@@ -610,7 +613,7 @@ watch(
         </select>
         <select
           v-model="filterCoverage"
-          class="input select-input"
+          class="input select-input select-input--sm"
           aria-label="Coverage"
         >
           <option value="all">All coverage</option>
@@ -660,38 +663,12 @@ watch(
             </label>
           </div>
         </div>
-        <div class="sort-controls">
-          <span class="sort-label">Sort:</span>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'hostname' }"
-            @click="toggleSort('hostname')"
-          >
-            Name {{ sortField === 'hostname' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'status' }"
-            @click="toggleSort('status')"
-          >
-            Status {{ sortField === 'status' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'last_seen' }"
-            @click="toggleSort('last_seen')"
-          >
-            Last Seen
-            {{ sortField === 'last_seen' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'version' }"
-            @click="toggleSort('version')"
-          >
-            Version {{ sortField === 'version' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
-          </button>
-        </div>
+        <SortControls
+          :field="sortField"
+          :direction="sortDir"
+          :options="SORT_OPTIONS"
+          @toggle="toggleSort"
+        />
       </template>
     </div>
 
@@ -722,18 +699,21 @@ watch(
 
     <div
       v-else
-      class="host-grid"
+      class="card-grid"
     >
       <div
         v-for="agent in filteredAgents"
         :key="agent.id"
-        class="host-card"
-        :class="{ 'host-card-hidden': agent.is_hidden, 'host-card-notable': !isOnline(agent) }"
+        class="entity-card"
+        :class="{
+          'entity-card--hidden': agent.is_hidden,
+          'entity-card--notable': !isOnline(agent),
+        }"
         @click="navigateToAgent(agent)"
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-hostname">{{ agent.hostname }}</span>
+            <span class="card-name">{{ agent.hostname }}</span>
             <span
               v-if="agent.display_name"
               class="card-display"
@@ -988,157 +968,9 @@ watch(
   min-width: 0;
 }
 
-.toolbar {
-  flex-wrap: wrap;
-}
-
-.search-input {
-  width: 220px;
-}
-
-.select-input {
-  width: auto;
-  min-width: 100px;
-}
-
-.btn-filter-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  cursor: pointer;
-  position: relative;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.btn-filter-toggle:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
-}
-
-.btn-filter-toggle.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.filter-badge {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.sort-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-left: auto;
-  overflow-x: auto;
-  flex-shrink: 0;
-}
-
-.sort-label {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-right: 0.25rem;
-}
-
-.sort-controls .btn.active {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.host-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-  gap: 1rem;
-}
-
-.host-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow var(--duration-base),
-    border-color var(--duration-base);
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.host-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.host-card-notable {
-  background: var(--bg-hover);
-}
-
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.card-hostname {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .card-display {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.5rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: auto;
 }
 
 /* Tag pills */
@@ -1150,35 +982,13 @@ watch(
 
 /* Tag filter dropdown */
 
-.dropdown-arrow {
-  font-size: var(--fs-2xs);
-  margin-left: 0.15rem;
-}
-
-.tag-dropdown-item input[type='checkbox'] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  cursor: pointer;
-}
-
 /* Overlay & Dialog */
-
-.token-notice {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
 
 .card-top-badges {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   flex-shrink: 0;
-}
-
-.host-card-hidden {
-  opacity: 0.6;
 }
 
 .hidden-toggle {

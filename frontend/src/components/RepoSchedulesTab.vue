@@ -89,7 +89,7 @@ defineExpose({ reload: load })
   />
   <div
     v-else
-    class="repo-schedule-grid"
+    class="card-grid"
   >
     <ScheduleCard
       v-for="s in schedules"
@@ -101,7 +101,7 @@ defineExpose({ reload: load })
     >
       <template #title>{{ s.name || `Schedule #${s.id}` }}</template>
       <template #meta>
-        <span class="host-count">
+        <span class="meta-pill">
           {{ s.target_hostnames.length }}
           agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
         </span>
@@ -120,21 +120,4 @@ defineExpose({ reload: load })
   </div>
 </template>
 
-<style scoped>
-.repo-schedule-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-  gap: 1rem;
-}
-
-.host-count {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-}
-</style>
+<style scoped></style>

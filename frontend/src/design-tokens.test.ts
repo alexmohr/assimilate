@@ -2,37 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { SRC, sourceFiles } from './test-utils/vueFiles'
 
 /**
  * Guards the design tokens declared in `src/style.css`.
  *
- * These rules exist because the frontend previously accumulated 29 distinct
- * font sizes, 13 literal border radii, 10 transition durations and five
- * `var()` references to variables that were never defined. See
- * `docs/contributing/ui-design-audit.md`.
+ * A literal font size, radius or transition duration is a value nothing else
+ * can follow: it does not move when the scale does, and it does not show up
+ * when someone greps for the token. A `var()` naming a token that does not
+ * exist resolves to nothing at all. See `skills/ui-design/SKILL.md`.
  */
 
-// Vitest runs with the frontend package root as cwd.
-const SRC = resolve(process.cwd(), 'src')
 const STYLE_CSS = join(SRC, 'style.css')
-
-function collectStyleSources(): string[] {
-  const out: string[] = []
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (entry.name !== 'generated') walk(full)
-      } else if (entry.name.endsWith('.vue') || entry.name.endsWith('.css')) {
-        out.push(full)
-      }
-    }
-  }
-  walk(SRC)
-  return out.sort()
-}
 
 /** Everything a `<style>` block or `.css` file contributes, joined per file. */
 function styleBlocks(file: string): string {
@@ -47,7 +30,7 @@ function definedTokens(): Set<string> {
   return new Set([...css.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gim)].map((m) => m[1]))
 }
 
-const FILES = collectStyleSources()
+const FILES = sourceFiles(['.vue', '.css'])
 const DEFINED = definedTokens()
 
 describe('design tokens', () => {

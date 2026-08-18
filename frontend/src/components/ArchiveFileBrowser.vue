@@ -107,7 +107,7 @@ function handleDeleteWholeArchive(): void {
   <div class="archive-file-browser">
     <div
       v-if="!archive"
-      class="empty-state"
+      class="browser-placeholder"
     >
       Select an archive to browse its contents.
     </div>
@@ -137,7 +137,7 @@ function handleDeleteWholeArchive(): void {
         </span>
       </div>
 
-      <div class="archive-breadcrumb">
+      <div class="path-crumbs">
         <button
           v-for="(seg, i) in breadcrumbs"
           :key="seg.path"
@@ -311,7 +311,7 @@ function handleDeleteWholeArchive(): void {
   color: var(--text-primary);
 }
 
-.empty-state {
+.browser-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -367,55 +367,6 @@ function handleDeleteWholeArchive(): void {
   background: var(--border);
 }
 
-.state-error {
-  color: var(--danger);
-}
-
-.archive-breadcrumb {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.1rem;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.crumb {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  font-family: var(--mono);
-  padding: 0.15rem 0.3rem;
-  border-radius: var(--radius-sm);
-  transition:
-    background var(--duration-fast),
-    color var(--duration-fast);
-}
-
-.crumb:hover {
-  background: var(--accent-subtle);
-  color: var(--accent-hover);
-}
-
-.crumb-last {
-  color: var(--text-primary);
-  cursor: default;
-}
-
-.crumb-last:hover {
-  background: none;
-  color: var(--text-primary);
-}
-
-.crumb:not(.crumb-last)::after {
-  content: ' /';
-  color: var(--text-muted);
-  margin-left: 0.2rem;
-}
-
 :deep(.browser-table) {
   table-layout: fixed;
 }
@@ -451,60 +402,6 @@ function handleDeleteWholeArchive(): void {
 
 :deep(.data-table tr.clickable:hover) {
   background: var(--bg-hover);
-}
-
-.td-name {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-}
-
-.name-text {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.entry-icon {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.td-size {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.td-date {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.td-action {
-  text-align: right;
-  display: inline-flex;
-  gap: 0.25rem;
-}
-
-.filter-input {
-  width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.35rem 0.5rem;
-  font-size: var(--fs-xs);
-}
-
-.filter-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 @media (max-width: 640px) {

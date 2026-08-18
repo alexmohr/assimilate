@@ -16,8 +16,7 @@ import type { AgentRow } from '../types/agent'
 
 /**
  * The archive browser for one schedule: its successful runs on the left, the
- * selected run's file tree on the right. See
- * docs/contributing/ui-design-audit.md (F-24).
+ * selected run's file tree on the right.
  */
 const props = defineProps<{
   /** Every report for this schedule; only the archived ones are listed. */
@@ -71,7 +70,7 @@ function select(report: ReportRow): void {
 <template>
   <div
     v-if="loading"
-    class="reports-loading"
+    class="loading-row"
   >
     <BaseSpinner size="sm" />
   </div>
@@ -83,7 +82,7 @@ function select(report: ReportRow): void {
   </div>
   <div
     v-else-if="archives.length === 0"
-    class="empty-state"
+    class="state-msg state-msg--inline"
   >
     No backup archives found for this schedule.
   </div>
@@ -134,28 +133,6 @@ function select(report: ReportRow): void {
 </template>
 
 <style scoped>
-.reports-loading {
-  padding: 2rem 0;
-  display: flex;
-  justify-content: center;
-}
-
-.error-banner {
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
-  color: var(--danger);
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
-  margin-bottom: 1rem;
-  font-size: var(--fs-base);
-}
-
-.empty-state {
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  padding: 1rem 0;
-}
-
 .backups-list-panel .panel-header {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -189,14 +166,6 @@ function select(report: ReportRow): void {
   transition: background var(--duration-fast);
 }
 
-.archive-row:hover {
-  background: var(--bg-hover);
-}
-
-.archive-row.selected {
-  background: var(--accent-subtle);
-}
-
 .cell-archive-name {
   font-family: var(--mono);
   font-size: var(--fs-xs);
@@ -205,22 +174,5 @@ function select(report: ReportRow): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-}
-
-.cell-host {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.cell-date {
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-}
-
-.cell-size {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
 }
 </style>

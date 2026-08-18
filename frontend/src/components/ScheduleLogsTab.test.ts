@@ -41,7 +41,7 @@ function mount(props: Record<string, unknown> = {}) {
 describe('ScheduleLogsTab', () => {
   it('shows a spinner while loading', () => {
     const wrapper = mount({ loading: true })
-    expect(wrapper.find('.reports-loading').exists()).toBe(true)
+    expect(wrapper.find('.loading-row').exists()).toBe(true)
     expect(wrapper.find('table').exists()).toBe(false)
   })
 
@@ -53,7 +53,7 @@ describe('ScheduleLogsTab', () => {
 
   it('says so when the schedule has never run', () => {
     const wrapper = mount({ reports: [] })
-    expect(wrapper.find('.empty-state').text()).toContain('No backup reports found')
+    expect(wrapper.find('.state-msg').text()).toContain('No backup reports found')
   })
 
   it('prefers the display name and falls back to the hostname', () => {

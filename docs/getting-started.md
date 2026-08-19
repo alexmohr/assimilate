@@ -102,47 +102,20 @@ docker compose up -d
 
 ### Server: `docker-compose.yml`
 
-Deploy this on the machine hosting the Assimilate server:
+The repository ships the server compose file at its root — use that rather than
+a copy, so it cannot drift from the images and health checks the project
+actually tests:
 
-```yaml
-services:
-  postgres:
-    image: postgres:latest
-    environment:
-      POSTGRES_DB: borg
-      POSTGRES_USER: borg
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-borg_secret}
-    volumes:
-      - pgdata:/var/lib/postgresql
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-    ports:
-      - "8080:8080"
-    environment:
-      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@postgres:5432/borg
-      ASSIMILATE_SECRET_KEY: ${ASSIMILATE_SECRET_KEY:?ASSIMILATE_SECRET_KEY must be set}
-      ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
-      ASSIMILATE_STATIC_DIR: /app/static
-    volumes:
-      - ssh_keys:/app/ssh
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-volumes:
-  pgdata:
-  ssh_keys:
+```bash
+curl -O https://raw.githubusercontent.com/alexmohr/assimilate/main/docker-compose.yml
 ```
+
+It brings up PostgreSQL and the server together, waits for the database to pass
+its health check before starting the server, and keeps the generated SSH keys in
+a named volume. The only values you need to supply are the two environment
+variables in the table above — put them in a `.env` file beside the compose file
+and see [First run](#first-run) below. The server listens on `8080`; to move it,
+override `ASSIMILATE_BIND_ADDR` and the published port.
 
 ### Agent: `docker-compose.yml`
 

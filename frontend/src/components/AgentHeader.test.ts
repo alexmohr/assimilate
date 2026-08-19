@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { menuLabels, openMenu } from '../test-utils/overflowMenu'
 import AgentHeader from './AgentHeader.vue'
 import type { AgentRow } from '../types/agent'
 
@@ -33,15 +33,6 @@ function mount(agentOverrides: Record<string, unknown> = {}, props: Record<strin
       ...props,
     },
   })
-}
-
-async function openMenu(wrapper: ReturnType<typeof mount>) {
-  await wrapper.find('.overflow-toggle').trigger('click')
-  await flushPromises()
-}
-
-function menuLabels(wrapper: ReturnType<typeof mount>): string[] {
-  return wrapper.findAll('.overflow-menu-item').map((i) => i.text().trim())
 }
 
 /** Buttons on the header row itself, excluding the overflow toggle. */
@@ -122,40 +113,8 @@ describe('AgentHeader', () => {
     expect(wrapper.emitted('activityLog')).toHaveLength(1)
   })
 
-  // Escape and a click anywhere else both close the menu; a menu that only
-  // closes by pressing its own toggle again is a trap.
-  it('closes the menu on Escape', async () => {
-    const wrapper = mount()
-    await openMenu(wrapper)
-    expect(wrapper.findAll('.overflow-menu-item').length).toBeGreaterThan(0)
-
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    await flushPromises()
-
-    expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
-  })
-
-  it('closes the menu on a click outside it', async () => {
-    const wrapper = mount()
-    await openMenu(wrapper)
-
-    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    await flushPromises()
-
-    expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
-  })
-
-  it('leaves the menu open when the click is inside it', async () => {
-    const wrapper = mount()
-    await openMenu(wrapper)
-
-    wrapper
-      .find('.overflow-menu-item')
-      .element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    await flushPromises()
-
-    expect(wrapper.findAll('.overflow-menu-item').length).toBeGreaterThan(0)
-  })
+  // Escape, an outside click and choosing an item all close the menu. That
+  // behaviour belongs to OverflowMenu and is asserted once, in its own spec.
 
   it.each([
     ['Edit identity', 'editIdentity'],

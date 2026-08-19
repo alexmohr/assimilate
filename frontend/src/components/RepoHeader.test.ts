@@ -3,48 +3,19 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { mockApiClientRw, mockToast, resetToastSpies, toastSpies } from '../test-utils/sharedMocks'
+import { openMenu } from '../test-utils/overflowMenu'
 
-const toastSuccess = vi.fn()
-const toastError = vi.fn()
-
-vi.mock('../api/client', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
-}))
-vi.mock('../composables/useToast', () => ({
-  useToast: () => ({ success: toastSuccess, error: toastError }),
-}))
+// The header owns sync, the import reset and the passphrase reveal, so it
+// reports through toasts and writes as well as reads.
+vi.mock('../api/client', () => mockApiClientRw())
+vi.mock('../composables/useToast', () => mockToast())
 
 import { renderWithPlugins } from '../test-utils'
+import { dialogButton, findButton } from '../test-utils/dom'
+import { repoFixture as repo } from '../test-utils/repoFixtures'
 import { apiClient } from '../api/client'
 import RepoHeader from './RepoHeader.vue'
-import type { RepoWithStats } from '../types/repo'
-
-const REPO = {
-  id: 12,
-  name: 'server-daily',
-  repo_path: '/backup/repos/server-daily',
-  ssh_user: 'borg',
-  ssh_host: 'backup.example.com',
-  ssh_port: 22,
-  ssh_host_key: 'ssh-ed25519 AAAAKNOWN',
-  compression: 'zstd,6',
-  encryption: 'repokey-blake2',
-  enabled: true,
-  importing: false,
-  import_error: null,
-  import_progress: 0,
-  import_total: 0,
-  sync_schedule: null,
-  agent_count: 3,
-  archive_count: 30,
-  total_deduplicated_size: 1024,
-  total_original_size: 4096,
-  last_backup_at: '2026-03-01T02:00:00Z',
-} as unknown as RepoWithStats
-
-function repo(overrides: Partial<RepoWithStats> = {}): RepoWithStats {
-  return { ...REPO, ...overrides }
-}
 
 function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(RepoHeader, {
@@ -52,31 +23,10 @@ function mount(props: Record<string, unknown> = {}) {
   })
 }
 
-/** The dialog teleports, so its nodes live on the document body. */
-function dialogButton(label: string): HTMLButtonElement {
-  const match = [...document.body.querySelectorAll<HTMLButtonElement>('.modal-dialog button')].find(
-    (b) => b.textContent?.trim() === label,
-  )
-  if (!match) throw new Error(`no dialog button labelled "${label}"`)
-  return match
-}
-
-function findButton(wrapper: ReturnType<typeof mount>, label: RegExp) {
-  const match = wrapper.findAll('button').find((b) => label.test(b.text()))
-  if (!match) throw new Error(`no button matching ${label}`)
-  return match
-}
-
-/** Opens the overflow menu, where everything but the primary action lives. */
-async function openMenu(wrapper: ReturnType<typeof mount>): Promise<void> {
-  await wrapper.find('.overflow-toggle').trigger('click')
-}
-
 describe('RepoHeader', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
-    toastSuccess.mockReset()
-    toastError.mockReset()
+    resetToastSpies()
     vi.mocked(apiClient.get)
       .mockReset()
       .mockResolvedValue({ data: { passphrase: 'hunter2' } } as never)
@@ -173,7 +123,7 @@ describe('RepoHeader', () => {
       await findButton(wrapper, /Sync now/).trigger('click')
       await flushPromises()
       expect(apiClient.post).toHaveBeenCalledWith('/repos/12/sync?build_index=true')
-      expect(toastSuccess).toHaveBeenCalled()
+      expect(toastSpies.success).toHaveBeenCalled()
     })
 
     it('surfaces a failure as an error toast', async () => {
@@ -181,7 +131,7 @@ describe('RepoHeader', () => {
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('nope'))
       await findButton(wrapper, /Sync now/).trigger('click')
       await flushPromises()
-      expect(toastError).toHaveBeenCalled()
+      expect(toastSpies.error).toHaveBeenCalled()
     })
   })
 
@@ -199,7 +149,7 @@ describe('RepoHeader', () => {
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('nope'))
       await findButton(wrapper, /Cancel import/).trigger('click')
       await flushPromises()
-      expect(toastError).toHaveBeenCalled()
+      expect(toastSpies.error).toHaveBeenCalled()
       expect(wrapper.emitted('import-reset')).toBeUndefined()
     })
   })

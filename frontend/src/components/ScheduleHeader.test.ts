@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { menuLabels, openMenu } from '../test-utils/overflowMenu'
 import ScheduleHeader from './ScheduleHeader.vue'
 import type { ScheduleRow } from '../types/schedule'
 
@@ -30,15 +30,6 @@ function mount(
       ...props,
     },
   })
-}
-
-async function openMenu(wrapper: ReturnType<typeof mount>) {
-  await wrapper.find('.overflow-toggle').trigger('click')
-  await flushPromises()
-}
-
-function menuLabels(wrapper: ReturnType<typeof mount>): string[] {
-  return wrapper.findAll('.overflow-menu-item').map((i) => i.text().trim())
 }
 
 describe('ScheduleHeader', () => {
@@ -109,27 +100,6 @@ describe('ScheduleHeader', () => {
       .trigger('click')
 
     expect(wrapper.emitted(event)).toHaveLength(1)
-    expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
-  })
-
-  it('closes the menu on Escape', async () => {
-    const wrapper = mount()
-    await openMenu(wrapper)
-    expect(wrapper.findAll('.overflow-menu-item').length).toBeGreaterThan(0)
-
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    await flushPromises()
-
-    expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
-  })
-
-  it('closes the menu on a click outside it', async () => {
-    const wrapper = mount()
-    await openMenu(wrapper)
-
-    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    await flushPromises()
-
     expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
   })
 })

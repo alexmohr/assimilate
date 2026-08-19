@@ -10,6 +10,7 @@ import { useAuthStore } from '../stores/auth'
 import { formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import { Plus, Pencil, Trash2, Users } from '@lucide/vue'
+import AsyncSection from '../components/AsyncSection.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import type { Repo } from '../types/repo'
@@ -313,93 +314,84 @@ onMounted(fetchUsers)
       </div>
     </div>
 
-    <BaseSpinner
-      v-if="loading"
-      size="lg"
-    />
-
-    <div
-      v-else-if="loadError"
-      class="error-banner"
+    <AsyncSection
+      :loading="loading"
+      :error="loadError"
+      :empty="users.length === 0"
     >
-      {{ loadError }}
-    </div>
-
-    <EmptyState
-      v-else-if="users.length === 0"
-      :icon="Users"
-      title="No users yet"
-      description="Every person who signs in has an account here."
-      action="New user"
-      @action="openCreate"
-    />
-
-    <div
-      v-else
-      class="table-wrap table-wrap--framed"
-    >
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Username</th>
-            <th>Role</th>
-            <th class="col-date">Created</th>
-            <th class="col-date">Last login</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="user in users"
-            :key="user.id"
-          >
-            <td>
-              <span class="user-cell">
-                {{ user.username }}
+      <template #empty>
+        <EmptyState
+          :icon="Users"
+          title="No users yet"
+          description="Every person who signs in has an account here."
+          action="New user"
+          @action="openCreate"
+        />
+      </template>
+      <div class="table-wrap table-wrap--framed">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th class="col-date">Created</th>
+              <th class="col-date">Last login</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="user in users"
+              :key="user.id"
+            >
+              <td>
+                <span class="user-cell">
+                  {{ user.username }}
+                  <span
+                    v-if="isSelf(user)"
+                    class="badge badge--accent"
+                    >you</span
+                  >
+                </span>
+              </td>
+              <td>
                 <span
-                  v-if="isSelf(user)"
-                  class="badge badge--accent"
-                  >you</span
+                  class="badge badge--neutral"
+                  :class="user.role"
+                  >{{ user.role }}</span
                 >
-              </span>
-            </td>
-            <td>
-              <span
-                class="badge badge--neutral"
-                :class="user.role"
-                >{{ user.role }}</span
-              >
-            </td>
-            <td class="date-cell col-date">
-              {{ formatDate(user.created_at) }}
-            </td>
-            <td class="date-cell col-date">
-              {{ formatDate(user.last_login_at, 'Never') }}
-            </td>
-            <td>
-              <div
-                v-if="!isSelf(user)"
-                class="actions-cell"
-              >
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="openEdit(user)"
+              </td>
+              <td class="date-cell col-date">
+                {{ formatDate(user.created_at) }}
+              </td>
+              <td class="date-cell col-date">
+                {{ formatDate(user.last_login_at, 'Never') }}
+              </td>
+              <td>
+                <div
+                  v-if="!isSelf(user)"
+                  class="actions-cell"
                 >
-                  <Pencil :size="14" />
-                  Edit
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost btn-danger-text"
-                  @click="openDelete(user)"
-                >
-                  <Trash2 :size="14" />
-                </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="openEdit(user)"
+                  >
+                    <Pencil :size="14" />
+                    Edit
+                  </button>
+                  <button
+                    class="btn btn-sm btn-ghost btn-danger-text"
+                    @click="openDelete(user)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </AsyncSection>
 
     <!-- Create User Modal -->
     <BaseModal

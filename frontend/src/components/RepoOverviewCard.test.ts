@@ -3,47 +3,18 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { mockApiClientRw, mockToast, resetToastSpies, toastSpies } from '../test-utils/sharedMocks'
+import type { ActiveRepoOp } from '../types/repo'
 
-const toastSuccess = vi.fn()
-const toastError = vi.fn()
-
-vi.mock('../api/client', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
-}))
-vi.mock('../composables/useToast', () => ({
-  useToast: () => ({ success: toastSuccess, error: toastError }),
-}))
+// The card owns the edit form and the SSH host-key scan it runs on mount.
+vi.mock('../api/client', () => mockApiClientRw())
+vi.mock('../composables/useToast', () => mockToast())
 
 import { renderWithPlugins } from '../test-utils'
+import { dialogButton, findButton } from '../test-utils/dom'
+import { repoFixture as repo } from '../test-utils/repoFixtures'
 import { apiClient } from '../api/client'
 import RepoOverviewCard from './RepoOverviewCard.vue'
-import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
-
-const REPO = {
-  id: 12,
-  name: 'server-daily',
-  repo_path: '/backup/repos/server-daily',
-  ssh_user: 'borg',
-  ssh_host: 'backup.example.com',
-  ssh_port: 22,
-  ssh_host_key: 'ssh-ed25519 AAAAKNOWN',
-  compression: 'zstd,6',
-  encryption: 'repokey-blake2',
-  enabled: true,
-  importing: false,
-  import_error: null,
-  import_progress: 0,
-  import_total: 0,
-  sync_schedule: null,
-  agent_count: 3,
-  last_op_kind: 'agent_backup',
-  last_op_at: '2026-03-01T02:00:00Z',
-  last_op_by: 'web-01',
-} as unknown as RepoWithStats
-
-function repo(overrides: Partial<RepoWithStats> = {}): RepoWithStats {
-  return { ...REPO, ...overrides }
-}
 
 function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(RepoOverviewCard, {
@@ -56,26 +27,10 @@ function mount(props: Record<string, unknown> = {}) {
   })
 }
 
-/** The dialogs teleport, so their nodes live on the document body. */
-function dialogButton(label: string): HTMLButtonElement {
-  const match = [...document.body.querySelectorAll<HTMLButtonElement>('.modal-dialog button')].find(
-    (b) => b.textContent?.trim() === label,
-  )
-  if (!match) throw new Error(`no dialog button labelled "${label}"`)
-  return match
-}
-
-function findButton(wrapper: ReturnType<typeof mount>, label: RegExp) {
-  const match = wrapper.findAll('button').find((b) => label.test(b.text()))
-  if (!match) throw new Error(`no button matching ${label}`)
-  return match
-}
-
 describe('RepoOverviewCard', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
-    toastSuccess.mockReset()
-    toastError.mockReset()
+    resetToastSpies()
     vi.mocked(apiClient.get)
       .mockReset()
       .mockResolvedValue({ data: { passphrase: 'hunter2' } } as never)
@@ -85,7 +40,7 @@ describe('RepoOverviewCard', () => {
     // The card scans the SSH host key on mount; default to "unchanged".
     vi.mocked(apiClient.post)
       .mockReset()
-      .mockResolvedValue({ data: { ssh_host_key: REPO.ssh_host_key } } as never)
+      .mockResolvedValue({ data: { ssh_host_key: repo().ssh_host_key } } as never)
   })
 
   describe('info grid', () => {
@@ -363,7 +318,7 @@ describe('RepoOverviewCard', () => {
         ssh_host_key: 'ssh-ed25519 AAAADIFFERENT',
       })
       expect(wrapper.emitted('saved')).toHaveLength(1)
-      expect(toastSuccess).toHaveBeenCalled()
+      expect(toastSpies.success).toHaveBeenCalled()
     })
 
     it('dismisses the host-key dialog on the modal control without recording it', async () => {

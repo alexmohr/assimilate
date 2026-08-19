@@ -211,6 +211,7 @@ const OWNED = [
   'settings-tab',
   'settings-nav',
   'settings-nav-item',
+  'settings-nav--even',
   'settings-pane',
   'pane-head',
   'pane-lede',

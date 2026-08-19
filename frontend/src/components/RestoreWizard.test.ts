@@ -3,25 +3,11 @@
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
 import axios from 'axios'
 
-vi.mock('../api/client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-  },
-}))
-
-vi.mock('../utils/error', () => ({
-  extractError: (e: unknown): string => {
-    if (e instanceof Error) return e.message
-    return 'Unknown error'
-  },
-  extractBlobError: async (e: unknown): Promise<string> => {
-    if (e instanceof Error) return e.message
-    return 'Unknown error'
-  },
-}))
+vi.mock('../api/client', () => mockApiClientRead())
+vi.mock('../utils/error', () => mockErrorUtilsPassthrough())
 
 import { apiClient } from '../api/client'
 import RestoreWizard from './RestoreWizard.vue'
@@ -57,6 +43,26 @@ function mountWizard(open = true): ReturnType<typeof mount> {
       },
     },
   })
+}
+
+/**
+ * Walks the wizard from step 1 to the confirmation step with a fixed archive
+ * and path. Four tests need to be *at* step 4 before they assert anything, and
+ * the walk itself is only interesting to the two tests that assert on it.
+ */
+async function advanceToConfirm(wrapper: ReturnType<typeof mountWizard>): Promise<void> {
+  const next = async (): Promise<void> => {
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Next')!
+      .trigger('click')
+    await wrapper.vm.$nextTick()
+  }
+  await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
+  await next()
+  await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')
+  await next()
+  await next()
 }
 
 describe('RestoreWizard', () => {
@@ -151,25 +157,7 @@ describe('RestoreWizard', () => {
   it('advances through all steps and reaches step 4 confirmation', async () => {
     const wrapper = mountWizard()
 
-    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
+    await advanceToConfirm(wrapper)
 
     expect(wrapper.text()).toContain('Confirm restore')
     expect(wrapper.text()).toContain(ARCHIVES[0].name)
@@ -187,25 +175,7 @@ describe('RestoreWizard', () => {
 
     const wrapper = mountWizard()
 
-    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
+    await advanceToConfirm(wrapper)
 
     await wrapper.find('button.btn-primary').trigger('click')
     await wrapper.vm.$nextTick()
@@ -224,25 +194,7 @@ describe('RestoreWizard', () => {
 
     const wrapper = mountWizard()
 
-    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
+    await advanceToConfirm(wrapper)
 
     await wrapper.find('button.btn-primary').trigger('click')
     await wrapper.vm.$nextTick()
@@ -265,25 +217,7 @@ describe('RestoreWizard', () => {
 
     const wrapper = mountWizard()
 
-    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
+    await advanceToConfirm(wrapper)
 
     await wrapper.find('button.btn-primary').trigger('click')
     await wrapper.vm.$nextTick()

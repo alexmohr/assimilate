@@ -3,24 +3,10 @@
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
 
-vi.mock('../api/client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-  },
-}))
-
-vi.mock('../utils/error', () => ({
-  extractError: (e: unknown): string => {
-    if (e instanceof Error) return e.message
-    return 'Unknown error'
-  },
-  extractBlobError: async (e: unknown): Promise<string> => {
-    if (e instanceof Error) return e.message
-    return 'Unknown error'
-  },
-}))
+vi.mock('../api/client', () => mockApiClientRead())
+vi.mock('../utils/error', () => mockErrorUtilsPassthrough())
 
 vi.mock('../utils/format', () => ({
   formatBytes: (n: number): string => `${n} B`,

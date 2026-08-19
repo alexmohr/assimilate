@@ -930,6 +930,51 @@
     gap: var(--space-6);
   }
 
+  /* Below the md breakpoint the rail becomes a row above the pane. Declared
+     here rather than by each settings tab: all three wanted the same collapse
+     and each carried its own copy of it. */
+  @media (max-width: 768px) {
+    .settings-tab {
+      flex-direction: column;
+    }
+
+    .settings-nav {
+      width: 100%;
+      flex-direction: row;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .settings-nav-item {
+      border-left: none;
+      border-bottom: 2px solid transparent;
+    }
+
+    .settings-nav-item[aria-current='true'] {
+      border-left-color: transparent;
+      border-bottom-color: var(--accent);
+    }
+
+    .settings-nav-item--danger[aria-current='true'] {
+      border-bottom-color: var(--danger);
+    }
+
+    /* A rail with a small, fixed set of sections spreads them into equal
+       cells instead, so it never wraps to a second row. */
+    .settings-nav--even {
+      flex-wrap: nowrap;
+    }
+
+    .settings-nav--even .settings-nav-item {
+      flex: 1 1 0;
+      min-width: 0;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
   /* What a pane opens with. The rail already names the section, so a pane
      carries no heading of its own: it states what the section is for, and
      right-aligns the action that applies to the whole of it. Every pane used

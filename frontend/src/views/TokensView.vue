@@ -8,7 +8,7 @@ import { onMounted } from 'vue'
 import { useApiTokens } from '../composables/useApiTokens'
 import { Plus, Key } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
-import BaseSpinner from '../components/BaseSpinner.vue'
+import AsyncSection from '../components/AsyncSection.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
@@ -55,32 +55,25 @@ onMounted(fetchTokens)
       </div>
     </div>
 
-    <BaseSpinner
-      v-if="loading"
-      size="lg"
-    />
-
-    <div
-      v-else-if="loadError"
-      class="error-banner"
+    <AsyncSection
+      :loading="loading"
+      :error="loadError"
+      :empty="tokens.length === 0"
     >
-      {{ loadError }}
-    </div>
-
-    <ApiTokenTable
-      v-else-if="tokens.length"
-      :tokens="tokens"
-      @delete="openDelete"
-    />
-
-    <EmptyState
-      v-else
-      :icon="Key"
-      title="No API tokens"
-      description="Create one to get started."
-      action="New token"
-      @action="showCreateModal = true"
-    />
+      <ApiTokenTable
+        :tokens="tokens"
+        @delete="openDelete"
+      />
+      <template #empty>
+        <EmptyState
+          :icon="Key"
+          title="No API tokens"
+          description="Create one to get started."
+          action="New token"
+          @action="showCreateModal = true"
+        />
+      </template>
+    </AsyncSection>
 
     <!-- One dialog, two states: collect a name, then reveal the token once. -->
     <BaseModal

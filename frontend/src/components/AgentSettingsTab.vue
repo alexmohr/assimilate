@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
 import EntityTags from './EntityTags.vue'
+import SettingsRail, { type SettingsSectionOption } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentDangerZone from './AgentDangerZone.vue'
@@ -49,15 +50,9 @@ defineExpose({ reloadAliases })
 
 const isImported = computed(() => props.agent.is_imported)
 
-interface SectionOption {
-  id: SettingsSection
-  label: string
-  danger?: boolean
-}
-
 /** The danger zone is admin-only, so it is absent rather than disabled. */
-const sections = computed<SectionOption[]>(() => {
-  const list: SectionOption[] = [
+const sections = computed<SettingsSectionOption<SettingsSection>[]>(() => {
+  const list: SettingsSectionOption<SettingsSection>[] = [
     { id: 'identity', label: 'Identity' },
     { id: 'defaults', label: 'Backup defaults' },
     { id: 'aliases', label: 'Hostname aliases' },
@@ -68,155 +63,92 @@ const sections = computed<SectionOption[]>(() => {
   }
   return list
 })
-
-/**
- * What the pane renders, and what the nav marks current - deliberately not the
- * `section` prop. `sections` is the one list saying what this viewer may open,
- * so a section they have no button for falls back to Identity rather than
- * rendering behind their back: `?section=` comes from the URL, and editing it
- * by hand is not an exploit, just typing. The server rejects the writes either
- * way (`RequireAdmin` on the delete and tag routes), so this is about not
- * offering an action, not about stopping one.
- *
- * Derived from `sections` rather than repeating `v-if="isAdmin"` on the two
- * admin-only panes, because that is the shape that just broke: the nav list
- * and the pane list were gated separately and drifted apart. One source means
- * the next section added cannot reintroduce this.
- */
-const currentSection = computed<SettingsSection>(() =>
-  sections.value.some((s) => s.id === props.section) ? props.section : 'identity',
-)
 </script>
 
 <template>
-  <div class="settings-tab">
-    <nav
-      class="settings-nav"
-      aria-label="Agent settings sections"
-    >
-      <button
-        v-for="s in sections"
-        :key="s.id"
-        type="button"
-        class="settings-nav-item"
-        :class="{ 'settings-nav-item--danger': s.danger }"
-        :aria-current="s.id === currentSection"
-        @click="emit('update:section', s.id)"
-      >
-        {{ s.label }}
-      </button>
-    </nav>
+  <SettingsRail
+    v-slot="{ section: currentSection }"
+    :sections="sections"
+    :section="section"
+    label="Agent settings sections"
+    @update:section="emit('update:section', $event)"
+  >
+    <template v-if="currentSection === 'identity'">
+      <div class="pane-head">
+        <p class="pane-lede">How this host names itself, and what the server knows about it.</p>
+        <button
+          v-if="!isImported"
+          class="btn btn-sm"
+          type="button"
+          @click="emit('editIdentity')"
+        >
+          Edit
+        </button>
+      </div>
+      <dl class="info-grid">
+        <dt>Hostname</dt>
+        <dd class="mono">{{ agent.hostname }}</dd>
+        <dt>Display name</dt>
+        <dd>{{ agent.display_name ?? 'Not set' }}</dd>
+        <template v-if="!isImported">
+          <dt>Agent version</dt>
+          <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
+          <dt>Revision</dt>
+          <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
+          <dt>Built</dt>
+          <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
+        </template>
+        <dt>Registered</dt>
+        <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
+        <dt>Last seen</dt>
+        <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
+      </dl>
 
-    <div class="settings-pane">
-      <template v-if="currentSection === 'identity'">
-        <div class="pane-head">
-          <p class="pane-lede">How this host names itself, and what the server knows about it.</p>
+      <section
+        v-if="!isImported"
+        class="pane-section"
+      >
+        <div class="pane-section-head">
+          <span class="group-label">Connection</span>
           <button
-            v-if="!isImported"
             class="btn btn-sm"
             type="button"
-            @click="emit('editIdentity')"
+            :disabled="regenLoading"
+            @click="emit('regenerateToken')"
           >
-            Edit
+            {{ regenLoading ? 'Regenerating...' : 'Regenerate token' }}
           </button>
         </div>
-        <dl class="info-grid">
-          <dt>Hostname</dt>
-          <dd class="mono">{{ agent.hostname }}</dd>
-          <dt>Display name</dt>
-          <dd>{{ agent.display_name ?? 'Not set' }}</dd>
-          <template v-if="!isImported">
-            <dt>Agent version</dt>
-            <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
-            <dt>Revision</dt>
-            <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
-            <dt>Built</dt>
-            <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
-          </template>
-          <dt>Registered</dt>
-          <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
-          <dt>Last seen</dt>
-          <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
-        </dl>
+        <p class="field-hint">
+          Regenerating invalidates the current token immediately. The agent stays disconnected until
+          it is restarted with the new one.
+        </p>
+      </section>
+    </template>
 
-        <section
-          v-if="!isImported"
-          class="pane-section"
-        >
-          <div class="pane-section-head">
-            <span class="group-label">Connection</span>
-            <button
-              class="btn btn-sm"
-              type="button"
-              :disabled="regenLoading"
-              @click="emit('regenerateToken')"
-            >
-              {{ regenLoading ? 'Regenerating...' : 'Regenerate token' }}
-            </button>
-          </div>
-          <p class="field-hint">
-            Regenerating invalidates the current token immediately. The agent stays disconnected
-            until it is restarted with the new one.
-          </p>
-        </section>
-      </template>
+    <AgentDefaultsCard
+      v-else-if="currentSection === 'defaults'"
+      :agent="agent"
+      :can-edit="!isImported"
+      @saved="emit('saved', $event)"
+    />
 
-      <AgentDefaultsCard
-        v-else-if="currentSection === 'defaults'"
-        :agent="agent"
-        :can-edit="!isImported"
-        @saved="emit('saved', $event)"
-      />
+    <AgentHostnameAliases
+      v-else-if="currentSection === 'aliases'"
+      ref="aliases"
+      :hostname="agent.hostname"
+      :can-edit="!isImported"
+    />
 
-      <AgentHostnameAliases
-        v-else-if="currentSection === 'aliases'"
-        ref="aliases"
-        :hostname="agent.hostname"
-        :can-edit="!isImported"
-      />
+    <EntityTags
+      v-else-if="currentSection === 'tags'"
+      scope="host"
+      :entity-path="`/agents/${agent.hostname}`"
+    />
 
-      <EntityTags
-        v-else-if="currentSection === 'tags'"
-        scope="host"
-        :entity-path="`/agents/${agent.hostname}`"
-      />
-
-      <AgentDangerZone
-        v-else-if="currentSection === 'danger'"
-        :agent="agent"
-      />
-    </div>
-  </div>
+    <AgentDangerZone
+      v-else-if="currentSection === 'danger'"
+      :agent="agent"
+    />
+  </SettingsRail>
 </template>
-
-<style scoped>
-/* Base .settings-tab/.settings-nav/.settings-nav-item/.settings-pane shapes
-   live in style.css, shared with ScheduleSettingsTab. Only this page's mobile
-   collapse (wrap into rows) is its own. */
-@media (max-width: 768px) {
-  .settings-tab {
-    flex-direction: column;
-  }
-
-  .settings-nav {
-    width: 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .settings-nav-item {
-    border-left: none;
-    border-bottom: 2px solid transparent;
-  }
-
-  .settings-nav-item[aria-current='true'] {
-    border-left-color: transparent;
-    border-bottom-color: var(--accent);
-  }
-
-  .settings-nav-item--danger[aria-current='true'] {
-    border-bottom-color: var(--danger);
-  }
-}
-</style>

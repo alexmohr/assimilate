@@ -177,7 +177,7 @@ onMounted(loadRepos)
 
       <ArchiveBrowserLayout v-if="selectedRepoId !== null">
         <template #list>
-          <div class="panel panel--sectioned">
+          <div class="panel panel--sectioned archives-panel">
             <div class="panel-header">
               <span class="panel-title">Archives</span>
               <div class="panel-actions">

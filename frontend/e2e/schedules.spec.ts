@@ -186,7 +186,13 @@ test.describe('Schedules management', () => {
     await page.getByRole('tab', { name: 'Settings' }).click()
     await page.getByRole('button', { name: 'Retention' }).click()
 
-    await expect(page.getByRole('heading', { name: 'Retention' })).toBeVisible()
+    // The pane no longer restates the rail item that opened it, so what proves
+    // Retention is showing is the rail marking it current plus its own lede.
+    await expect(page.getByRole('button', { name: 'Retention' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    await expect(page.locator('.settings-pane .pane-lede')).toContainText('borg keeps')
     await expect(page.getByText('Daily', { exact: true })).toBeVisible()
     await expect(page.getByText('Weekly', { exact: true })).toBeVisible()
   })
@@ -363,7 +369,7 @@ test.describe('Schedules management', () => {
       .locator('select')
       .selectOption({ label: 'Integrity check' })
 
-    await page.getByRole('button', { name: 'New schedule' }).click()
+    await page.getByRole('button', { name: 'Create schedule' }).click()
 
     // The create request used to fail with "missing field `agent_ids`" because the
     // frontend sent client_ids/backup_sources_per_host instead of the names the

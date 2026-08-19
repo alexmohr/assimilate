@@ -401,6 +401,8 @@ const HOOKS = new Set([
   'action-filter',
   'date-input',
   'tag-group',
+  'archives-panel',
+  'import-status-msg',
 ])
 
 function classSelectors(css: string): Set<string> {

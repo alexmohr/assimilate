@@ -143,6 +143,9 @@ async function revealPassphrase(): Promise<void> {
         last write <b>{{ relativeTime(repo.last_backup_at) }}</b>
       </span>
       <span>
+        compression <b>{{ repo.compression }}</b>
+      </span>
+      <span>
         encryption <b>{{ repo.encryption }}</b>
       </span>
     </template>
@@ -207,7 +210,7 @@ async function revealPassphrase(): Promise<void> {
         </div>
         <p
           v-if="repo.import_status_message"
-          class="field-hint"
+          class="field-hint import-status-msg"
         >
           {{ repo.import_status_message }}
         </p>

@@ -48,6 +48,10 @@ describe('RepoHeader', () => {
       const text = mount().find('.detail-meta').text()
       expect(text).toContain('30')
       expect(text).toContain('repokey-blake2')
+      // Compression and encryption are how the repository was made rather
+      // than what it holds now, so they belong to the header on every tab
+      // instead of only to the Settings tab that can change them.
+      expect(text).toContain('zstd,6')
     })
   })
 

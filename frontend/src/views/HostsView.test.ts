@@ -939,6 +939,7 @@ describe('HostsView deploy button label', () => {
       expect(dialog.exists()).toBe(true)
       expect(dialog.props('hostname')).toBe('test-agent')
       expect(dialog.props('agentVersion')).toBe('0.1.0')
+      expect(dialog.props('availableVersion')).toBe('0.2.0')
 
       dialog.vm.$emit('close')
       await flushPromises()

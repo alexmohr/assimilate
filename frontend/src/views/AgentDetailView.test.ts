@@ -64,7 +64,7 @@ vi.mock('../components/AgentDeployDialog.vue', () => ({
   default: {
     name: 'AgentDeployDialog',
     template: '<div />',
-    props: ['hostname'],
+    props: ['hostname', 'agentVersion', 'availableVersion', 'lastSshUser'],
   },
 }))
 
@@ -1362,7 +1362,9 @@ describe('AgentDetailView - tab structure and settings', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(true)
+    const dialog = wrapper.findComponent({ name: 'AgentDeployDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('availableVersion')).toBe('2.0.0')
   })
 
   async function openSshKeyDialog(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {

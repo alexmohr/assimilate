@@ -24,6 +24,7 @@ let wrapper: VueWrapper<ComponentPublicInstance> | null = null
 function mountDialog(props: {
   hostname: string
   agentVersion: string | null
+  availableVersion?: string | null
   lastSshUser?: string | null
 }): VueWrapper<ComponentPublicInstance> {
   wrapper = mount(AgentDeployDialog, {
@@ -124,6 +125,81 @@ describe('AgentDeployDialog', () => {
     await flushPromises()
 
     expect(textarea?.value).toBe('user in-progress edit')
+  })
+
+  describe('version summary', () => {
+    it('shows the installed and available versions and names the target on the submit button', () => {
+      mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0', availableVersion: '1.2.0' })
+      expect(document.querySelector('.upgrade-hero')?.textContent).toContain('1.0.0')
+      expect(document.querySelector('.upgrade-hero')?.textContent).toContain('1.2.0')
+      const submitBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => b.textContent?.includes('Upgrade to'),
+      )
+      expect(submitBtn?.textContent?.trim()).toBe('Upgrade to 1.2.0')
+    })
+
+    it('falls back to a generic label when the two version strings are identical', () => {
+      // A dev build can be newer without its semantic version changing (the
+      // server compares by git commit count instead).
+      mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0', availableVersion: '1.0.0' })
+      expect(document.querySelector('.upgrade-hero')?.textContent).toContain(
+        'A newer build is available.',
+      )
+      const submitBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => b.textContent?.trim() === 'Upgrade Agent',
+      )
+      expect(submitBtn).toBeDefined()
+    })
+
+    it('shows no version hero for a first-time deploy', () => {
+      mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      expect(document.querySelector('.upgrade-hero')).toBeNull()
+    })
+  })
+
+  describe('service unit disclosure', () => {
+    function isOpen(): boolean {
+      const body = document.querySelector<HTMLElement>('.disclosure-body')
+      return body !== null && body.style.display !== 'none'
+    }
+
+    function toggle(): void {
+      document.querySelector<HTMLButtonElement>('.disclosure-head')?.click()
+    }
+
+    it('starts collapsed', async () => {
+      mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0' })
+      await flushPromises()
+      expect(isOpen()).toBe(false)
+    })
+
+    it('opens and closes on click', async () => {
+      mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0' })
+      await flushPromises()
+
+      toggle()
+      await flushPromises()
+      expect(isOpen()).toBe(true)
+
+      toggle()
+      await flushPromises()
+      expect(isOpen()).toBe(false)
+    })
+
+    it('badges the unit Default until its content diverges from the generated default', async () => {
+      mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0' })
+      await flushPromises()
+      const badge = (): string | undefined =>
+        document.querySelector('.disclosure-head .badge')?.textContent?.trim()
+      expect(badge()).toBe('Default')
+
+      const textarea = document.querySelector<HTMLTextAreaElement>('textarea')!
+      textarea.value = '# a hand-edited unit'
+      textarea.dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      expect(badge()).toBe('Customized')
+    })
   })
 
   // Escape and the backdrop reach the dialog as BaseModal's close event, which

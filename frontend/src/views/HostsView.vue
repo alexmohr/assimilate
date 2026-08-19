@@ -1040,6 +1040,7 @@ watch(
       v-if="showDeployDialog && deployTarget"
       :hostname="deployTarget.hostname"
       :agent-version="deployTarget.agent_version ?? null"
+      :available-version="availableAgentVersion"
       :last-ssh-user="deployTarget.last_ssh_user"
       @close="showDeployDialog = false"
       @deployed="

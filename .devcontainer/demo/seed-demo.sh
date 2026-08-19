@@ -269,7 +269,7 @@ DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "S
 STALE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='stale-report-01'")
 
 echo "==> Creating schedules..."
-api POST "/api/schedules" "{
+WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"0 2 * * *\",
@@ -280,7 +280,7 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\", \"/etc/nginx\"],
     \"file_change_patterns_raw\": \"*/var/log/nginx/access.log* ignore\n*/var/www/cache* fatal\n*/etc/nginx/nginx.conf* warn\"
-}" > /dev/null
+}" | jq -r '.id')
 
 api POST "/api/schedules" "{
     \"name\": \"Offline agent due soon\",
@@ -704,6 +704,22 @@ if [ "$INCIDENT_COUNT" != "3" ]; then
     echo "expected exactly 3 seeded failure rows for db-server-01, found $INCIDENT_COUNT" >&2
     exit 1
 fi
+
+echo "==> Seeding a cancelled run on web-server-01..."
+# Feeds the Schedules view's run-history strip: a cancelled run must render
+# distinctly from a failed one (a muted, non-alarming bar) rather than
+# falling into the same "failed" bucket, so the demo needs at least one
+# backup_reports row with status = 'cancelled' to actually exercise that.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status)
+VALUES (
+    $WEB01_ID, $REPO_DAILY_ID, $WEB01_DAILY_SCHEDULE_ID,
+    NOW() - interval '9 hours' - interval '2 minutes',
+    NOW() - interval '9 hours',
+    'cancelled'
+);
+SQL
 
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null

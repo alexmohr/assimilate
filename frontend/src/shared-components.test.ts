@@ -108,6 +108,9 @@ const OWNED = [
   'card-stats',
   'card-actions',
   'meta-pill',
+  'type-backup',
+  'type-check',
+  'type-verify',
   'stat',
   'filter-toggle',
   'filter-badge',
@@ -184,6 +187,23 @@ const OWNED = [
   'detail-pre',
   'error-pre',
   'warning-pre',
+  'settings-tab',
+  'settings-nav',
+  'settings-nav-item',
+  'settings-pane',
+  'overview-tab',
+  'attention',
+  'attention-message',
+  'tiles',
+  'tile',
+  'section-head',
+  'section-title',
+  'section-link',
+  // 'attention-row' is deliberately not enforced: DashboardView declares the
+  // same name for an unrelated two-column grid, and it overlaps this one on
+  // display/gap/align-items. The shared definition still lives in style.css
+  // and both overview tabs use it - only the cross-file enforcement is
+  // skipped, so DashboardView's own layout isn't flagged as a violation.
 ]
 
 /**

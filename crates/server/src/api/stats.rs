@@ -69,10 +69,15 @@ fn finding_reason(message: Option<&str>, fallback: &str) -> String {
 /// Query parameters for filtering the activity feed.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ActivityQuery {
-    /// Maximum number of entries to return.
+    /// Maximum number of entries to return, across the whole result set.
     pub limit: Option<i64>,
     /// Return entries from the last N days.
     pub days: Option<i64>,
+    /// Maximum number of entries to return *per schedule*, instead of across
+    /// the whole result set. Only applies when `days` is also set; a plain
+    /// `limit` would let one frequently-running schedule's reports crowd out
+    /// every row belonging to a less-frequent one in the ranked window.
+    pub limit_per_schedule: Option<i64>,
     /// Filter by activity category.
     pub category: Option<String>,
     /// Filter by repository ID.
@@ -725,8 +730,10 @@ pub async fn storage_breakdown(
     tag = "Statistics",
     operation_id = "getActivity",
     params(
-        ("limit" = Option<i64>, Query, description = "Max entries to return"),
+        ("limit" = Option<i64>, Query, description = "Max entries, across the whole result set"),
         ("days" = Option<i64>, Query, description = "Return entries from last N days"),
+        ("limit_per_schedule" = Option<i64>, Query,
+            description = "Max entries per schedule (only applies when days is set)"),
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
         ("hostname" = Option<String>, Query, description = "Filter by agent hostname"),
         ("schedule_id" = Option<i64>, Query, description = "Filter by schedule ID"),
@@ -755,6 +762,7 @@ pub async fn activity(
             query.hostname.as_deref(),
             query.schedule_id,
             query.run_id.as_deref(),
+            query.limit_per_schedule,
         )
         .await?
     } else {

@@ -26,6 +26,32 @@ export interface ScheduleFormState {
 }
 
 /**
+ * The form's starting shape: what a new schedule looks like before anything
+ * is typed into it, and what a loaded schedule's fields fall back to before
+ * `populateForm()` overwrites them. Exported so tests can build fixtures
+ * against the same defaults instead of re-typing them.
+ */
+export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
+  name: '',
+  cron_expression: '0 2 * * *',
+  enabled: true,
+  canary_enabled: true,
+  exclude_patterns: '',
+  file_change_patterns: '',
+  ignore_global_excludes: false,
+  keep_hourly: 24,
+  keep_daily: 7,
+  keep_weekly: 4,
+  keep_monthly: 12,
+  keep_yearly: 10,
+  compact_enabled: true,
+  rate_limit_kbps: 0,
+  pre_backup_commands: '',
+  post_backup_commands: '',
+  backup_sources: '',
+}
+
+/**
  * Per-agent overrides for a multi-host schedule. Each record is keyed by agent
  * id; a missing or empty entry means "fall back to the schedule-level value".
  */

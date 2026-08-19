@@ -23,6 +23,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
 import type { CreateAgentResponse } from '../types/generated'
@@ -501,23 +502,6 @@ const liveBackups = computed<LiveBackup[]>(() =>
     progress: b.progress,
   })),
 )
-
-interface BorgArchiveProgress {
-  type: 'archive_progress'
-  nfiles: number
-  original_size: number
-  path: string
-}
-
-function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
-  try {
-    const obj = JSON.parse(raw) as Record<string, unknown>
-    if (obj['type'] === 'archive_progress') return obj as unknown as BorgArchiveProgress
-    return null
-  } catch {
-    return null
-  }
-}
 
 onMessage('BackupStarted', (payload) => {
   if (payload.hostname !== props.hostname) return

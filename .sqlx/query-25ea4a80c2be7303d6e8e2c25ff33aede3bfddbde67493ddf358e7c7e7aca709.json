@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, br.schedule_id, s.name AS \"schedule_name?\", br.run_id FROM backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) ORDER BY br.started_at DESC",
+  "query": "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!\", duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint IS NULL OR rn <= $6 ORDER BY started_at DESC",
   "describe": {
     "columns": [
       {
@@ -30,12 +30,12 @@
       },
       {
         "ordinal": 5,
-        "name": "status",
+        "name": "status!",
         "type_info": "Text"
       },
       {
         "ordinal": 6,
-        "name": "duration_secs",
+        "name": "duration_secs!",
         "type_info": "Int8"
       },
       {
@@ -75,7 +75,8 @@
         "Int8",
         "Text",
         "Int8",
-        "Text"
+        "Text",
+        "Int8"
       ]
     },
     "nullable": [
@@ -94,5 +95,5 @@
       true
     ]
   },
-  "hash": "91e5b23783c1482ceffd3c5c2c716cbf5edb05f35bfc00395a1dd18094484a83"
+  "hash": "25ea4a80c2be7303d6e8e2c25ff33aede3bfddbde67493ddf358e7c7e7aca709"
 }

@@ -192,56 +192,9 @@ const currentSection = computed<SettingsSection>(() =>
 </template>
 
 <style scoped>
-.settings-tab {
-  display: flex;
-  gap: 1.25rem;
-  align-items: flex-start;
-}
-
-.settings-nav {
-  width: 170px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-}
-
-.settings-nav-item {
-  font: inherit;
-  text-align: left;
-  font-size: var(--fs-sm);
-  padding: 0.35rem 0.6rem;
-  border: none;
-  border-left: 2px solid transparent;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.settings-nav-item:hover {
-  color: var(--text-primary);
-}
-
-.settings-nav-item[aria-current='true'] {
-  color: var(--accent);
-  font-weight: 600;
-  border-left-color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.settings-nav-item--danger[aria-current='true'] {
-  color: var(--danger);
-  border-left-color: var(--danger);
-  background: var(--danger-subtle);
-}
-
-.settings-pane {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
+/* Base .settings-tab/.settings-nav/.settings-nav-item/.settings-pane shapes
+   live in style.css, shared with ScheduleSettingsTab. Only this page's mobile
+   collapse (wrap into rows) is its own. */
 @media (max-width: 720px) {
   .settings-tab {
     flex-direction: column;

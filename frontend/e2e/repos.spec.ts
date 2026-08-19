@@ -44,6 +44,35 @@ test.describe('Repositories management journey', () => {
     expect(hasEncryption).toBe(true)
   })
 
+  // The five cards that used to stack on Overview now sit behind a settings
+  // sub-nav, so simply loading /repos/1 no longer mounts them - and no longer
+  // calls the endpoints they read. Walking the rail keeps that server-side
+  // path exercised (quota, tags, the repository record and its SSH host key)
+  // and covers the navigation itself, which only had the danger pane before.
+  test('the repository Settings rail opens each of its panes', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos/1?tab=settings&section=repository')
+    await page.waitForLoadState('networkidle')
+
+    const rail = page.locator('.settings-nav')
+    const pane = page.locator('.settings-pane')
+
+    await expect(rail.locator('.settings-nav-item[aria-current="true"]')).toHaveText('Repository')
+    await expect(pane).toContainText('borg@')
+
+    await rail.getByRole('button', { name: 'Storage quota' }).click()
+    await expect(pane.locator('.panel-title')).toHaveText('Storage quota')
+    await expect(page).toHaveURL(/section=quota/)
+
+    await rail.getByRole('button', { name: 'Tags' }).click()
+    await expect(pane.getByPlaceholder('New tag name')).toBeVisible()
+    await expect(page).toHaveURL(/section=tags/)
+
+    await rail.getByRole('button', { name: 'Borg console' }).click()
+    await expect(pane.locator('.panel-title')).toHaveText('Borg console')
+    await expect(page).toHaveURL(/section=console/)
+  })
+
   test('clicking a repo from the list navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/repos')

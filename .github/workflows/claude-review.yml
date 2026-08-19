@@ -214,11 +214,6 @@ jobs:
               force: "${{ steps.resolve.outputs.force }}" === "true",
             });
 
-      - name: Record job start time
-        id: job_start
-        if: steps.precheck.outputs.run_claude == 'true'
-        run: echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
       # github_token is required: without it, claude-code-action leaves
       # OVERRIDE_GITHUB_TOKEN unset and falls back to exchanging a GitHub
       # Actions OIDC token for a claude[bot] GitHub App installation token via
@@ -247,14 +242,19 @@ jobs:
       # explicitly ("Claude cannot submit formal GitHub PR reviews... cannot
       # approve pull requests"), and create_inline_comment's own source
       # comment confirms it's scoped down "so that Claude can't accidentally
-      # approve a PR". skills/review/SKILL.md's native-review-API and
+      # approve a PR". skills/review/SKILL.md's inline-comment and
       # claude-approved/claude-changes-requested instructions are exactly
       # what that restriction blocks, no matter how this workflow is
       # configured - every attempt silently failed.
       #
       # allowedTools grants Bash access to a specific set of gh/git
       # subcommands (not blanket Bash): `gh pr review`/`gh pr edit` so Claude
-      # can submit the verdict itself (native review / label fallback), plus
+      # can submit the verdict itself (a Comment-type review body plus the
+      # verdict labels - see skills/review/SKILL.md; this workflow's
+      # GitHub Actions token can never formally --approve a PR anyway, and a
+      # fresh token every run can't reliably clear a --request-changes review
+      # it submitted in an earlier run either, which is why labels carry the
+      # verdict instead of a formal review state), plus
       # `gh pr diff`, `gh pr view`, `git log`, `git diff`, `git show` so it
       # can actually see what changed - none of the action's built-in tools
       # (src/mcp/*.ts) fetch a PR diff at all. The first live run with only
@@ -262,8 +262,8 @@ jobs:
       # permission denials with no way to read the diff, then posted a
       # literal "gh pr review 351 --comment --body \"test\"" as its one
       # successful call before giving up - an exploratory sanity check, not
-      # a real review (it never even used --approve/--request-changes as
-      # instructed). GH_TOKEN below is required for gh to authenticate - it
+      # a real review (it never actually submitted a verdict). GH_TOKEN below
+      # is required for gh to authenticate - it
       # isn't set automatically just because github_token was passed to the
       # action above (that only covers the action's own git/API calls, not
       # Claude-invoked Bash's environment). No `gh pr merge` here anymore -
@@ -341,21 +341,18 @@ jobs:
 
             Post line-specific findings with your create_inline_comment tool as you go.
 
-            Submit your verdict per the account rule in skills/review/SKILL.md, using the gh
-            CLI (already authenticated) since you have no built-in review/label tool:
-            - Different account's PR: `gh pr review ${{ steps.resolve.outputs.pr_number }} --approve --body "..."`
-              or `gh pr review ${{ steps.resolve.outputs.pr_number }} --request-changes --body "..."`.
-              If `--approve` itself is rejected ("GitHub Actions is not permitted to approve pull
-              requests" - a platform-level restriction on this token, not something retrying fixes),
-              resubmit the exact same verdict as `gh pr review ${{ steps.resolve.outputs.pr_number }}
-              --comment --body "..."` instead, and additionally run
-              `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"
-              --remove-label "claude-changes-requested"` (ignore the remove if that label isn't
-              present) so the verdict is still recorded somewhere machine-readable - a plain
-              comment alone doesn't move GitHub's own reviewDecision.
-            - Your own account's PR: `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"`
-              or `--add-label "claude-changes-requested"` (and remove whichever of the two was
-              previously set with `--remove-label`).
+            Submit your verdict per skills/review/SKILL.md, using the gh CLI (already
+            authenticated) since you have no built-in review/label tool. Never submit a formal
+            `--approve`/`--request-changes` review - this token can never formally approve a PR
+            at all, and a fresh token on a later run can't reliably clear a stale
+            `--request-changes` review either, so the verdict always goes through the labels
+            instead:
+            - Post your findings as `gh pr review ${{ steps.resolve.outputs.pr_number }}
+              --comment --body "..."` (this works on any PR, including one opened by this same
+              account).
+            - Then record the verdict with `gh pr edit ${{ steps.resolve.outputs.pr_number }}
+              --add-label "claude-approved"` or `--add-label "claude-changes-requested"` (and
+              remove whichever of the two was previously set with `--remove-label`).
 
             Call `gh pr review`/`gh pr edit` exactly once, at the very end, with your real,
             final, complete verdict and body - never as a test/dry-run to check the command
@@ -429,41 +426,32 @@ jobs:
               );
             }
 
-      # GitHub Actions tokens can never formally `--approve` a PR (platform-
-      # level restriction - "GitHub Actions is not permitted to approve pull
-      # requests"), so once this same bot account has ever formally
-      # requested changes on a "different account" PR, a later clean verdict
-      # can only ever be filed as a plain COMMENTED review (see the prompt's
-      # own fallback above). GitHub's reviewDecision only updates a
-      # reviewer's standing verdict when that reviewer submits a NEW
-      # APPROVED or CHANGES_REQUESTED review - a COMMENTED review does not
-      # supersede an earlier CHANGES_REQUESTED from the same user at all, so
-      # without this the PR's native reviewDecision stays stuck at
-      # CHANGES_REQUESTED forever, no matter how many clean rounds follow.
-      # Confirmed live on PR #365 (this repo's own harness PR): a clean,
-      # approving verdict, filed as COMMENTED, left `review=CHANGES_REQUESTED
-      # (native=CHANGES_REQUESTED)` in the very next label sync.
+      # The new process (per skills/review/SKILL.md's Required rules) never
+      # files a formal --approve/--request-changes review going forward, only
+      # claude-approved/claude-changes-requested labels - but a PR that
+      # already carried a bot-authored formal CHANGES_REQUESTED review from
+      # before this change has no other path to clear it: GitHub's native
+      # reviewDecision only updates on a NEW formal APPROVED/CHANGES_REQUESTED
+      # submission, and sync-pr-labels.js's changesRequestedIsCurrent keeps
+      # treating a same-commit CHANGES_REQUESTED as current forever otherwise
+      # (a plain --comment review never supersedes it). Without this,
+      # `ready to merge` becomes permanently unreachable on such a PR until a
+      # human manually dismisses the stale review via the GitHub UI. This is a
+      # demonstrated, recurring pattern, not hypothetical - PR #431 carries
+      # this exact stale review today, and PR #351 needed the dismissal 3
+      # separate times.
       #
-      # Dismissing a review only requires push access (this workflow's own
-      # pull-requests: write already covers it) - it does not have to be
-      # done by the review's original author. Only dismisses the specific
-      # review still driving reviewDecision (the most recent APPROVED/
-      # CHANGES_REQUESTED from this bot, ignoring any COMMENTED reviews in
-      # between, which don't affect reviewDecision either way) - never
-      # touches anything from a different reviewer.
-      #
-      # Gated on steps.claude.outcome == 'success' (not just run_claude, the
-      # same condition the Claude step itself uses) and further restricted to
-      # a review actually submitted after this exact job started
-      # (steps.job_start.outputs.started_at) - not "whichever of this bot's
-      # reviews happens to be last in the PR's entire history". Without both
-      # of those, a Claude step that errored out or intentionally deferred
-      # (the prompt explicitly allows submitting nothing over an incomplete
-      # verdict - a non-error outcome) would still run this step, misread
-      # some old unrelated review as "this round's clean pass", and dismiss a
-      # real, still-unaddressed CHANGES_REQUESTED that nothing actually
-      # re-reviewed this run.
-      - name: Dismiss this bot's own stale changes-requested review
+      # Keyed off the claude-approved/claude-changes-requested label this run
+      # just set, not review timestamps or job-start bookkeeping like the
+      # step this replaces - simpler and sufficient now that this workflow
+      # never submits a new formal review of its own to distinguish "this
+      # run's verdict" from history. Only clears a CHANGES_REQUESTED review
+      # that is (a) from this bot account, (b) still submitted against the
+      # PR's current head commit - an older-commit review already goes stale
+      # on its own via changesRequestedIsCurrent - and (c) superseded by a
+      # clean claude-approved verdict this same run; never touches a review
+      # from any other reviewer.
+      - name: Clear a stale bot-authored changes-requested review
         if: steps.precheck.outputs.run_claude == 'true' && steps.claude.outcome == 'success'
         uses: actions/github-script@v7
         with:
@@ -472,7 +460,12 @@ jobs:
             const repo = context.repo.repo;
             const prNumber = Number("${{ steps.resolve.outputs.pr_number }}");
             const BOT_LOGIN = "github-actions[bot]";
-            const jobStartedAt = new Date("${{ steps.job_start.outputs.started_at }}");
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const labels = pr.labels.map((l) => l.name);
+            if (!labels.includes("claude-approved") || labels.includes("claude-changes-requested")) {
+              return; // this round's own verdict still requests changes - nothing stale to clear
+            }
 
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner,
@@ -480,37 +473,21 @@ jobs:
               pull_number: prNumber,
               per_page: 100,
             });
-            const ownReviews = reviews.filter((r) => r.user && r.user.login === BOT_LOGIN);
-            if (ownReviews.length === 0) {
-              return;
-            }
-
-            // "This run's own verdict" must be something this exact job
-            // actually submitted, not just the last item in the bot's whole
-            // review history on this PR (which could be arbitrarily old).
-            const thisRunReviews = ownReviews.filter(
-              (r) => new Date(r.submitted_at) > jobStartedAt,
-            );
-            if (thisRunReviews.length === 0) {
-              return; // nothing was actually submitted this run - don't touch anything
-            }
-            const thisRun = thisRunReviews[thisRunReviews.length - 1];
-            if (thisRun.state === "CHANGES_REQUESTED") {
-              return; // this run's own verdict genuinely still requests changes
-            }
-
             // reviewDecision only ever reflects a reviewer's most recent
             // APPROVED/CHANGES_REQUESTED review - a COMMENTED one in between
             // (or after) doesn't change what's "in effect" at all.
-            const decisionBearing = ownReviews.filter(
-              (r) => r.state === "APPROVED" || r.state === "CHANGES_REQUESTED",
+            const decisionBearing = reviews.filter(
+              (r) =>
+                r.user &&
+                r.user.login === BOT_LOGIN &&
+                (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED"),
             );
             if (decisionBearing.length === 0) {
               return;
             }
             const stillInEffect = decisionBearing[decisionBearing.length - 1];
-            if (stillInEffect.state !== "CHANGES_REQUESTED" || stillInEffect.id === thisRun.id) {
-              return; // already clear, or a formal approval already landed
+            if (stillInEffect.state !== "CHANGES_REQUESTED" || stillInEffect.commit_id !== pr.head.sha) {
+              return; // already clear, or stale against an older commit (goes stale on its own)
             }
 
             try {
@@ -520,24 +497,18 @@ jobs:
                 pull_number: prNumber,
                 review_id: stillInEffect.id,
                 message:
-                  "Superseded by a later, clean verdict from the same automated reviewer - " +
-                  "GitHub Actions tokens cannot formally re-approve to clear this natively, so " +
-                  "the newer verdict was filed as a plain comment instead. Dismissing so " +
-                  "reviewDecision reflects the current state rather than staying stuck on this.",
+                  "Superseded by a clean claude-approved verdict from the same automated reviewer - " +
+                  "this workflow no longer files formal reviews, so the newer verdict lives in the " +
+                  "claude-approved label instead. Dismissing so reviewDecision reflects the current state.",
               });
-              core.info(
-                `Dismissed stale CHANGES_REQUESTED review ${stillInEffect.id} from ${BOT_LOGIN}`,
-              );
+              core.info(`Dismissed stale CHANGES_REQUESTED review ${stillInEffect.id} from ${BOT_LOGIN}`);
             } catch (err) {
-              // Tolerate a concurrent trigger (e.g. a push immediately
-              // followed by a /claude-review comment) having already
-              // dismissed the same review - not worth failing this job over.
+              // Tolerate a concurrent trigger having already dismissed the
+              // same review - not worth failing this job over.
               if (err.status !== 422 && err.status !== 404) {
                 throw err;
               }
-              core.info(
-                `Review ${stillInEffect.id} already dismissed or gone (status ${err.status}) - skipping.`,
-              );
+              core.info(`Review ${stillInEffect.id} already dismissed or gone (status ${err.status}) - skipping.`);
             }
 
       # Belt-and-suspenders: re-sync immediately after Claude's turn (not

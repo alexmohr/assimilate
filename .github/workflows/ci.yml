@@ -229,7 +229,17 @@ jobs:
             --add-tracefile e2e/merged-e2e.info \
             --output-file final.info \
             --ignore-errors inconsistent
+      # Coveralls treats the GitHub Actions run ID as the build identifier and
+      # rejects a second report once that build is "closed" - re-running this
+      # exact workflow run (not pushing a new commit) always hits this, since
+      # the run ID doesn't change between attempts. That's a rerun-tooling
+      # limitation, not a real coverage problem (the local lcov data below is
+      # what analyze-coverage-diff.js and the "Upload merged coverage
+      # artifact" step below actually rely on) - continue-on-error keeps a
+      # rerun from failing the whole job over the external dashboard report
+      # alone.
       - uses: coverallsapp/github-action@v2
+        continue-on-error: true
         with:
           file: final.info
           format: lcov

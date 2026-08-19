@@ -177,6 +177,18 @@ Assimilate enforces a **one-shot** relocation acceptance model:
 
 See [Repositories — Relocation Safety](repositories.md#repository-relocation-safety) for operational details.
 
+## Response Security Headers
+
+Every HTTP response from the server carries a standard set of hardening headers, applied by a single middleware layer ahead of all routes:
+
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `Content-Security-Policy` | `default-src 'self'; ...; connect-src 'self'; ...` | Restricts script/style/image/font/connect sources to the app's own origin. The API docs route (`/api/docs`) uses a relaxed variant that additionally allows `https://cdn.jsdelivr.net` for the Scalar UI. `connect-src` is same-origin only — it does not allow WebSocket connections to arbitrary hosts. |
+| `X-Content-Type-Options` | `nosniff` | Stops browsers from MIME-sniffing responses (e.g. archive/file content served via export) into an executable type. |
+| `Referrer-Policy` | `no-referrer` | Prevents the app's URL/path from leaking to webhook or other external targets via the `Referer` header. |
+| `Permissions-Policy` | `geolocation=(), camera=(), microphone=()` | Disables browser features the app never uses. |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | Sent only when `ASSIMILATE_SECURE_COOKIES` is enabled (the default), since that setting already signals a TLS deployment. See [Configuration](configuration.md). |
+
 ## Sensitive Data Handling
 
 - Repository passphrases are never logged or transmitted in plaintext. They are decrypted in memory only when passed to the borg subprocess.

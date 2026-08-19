@@ -423,8 +423,8 @@ async function resetAndSync(): Promise<void> {
 
 <style scoped>
 .break-lock-success {
-  margin-top: 0.75rem;
-  padding: 0.75rem;
+  margin-top: var(--space-5);
+  padding: var(--space-5);
   background: var(--success-subtle);
   border-radius: var(--radius-sm);
   font-size: var(--fs-base);

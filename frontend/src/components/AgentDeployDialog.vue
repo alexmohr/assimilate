@@ -5,11 +5,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ArrowRight, Upload, KeyRound, CheckCircle, ChevronDown } from '@lucide/vue'
+import { ArrowRight, Upload, KeyRound, CheckCircle } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
 import BaseModal from './BaseModal.vue'
+import BaseDisclosure from './BaseDisclosure.vue'
 
 const DEFAULT_INSTALL_PATH = '/usr/local/bin/assimilate-agent'
 
@@ -45,11 +46,6 @@ const deployError = ref<string | null>(null)
 const fetchServiceLoading = ref(false)
 const fetchServiceError = ref<string | null>(null)
 const serviceContentTouched = ref(false)
-// Closed by default on an upgrade, where a working unit already exists and
-// is rarely hand-edited. Open by default on a first-time deploy: there is no
-// established default yet, and loading or customizing the unit is often part
-// of setting the host up in the first place.
-const serviceUnitOpen = ref(props.agentVersion === null)
 const deployResult = ref<{
   success: boolean
   skipped: boolean
@@ -211,7 +207,7 @@ async function submitDeploy(): Promise<void> {
             >A newer build is available.</span
           >
         </div>
-        <ul class="hero-lines">
+        <ul class="icon-list">
           <li>
             <Upload :size="14" />
             <span
@@ -302,23 +298,10 @@ async function submitDeploy(): Promise<void> {
       </div>
 
       <div class="field">
-        <button
-          type="button"
-          class="disclosure-head"
-          :aria-expanded="serviceUnitOpen"
-          @click="serviceUnitOpen = !serviceUnitOpen"
-        >
-          <ChevronDown
-            :size="14"
-            class="disclosure-chevron"
-            :class="{ 'disclosure-chevron--open': serviceUnitOpen }"
-          />
-          <span class="disclosure-title">Systemd service unit</span>
-          <span class="badge badge--neutral">{{ hasCustomUnit ? 'Customized' : 'Default' }}</span>
-        </button>
-        <div
-          v-show="serviceUnitOpen"
-          class="disclosure-body"
+        <BaseDisclosure
+          title="Systemd service unit"
+          :badge="hasCustomUnit ? 'Customized' : 'Default'"
+          :default-open="!isUpgrade"
         >
           <div class="disclosure-actions">
             <button
@@ -349,7 +332,7 @@ async function submitDeploy(): Promise<void> {
           >
             {{ fetchServiceError }}
           </span>
-        </div>
+        </BaseDisclosure>
       </div>
       <div
         v-if="deployError"
@@ -431,7 +414,7 @@ async function submitDeploy(): Promise<void> {
 .deploy-info {
   font-size: var(--fs-base);
   color: var(--text-muted);
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 
 .deploy-note {
@@ -440,32 +423,32 @@ async function submitDeploy(): Promise<void> {
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.5rem 0.75rem;
-  margin-bottom: 1rem;
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-6);
 }
 
 .deploy-note code {
   font-size: var(--fs-xs);
   background: var(--bg-card);
-  padding: 0.1rem 0.3rem;
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
 }
 
 .upgrade-hero {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: var(--space-6);
   background: var(--accent-subtle);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem 1.25rem;
-  margin-bottom: 0.85rem;
+  padding: var(--space-6) var(--space-7);
+  margin-bottom: var(--space-5);
 }
 
 .hero-version {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -490,38 +473,15 @@ async function submitDeploy(): Promise<void> {
   color: var(--text-muted);
 }
 
-.hero-lines {
-  margin: 0 0 1.25rem;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.hero-lines li {
-  display: flex;
-  gap: 0.5rem;
-  align-items: flex-start;
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-}
-
-.hero-lines svg {
-  flex: none;
-  margin-top: 0.15rem;
-  color: var(--text-muted);
-}
-
-.hero-lines code {
+.icon-list code {
   font-size: var(--fs-xs);
   background: var(--bg-card);
-  padding: 0.1rem 0.3rem;
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
 }
 
 .field-label-row {
-  margin-bottom: 0.3rem;
+  margin-bottom: var(--space-2);
 }
 
 .field-label-row .field-label {
@@ -532,49 +492,10 @@ async function submitDeploy(): Promise<void> {
   color: var(--danger);
 }
 
-.disclosure-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.85rem;
-  cursor: pointer;
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-  font-weight: 500;
-  text-align: left;
-  transition: background var(--duration-base);
-}
-
-.disclosure-head:hover {
-  background: var(--bg-hover);
-}
-
-.disclosure-title {
-  flex: 1;
-}
-
-.disclosure-chevron {
-  color: var(--text-muted);
-  flex: none;
-  transition: transform var(--duration-base);
-}
-
-.disclosure-chevron--open {
-  transform: rotate(-180deg);
-}
-
-.disclosure-body {
-  margin-top: 0.6rem;
-}
-
 .disclosure-actions {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 0.4rem;
+  margin-bottom: var(--space-3);
 }
 
 .service-textarea {
@@ -589,7 +510,7 @@ async function submitDeploy(): Promise<void> {
 .deploy-success-msg {
   color: var(--success);
   font-weight: 600;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 
 .deploy-skipped-msg {

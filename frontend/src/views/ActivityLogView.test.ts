@@ -332,7 +332,10 @@ describe('ActivityLogView', () => {
         .find((c) => c.findAll('button').some((b) => b.text() === 'View run'))
       expect(cardWithRun).toBeTruthy()
 
-      await cardWithRun!.findAll('button').find((b) => b.text() === 'View run')!.trigger('click')
+      await cardWithRun!
+        .findAll('button')
+        .find((b) => b.text() === 'View run')!
+        .trigger('click')
       await flushPromises()
 
       expect(mockGet).toHaveBeenCalledWith(
@@ -566,7 +569,10 @@ describe('ActivityLogView', () => {
       await statusSelect?.setValue('failed')
       await flushPromises()
 
-      await wrapper.findAll('button').find((b) => b.text() === 'Clear')!.trigger('click')
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Clear')!
+        .trigger('click')
       await flushPromises()
 
       expect((statusSelect?.element as HTMLSelectElement).value).toBe('all')

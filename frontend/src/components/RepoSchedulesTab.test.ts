@@ -88,7 +88,7 @@ describe('RepoSchedulesTab', () => {
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    expect(wrapper.find('.state-error').text()).toBe('Failed to load schedules.')
+    expect(wrapper.find('.error-banner').text()).toBe('Failed to load schedules.')
     expect(wrapper.find('.empty-state').exists()).toBe(false)
   })
 

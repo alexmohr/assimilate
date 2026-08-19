@@ -186,7 +186,7 @@ defineExpose({ reload: load })
 <style scoped>
 .color-input {
   width: 2.5rem;
-  padding: 0.1rem;
+  padding: var(--space-1);
   cursor: pointer;
 }
 </style>

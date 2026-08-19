@@ -106,7 +106,7 @@ const visible = computed(() => {
 .backups-tab {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .backups-toolbar {

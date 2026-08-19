@@ -62,7 +62,7 @@ const iconMap: Record<ToastType, Component> = {
   z-index: 400;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
   max-width: 380px;
   width: calc(100vw - 2rem);
   pointer-events: none;
@@ -71,8 +71,8 @@ const iconMap: Record<ToastType, Component> = {
 .toast {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -131,7 +131,7 @@ const iconMap: Record<ToastType, Component> = {
   cursor: pointer;
   font-size: var(--fs-lg);
   line-height: 1;
-  padding: 0.125rem 0.25rem;
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   transition:
     color var(--duration-base),

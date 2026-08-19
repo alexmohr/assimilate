@@ -198,6 +198,6 @@ const dedupOptions = computed(() => {
 .charts-row {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-7);
 }
 </style>

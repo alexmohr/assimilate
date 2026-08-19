@@ -134,7 +134,7 @@ onMounted(loadRepos)
     </div>
     <div
       v-else-if="reposError"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ reposError }}
     </div>
@@ -177,7 +177,7 @@ onMounted(loadRepos)
 
       <ArchiveBrowserLayout v-if="selectedRepoId !== null">
         <template #list>
-          <div class="panel panel--sectioned archives-panel">
+          <div class="panel panel--sectioned">
             <div class="panel-header">
               <span class="panel-title">Archives</span>
               <div class="panel-actions">
@@ -218,7 +218,7 @@ onMounted(loadRepos)
             </div>
             <div
               v-else-if="archivesError"
-              class="state-msg state-error"
+              class="error-banner"
             >
               {{ archivesError }}
             </div>
@@ -435,8 +435,8 @@ onMounted(loadRepos)
 .repo-selector {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
 }
 
 .selector-label {

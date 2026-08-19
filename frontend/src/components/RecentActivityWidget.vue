@@ -138,7 +138,7 @@ function liveRelativeTime(iso: string): string {
 .activity-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
   overflow-y: auto;
   min-height: 0;
 }
@@ -146,14 +146,14 @@ function liveRelativeTime(iso: string): string {
 .activity-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
 }
 
 .activity-item-clickable {
   cursor: pointer;
-  padding: 0.35rem 0.5rem;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
 }
 
@@ -177,7 +177,7 @@ function liveRelativeTime(iso: string): string {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: var(--space-1);
 }
 
 .activity-host {
@@ -201,7 +201,7 @@ function liveRelativeTime(iso: string): string {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.1rem;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -220,8 +220,8 @@ function liveRelativeTime(iso: string): string {
   font-size: var(--fs-2xs);
   background: var(--bg-code);
   border-radius: var(--radius-sm);
-  padding: 0.4rem;
-  margin-top: 0.25rem;
+  padding: var(--space-3);
+  margin-top: var(--space-2);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 6rem;

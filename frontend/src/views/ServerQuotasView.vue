@@ -137,7 +137,7 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -400,24 +400,24 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 .quota-card-list {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .quota-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem;
+  padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .quota-card-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .quota-host {
@@ -427,20 +427,20 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 
 .quota-card-stats {
   display: flex;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .quota-card-thresholds {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-3);
   margin: 0;
 }
 
 .threshold-row {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: var(--space-1);
   font-size: var(--fs-sm);
 }
 
@@ -459,7 +459,7 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
 .quota-card-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.375rem;
+  gap: var(--space-3);
 }
 
 .data-table {

@@ -796,7 +796,7 @@ async function fetchOverview(): Promise<void> {
 .dashboard {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--space-8);
   max-width: 1100px;
   margin: 0 auto;
 }
@@ -804,7 +804,7 @@ async function fetchOverview(): Promise<void> {
 .stats-coverage-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
   align-items: stretch;
   min-width: 0;
 }
@@ -837,14 +837,14 @@ async function fetchOverview(): Promise<void> {
 .attention-row {
   display: grid;
   grid-template-columns: 3fr 2fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
   align-items: start;
 }
 
 .attention-sidebar {
   display: grid;
   grid-template-rows: 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .attention-row-full {
@@ -860,7 +860,7 @@ async function fetchOverview(): Promise<void> {
 .status-banner {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 @media (max-width: 640px) {
@@ -892,13 +892,13 @@ async function fetchOverview(): Promise<void> {
 .main-grid {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .rings-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 /* Panel */
@@ -913,7 +913,7 @@ async function fetchOverview(): Promise<void> {
   position: relative;
   width: 160px;
   height: 160px;
-  margin: 0 auto 1rem;
+  margin: 0 auto var(--space-6);
 }
 
 .ring-svg {
@@ -971,7 +971,7 @@ async function fetchOverview(): Promise<void> {
 .trends-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
   align-items: start;
 }
 
@@ -998,20 +998,20 @@ async function fetchOverview(): Promise<void> {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem;
+  padding: var(--space-7);
 }
 
 .active-backups-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .active-backup-item {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   font-size: var(--fs-base);
 }
 

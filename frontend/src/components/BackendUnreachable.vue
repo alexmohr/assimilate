@@ -54,8 +54,8 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1rem;
-  padding: 2.5rem 3rem;
+  gap: var(--space-6);
+  padding: var(--space-9) var(--space-10);
   background: var(--bg-card);
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -82,8 +82,8 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
 }
 
 .backend-overlay-btn {
-  margin-top: 0.5rem;
-  padding: 0.5rem 1.5rem;
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-8);
   font-size: var(--fs-base);
   font-weight: 500;
   border: none;

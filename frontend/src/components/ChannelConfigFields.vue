@@ -63,7 +63,7 @@ defineExpose({ validate, reset, result })
   <template v-if="channelType === 'email'">
     <div class="field">
       <label class="field-label">
-        SMTP Host
+        SMTP host
         <span
           v-if="showRequired"
           class="required"
@@ -103,7 +103,7 @@ defineExpose({ validate, reset, result })
     </div>
     <div class="field">
       <label class="field-label">
-        From Address
+        From address
         <span
           v-if="showRequired"
           class="required"
@@ -118,7 +118,7 @@ defineExpose({ validate, reset, result })
     </div>
     <div class="field">
       <label class="field-label">
-        To Addresses
+        To addresses
         <span
           v-if="showRequired"
           class="required"
@@ -182,8 +182,8 @@ defineExpose({ validate, reset, result })
 
 <style scoped>
 .smtp-validation-result {
-  margin-left: 0.5rem;
-  padding: 0.25rem 0.5rem;
+  margin-left: var(--space-4);
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-sm);
   font-size: var(--fs-sm);
 }

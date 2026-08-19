@@ -283,14 +283,14 @@ async function save(): Promise<void> {
 .defaults-groups {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
-  margin-bottom: 0.5rem;
+  gap: var(--space-5);
+  margin-bottom: var(--space-4);
 }
 
 .defaults-group {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .fcp-action-badge {

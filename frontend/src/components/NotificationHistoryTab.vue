@@ -77,6 +77,7 @@ function formatPayload(payload: unknown): string {
           <tr
             class="delivery-row"
             :class="{ expanded: expandedId === d.id }"
+            :aria-expanded="expandedId === d.id"
             @click="toggleExpand(d.id)"
           >
             <td class="col-expand">
@@ -161,16 +162,16 @@ function formatPayload(payload: unknown): string {
 }
 
 .detail-panel {
-  padding: 1rem 1.25rem;
+  padding: var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: var(--space-5);
 }
 
 .detail-block {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--space-2);
 }
 
 .detail-block-label {
@@ -187,7 +188,7 @@ function formatPayload(payload: unknown): string {
 
 .delivery-status {
   font-size: var(--fs-xs);
-  padding: 0.15rem 0.5rem;
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-sm);
   font-weight: 500;
 }
@@ -211,11 +212,6 @@ function formatPayload(payload: unknown): string {
    row instead of scrolling horizontally, so long values (errors, payloads)
    wrap in place rather than forcing the whole table wider than the viewport. */
 @media (max-width: 640px) {
-  .table-wrap {
-    overflow-x: visible;
-    border: none;
-  }
-
   .data-table-expandable thead {
     display: none;
   }
@@ -223,7 +219,7 @@ function formatPayload(payload: unknown): string {
   .data-table-expandable tbody {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--space-5);
   }
 
   .data-table-expandable .delivery-row {
@@ -232,7 +228,7 @@ function formatPayload(payload: unknown): string {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--bg-card);
-    padding: 0.5rem 0.75rem;
+    padding: var(--space-4) var(--space-5);
   }
 
   .data-table-expandable .delivery-row td {
@@ -247,8 +243,8 @@ function formatPayload(payload: unknown): string {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.35rem 0;
+    gap: var(--space-5);
+    padding: var(--space-3) 0;
     text-align: right;
     white-space: normal;
     word-break: break-word;

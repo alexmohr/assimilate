@@ -321,7 +321,7 @@ describe('ArchivesView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.find('.state-error').exists()).toBe(true)
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
   })
 
   // The file browser itself lives in ArchiveFileBrowser, which RepoDetailView

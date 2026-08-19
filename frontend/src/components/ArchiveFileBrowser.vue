@@ -162,7 +162,7 @@ function handleDeleteWholeArchive(): void {
       </div>
       <div
         v-else-if="contentsError"
-        class="state-msg state-error"
+        class="error-banner"
       >
         {{ contentsError }}
       </div>
@@ -321,7 +321,7 @@ function handleDeleteWholeArchive(): void {
 }
 
 .browser-header {
-  padding: 0.875rem 1.25rem;
+  padding: var(--space-5) var(--space-7);
   border-bottom: 1px solid var(--border);
 }
 
@@ -336,8 +336,8 @@ function handleDeleteWholeArchive(): void {
 .archive-meta-bar {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
   background: var(--bg-base);
 }
@@ -345,7 +345,7 @@ function handleDeleteWholeArchive(): void {
 .archive-meta-item {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: var(--space-3);
 }
 
 .archive-meta-label {
@@ -382,7 +382,7 @@ function handleDeleteWholeArchive(): void {
    `headerRow: border-b`. Adding a second border on th/td doubled the line. */
 :deep(.data-table th) {
   text-align: left;
-  padding: 0.5rem 1rem;
+  padding: var(--space-4) var(--space-6);
   color: var(--text-muted);
   font-weight: 600;
   font-size: var(--fs-xs);
@@ -391,7 +391,7 @@ function handleDeleteWholeArchive(): void {
 }
 
 :deep(.data-table td) {
-  padding: 0.6rem 1rem;
+  padding: var(--space-4) var(--space-6);
   color: var(--text-secondary);
 }
 

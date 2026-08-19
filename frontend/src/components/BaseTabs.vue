@@ -115,7 +115,7 @@ function onKeydown(e: KeyboardEvent, index: number): void {
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .tab-count {

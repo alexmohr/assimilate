@@ -281,7 +281,7 @@ onMounted(() => {
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -290,7 +290,7 @@ onMounted(() => {
       :icon="Cable"
       title="No SSH tunnels configured"
       description="Create a tunnel to access remote hosts."
-      action="Add tunnel"
+      action="New tunnel"
       @action="showAddDialog = true"
     />
 
@@ -370,7 +370,7 @@ onMounted(() => {
     <!-- Add Tunnel Dialog -->
     <BaseModal
       :open="showAddDialog"
-      title="Add tunnel"
+      title="New tunnel"
       @close="showAddDialog = false"
     >
       <div class="field">
@@ -614,7 +614,7 @@ onMounted(() => {
 .status-cell {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .status-dot {
@@ -652,7 +652,7 @@ onMounted(() => {
 
 .row-actions {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .field-checkbox {
@@ -663,7 +663,7 @@ onMounted(() => {
 .checkbox-label {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   cursor: pointer;
   font-size: var(--fs-base);
   color: var(--text-secondary);

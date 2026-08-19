@@ -290,14 +290,14 @@ onMounted(loadQuota)
 
 <style scoped>
 .quota-usage {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 
 .usage-labels {
   display: flex;
   justify-content: space-between;
   font-size: var(--fs-sm);
-  margin-bottom: 0.4rem;
+  margin-bottom: var(--space-3);
 }
 
 .usage-current {
@@ -337,7 +337,7 @@ onMounted(loadQuota)
 .quota-details {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 0.4rem 1rem;
+  gap: var(--space-3) var(--space-6);
   margin: 0;
   font-size: var(--fs-base);
 }

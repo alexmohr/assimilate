@@ -571,7 +571,7 @@ describe('ReposView', () => {
     setupApiSuccess([])
     const wrapper = await mountAsAdmin()
 
-    await clickButton(wrapper, (t) => t.includes('Add repository'))
+    await clickButton(wrapper, (t) => t.includes('New repository'))
 
     const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
     expect(dialog.props('open')).toBe(true)

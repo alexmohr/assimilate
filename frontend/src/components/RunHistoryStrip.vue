@@ -126,7 +126,7 @@ const caption = computed(() => {
 .run-history {
   display: flex;
   align-items: flex-end;
-  gap: 0.5rem;
+  gap: var(--space-4);
   height: 26px;
 }
 

@@ -185,6 +185,6 @@ async function confirmDeleteArchives(): Promise<void> {
 .danger-warning-text {
   font-size: var(--fs-base);
   color: var(--danger);
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 </style>

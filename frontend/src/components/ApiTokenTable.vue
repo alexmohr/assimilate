@@ -25,41 +25,43 @@ defineEmits<{
 </script>
 
 <template>
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Created</th>
-        <th>Last used</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr
-        v-for="token in tokens"
-        :key="token.id"
-      >
-        <td class="cell-name">
-          {{ token.name }}
-        </td>
-        <td class="cell-date">
-          {{ formatDate(token.created_at) }}
-        </td>
-        <td class="cell-date">
-          {{ formatDate(token.last_used_at, 'Never') }}
-        </td>
-        <td>
-          <button
-            class="btn btn-sm btn-ghost btn-danger-text"
-            title="Delete"
-            @click="$emit('delete', token)"
-          >
-            <Trash2 :size="14" />
-          </button>
-        </td>
-      </tr>
-    </tbody>
-  </table>
+  <div class="table-wrap table-wrap--framed">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Created</th>
+          <th>Last used</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="token in tokens"
+          :key="token.id"
+        >
+          <td class="cell-name">
+            {{ token.name }}
+          </td>
+          <td class="cell-date">
+            {{ formatDate(token.created_at) }}
+          </td>
+          <td class="cell-date">
+            {{ formatDate(token.last_used_at, 'Never') }}
+          </td>
+          <td>
+            <button
+              class="btn btn-sm btn-ghost btn-danger-text"
+              title="Delete"
+              @click="$emit('delete', token)"
+            >
+              <Trash2 :size="14" />
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <style scoped>

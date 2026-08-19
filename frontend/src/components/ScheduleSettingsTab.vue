@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ArrowDown, ArrowUp, ChevronDown } from '@lucide/vue'
 import CronBuilder from './CronBuilder.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
@@ -211,7 +212,11 @@ onBeforeUnmount(() => {
               @click.stop="showAgentDropdown = !showAgentDropdown"
             >
               <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-              <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
+              <ChevronDown
+                :size="14"
+                class="disclosure-chevron"
+                :class="{ 'disclosure-chevron--open': showAgentDropdown }"
+              />
             </button>
             <div
               v-if="showAgentDropdown"
@@ -302,18 +307,20 @@ onBeforeUnmount(() => {
                   class="order-btn"
                   :disabled="idx === 0"
                   title="Move up"
+                  aria-label="Move up"
                   @click="moveAgentUp(idx)"
                 >
-                  ▲
+                  <ArrowUp :size="12" />
                 </button>
                 <button
                   type="button"
                   class="order-btn"
                   :disabled="idx === selectedAgentIds.length - 1"
                   title="Move down"
+                  aria-label="Move down"
                   @click="moveAgentDown(idx)"
                 >
-                  ▼
+                  <ArrowDown :size="12" />
                 </button>
               </div>
             </div>
@@ -447,7 +454,7 @@ onBeforeUnmount(() => {
 .retention-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(90px, 100%), 1fr));
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 /* Multi-select */
@@ -457,7 +464,7 @@ onBeforeUnmount(() => {
 
 .multi-select-trigger {
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -468,7 +475,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-4);
   transition: border-color var(--duration-base);
   box-sizing: border-box;
   text-align: left;
@@ -486,12 +493,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.multi-select-arrow {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
 .multi-select-dropdown {
   position: absolute;
   top: calc(100% + 4px);
@@ -501,20 +502,20 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-lg);
-  padding: 0.4rem;
+  padding: var(--space-3);
   z-index: 100;
   max-height: 220px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: var(--space-1);
 }
 
 .multi-select-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.5rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--fs-base);
@@ -544,14 +545,14 @@ onBeforeUnmount(() => {
 .order-list {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-3);
 }
 
 .order-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.6rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -576,12 +577,12 @@ onBeforeUnmount(() => {
 
 .order-actions {
   display: flex;
-  gap: 0.2rem;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .order-btn {
-  padding: 0.4rem 0.6rem;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;

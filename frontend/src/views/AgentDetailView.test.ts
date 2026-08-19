@@ -1563,7 +1563,7 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
     // extractError is stubbed to a fixed string in this file, so the thrown
     // "not found" message cannot be asserted - only that it surfaced at all.
-    expect(wrapper.find('.state-error').exists()).toBe(true)
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
     expect(wrapper.find('.detail-name').exists()).toBe(false)
   })
 

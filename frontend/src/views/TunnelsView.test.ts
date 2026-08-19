@@ -164,7 +164,7 @@ describe('TunnelsView', () => {
 
     expect(wrapper.text()).toContain('No SSH tunnels configured')
     expect(wrapper.text()).toContain('Create a tunnel to access remote hosts.')
-    expect(wrapper.text()).toContain('Add tunnel')
+    expect(wrapper.text()).toContain('New tunnel')
   })
 
   describe('tunnel dialogs', () => {
@@ -318,7 +318,7 @@ describe('TunnelsView', () => {
       const { createTunnel } = await import('../api/tunnels')
       const wrapper = await render([...mockAgents, SPARE_AGENT])
       await openAdd(wrapper)
-      expect(wrapper.text()).toContain('Add tunnel')
+      expect(wrapper.text()).toContain('New tunnel')
 
       await clickButton(wrapper, 'Cancel')
 

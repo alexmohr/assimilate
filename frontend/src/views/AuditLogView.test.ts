@@ -293,7 +293,7 @@ describe('AuditLogView', () => {
       const wrapper = mountView('admin')
       await flushPromises()
 
-      expect(wrapper.find('.state-error').exists()).toBe(true)
+      expect(wrapper.find('.error-banner').exists()).toBe(true)
     })
 
     it('does not render the table on API error', async () => {

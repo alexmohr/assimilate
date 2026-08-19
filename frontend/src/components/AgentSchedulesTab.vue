@@ -109,14 +109,14 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
 .schedules-tab {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .tab-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 </style>

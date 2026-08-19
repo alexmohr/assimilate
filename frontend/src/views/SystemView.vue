@@ -831,7 +831,7 @@ async function resetSystem(): Promise<void> {
 .warning-text {
   font-size: var(--fs-base);
   color: var(--text-secondary);
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
 }
 
 .warning-bold {
@@ -839,13 +839,12 @@ async function resetSystem(): Promise<void> {
   color: var(--danger);
 }
 
-
 .database-total {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: var(--space-6);
+  margin-bottom: var(--space-6);
   color: var(--text-secondary);
   font-size: var(--fs-base);
 }
@@ -870,19 +869,19 @@ async function resetSystem(): Promise<void> {
 }
 
 .storage-share-value {
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--space-2);
 }
 
 .config-io-section {
   display: flex;
   flex-direction: column;
-  gap: 0.875rem;
+  gap: var(--space-5);
 }
 
 .config-io-row {
   display: flex;
   align-items: flex-start;
-  gap: 1rem;
+  gap: var(--space-6);
 }
 
 .config-io-label {
@@ -891,13 +890,13 @@ async function resetSystem(): Promise<void> {
   font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-primary);
-  padding-top: 0.375rem;
+  padding-top: var(--space-3);
 }
 
 .config-io-controls {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 
@@ -909,7 +908,7 @@ async function resetSystem(): Promise<void> {
 .file-label {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   cursor: pointer;
 }
 
@@ -927,8 +926,8 @@ async function resetSystem(): Promise<void> {
 }
 
 .import-result {
-  margin-top: 0.5rem;
-  padding: 0.75rem 1rem;
+  margin-top: var(--space-4);
+  padding: var(--space-5) var(--space-6);
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -937,23 +936,23 @@ async function resetSystem(): Promise<void> {
 
 .import-stats {
   display: flex;
-  gap: 1.25rem;
+  gap: var(--space-7);
   color: var(--text-secondary);
   flex-wrap: wrap;
 }
 
 .import-warnings {
-  margin: 0.5rem 0 0;
-  padding-left: 1.25rem;
+  margin: var(--space-4) 0 0;
+  padding-left: var(--space-7);
   color: var(--warning);
   font-size: var(--fs-sm);
 }
 
 .reset-result {
   display: flex;
-  gap: 1.25rem;
-  margin-top: 1rem;
-  padding: 0.75rem 1rem;
+  gap: var(--space-7);
+  margin-top: var(--space-6);
+  padding: var(--space-5) var(--space-6);
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -963,13 +962,13 @@ async function resetSystem(): Promise<void> {
 }
 
 .reset-list {
-  margin: 0.5rem 0;
-  padding-left: 1.25rem;
+  margin: var(--space-4) 0;
+  padding-left: var(--space-7);
   font-size: var(--fs-base);
   color: var(--text-primary);
 
   & li {
-    margin-bottom: 0.25rem;
+    margin-bottom: var(--space-2);
   }
 }
 </style>

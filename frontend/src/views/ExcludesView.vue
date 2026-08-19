@@ -57,7 +57,7 @@ onMounted(loadData)
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -65,13 +65,12 @@ onMounted(loadData)
     <div
       v-else
       class="layout"
-      :class="{ 'layout-with-ref': refOpen }"
     >
       <div class="panels">
         <section class="panel panel--sectioned">
           <div class="panel-header">
             <span class="panel-title">Patterns</span>
-            <span class="panel-hint">Applied to all schedules unless overridden</span>
+            <span class="field-hint">Applied to all schedules unless overridden</span>
           </div>
           <textarea
             v-model="text"
@@ -124,7 +123,7 @@ onMounted(loadData)
    pushed to the edges. */
 .panel .panel-header {
   justify-content: flex-start;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .excludes-view {
@@ -134,7 +133,7 @@ onMounted(loadData)
 
 .layout {
   display: flex;
-  gap: 1.5rem;
+  gap: var(--space-8);
   align-items: flex-start;
 }
 
@@ -142,7 +141,7 @@ onMounted(loadData)
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-7);
   min-width: 0;
 }
 
@@ -159,7 +158,7 @@ onMounted(loadData)
   font-family: var(--mono);
   font-size: var(--fs-sm);
   line-height: 1.6;
-  padding: 0.875rem 1.25rem;
+  padding: var(--space-5) var(--space-7);
   resize: vertical;
   min-height: 200px;
   width: 100%;
@@ -175,8 +174,8 @@ onMounted(loadData)
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 0.75rem 1.25rem;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-7);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-base);
 }

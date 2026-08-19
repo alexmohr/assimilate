@@ -77,7 +77,7 @@ defineExpose({ reload: load })
   />
   <div
     v-else-if="error"
-    class="state-msg state-error"
+    class="error-banner"
   >
     {{ error }}
   </div>

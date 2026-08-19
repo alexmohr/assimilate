@@ -363,7 +363,7 @@ test.describe('Schedules management', () => {
       .locator('select')
       .selectOption({ label: 'Integrity check' })
 
-    await page.getByRole('button', { name: 'Create schedule' }).click()
+    await page.getByRole('button', { name: 'New schedule' }).click()
 
     // The create request used to fail with "missing field `agent_ids`" because the
     // frontend sent client_ids/backup_sources_per_host instead of the names the

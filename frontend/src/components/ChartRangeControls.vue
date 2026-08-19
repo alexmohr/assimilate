@@ -45,12 +45,12 @@ const days = defineModel<T>('days', { required: true })
 .chart-range-controls {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .chart-range-select {
   width: auto;
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-2) var(--space-4);
   font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

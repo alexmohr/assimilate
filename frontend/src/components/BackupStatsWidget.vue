@@ -136,15 +136,15 @@ function navigateToActivity(status?: string): void {
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .mini-stat {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.15rem;
-  padding: 0.5rem;
+  gap: var(--space-1);
+  padding: var(--space-4);
   background: var(--bg-base);
   border-radius: var(--radius-sm);
 }

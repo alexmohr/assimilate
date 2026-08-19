@@ -680,14 +680,17 @@ onMounted(() => {
     />
 
     <!-- Channels Tab -->
-    <div v-if="activeTab === 'channels'">
+    <div
+      v-if="activeTab === 'channels'"
+      class="tab-content fade-in"
+    >
       <BaseSpinner
         v-if="loading"
         size="lg"
       />
       <div
         v-else-if="error"
-        class="state-msg state-error"
+        class="error-banner"
       >
         {{ error }}
       </div>
@@ -696,7 +699,7 @@ onMounted(() => {
         :icon="Bell"
         title="No notification channels"
         description="Create a channel to receive alerts."
-        action="Add channel"
+        action="New channel"
         @action="openAddChannel"
       />
       <div
@@ -782,7 +785,10 @@ onMounted(() => {
     </div>
 
     <!-- History Tab -->
-    <div v-if="activeTab === 'history'">
+    <div
+      v-if="activeTab === 'history'"
+      class="tab-content fade-in"
+    >
       <NotificationHistoryTab
         :deliveries="deliveries"
         :channels="channels"
@@ -1226,13 +1232,13 @@ onMounted(() => {
 .channels-list {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-6);
 }
 
 .channel-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem 1.25rem;
+  padding: var(--space-6) var(--space-7);
   background: var(--bg-card);
 }
 
@@ -1240,13 +1246,13 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-6);
 }
 
 .channel-info {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .channel-icon {
@@ -1261,29 +1267,29 @@ onMounted(() => {
 .channel-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .test-result {
-  margin-top: 0.5rem;
-  padding: 0.4rem 0.75rem;
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-sm);
   font-size: var(--fs-sm);
 }
 
 .channel-meta {
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-3);
 }
 
 .meta-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
   font-size: var(--fs-sm);
 }
 
@@ -1299,7 +1305,7 @@ onMounted(() => {
 .meta-edit-btn {
   background: none;
   border: none;
-  padding: 0.1rem 0.3rem;
+  padding: var(--space-1) var(--space-2);
   cursor: pointer;
   font-size: var(--fs-sm);
   color: var(--text-muted);
@@ -1318,27 +1324,27 @@ onMounted(() => {
   font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-left: auto;
-  margin-right: 0.75rem;
+  margin-right: var(--space-5);
 }
 
 .step-description {
   font-size: var(--fs-base);
   color: var(--text-secondary);
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 
 /* Events list (wizard + modal) */
 .events-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .event-item {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.4rem 0.5rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
 }
 
@@ -1353,13 +1359,13 @@ onMounted(() => {
 
 /* Scope sections (wizard + modal) */
 .scope-search {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
 }
 
 .scope-sections {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
   max-height: 320px;
   overflow-y: auto;
 }
@@ -1367,19 +1373,19 @@ onMounted(() => {
 .scope-section {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 /* The shared group label plus the space this list wants under it. */
 .scope-section-title {
-  margin-bottom: 0.2rem;
+  margin-bottom: var(--space-2);
 }
 
 .scope-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.4rem;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
   font-size: var(--fs-sm);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -1399,9 +1405,9 @@ onMounted(() => {
   background: color-mix(in srgb, var(--warning) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
   border-radius: var(--radius-sm);
-  padding: 0.6rem 0.8rem;
+  padding: var(--space-4) var(--space-5);
   font-size: var(--fs-base);
   color: var(--warning);
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 </style>

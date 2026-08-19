@@ -493,12 +493,12 @@ watch(
 .cron-builder {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-3);
 }
 
 .cron-input-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-4);
   align-items: center;
 }
 
@@ -511,7 +511,7 @@ watch(
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 0.55rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   box-sizing: border-box;
   transition: border-color var(--duration-base);
 }
@@ -522,7 +522,7 @@ watch(
 }
 
 .helper-toggle {
-  padding: 0.45rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -559,20 +559,20 @@ watch(
 }
 
 .helper-panel {
-  margin-top: 0.35rem;
-  padding: 0.75rem;
+  margin-top: var(--space-3);
+  padding: var(--space-5);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-4);
 }
 
 .helper-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .helper-label {
@@ -588,7 +588,7 @@ watch(
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 0.35rem 0.5rem;
+  padding: var(--space-3) var(--space-4);
   font-size: var(--fs-sm);
 }
 
@@ -602,7 +602,7 @@ watch(
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 0.35rem 0.5rem;
+  padding: var(--space-3) var(--space-4);
   font-size: var(--fs-sm);
 }
 
@@ -623,7 +623,7 @@ watch(
 .time-picker {
   display: flex;
   align-items: center;
-  gap: 0.2rem;
+  gap: var(--space-2);
 }
 
 .time-select {
@@ -638,12 +638,12 @@ watch(
 
 .day-picker {
   display: flex;
-  gap: 0.2rem;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
 .day-btn {
-  padding: 0.25rem 0.45rem;
+  padding: var(--space-2) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -672,7 +672,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 0.5rem;
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
 
@@ -684,7 +684,7 @@ watch(
 }
 
 .helper-apply-btn {
-  padding: 0.3rem 0.75rem;
+  padding: var(--space-2) var(--space-5);
   border: none;
   border-radius: var(--radius-sm);
   background: var(--accent);
@@ -700,14 +700,14 @@ watch(
 }
 
 .cron-preview {
-  margin-top: 0.25rem;
-  padding: 0.4rem 0.65rem;
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-input);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-2);
 }
 
 .cron-description {
@@ -720,7 +720,7 @@ watch(
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.25rem;
+  gap: var(--space-2);
   font-size: var(--fs-xs);
   color: var(--text-muted);
 }

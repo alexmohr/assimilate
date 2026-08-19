@@ -95,30 +95,32 @@ function select(report: ReportRow): void {
         <div class="panel-header">
           <span class="panel-title">Archives</span>
         </div>
-        <table class="data-table data-table--compact">
-          <thead>
-            <tr>
-              <th>Archive</th>
-              <th>Host</th>
-              <th>Date</th>
-              <th>Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="r in archives"
-              :key="r.id"
-              class="archive-row"
-              :class="{ selected: selected?.id === r.id }"
-              @click="select(r)"
-            >
-              <td class="cell-archive-name">{{ r.archive_name }}</td>
-              <td class="cell-host">{{ hostLabel(r.agent_id) }}</td>
-              <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
-              <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="data-table data-table--compact">
+            <thead>
+              <tr>
+                <th>Archive</th>
+                <th>Host</th>
+                <th>Date</th>
+                <th>Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="r in archives"
+                :key="r.id"
+                class="archive-row"
+                :class="{ selected: selected?.id === r.id }"
+                @click="select(r)"
+              >
+                <td class="cell-archive-name">{{ r.archive_name }}</td>
+                <td class="cell-host">{{ hostLabel(r.agent_id) }}</td>
+                <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
+                <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </template>
     <template #browser>
@@ -134,7 +136,7 @@ function select(report: ReportRow): void {
 
 <style scoped>
 .backups-list-panel .panel-header {
-  padding: 0.75rem 1rem;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border);
 }
 

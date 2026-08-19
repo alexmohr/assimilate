@@ -40,7 +40,7 @@ test.describe('Settings journey', () => {
     )
 
     await empty.locator('.empty-action').click()
-    await expect(page.locator('.modal-title')).toHaveText('Create API Token')
+    await expect(page.locator('.modal-title')).toHaveText('New API token')
   })
 
   test('notifications page shows configured channels', async ({ page }) => {

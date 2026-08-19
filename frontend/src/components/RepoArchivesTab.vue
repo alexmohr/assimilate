@@ -195,7 +195,7 @@ defineExpose({
   <ArchiveBrowserLayout>
     <template #list>
       <!-- Archive list -->
-      <div class="panel panel--sectioned archives-panel">
+      <div class="panel panel--sectioned">
         <div class="panel-header">
           <span class="panel-title">Archives</span>
         </div>
@@ -278,7 +278,9 @@ defineExpose({
             >
               <button
                 class="group-header"
+                type="button"
                 :class="{ collapsed: isGroupCollapsed(group.hostname) }"
+                :aria-expanded="!isGroupCollapsed(group.hostname)"
                 @click="toggleGroup(group.hostname)"
               >
                 <ChevronRight
@@ -430,9 +432,9 @@ defineExpose({
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  padding: 0.75rem 1rem;
+  gap: var(--space-6);
+  margin-bottom: var(--space-6);
+  padding: var(--space-5) var(--space-6);
   background: var(--warning-subtle);
   border: 1px solid var(--warning);
   border-radius: var(--radius);
@@ -442,7 +444,7 @@ defineExpose({
 .unmatched-banner-text {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
   color: var(--text-primary);
 }
 
@@ -453,8 +455,8 @@ defineExpose({
 
 .unmatched-hostname {
   display: inline-block;
-  margin: 0 0.25rem;
-  padding: 0.1rem 0.4rem;
+  margin: 0 var(--space-2);
+  padding: var(--space-1) var(--space-3);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -465,8 +467,8 @@ defineExpose({
 .archive-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border);
 }
 
@@ -478,7 +480,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   background: var(--accent-subtle);
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
@@ -497,9 +499,9 @@ defineExpose({
 .group-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   background: var(--bg-hover);
   border: none;
   cursor: pointer;
@@ -534,7 +536,7 @@ defineExpose({
   color: var(--text-muted);
   background: var(--bg-card);
   border-radius: var(--radius-pill);
-  padding: 0.1rem 0.5rem;
+  padding: var(--space-1) var(--space-4);
   min-width: 1.4rem;
   text-align: center;
 }
@@ -557,8 +559,8 @@ defineExpose({
 .archive-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem 0.4rem 1.5rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-8);
   border: none;
   background: none;
   cursor: pointer;
@@ -575,8 +577,8 @@ defineExpose({
 .archive-row-detailed {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 9.5rem 4.25rem 4.25rem auto;
-  gap: 0.75rem;
-  padding-left: 0.75rem;
+  gap: var(--space-5);
+  padding-left: var(--space-5);
 }
 
 .archive-row-delete {
@@ -618,7 +620,7 @@ defineExpose({
 
 .archive-delete-message {
   display: flex;
-  gap: 1rem;
+  gap: var(--space-6);
   align-items: flex-start;
 }
 

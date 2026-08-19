@@ -284,7 +284,7 @@ function cancelDownload(): void {
           {{
             restoreMethod === 'download'
               ? 'Download to browser'
-              : `Agent restore → ${hostname}:${targetPath}`
+              : `Agent restore to ${hostname}:${targetPath}`
           }}
         </dd>
       </dl>
@@ -337,9 +337,9 @@ function cancelDownload(): void {
 <style scoped>
 .steps-indicator {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-4);
   justify-content: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-8);
 }
 
 .step-dot {
@@ -374,11 +374,11 @@ function cancelDownload(): void {
 
 .field-label {
   display: block;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 
 .field-hint {
-  margin-top: 0.4rem;
+  margin-top: var(--space-3);
 }
 
 .full-width {
@@ -391,7 +391,7 @@ function cancelDownload(): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 0.55rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   font-size: var(--fs-base);
   font-family: var(--mono);
   resize: vertical;
@@ -408,34 +408,34 @@ function cancelDownload(): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 0.55rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   font-size: var(--fs-base);
 }
 
 .radio-group {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  margin-bottom: 1rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
 }
 
 .radio-option {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   font-size: var(--fs-base);
   color: var(--text-primary);
   cursor: pointer;
 }
 
 .mt-1 {
-  margin-top: 1rem;
+  margin-top: var(--space-6);
 }
 
 .confirm-list {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 0.4rem 1rem;
+  gap: var(--space-3) var(--space-6);
   font-size: var(--fs-base);
 }
 
@@ -454,20 +454,20 @@ function cancelDownload(): void {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.1rem 0.4rem;
+  padding: var(--space-1) var(--space-3);
   font-size: var(--fs-xs);
-  margin-right: 0.3rem;
-  margin-bottom: 0.2rem;
+  margin-right: var(--space-2);
+  margin-bottom: var(--space-2);
 }
 
 .success-msg {
   text-align: center;
-  padding: 2rem 0;
+  padding: var(--space-9) 0;
   color: var(--success);
   font-weight: 500;
 }
 
 .success-msg p {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 </style>

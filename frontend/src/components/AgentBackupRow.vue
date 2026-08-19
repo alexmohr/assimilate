@@ -150,7 +150,7 @@ const hasDetail = computed(
 .agent-row-detail {
   flex-direction: column;
   align-items: stretch;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .agent-row-detail:hover {
@@ -163,14 +163,14 @@ const hasDetail = computed(
 
 /* The shared label plus the space this block wants under it. */
 .detail-label {
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--space-2);
 }
 
 .detail-output {
   font-size: var(--fs-2xs);
   background: var(--bg-code);
   border-radius: var(--radius-sm);
-  padding: 0.5rem;
+  padding: var(--space-4);
   margin: 0;
   overflow-x: auto;
   white-space: pre-wrap;

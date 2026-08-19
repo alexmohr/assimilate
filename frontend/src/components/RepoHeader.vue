@@ -254,6 +254,6 @@ async function revealPassphrase(): Promise<void> {
 .repo-import {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 </style>

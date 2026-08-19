@@ -235,7 +235,7 @@ const refOpen = ref(false)
 }
 
 .ref-toggle {
-  padding: 0.15rem 0.5rem;
+  padding: var(--space-1) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -259,7 +259,7 @@ const refOpen = ref(false)
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-top: 0.5rem;
+  margin-top: var(--space-4);
   display: block;
 }
 </style>

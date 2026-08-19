@@ -59,15 +59,15 @@ defineProps<{
 .entity-badge-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: var(--space-3);
   align-items: center;
 }
 
 .entity-issue-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.18rem 0.55rem;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-pill);
   font-size: var(--fs-2xs);
   font-weight: 600;
@@ -96,8 +96,8 @@ defineProps<{
 .entity-status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.18rem 0.55rem;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-pill);
   font-size: var(--fs-2xs);
   font-weight: 600;
@@ -110,8 +110,8 @@ defineProps<{
 .entity-running-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.18rem 0.55rem;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-pill);
   font-size: var(--fs-2xs);
   font-weight: 600;

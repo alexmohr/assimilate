@@ -49,6 +49,7 @@ const passwordSubmitting = ref(false)
 const {
   tokens,
   loading: tokensLoading,
+  loadError: tokensLoadError,
   showCreateModal,
   createName,
   createError,
@@ -320,7 +321,7 @@ onMounted(async () => {
           class="btn btn-primary btn-sm"
           @click="openCreateToken"
         >
-          Create token
+          New token
         </button>
       </div>
 
@@ -328,6 +329,13 @@ onMounted(async () => {
         v-if="tokensLoading"
         size="lg"
       />
+
+      <div
+        v-else-if="tokensLoadError"
+        class="error-banner"
+      >
+        {{ tokensLoadError }}
+      </div>
 
       <ApiTokenTable
         v-else-if="tokens.length"
@@ -340,7 +348,7 @@ onMounted(async () => {
         :icon="KeyRound"
         title="No API tokens yet"
         description="Create a token to let an external tool authenticate without your password."
-        action="Create token"
+        action="New token"
         @action="openCreateToken"
       />
     </div>
@@ -510,62 +518,64 @@ onMounted(async () => {
         {{ sessionsError }}
       </div>
 
-      <table
+      <div
         v-else-if="sessions.length"
-        class="data-table"
+        class="table-wrap table-wrap--framed"
       >
-        <thead>
-          <tr>
-            <th>Created</th>
-            <th>Last active</th>
-            <th>Expires</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="session in sessions"
-            :key="session.id"
-          >
-            <td class="cell-date">
-              {{ formatDate(session.created_at) }}
-            </td>
-            <td class="cell-date">
-              {{ formatDate(session.last_seen_at) }}
-            </td>
-            <td class="cell-date">
-              {{ formatDate(session.expires_at) }}
-            </td>
-            <td class="cell-type">
-              {{ session.remember_me ? 'Remember Me' : 'Session' }}
-            </td>
-            <td>
-              <span
-                v-if="session.current"
-                class="badge badge--success"
-                >Current</span
-              >
-              <span
-                v-else
-                class="badge badge--neutral"
-                >Active</span
-              >
-            </td>
-            <td>
-              <button
-                v-if="!session.current"
-                class="btn btn-sm btn-ghost btn-danger-text"
-                title="Revoke session"
-                @click="confirmRevokeSession(session.id)"
-              >
-                <Trash2 :size="14" />
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Last active</th>
+              <th>Expires</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="session in sessions"
+              :key="session.id"
+            >
+              <td class="cell-date">
+                {{ formatDate(session.created_at) }}
+              </td>
+              <td class="cell-date">
+                {{ formatDate(session.last_seen_at) }}
+              </td>
+              <td class="cell-date">
+                {{ formatDate(session.expires_at) }}
+              </td>
+              <td class="cell-type">
+                {{ session.remember_me ? 'Remember Me' : 'Session' }}
+              </td>
+              <td>
+                <span
+                  v-if="session.current"
+                  class="badge badge--success"
+                  >Current</span
+                >
+                <span
+                  v-else
+                  class="badge badge--neutral"
+                  >Active</span
+                >
+              </td>
+              <td>
+                <button
+                  v-if="!session.current"
+                  class="btn btn-sm btn-ghost btn-danger-text"
+                  title="Revoke session"
+                  @click="confirmRevokeSession(session.id)"
+                >
+                  <Trash2 :size="14" />
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <div
         v-else
@@ -626,7 +636,7 @@ onMounted(async () => {
     <!-- Create Token Modal -->
     <BaseModal
       :open="showCreateModal"
-      :title="newTokenPlaintext ? 'Token Created' : 'Create API Token'"
+      :title="newTokenPlaintext ? 'Token created' : 'New API token'"
       @close="closeCreateModal"
     >
       <template v-if="!newTokenPlaintext">
@@ -761,7 +771,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 
 .tokens-desc {
@@ -772,7 +782,7 @@ onMounted(async () => {
 
 .loading {
   color: var(--text-muted);
-  padding: 2rem;
+  padding: var(--space-9);
   text-align: center;
 }
 
@@ -780,17 +790,17 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 2rem;
+  gap: var(--space-9);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: var(--space-7) var(--space-8);
 }
 
 .setting-info {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-2);
 }
 
 .setting-label {
@@ -805,14 +815,14 @@ onMounted(async () => {
 
 .theme-options {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .theme-option {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.45rem 1rem;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
@@ -844,11 +854,11 @@ onMounted(async () => {
 .totp-status-section {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-6);
 }
 
 .totp-status-badge {
-  padding: 0.75rem 1rem;
+  padding: var(--space-5) var(--space-6);
   border-radius: var(--radius-sm);
   font-weight: 600;
   font-size: var(--fs-md);
@@ -875,7 +885,7 @@ onMounted(async () => {
 .totp-setup-section {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-6);
 }
 
 /* Heading over a block inside the two-factor tab. Named for where it is:
@@ -896,7 +906,7 @@ onMounted(async () => {
 .qr-container {
   display: flex;
   justify-content: center;
-  padding: 1rem;
+  padding: var(--space-6);
   background: white;
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -922,13 +932,13 @@ onMounted(async () => {
 
 .totp-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .recovery-codes-section {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-6);
 }
 
 .recovery-codes-warning {
@@ -941,8 +951,8 @@ onMounted(async () => {
 .recovery-codes-list {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.5rem;
-  padding: 1rem;
+  gap: var(--space-4);
+  padding: var(--space-6);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -952,7 +962,7 @@ onMounted(async () => {
   font-family: var(--mono);
   font-size: var(--fs-sm);
   color: var(--text-primary);
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-card);
   border-radius: var(--radius-sm);
 }
@@ -961,7 +971,7 @@ onMounted(async () => {
 .sessions-desc {
   color: var(--text-muted);
   font-size: var(--fs-base);
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 
 .cell-type {

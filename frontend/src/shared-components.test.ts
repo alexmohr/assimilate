@@ -48,6 +48,7 @@ const OWNED = [
   'btn-ghost',
   'btn-danger',
   'btn-danger-text',
+  'btn-warning-text',
   'btn-sm',
   'btn-xs',
   'panel',
@@ -185,9 +186,15 @@ const OWNED = [
   'pulse-dot',
   'spinning',
   'fade-in',
+  'tab-content',
   'detail-pre',
   'error-pre',
   'warning-pre',
+  'disclosure-head',
+  'disclosure-title',
+  'disclosure-chevron',
+  'disclosure-body',
+  'icon-list',
   'detail-header',
   'detail-identity',
   'detail-title-row',
@@ -375,5 +382,63 @@ describe('shared components', () => {
     expect(segmented).toContain('role="radiogroup"')
     expect(segmented).toContain('role="radio"')
     expect(segmented).toContain(':aria-checked')
+  })
+})
+
+/**
+ * Class names used in a template that no rule anywhere defines. Five of these
+ * were shipping at once: `.info-title-row` (so an Edit button fell onto its
+ * own line), `.state-msg-sm` (six in-panel messages rendered as full-page
+ * blocks), `.page-subtitle`, `.btn-warning-text` and `.layout-with-ref`. They
+ * look like styling and do nothing, and nothing was checking.
+ */
+const HOOKS = new Set([
+  // Carried for a test to select on rather than for styling: a marker for what
+  // a row or a control *is*, where the alternative is a brittle nth-child.
+  'repo-status-badge',
+  'run-card-system',
+  'action-filter',
+  'date-input',
+  'tag-group',
+])
+
+function classSelectors(css: string): Set<string> {
+  return new Set([...css.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]))
+}
+
+describe('class names', () => {
+  it('resolves every class used in a template to a rule somewhere', () => {
+    const defined = classSelectors(STYLE_CSS)
+    for (const m of classSelectors(readFileSync(join(SRC, 'assets/auth.css'), 'utf-8'))) {
+      defined.add(m)
+    }
+    for (const file of FILES) {
+      const text = readFileSync(file, 'utf-8')
+      for (const block of text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) {
+        for (const name of classSelectors(block[1])) defined.add(name)
+      }
+    }
+
+    const offenders: string[] = []
+    for (const file of FILES) {
+      const text = readFileSync(file, 'utf-8')
+      const template = text.includes('<template>')
+        ? text.split('<template>')[1].split('</template>')[0]
+        : ''
+      const used = new Set<string>()
+      // Static class lists, and the keys of an object-syntax `:class`.
+      for (const m of template.matchAll(/(?<![:\w-])class="([^"{}]*)"/g)) {
+        for (const name of m[1].split(/\s+/).filter(Boolean)) used.add(name)
+      }
+      for (const m of template.matchAll(/:class="\{([^"]*)\}"/g)) {
+        for (const k of m[1].matchAll(/'([a-zA-Z][\w-]*)'\s*:/g)) used.add(k[1])
+      }
+      for (const name of used) {
+        if (!defined.has(name) && !HOOKS.has(name)) {
+          offenders.push(`${relative(SRC, file)}: .${name}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
   })
 })

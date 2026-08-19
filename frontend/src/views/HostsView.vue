@@ -767,7 +767,7 @@ watch(
           class="fleet-version-chip"
           :class="{ 'fleet-version-chip-current': v.current }"
         >
-          {{ v.version }}{{ v.current ? ' (current)' : '' }} × {{ v.count }}
+          {{ v.version }}{{ v.current ? ' (current)' : '' }}: {{ v.count }}
         </span>
       </div>
     </div>
@@ -778,7 +778,7 @@ watch(
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -787,7 +787,7 @@ watch(
       :icon="Server"
       title="No agents registered"
       description="Add your first agent to start backing up."
-      action="Add agent"
+      action="New agent"
       @action="showAddDialog = true"
     />
     <div
@@ -1082,7 +1082,7 @@ watch(
 .card-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: var(--space-2);
 }
 
 /* Tag filter dropdown */
@@ -1092,14 +1092,14 @@ watch(
 .card-top-badges {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
 .hidden-toggle {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
   cursor: pointer;
   font-size: var(--fs-sm);
   color: var(--text-secondary);
@@ -1121,18 +1121,18 @@ watch(
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.85rem 1.1rem 1rem;
-  margin-bottom: 1.25rem;
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  margin-bottom: var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-4);
 }
 
 .fleet-summary-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .fleet-summary-title {
@@ -1151,7 +1151,7 @@ watch(
 .fleet-version-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .fleet-version-chip {
@@ -1159,7 +1159,7 @@ watch(
   align-items: center;
   font-family: var(--mono);
   font-size: var(--fs-2xs);
-  padding: 0.15rem 0.5rem;
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-pill);
   background: var(--bg-hover);
   color: var(--text-secondary);

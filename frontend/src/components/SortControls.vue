@@ -4,10 +4,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts" generic="F extends string">
+import { ArrowDown, ArrowUp } from '@lucide/vue'
 import type { SortDir } from '../composables/useListSort'
 
 /**
- * The "Sort: Name ↑ | Size | ..." strip on a list view. The agents,
+ * The "Sort: Name (asc) | Size | ..." strip on a list view. The agents,
  * repositories and schedules views each carried the same four-button block
  * with the same arrow expression repeated per button.
  */
@@ -33,7 +34,11 @@ defineEmits<{ toggle: [field: F] }>()
       @click="$emit('toggle', option.field)"
     >
       {{ option.label }}
-      {{ field === option.field ? (direction === 'asc' ? '↑' : '↓') : '' }}
+      <component
+        :is="direction === 'asc' ? ArrowUp : ArrowDown"
+        v-if="field === option.field"
+        :size="12"
+      />
     </button>
   </div>
 </template>

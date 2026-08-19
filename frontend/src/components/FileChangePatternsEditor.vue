@@ -114,17 +114,17 @@ function removeRow(index: number): void {
 .fcp-editor {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .fcp-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-4);
   align-items: center;
 }
 
 .fcp-input {
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

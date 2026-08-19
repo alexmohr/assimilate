@@ -198,7 +198,7 @@ onUnmounted(() => {
   justify-content: center;
   z-index: 300;
   backdrop-filter: blur(2px);
-  padding: 1rem;
+  padding: var(--space-6);
 }
 
 .modal-dialog {
@@ -229,8 +229,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 1.25rem 1.5rem 0;
+  gap: var(--space-5);
+  padding: var(--space-7) var(--space-8) 0;
   flex: none;
 }
 
@@ -274,7 +274,7 @@ onUnmounted(() => {
 }
 
 .modal-body {
-  padding: 1.25rem 1.5rem;
+  padding: var(--space-7) var(--space-8);
   overflow-y: auto;
   min-height: 0;
 }
@@ -283,8 +283,8 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 0 1.5rem 1.25rem;
+  gap: var(--space-5);
+  padding: 0 var(--space-8) var(--space-7);
   flex: none;
 }
 

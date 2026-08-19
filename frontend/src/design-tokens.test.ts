@@ -87,6 +87,28 @@ describe('design tokens', () => {
     expect(literals).toEqual([])
   })
 
+  it('declares the full spacing scale', () => {
+    for (let step = 1; step <= 10; step += 1) {
+      expect(DEFINED.has(`--space-${step}`)).toBe(true)
+    }
+  })
+
+  it('uses the spacing scale for every padding, margin and gap', () => {
+    // A raw rem here is what turned one gap into 32 near-identical gaps. Other
+    // units stay legal: a hairline is px, a centred block is auto, and a value
+    // sized to its own text is em.
+    const spacing =
+      /(?<![-\w])((?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?):\s*([^;]+);/g
+    const literals: string[] = []
+    for (const file of FILES) {
+      for (const m of styleBlocks(file).matchAll(spacing)) {
+        if (!/\d*\.?\d+rem/.test(m[2])) continue
+        literals.push(`${relative(SRC, file)}: ${m[1]}: ${m[2].trim()}`)
+      }
+    }
+    expect(literals).toEqual([])
+  })
+
   it('uses radius tokens for every rounded corner', () => {
     const literals: string[] = []
     for (const file of FILES) {

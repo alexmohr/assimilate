@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
 import { RouterLink } from 'vue-router'
+import { X } from '@lucide/vue'
 import type { DashboardFinding } from '../types/dashboard'
 import { relativeTime } from '../utils/format'
 import { apiClient } from '../api/client'
@@ -100,10 +101,12 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
           </RouterLink>
           <button
             class="dismiss-btn"
+            type="button"
             title="Dismiss"
+            aria-label="Dismiss"
             @click="dismiss(finding)"
           >
-            ✕
+            <X :size="12" />
           </button>
         </div>
       </div>
@@ -119,7 +122,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
 .panel-heading {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-6);
   align-items: start;
 }
 
@@ -129,7 +132,7 @@ h2 {
 }
 
 p {
-  margin: 0.25rem 0 1rem;
+  margin: var(--space-2) 0 var(--space-6);
   color: var(--text-muted);
   font-size: var(--fs-xs);
 }
@@ -148,9 +151,9 @@ p {
 .finding-row {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr) auto auto;
-  gap: 0.85rem;
+  gap: var(--space-5);
   align-items: center;
-  padding: 0.8rem 0;
+  padding: var(--space-5) 0;
   border-top: 1px solid var(--border);
 }
 
@@ -175,7 +178,7 @@ p {
 .finding-body {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem 0.55rem;
+  gap: var(--space-2) var(--space-4);
   min-width: 0;
 }
 
@@ -204,7 +207,7 @@ p {
 .finding-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .finding-action {
@@ -225,7 +228,7 @@ p {
   cursor: pointer;
   color: var(--text-muted);
   font-size: var(--fs-2xs);
-  padding: 0.15rem 0.35rem;
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-sm);
   line-height: 1;
   transition:

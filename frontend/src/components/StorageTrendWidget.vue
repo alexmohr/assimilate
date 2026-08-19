@@ -123,6 +123,6 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 .charts-col {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-7);
 }
 </style>

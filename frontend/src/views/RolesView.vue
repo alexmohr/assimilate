@@ -249,7 +249,7 @@ onMounted((): void => {
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -258,14 +258,14 @@ onMounted((): void => {
       :icon="ShieldCheck"
       title="No roles yet"
       description="Roles bundle permissions so they can be granted to users and groups."
-      action="Create role"
+      action="New role"
       @action="showCreateModal = true"
     />
 
     <!-- Permission Matrix -->
     <div
       v-else
-      class="matrix-wrap"
+      class="table-wrap"
     >
       <table class="data-table data-table--compact">
         <thead>
@@ -335,7 +335,7 @@ onMounted((): void => {
     <BaseModal
       :open="showCreateModal"
       size="lg"
-      title="Create role"
+      title="New role"
       form
       @close="showCreateModal = false"
       @submit="submitCreate"
@@ -447,10 +447,6 @@ onMounted((): void => {
   }
 }
 
-.matrix-wrap {
-  overflow-x: auto;
-}
-
 .role-name-col {
   text-align: left !important;
   min-width: 140px;
@@ -467,7 +463,7 @@ onMounted((): void => {
   text-orientation: mixed;
   transform: rotate(180deg);
   white-space: nowrap;
-  padding: 0.25rem 0;
+  padding: var(--space-2) 0;
 }
 
 .actions-col {
@@ -483,7 +479,7 @@ onMounted((): void => {
   text-align: left !important;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .role-name {
@@ -522,8 +518,8 @@ onMounted((): void => {
 .permissions-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.5rem;
-  padding: 0.75rem;
+  gap: var(--space-4);
+  padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
@@ -532,7 +528,7 @@ onMounted((): void => {
 .perm-checkbox {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
   font-size: var(--fs-sm);
   cursor: pointer;
   color: var(--text-primary);

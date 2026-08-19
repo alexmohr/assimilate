@@ -531,7 +531,7 @@ describe('ProfileView', () => {
     async function openCreateTokenModal(wrapper: ReturnType<typeof renderWithPlugins>) {
       await flushPromises()
       await clickApiTokensTab(wrapper)
-      const createBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'Create token')
+      const createBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'New token')
       expect(createBtn).toBeDefined()
       await createBtn!.trigger('click')
       await flushPromises()
@@ -556,7 +556,7 @@ describe('ProfileView', () => {
       await flushPromises()
 
       expect(wrapper.find('.modal-dialog').exists()).toBe(true)
-      expect(wrapper.find('.modal-title').text()).toContain('Token')
+      expect(wrapper.find('.modal-title').text()).toContain('token')
     })
 
     it('creates a token from the name typed in the dialog', async () => {

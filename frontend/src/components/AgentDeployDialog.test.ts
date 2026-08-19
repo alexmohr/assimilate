@@ -167,10 +167,18 @@ describe('AgentDeployDialog', () => {
       document.querySelector<HTMLButtonElement>('.disclosure-head')?.click()
     }
 
-    it('starts collapsed', async () => {
+    it('starts collapsed on an upgrade, where a working unit already exists', async () => {
       mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0' })
       await flushPromises()
       expect(isOpen()).toBe(false)
+    })
+
+    // A first-time deploy has no established unit yet, so loading or editing
+    // one is part of setting the host up rather than a detail to scroll past.
+    it('starts open on a first-time deploy', async () => {
+      mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      await flushPromises()
+      expect(isOpen()).toBe(true)
     })
 
     it('opens and closes on click', async () => {

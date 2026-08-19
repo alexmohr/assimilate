@@ -30,7 +30,7 @@ defineProps<{
 .chart-cell {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .metric-label {

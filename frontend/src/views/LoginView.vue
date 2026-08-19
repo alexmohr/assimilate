@@ -244,7 +244,7 @@ function toggleRecoveryCode(): void {
 .remember-me {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .remember-me input[type='checkbox'] {
@@ -273,14 +273,14 @@ function toggleRecoveryCode(): void {
 
 .totp-info {
   text-align: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 
 .totp-info-text {
   font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 0.25rem;
+  margin: 0 0 var(--space-2);
 }
 
 .totp-info-subtext {

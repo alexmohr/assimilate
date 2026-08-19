@@ -17,6 +17,7 @@ import BaseModal from '../components/BaseModal.vue'
 const {
   tokens,
   loading,
+  loadError,
   showCreateModal,
   createName,
   createError,
@@ -59,6 +60,13 @@ onMounted(fetchTokens)
       size="lg"
     />
 
+    <div
+      v-else-if="loadError"
+      class="error-banner"
+    >
+      {{ loadError }}
+    </div>
+
     <ApiTokenTable
       v-else-if="tokens.length"
       :tokens="tokens"
@@ -70,14 +78,14 @@ onMounted(fetchTokens)
       :icon="Key"
       title="No API tokens"
       description="Create one to get started."
-      action="Create token"
+      action="New token"
       @action="showCreateModal = true"
     />
 
     <!-- One dialog, two states: collect a name, then reveal the token once. -->
     <BaseModal
       :open="showCreateModal"
-      :title="newTokenPlaintext ? 'Token Created' : 'Create API Token'"
+      :title="newTokenPlaintext ? 'Token created' : 'New API token'"
       :form="!newTokenPlaintext"
       @close="closeCreateModal"
       @submit="submitCreate"

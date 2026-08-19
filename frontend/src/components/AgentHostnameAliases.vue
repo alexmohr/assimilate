@@ -133,7 +133,7 @@ defineExpose({ reload: load })
 .pattern-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .pattern-delete {
@@ -143,7 +143,7 @@ defineExpose({ reload: load })
 
 .pattern-add-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-4);
   align-items: center;
   flex-wrap: wrap;
 }

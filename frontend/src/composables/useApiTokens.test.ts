@@ -75,13 +75,14 @@ describe('useApiTokens', () => {
     expect(tokens.value).toEqual(mockTokens)
   })
 
-  it('resets loading to false even when fetch fails', async () => {
-    const { loading, fetchTokens } = useApiTokens()
+  it('reports a failed fetch rather than leaving an empty list unexplained', async () => {
+    const { loading, loadError, fetchTokens } = useApiTokens()
     mockApiGet.mockRejectedValue(new Error('network error'))
 
-    // fetchTokens uses try/finally without catch, so the promise rejects
-    await expect(fetchTokens()).rejects.toThrow('network error')
+    await fetchTokens()
+
     expect(loading.value).toBe(false)
+    expect(loadError.value).toContain('network error')
   })
 
   it('openCreate resets state and opens modal', () => {

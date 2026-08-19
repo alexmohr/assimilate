@@ -134,14 +134,14 @@ async function deploy(): Promise<void> {
 .deploy-hint {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
 }
 
 .deploy-fields {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 
 .deploy-fields .field {
@@ -151,7 +151,7 @@ async function deploy(): Promise<void> {
 .deploy-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .result-error {

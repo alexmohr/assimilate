@@ -87,7 +87,7 @@ describe('TokensView', () => {
     const newButton = buttons.find((b) => b.text().includes('New'))
     await newButton!.trigger('click')
 
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
   })
 
   it('renders token table with correct headers', async () => {
@@ -128,7 +128,7 @@ describe('TokensView', () => {
 
     await wrapper.find('.empty-action').trigger('click')
 
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
   })
 
   it('closes the create modal via the close button and clicking the overlay', async () => {
@@ -139,7 +139,7 @@ describe('TokensView', () => {
       .findAll('button')
       .find((b) => b.text().includes('New'))!
       .trigger('click')
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
 
     await wrapper.find('button.modal-close').trigger('click')
     expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
@@ -148,7 +148,7 @@ describe('TokensView', () => {
       .findAll('button')
       .find((b) => b.text().includes('New'))!
       .trigger('click')
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
 
     await wrapper.find('.modal-backdrop').trigger('mousedown')
     expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
@@ -171,7 +171,7 @@ describe('TokensView', () => {
 
     expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'deploy-key' })
     expect(wrapper.text()).toContain('secret-token-value')
-    expect(wrapper.text()).toContain('Token Created')
+    expect(wrapper.text()).toContain('Token created')
 
     await wrapper.find('.token-box button').trigger('click')
     expect(mockCopyToClipboard).toHaveBeenCalledWith('secret-token-value')

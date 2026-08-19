@@ -218,9 +218,9 @@ async function compare(): Promise<void> {
 <style scoped>
 .diff-controls {
   display: flex;
-  gap: 1rem;
+  gap: var(--space-6);
   align-items: flex-end;
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--space-7);
 }
 
 .diff-select-group {
@@ -229,7 +229,7 @@ async function compare(): Promise<void> {
 
 .field-label {
   display: block;
-  margin-bottom: 0.4rem;
+  margin-bottom: var(--space-3);
 }
 
 .compare-btn {
@@ -237,22 +237,22 @@ async function compare(): Promise<void> {
 }
 
 .form-error {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
 }
 
 .diff-results {
-  margin-top: 0.5rem;
+  margin-top: var(--space-4);
 }
 
 .diff-section {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .diff-summary {
-  padding: 0.6rem 1rem;
+  padding: var(--space-4) var(--space-6);
   font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
@@ -283,7 +283,7 @@ async function compare(): Promise<void> {
 }
 
 .diff-item {
-  padding: 0.35rem 1rem;
+  padding: var(--space-3) var(--space-6);
   font-family: var(--mono);
   font-size: var(--fs-xs);
   border-top: 1px solid var(--border-subtle);
@@ -303,7 +303,7 @@ async function compare(): Promise<void> {
 
 .no-diff {
   text-align: center;
-  padding: 1.5rem;
+  padding: var(--space-8);
   color: var(--text-muted);
   font-size: var(--fs-base);
 }

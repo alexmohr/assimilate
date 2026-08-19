@@ -345,8 +345,8 @@ describe('HostsView', () => {
     const chips = wrapper.findAll('.fleet-version-chip')
     expect(chips.map((c) => c.text())).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('0.1.89 (current) × 1'),
-        expect.stringContaining('0.1.87 × 1'),
+        expect.stringContaining('0.1.89 (current): 1'),
+        expect.stringContaining('0.1.87: 1'),
       ]),
     )
   })

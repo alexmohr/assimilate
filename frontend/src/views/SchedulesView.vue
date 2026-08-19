@@ -489,7 +489,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       :icon="Clock"
       title="No schedules configured"
       description="Create a schedule to automate your backups."
-      action="Create schedule"
+      action="New schedule"
       @action="router.push('/schedules/new')"
     />
 
@@ -603,7 +603,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 .schedule-toggle {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .schedule-toggle-label {
@@ -613,14 +613,14 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 }
 
 .schedule-group + .schedule-group {
-  margin-top: 1.75rem;
+  margin-top: var(--space-8);
 }
 
 .schedule-group-header {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .schedule-group-title {

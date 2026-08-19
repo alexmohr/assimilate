@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search, SlidersHorizontal, Activity, X } from '@lucide/vue'
+import { Search, SlidersHorizontal, Activity, X, ArrowRight } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -536,7 +536,11 @@ function filterByRun(runId: string): void {
         <div class="live-session-header">
           <span class="pulse-dot pulse-dot--success" />
           <span class="live-session-title">Live backup output</span>
-          <span class="live-session-meta">{{ session.hostname }} → {{ session.target_name }}</span>
+          <span class="live-session-meta">
+            {{ session.hostname }}
+            <ArrowRight :size="12" />
+            {{ session.target_name }}
+          </span>
         </div>
         <div class="live-session-output">
           <div
@@ -977,7 +981,7 @@ function filterByRun(runId: string): void {
 .activity-log {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-7);
   color: var(--text-primary);
 }
 
@@ -993,7 +997,7 @@ function filterByRun(runId: string): void {
 }
 
 .log-table th {
-  padding: 0.75rem 1rem;
+  padding: var(--space-5) var(--space-6);
   text-align: left;
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -1006,7 +1010,7 @@ function filterByRun(runId: string): void {
 .run-list {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-4);
 }
 
 .run-card.expanded {
@@ -1015,7 +1019,7 @@ function filterByRun(runId: string): void {
 
 .run-card-summary {
   cursor: pointer;
-  padding: 0.85rem 1.1rem;
+  padding: var(--space-5) var(--space-6);
   transition: background var(--duration-fast);
 }
 
@@ -1027,13 +1031,13 @@ function filterByRun(runId: string): void {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .run-card-host {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
+  gap: var(--space-4);
   min-width: 0;
   flex-wrap: wrap;
 }
@@ -1050,21 +1054,21 @@ function filterByRun(runId: string): void {
 }
 
 .run-card-meta {
-  margin-top: 0.35rem;
+  margin-top: var(--space-3);
   font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 
 .run-card-message {
-  margin: 0.35rem 0 0;
+  margin: var(--space-3) 0 0;
   font-size: var(--fs-base);
   color: var(--text-secondary);
   word-break: break-word;
 }
 
 .run-card-foot {
-  margin-top: 0.6rem;
-  padding-top: 0.6rem;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
@@ -1078,7 +1082,7 @@ function filterByRun(runId: string): void {
 }
 
 .detail-panel {
-  padding: 1.1rem 1.1rem 1.25rem;
+  padding: var(--space-6) var(--space-6) var(--space-7);
   border-top: 1px solid var(--border);
   background: var(--bg-base);
 }
@@ -1091,7 +1095,7 @@ function filterByRun(runId: string): void {
 .detail-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .detail-section {
@@ -1103,7 +1107,7 @@ function filterByRun(runId: string): void {
 }
 
 .detail-heading {
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-4);
   font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
@@ -1129,7 +1133,7 @@ function filterByRun(runId: string): void {
 
 .command-pre {
   margin: 0;
-  padding: 0.75rem 1rem;
+  padding: var(--space-5) var(--space-6);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1143,7 +1147,7 @@ function filterByRun(runId: string): void {
 .load-more {
   display: flex;
   justify-content: center;
-  padding: 0.5rem 0;
+  padding: var(--space-4) 0;
 }
 
 .filter-group-search {
@@ -1178,7 +1182,7 @@ function filterByRun(runId: string): void {
 }
 
 .log-entry-row td {
-  padding: 0.4rem 0.75rem;
+  padding: var(--space-3) var(--space-5);
   vertical-align: top;
 }
 
@@ -1207,14 +1211,14 @@ function filterByRun(runId: string): void {
   display: block;
   font-size: var(--fs-xs);
   color: var(--text-muted);
-  margin-top: 0.1rem;
+  margin-top: var(--space-1);
 }
 
 .run-id-filter {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.5rem;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
@@ -1229,7 +1233,7 @@ function filterByRun(runId: string): void {
 .live-sessions {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .live-session-card {
@@ -1242,8 +1246,8 @@ function filterByRun(runId: string): void {
 .live-session-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
   background: var(--bg-base);
 }
@@ -1266,7 +1270,7 @@ function filterByRun(runId: string): void {
 .live-session-output {
   max-height: 200px;
   overflow-y: auto;
-  padding: 0.5rem 1rem;
+  padding: var(--space-4) var(--space-6);
   background: var(--bg-base);
   font-family: var(--mono);
   font-size: var(--fs-xs);
@@ -1277,6 +1281,6 @@ function filterByRun(runId: string): void {
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.5;
-  padding: 0.05rem 0;
+  padding: var(--space-1) 0;
 }
 </style>

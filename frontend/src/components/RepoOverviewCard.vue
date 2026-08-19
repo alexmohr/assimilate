@@ -224,7 +224,7 @@ onMounted(checkHostKeyMismatch)
 </script>
 
 <template>
-  <div class="repo-info-pane">
+  <div>
     <div class="pane-head">
       <p class="pane-lede">Where this repository lives and how borg writes to it.</p>
       <div
@@ -463,8 +463,8 @@ onMounted(checkHostKeyMismatch)
 }
 
 .ssh-key-box {
-  margin-top: 0.75rem;
-  padding: 0.85rem;
+  margin-top: var(--space-5);
+  padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-card);

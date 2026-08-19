@@ -43,7 +43,7 @@ describe('ChannelConfigFields', () => {
     const wrapper = mount()
     const labels = wrapper.findAll('.field-label').map((l) => l.text())
     expect(labels).toEqual(
-      expect.arrayContaining(['SMTP Host', 'SMTP user', 'Port', 'SMTP password']),
+      expect.arrayContaining(['SMTP host', 'SMTP user', 'Port', 'SMTP password']),
     )
   })
 
@@ -166,12 +166,12 @@ describe('ChannelConfigFields', () => {
 
     it('shows only the fields for the selected channel type', () => {
       const email = mount()
-      expect(() => fieldByLabel(email, 'SMTP Host')).not.toThrow()
+      expect(() => fieldByLabel(email, 'SMTP host')).not.toThrow()
       expect(() => fieldByLabel(email, 'URL')).toThrow()
 
       const webhook = mount({ channelType: 'webhook' })
       expect(() => fieldByLabel(webhook, 'URL')).not.toThrow()
-      expect(() => fieldByLabel(webhook, 'SMTP Host')).toThrow()
+      expect(() => fieldByLabel(webhook, 'SMTP host')).toThrow()
     })
   })
 })

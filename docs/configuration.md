@@ -15,7 +15,7 @@
 | `ASSIMILATE_DB_MAX_CONN` | `20` | No | Maximum number of connections in the PostgreSQL connection pool. |
 | `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` | `300` | No | Maximum time a single `borg list`/`borg info` query may run before it is killed and the operation fails. Bounds hangs (e.g. an unreachable repository) so an import never gets stuck at "Listing archives". Increase for very large repositories over slow links. |
 | `ASSIMILATE_BORG_LIST_STAGE_TIMEOUT_SECS` | `1800` | No | Upper bound on the total time an archive-listing stage may spend retrying `borg list` while the repository is locked by another operation (e.g. a running backup). Without this, lock-wait retries could keep an import stuck at "Listing archives" for up to 90 minutes. |
-| `ASSIMILATE_SECURE_COOKIES` | `true` | No | When `true` (default), session cookies are set with the `Secure` flag (requires HTTPS). Set to `false` for local development without TLS. |
+| `ASSIMILATE_SECURE_COOKIES` | `true` | No | When `true` (default), session cookies are set with the `Secure` flag (requires HTTPS) and responses carry a `Strict-Transport-Security` header. Set to `false` for local development without TLS. |
 | `AGENT_BINARY_DIR` | — | No | Directory containing arch-specific agent binaries (`agent-x86_64`, `agent-aarch64`, etc.) used by the SSH deploy feature. If unset, the server looks in `/app/` (Docker) or alongside its own executable. |
 | `VAPID_PUBLIC_KEY` | — | No | Web Push VAPID public key. Used as a fallback for browser push notifications when no key is stored in system settings. See [Notifications](notifications.md). |
 | `VAPID_PRIVATE_KEY` | — | No | Web Push VAPID private key. Fallback companion to `VAPID_PUBLIC_KEY`; keys stored via the API take precedence. |

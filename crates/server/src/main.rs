@@ -17,7 +17,7 @@ use server::{
     client_ip::ClientIpResolver,
     db,
     log_buffer::{LogBuffer, LogBufferLayer},
-    middleware::csp_headers,
+    middleware::security_headers,
     notifications::NotificationService,
     openapi::ApiDoc,
     rate_limit::{
@@ -125,7 +125,7 @@ async fn main() -> Result<(), StartupError> {
     let background_task_tracker = state.background_task_tracker.clone();
     let app = build_router(&state, login_router)
         .with_state(state)
-        .layer(axum_middleware::from_fn(csp_headers))
+        .layer(axum_middleware::from_fn(security_headers))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
     let app = configure_docs_and_static(app).await;
 

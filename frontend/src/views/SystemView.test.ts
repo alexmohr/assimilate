@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import SystemView from './SystemView.vue'
+import TimezoneSelect from '../components/TimezoneSelect.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -274,6 +275,61 @@ describe('SystemView', () => {
     expect(mockPut).toHaveBeenCalledWith(
       '/system/settings',
       expect.objectContaining({ session_idle_timeout_minutes: 120 }),
+    )
+  })
+
+  // Every retention field was read back from the API in a test, but nothing
+  // typed into one, so the v-model write path each field owns went unexercised
+  // - a field wired to the wrong form key would still have passed.
+  it('sends every edited retention field on save', async () => {
+    setupSuccessMocks()
+    mockPut.mockResolvedValue({
+      data: {
+        timezone: 'Europe/Berlin',
+        retention_days: 14,
+        report_retention_days: 180,
+        failed_report_retention_days: 200,
+        system_event_retention_days: 45,
+        notification_delivery_retention_days: 15,
+        borg_query_timeout_secs: 900,
+        session_idle_timeout_minutes: 60,
+      },
+    })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const edits: [string, string, string, number][] = [
+      ['#settings-retention', '14', 'retention_days', 14],
+      ['#settings-report-retention', '180', 'report_retention_days', 180],
+      ['#settings-failed-retention', '200', 'failed_report_retention_days', 200],
+      ['#settings-event-retention', '45', 'system_event_retention_days', 45],
+      [
+        '#settings-notification-delivery-retention',
+        '15',
+        'notification_delivery_retention_days',
+        15,
+      ],
+      ['#settings-borg-timeout', '900', 'borg_query_timeout_secs', 900],
+    ]
+
+    for (const [selector, typed] of edits) {
+      await wrapper.find<HTMLInputElement>(selector).setValue(typed)
+    }
+
+    // The timezone is a component rather than an input, so it writes back
+    // through its model event.
+    await wrapper.findComponent(TimezoneSelect).vm.$emit('update:modelValue', 'Europe/Berlin')
+    await flushPromises()
+
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({
+        ...Object.fromEntries(edits.map(([, , key, value]) => [key, value])),
+        timezone: 'Europe/Berlin',
+      }),
     )
   })
 

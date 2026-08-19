@@ -25,6 +25,7 @@ vi.mock('../composables/useTimezone', () => ({
 
 import { renderWithPlugins } from '../test-utils'
 import RepoDetailView from './RepoDetailView.vue'
+import RepoOverviewCard from '../components/RepoOverviewCard.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -214,6 +215,16 @@ async function openSettings(
 ): Promise<void> {
   await wrapper.vm.$router.replace({ query: { tab: 'settings', section } })
   await flushPromises()
+}
+
+/** The tab strip button carrying this label. */
+function tabButton(
+  wrapper: ReturnType<typeof renderWithPlugins>,
+  label: string,
+): ReturnType<ReturnType<typeof renderWithPlugins>['find']> {
+  const btn = wrapper.findAll('[role="tab"]').find((b) => b.text() === label)
+  if (!btn) throw new Error(`no tab labelled ${label}`)
+  return btn
 }
 
 async function renderRepoDetail(
@@ -1385,6 +1396,66 @@ describe('RepoDetailView', () => {
       // content would otherwise leak into document.body for whatever test
       // runs next.
       wrapper.unmount()
+    })
+  })
+  describe('tab and section navigation', () => {
+    // The Overview summarises the schedules and hands off to the tab that
+    // owns them, rather than repeating the whole list twice on one page.
+    it('jumps to the Schedules tab from the Overview summary', async () => {
+      const wrapper = await renderRepoDetail()
+
+      const viewAll = wrapper.findAll('button').find((b) => b.text() === 'View all')
+      expect(viewAll).toBeDefined()
+
+      await viewAll!.trigger('click')
+      await flushPromises()
+
+      expect(tabButton(wrapper, 'Schedules').attributes('aria-selected')).toBe('true')
+    })
+
+    // ?section= is what makes a settings pane linkable and survives a reload,
+    // so choosing a pane has to write it back rather than only read it.
+    it('records the chosen settings section in the query', async () => {
+      const wrapper = await renderRepoDetail()
+      await openSettings(wrapper, 'repository')
+
+      const quota = wrapper.findAll('.settings-nav-item').find((b) => b.text() === 'Storage quota')
+      expect(quota).toBeDefined()
+
+      await quota!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.vm.$route.query.section).toBe('quota')
+      // The tab it belongs to is kept, so the link round-trips.
+      expect(wrapper.vm.$route.query.tab).toBe('settings')
+    })
+
+    // Editing a repository's own fields changes the numbers the header and the
+    // Overview tiles show, so a save has to pull the record again rather than
+    // leave the page describing the pre-edit state.
+    it('refetches the repository when its settings card saves', async () => {
+      const wrapper = await renderRepoDetail()
+      await openSettings(wrapper, 'repository')
+
+      const before = vi
+        .mocked(apiClient.get)
+        .mock.calls.filter((c) => String(c[0]) === '/repos/1').length
+
+      wrapper.findComponent(RepoOverviewCard).vm.$emit('saved')
+      await flushPromises()
+
+      const after = vi
+        .mocked(apiClient.get)
+        .mock.calls.filter((c) => String(c[0]) === '/repos/1').length
+      expect(after).toBeGreaterThan(before)
+    })
+
+    it('falls back to the repository pane for an unknown section', async () => {
+      const wrapper = await renderRepoDetail()
+      await openSettings(wrapper, 'not-a-section')
+
+      const current = wrapper.find('.settings-nav-item[aria-current="true"]')
+      expect(current.text()).toBe('Repository')
     })
   })
 })

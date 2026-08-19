@@ -105,11 +105,11 @@ test.describe('Repositories management journey', () => {
     page,
   }) => {
     await loginAsAdmin(page)
-    await page.goto('/repos/1')
+    await page.goto('/repos/1?tab=settings&section=danger')
     await page.waitForLoadState('networkidle')
 
-    const dangerZone = page.locator('.danger-zone')
-    const breakLockBtn = dangerZone.getByRole('button', { name: 'Break Lock', exact: true })
+    const dangerZone = page.locator('.settings-pane')
+    const breakLockBtn = dangerZone.getByRole('button', { name: 'Break lock', exact: true })
     await expect(breakLockBtn).toBeVisible()
     await breakLockBtn.click()
 
@@ -118,7 +118,7 @@ test.describe('Repositories management journey', () => {
       'stale local cache lock',
     )
 
-    await page.getByRole('button', { name: 'Yes, Break Lock', exact: true }).click()
+    await page.getByRole('button', { name: 'Yes, break lock', exact: true }).click()
 
     // Demo repo has no active lock, so borg break-lock is a safe no-op that
     // still reports success - the exact wording isn't asserted since it's

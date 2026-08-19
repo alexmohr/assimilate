@@ -246,7 +246,7 @@ After changing the password, the dashboard loads and shows no agents yet.
 
 An *agent* represents a machine running the Assimilate agent binary.
 
-1. Navigate to **Agents** and click **Add Agent**.
+1. Navigate to **Agents** and click **New agent**.
 2. Enter a display name for the machine.
 3. Click **Save** — the server generates a unique agent token.
 4. Copy the token shown on the agent detail page.
@@ -280,7 +280,7 @@ echo "<public key from System page>" >> ~/.ssh/authorized_keys
 
 ### Create the repository
 
-1. Navigate to **Repos** and click **Add Repository**.
+1. Navigate to **Repos** and click **New repository**.
 2. Fill in the connection details:
 
     | Field | Example |
@@ -303,7 +303,7 @@ See [Repository Management](repositories.md) for pruning policies and passphrase
 3. Set the paths to back up (e.g., `/home`, `/etc`).
 4. Choose a cron expression or interval (e.g., `0 2 * * *` for 2 AM daily).
 5. Click **Save**.
-6. Click **Run Now** to trigger an immediate backup.
+6. Click **Run now** to trigger an immediate backup.
 
 The dashboard shows the backup progress in real time. Once complete, the archive appears under **Archives** for the repository.
 

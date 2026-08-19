@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 Storage quotas let you set warning and critical deduplicated storage thresholds per repository. Each threshold has its own configurable **action**: send a notification only, block all backups for the repository, or disable just the schedule that pushed the repository over the limit.
 
-Storage quota configuration is available on the repository detail page under the **Storage Quota** section.
+Storage quota configuration lives on the repository detail page, under **Settings → Storage quota**.
 
 ![Repository Detail with Quota](assets/screenshots/repo-detail.png)
 

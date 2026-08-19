@@ -79,7 +79,7 @@ The activity feed updates automatically via WebSocket. When a backup completes o
 
 ## Pagination
 
-The activity view loads entries in pages. Click **Load More** at the bottom to fetch older entries. The entry count is shown in the page header.
+The activity view loads entries in pages. Click **Load more** at the bottom to fetch older entries. The entry count is shown in the page header.
 
 ## API Endpoints
 

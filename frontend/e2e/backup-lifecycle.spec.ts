@@ -4,7 +4,7 @@
 import { expect, loginAsAdmin, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
-// Navigate to schedule 1 - it has no seed reports so Run Now is always visible.
+// Navigate to schedule 1 - it has no seed reports so Run now is always visible.
 async function openFirstSchedule(page: Page): Promise<string> {
   await page.goto('/schedules/1')
   await page.waitForURL(/\/schedules\/1/, { timeout: 10_000 })
@@ -49,8 +49,8 @@ test('cancel button is shown when a backup is in progress', async ({ page }) => 
   await page.reload()
   await page.waitForTimeout(500)
 
-  await expect(page.getByRole('button', { name: 'Cancel Backup' })).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByRole('button', { name: 'Run Now' })).not.toBeVisible()
+  await expect(page.getByRole('button', { name: 'Cancel backup' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('button', { name: 'Run now' })).not.toBeVisible()
 })
 
 test('clicking cancel sends the request and shows a toast', async ({ page }) => {
@@ -66,14 +66,14 @@ test('clicking cancel sends the request and shows a toast', async ({ page }) => 
   )
   await page.reload()
 
-  const cancelBtn = page.getByRole('button', { name: 'Cancel Backup' })
+  const cancelBtn = page.getByRole('button', { name: 'Cancel backup' })
   await expect(cancelBtn).toBeVisible({ timeout: 10_000 })
   await cancelBtn.click()
 
   await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
 })
 
-test('after cancel the Run Now button is restored on next report poll', async ({ page }) => {
+test('after cancel the Run now button is restored on next report poll', async ({ page }) => {
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
 
@@ -89,7 +89,7 @@ test('after cancel the Run Now button is restored on next report poll', async ({
   )
   await page.reload()
 
-  const cancelBtn = page.getByRole('button', { name: 'Cancel Backup' })
+  const cancelBtn = page.getByRole('button', { name: 'Cancel backup' })
   await expect(cancelBtn).toBeVisible({ timeout: 10_000 })
   // Flip the mock so subsequent report polls return cancelled.
   isCancelled = true
@@ -98,11 +98,11 @@ test('after cancel the Run Now button is restored on next report poll', async ({
 
   // Navigate back to the same schedule - the route mock now returns cancelled.
   await page.goto(`/schedules/${id}`)
-  await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible()
+  await expect(page.getByRole('button', { name: 'Run now' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('button', { name: 'Cancel backup' })).not.toBeVisible()
 })
 
-test('Run Now shows a success toast when the API accepts the request', async ({ page }) => {
+test('Run now shows a success toast when the API accepts the request', async ({ page }) => {
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
 
@@ -114,14 +114,14 @@ test('Run Now shows a success toast when the API accepts the request', async ({ 
   )
 
   await page.reload()
-  const runNowBtn = page.getByRole('button', { name: 'Run Now' })
+  const runNowBtn = page.getByRole('button', { name: 'Run now' })
   await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
   await runNowBtn.click()
 
   await expect(page.getByText(/started\./i)).toBeVisible({ timeout: 5_000 })
 })
 
-test('Run Now shows an error toast when the API rejects the request', async ({ page }) => {
+test('Run now shows an error toast when the API rejects the request', async ({ page }) => {
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
 
@@ -138,7 +138,7 @@ test('Run Now shows an error toast when the API rejects the request', async ({ p
 
   await page.reload()
 
-  const runNowBtn = page.getByRole('button', { name: 'Run Now' })
+  const runNowBtn = page.getByRole('button', { name: 'Run now' })
   await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
   await runNowBtn.click()
 
@@ -147,27 +147,27 @@ test('Run Now shows an error toast when the API rejects the request', async ({ p
   await expect(runNowBtn).toBeEnabled({ timeout: 5_000 })
 })
 
-test('Run Now triggers a backup that eventually completes', async ({ page }) => {
+test('Run now triggers a backup that eventually completes', async ({ page }) => {
   await loginAsAdmin(page)
   await openFirstSchedule(page)
 
-  // The demo runs real agents, so Run Now dispatches an actual borg operation.
-  const runNowBtn = page.getByRole('button', { name: 'Run Now' })
+  // The demo runs real agents, so Run now dispatches an actual borg operation.
+  const runNowBtn = page.getByRole('button', { name: 'Run now' })
   await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
   await runNowBtn.click()
 
-  // Wait for the agent to pick up the job (Cancel Backup appears via BackupStarted WS event).
-  // If the backup is so fast that it already completed, Run Now will still be visible - both
+  // Wait for the agent to pick up the job (Cancel backup appears via BackupStarted WS event).
+  // If the backup is so fast that it already completed, Run now will still be visible - both
   // states are acceptable here; we just must not stay in an error state.
   const cancelOrRun = page.getByRole('button', { name: /cancel backup|run now/i })
   await expect(cancelOrRun).toBeVisible({ timeout: 15_000 })
 
   // Wait until the backup is no longer in progress (BackupCompleted resets the button).
-  // Check both conditions in the same poll to avoid a race where "Run Now" briefly appears
-  // while "Cancel Backup" is still in the DOM, or a new backup starts immediately after.
+  // Check both conditions in the same poll to avoid a race where "Run now" briefly appears
+  // while "Cancel backup" is still in the DOM, or a new backup starts immediately after.
   await expect(async () => {
-    await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 500 })
-    await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible({
+    await expect(page.getByRole('button', { name: 'Run now' })).toBeVisible({ timeout: 500 })
+    await expect(page.getByRole('button', { name: 'Cancel backup' })).not.toBeVisible({
       timeout: 500,
     })
   }).toPass({ timeout: 120_000 })
@@ -177,13 +177,13 @@ test('cancel running backup and verify it is marked cancelled', async ({ page })
   await loginAsAdmin(page)
   await openFirstSchedule(page)
 
-  // Wait for either Run Now or Cancel Backup to appear.
-  const runNowBtn = page.getByRole('button', { name: 'Run Now' })
-  const cancelBtn = page.getByRole('button', { name: 'Cancel Backup' })
+  // Wait for either Run now or Cancel backup to appear.
+  const runNowBtn = page.getByRole('button', { name: 'Run now' })
+  const cancelBtn = page.getByRole('button', { name: 'Cancel backup' })
   const anyBtn = page.getByRole('button', { name: /cancel backup|run now/i })
   await expect(anyBtn).toBeVisible({ timeout: 15_000 })
 
-  // If Cancel Backup is already visible, a backup is already running.
+  // If Cancel backup is already visible, a backup is already running.
   if (await cancelBtn.isVisible()) {
     // No need to start a new one - proceed to cancel.
   } else {
@@ -197,6 +197,6 @@ test('cancel running backup and verify it is marked cancelled', async ({ page })
   await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
 
   // Wait for the frontend to poll reports and detect the cancellation.
-  await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 60_000 })
-  await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible()
+  await expect(page.getByRole('button', { name: 'Run now' })).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByRole('button', { name: 'Cancel backup' })).not.toBeVisible()
 })

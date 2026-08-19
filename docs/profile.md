@@ -23,7 +23,7 @@ The **API Tokens** tab lets you create and manage personal API tokens for progra
 
 ### Creating a Token
 
-1. Click **Create Token**.
+1. Click **New token**.
 2. Enter a descriptive name (e.g., "CI pipeline", "monitoring script").
 3. Click **Create**.
 4. **Copy the token immediately** — it is shown only once and cannot be retrieved later.

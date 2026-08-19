@@ -21,7 +21,7 @@ test.describe('Agent detail', () => {
     await openAgent(page)
 
     // The header is the identity, and it stays put across every tab.
-    await expect(page.locator('.agent-hostname')).toHaveText('web-server-01')
+    await expect(page.locator('.detail-name')).toHaveText('web-server-01')
 
     const tiles = page.locator('.tile .stat-label')
     await expect(tiles).toHaveText(['Last backup', 'Next run', 'Repositories', 'Recent runs'])
@@ -44,14 +44,14 @@ test.describe('Agent detail', () => {
   test('rare actions live behind the header overflow menu', async ({ page }) => {
     await openAgent(page)
 
-    await expect(page.locator('.agent-menu-item')).toHaveCount(0)
-    await page.locator('.agent-menu-toggle').click()
+    await expect(page.locator('.overflow-menu-item')).toHaveCount(0)
+    await page.locator('.overflow-toggle').click()
 
-    await expect(page.locator('.agent-menu-item', { hasText: 'Edit identity' })).toBeVisible()
-    await expect(page.locator('.agent-menu-item', { hasText: 'Regenerate token' })).toBeVisible()
+    await expect(page.locator('.overflow-menu-item', { hasText: 'Edit identity' })).toBeVisible()
+    await expect(page.locator('.overflow-menu-item', { hasText: 'Regenerate token' })).toBeVisible()
 
     // Editing opens a dialog rather than an inline panel that reflows the page.
-    await page.locator('.agent-menu-item', { hasText: 'Edit identity' }).click()
+    await page.locator('.overflow-menu-item', { hasText: 'Edit identity' }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
     await expect(page.locator('input[placeholder="hostname"]')).toHaveValue('web-server-01')
   })
@@ -82,7 +82,7 @@ test.describe('Agent detail', () => {
 
     // A tab, not a route: the URL keeps the agent, and the header stays.
     await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=settings/)
-    await expect(page.locator('.agent-hostname')).toHaveText('web-server-01')
+    await expect(page.locator('.detail-name')).toHaveText('web-server-01')
 
     await expect(page.locator('.settings-nav-item')).toHaveText([
       'Identity',

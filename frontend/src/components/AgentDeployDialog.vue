@@ -45,10 +45,11 @@ const deployError = ref<string | null>(null)
 const fetchServiceLoading = ref(false)
 const fetchServiceError = ref<string | null>(null)
 const serviceContentTouched = ref(false)
-// Closed by default: the service unit is the largest thing in the dialog and
-// is rarely hand-edited, so it should not be the first thing a returning
-// user has to scroll past.
-const serviceUnitOpen = ref(false)
+// Closed by default on an upgrade, where a working unit already exists and
+// is rarely hand-edited. Open by default on a first-time deploy: there is no
+// established default yet, and loading or customizing the unit is often part
+// of setting the host up in the first place.
+const serviceUnitOpen = ref(props.agentVersion === null)
 const deployResult = ref<{
   success: boolean
   skipped: boolean

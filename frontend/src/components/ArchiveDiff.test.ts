@@ -44,6 +44,21 @@ function mountDiff(open = true): ReturnType<typeof mount> {
   })
 }
 
+/**
+ * Picks the two archives and presses Compare, which is the setup every test
+ * about the *result* of a diff needs before it can assert anything.
+ */
+async function compareArchives(): Promise<ReturnType<typeof mountDiff>> {
+  const wrapper = mountDiff()
+  const selects = wrapper.findAll('select')
+  await selects[0].setValue(ARCHIVES[0].name)
+  await selects[1].setValue(ARCHIVES[1].name)
+  await wrapper.find('button.compare-btn').trigger('click')
+  await wrapper.vm.$nextTick()
+  await wrapper.vm.$nextTick()
+  return wrapper
+}
+
 describe('ArchiveDiff', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -100,13 +115,7 @@ describe('ArchiveDiff', () => {
       },
     })
 
-    const wrapper = mountDiff()
-    const selects = wrapper.findAll('select')
-    await selects[0].setValue(ARCHIVES[0].name)
-    await selects[1].setValue(ARCHIVES[1].name)
-    await wrapper.find('button.compare-btn').trigger('click')
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
+    const wrapper = await compareArchives()
 
     expect(wrapper.text()).toContain('/etc/nginx/new.conf')
     expect(wrapper.text()).toContain('/etc/nginx/old.conf')
@@ -121,13 +130,7 @@ describe('ArchiveDiff', () => {
       data: { added: [], removed: [], modified: [] },
     })
 
-    const wrapper = mountDiff()
-    const selects = wrapper.findAll('select')
-    await selects[0].setValue(ARCHIVES[0].name)
-    await selects[1].setValue(ARCHIVES[1].name)
-    await wrapper.find('button.compare-btn').trigger('click')
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
+    const wrapper = await compareArchives()
 
     expect(wrapper.text()).toContain('No differences found between the two archives.')
   })
@@ -135,13 +138,7 @@ describe('ArchiveDiff', () => {
   it('shows error message when API call fails', async () => {
     mockGet.mockRejectedValue(new Error('Server error'))
 
-    const wrapper = mountDiff()
-    const selects = wrapper.findAll('select')
-    await selects[0].setValue(ARCHIVES[0].name)
-    await selects[1].setValue(ARCHIVES[1].name)
-    await wrapper.find('button.compare-btn').trigger('click')
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
+    const wrapper = await compareArchives()
 
     expect(wrapper.find('.form-error').text()).toBe('Server error')
   })

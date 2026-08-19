@@ -35,17 +35,21 @@ Next to the **Run** button, an **Enabled**/**Disabled** switch lets you pause or
 
 Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the Overdue chip to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
 
+### Schedule Detail Tabs
+
+A saved schedule's detail page opens on **Overview**: an at-a-glance summary (repository, on-failure behavior, next/last run, human-readable cron), the list of target agents with their health, and a preview of recent backups. Settings — name, cron, targets, retention, and (for backup-type schedules) the advanced options below — live under a **Settings** tab with its own sub-navigation, so editing a schedule no longer means scrolling past its status. Editing takes effect on save; nothing here is a live view of a running backup except the progress card described below.
+
+![Schedule Detail](assets/screenshots/schedule-detail.png)
+
+On the Overview tab, a target that's behind shows an **Overdue** badge and a **Retry** button, both in the attention banner at the top and in its row further down. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
+
+While a backup for the schedule is running, the Overview tab also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
+
 ### Backups Tab
 
 For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view.
 
 The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
-
-![Schedule Detail](assets/screenshots/schedule-detail.png)
-
-On the schedule detail page, each target under **Schedule Info** shows an **Overdue** badge and a **Retry** button when it's behind. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
-
-While a backup for the schedule is running, the **Schedule Info** card also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
 ## Cron Expression Builder
 

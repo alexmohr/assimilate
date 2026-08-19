@@ -25,3 +25,15 @@ export function normalizeBackupStatus(rawStatus: string): NormalizedBackupStatus
   if (s === 'cancelled') return 'cancelled'
   return 'failed'
 }
+
+/**
+ * Reports with an outcome. A pending or started run hasn't finished, so it
+ * has nothing to show in a "recent backups" list yet - the agent and
+ * schedule Overview tabs both filter to this before slicing a preview.
+ */
+export function filterSettledReports<T extends { status: string }>(reports: readonly T[]): T[] {
+  return reports.filter((r) => {
+    const status = normalizeBackupStatus(r.status)
+    return status !== 'pending' && status !== 'started'
+  })
+}

@@ -64,15 +64,16 @@ describe('AgentHeader', () => {
     expect(mount({ is_connected: false }).find('.badge--neutral').text()).toContain('Offline')
   })
 
-  // The row used to hold up to eight identical ghost buttons. Navigation stays
-  // visible; everything rare or destructive is one affordance away.
-  it('keeps the visible row to navigation only when no upgrade is available', () => {
-    expect(visibleActions(mount())).toEqual(['Activity log'])
+  // The row used to hold up to eight identical ghost buttons. Now it holds
+  // only the one thing that is actionable right now; everything else,
+  // including navigation like Activity log, is one affordance away.
+  it('keeps the visible row empty when no upgrade is available', () => {
+    expect(visibleActions(mount())).toEqual([])
   })
 
   it('gives the accented slot to an available upgrade', () => {
     const wrapper = mount({}, { deployLabel: 'Upgrade' })
-    expect(visibleActions(wrapper)).toEqual(['Upgrade agent', 'Activity log'])
+    expect(visibleActions(wrapper)).toEqual(['Upgrade agent'])
     expect(wrapper.find('.btn-primary').text()).toBe('Upgrade agent')
     expect(wrapper.find('.badge--info').text()).toBe('Upgrade available')
   })
@@ -92,6 +93,7 @@ describe('AgentHeader', () => {
     await openMenu(wrapper)
 
     expect(menuLabels(wrapper)).toEqual([
+      'Activity log',
       'Edit identity',
       'Deploy SSH key',
       'Regenerate token',
@@ -99,17 +101,25 @@ describe('AgentHeader', () => {
     ])
   })
 
-  it.each([
-    ['Activity log', 'activityLog'],
-    ['Upgrade agent', 'deploy'],
-  ])('emits %s from the visible row', async (label, event) => {
+  it('emits deploy from the visible row', async () => {
     const wrapper = mount({}, { deployLabel: 'Upgrade' })
     await wrapper
       .findAll('.agent-actions > button')
-      .find((b) => b.text().trim() === label)!
+      .find((b) => b.text().trim() === 'Upgrade agent')!
       .trigger('click')
 
-    expect(wrapper.emitted(event)).toHaveLength(1)
+    expect(wrapper.emitted('deploy')).toHaveLength(1)
+  })
+
+  it('emits activityLog from the menu', async () => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.agent-menu-item')
+      .find((i) => i.text().trim() === 'Activity log')!
+      .trigger('click')
+
+    expect(wrapper.emitted('activityLog')).toHaveLength(1)
   })
 
   // Escape and a click anywhere else both close the menu; a menu that only

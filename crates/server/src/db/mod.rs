@@ -6220,23 +6220,32 @@ pub async fn get_activity_feed_days(
     hostname: Option<&str>,
     schedule_id: Option<i64>,
     run_id: Option<&str>,
+    // Caps rows *per schedule*, not the result set overall - a plain global
+    // LIMIT would let one frequently-running schedule's reports crowd out
+    // every row belonging to a less-frequent one in the ranked window.
+    per_schedule_limit: Option<i64>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
     sqlx::query_as!(
         ActivityRow,
-        "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
-         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS \"schedule_name?\", br.run_id FROM backup_reports br JOIN \
-         agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s \
-         ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
-         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
-         make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text \
-         IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND \
-         ($5::text IS NULL OR br.run_id = $5) ORDER BY br.started_at DESC",
+        "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!\", \
+         duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, \
+         schedule_name AS \"schedule_name?\", run_id FROM ( SELECT br.id, a.hostname, r.name AS \
+         target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, \
+         br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, \
+         ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM \
+         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+         LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
+         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND \
+         br.started_at > NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR \
+         br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR \
+         br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint \
+         IS NULL OR rn <= $6 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         repo_id,
         hostname,
         schedule_id,
         run_id,
+        per_schedule_limit,
     )
     .fetch_all(pool)
     .await

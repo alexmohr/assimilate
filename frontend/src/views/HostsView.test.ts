@@ -226,6 +226,131 @@ describe('HostsView', () => {
     expect(wrapper.text()).not.toContain('protected-host')
   })
 
+  it('shows the fleet summary band with agent, online and schedule counts', async () => {
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const band = wrapper.find('.fleet-summary')
+    expect(band.exists()).toBe(true)
+    // Fixture has 2 agents, one connected (protected-host).
+    expect(band.text()).toContain('2 agents')
+    expect(band.text()).toContain('1 online')
+  })
+
+  async function mountFleetWithScheduleRoutes(
+    overrides: Record<string, () => Promise<unknown>>,
+  ): Promise<ReturnType<typeof mount>> {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (overrides[url]) return overrides[url]()
+      if (url === '/agents') return Promise.resolve({ data: agents })
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+          },
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('counts a schedule targeting multiple agents once in the fleet total, not once per agent', async () => {
+    // Schedule 1 targets both agents, so /stats/schedule-counts (grouped
+    // per agent_id) reports it twice - the fleet total must still be 1.
+    const wrapper = await mountFleetWithScheduleRoutes({
+      '/stats/schedule-counts': () =>
+        Promise.resolve({
+          data: [
+            { agent_id: 1, count: 1 },
+            { agent_id: 2, count: 1 },
+          ],
+        }),
+      '/schedules': () => Promise.resolve({ data: [{ id: 1 }] }),
+    })
+
+    expect(wrapper.find('.fleet-summary').text()).toContain('1 schedule')
+  })
+
+  it('falls back to 0 fleet schedules when the /schedules request fails', async () => {
+    const wrapper = await mountFleetWithScheduleRoutes({
+      '/schedules': () => Promise.reject(new Error('network error')),
+    })
+
+    expect(wrapper.find('.fleet-summary').text()).toContain('0 schedules')
+  })
+
+  it('still renders the agent list when tags, health, schedule-count and overview requests all fail', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: agents })
+      return Promise.reject(new Error('network error'))
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.findAll('.entity-card')).toHaveLength(2)
+    expect(wrapper.find('.fleet-summary').text()).toContain('2 agents')
+  })
+
+  it('groups the fleet summary by agent version', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            { ...agents[0], agent_version: '0.1.89' },
+            { ...agents[1], agent_version: '0.1.87' },
+          ],
+        })
+      }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+          },
+        })
+      }
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: '0.1.89' } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const chips = wrapper.findAll('.fleet-version-chip')
+    expect(chips.map((c) => c.text())).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('0.1.89 (current) × 1'),
+        expect.stringContaining('0.1.87 × 1'),
+      ]),
+    )
+  })
+
   it('formats relative last-seen times and agent versions', async () => {
     const recent = new Date(Date.now() - 90 * 60 * 1000).toISOString()
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
@@ -421,6 +546,110 @@ describe('HostsView issue rows', () => {
 
     expect(wrapper.find('.entity-card').classes()).not.toContain('entity-card--notable')
     expect(wrapper.find('.entity-badge-row').exists()).toBe(false)
+  })
+
+  it('shows "No cadence" on the coverage meter for an agent with no enabled schedule', async () => {
+    const wrapper = await mountSingleAgent({})
+
+    expect(wrapper.find('.coverage-status-no-cadence').text()).toBe('No cadence')
+  })
+
+  it("derives the coverage meter from the agent's most recent backup and shortest cadence", async () => {
+    const { wrapper } = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          last_status: 'success',
+          last_backup_at: new Date(Date.now() - 90 * 60_000).toISOString(),
+          is_overdue: false,
+          last_error_message: null,
+          cron_expression: '0 */8 * * *',
+          schedule_enabled: true,
+        },
+        {
+          hostname: 'flaky-host',
+          target_name: 'onsite',
+          last_status: 'success',
+          last_backup_at: new Date(Date.now() - 150 * 60_000).toISOString(),
+          is_overdue: false,
+          last_error_message: null,
+          cron_expression: '0 */1 * * *',
+          schedule_enabled: true,
+        },
+      ],
+    )
+
+    // Most recent backup is 90m ago; the shortest cadence is hourly, so
+    // elapsed/cadence = 1.5 - past due, but well short of the 2x critical mark.
+    expect(wrapper.find('.coverage-status-warning').exists()).toBe(true)
+  })
+
+  it("ignores a disabled schedule's cadence when computing agent coverage", async () => {
+    const { wrapper } = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          last_status: 'success',
+          last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
+          is_overdue: false,
+          last_error_message: null,
+          cron_expression: '0 */1 * * *',
+          schedule_enabled: false,
+        },
+        {
+          hostname: 'flaky-host',
+          target_name: 'onsite',
+          last_status: 'success',
+          last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
+          is_overdue: false,
+          last_error_message: null,
+          cron_expression: '0 */8 * * *',
+          schedule_enabled: true,
+        },
+      ],
+    )
+
+    // Only the enabled 8h schedule counts, so 1h elapsed is comfortably on time.
+    expect(wrapper.find('.coverage-status-ok').exists()).toBe(true)
+  })
+
+  it("does not count a failed run's finish time as coverage, even when it is the most recent report", async () => {
+    const { wrapper } = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          // Most recent report by far, but it failed - must not count as
+          // "covered" just because it has the latest finished_at.
+          last_status: 'failed',
+          last_backup_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+          is_overdue: false,
+          last_error_message: 'disk full',
+          cron_expression: '0 */1 * * *',
+          schedule_enabled: true,
+        },
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          last_status: 'success',
+          last_backup_at: new Date(Date.now() - 5 * 3600_000).toISOString(),
+          is_overdue: false,
+          last_error_message: null,
+          cron_expression: '0 */1 * * *',
+          schedule_enabled: true,
+        },
+      ],
+    )
+
+    // Coverage must be derived from the 5h-old success, not the 5m-old
+    // failure - elapsed/cadence = 5, well past the 2x critical mark.
+    expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
+    expect(wrapper.find('.coverage-status-ok').exists()).toBe(false)
   })
 })
 

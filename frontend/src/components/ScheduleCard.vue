@@ -95,20 +95,3 @@ function scheduleTypeLabel(t: ScheduleType): string {
     </div>
   </div>
 </template>
-
-<style scoped>
-.type-backup {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.type-check {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.type-verify {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-</style>

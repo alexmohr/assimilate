@@ -376,6 +376,24 @@
     color: var(--text-muted);
   }
 
+  /* Schedule type tones, layered on top of `.badge--neutral` - shared by
+     ScheduleCard.vue and SchedulesView.vue's own card markup so the two
+     don't each keep their own copy. */
+  .type-backup {
+    background: var(--success-subtle);
+    color: var(--success);
+  }
+
+  .type-check {
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+
+  .type-verify {
+    background: var(--warning-subtle);
+    color: var(--warning);
+  }
+
   /* --- Danger zone --------------------------------------------------------
      The destructive-actions panel on a detail page. Rows are `.danger-body`;
      the separator between them comes from here, not from each caller. */

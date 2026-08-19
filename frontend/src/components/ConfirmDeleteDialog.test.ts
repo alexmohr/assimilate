@@ -17,17 +17,17 @@ describe('ConfirmDeleteDialog', () => {
   it('renders the title and slot content when shown', () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: false },
+      props: { show: true, title: 'Delete group', submitting: false },
       slots: { default: 'Are you sure you want to delete this group?' },
     })
-    expect(wrapper.find('.modal-title').text()).toBe('Delete Group')
+    expect(wrapper.find('.modal-title').text()).toBe('Delete group')
     expect(wrapper.text()).toContain('Are you sure you want to delete this group?')
   })
 
   it('shows "Delete" and enables the button when not submitting', () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: false },
+      props: { show: true, title: 'Delete group', submitting: false },
     })
     const deleteBtn = wrapper.find('button.btn-danger')
     expect(deleteBtn.text()).toBe('Delete')
@@ -37,7 +37,7 @@ describe('ConfirmDeleteDialog', () => {
   it('shows "Deleting..." and disables the button while submitting', () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: true },
+      props: { show: true, title: 'Delete group', submitting: true },
     })
     const deleteBtn = wrapper.find('button.btn-danger')
     expect(deleteBtn.text()).toBe('Deleting...')
@@ -47,7 +47,7 @@ describe('ConfirmDeleteDialog', () => {
   it('emits confirm when the Delete button is clicked', async () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: false },
+      props: { show: true, title: 'Delete group', submitting: false },
     })
     await wrapper.find('button.btn-danger').trigger('click')
     expect(wrapper.emitted('confirm')).toBeTruthy()
@@ -56,7 +56,7 @@ describe('ConfirmDeleteDialog', () => {
   it('emits cancel when the Cancel button or close button is clicked', async () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: false },
+      props: { show: true, title: 'Delete group', submitting: false },
     })
     await wrapper.find('button.btn-ghost').trigger('click')
     expect(wrapper.emitted('cancel')).toBeTruthy()
@@ -68,7 +68,7 @@ describe('ConfirmDeleteDialog', () => {
   it('renders the error message when provided', () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: false, error: 'Delete failed' },
+      props: { show: true, title: 'Delete group', submitting: false, error: 'Delete failed' },
     })
     expect(wrapper.find('.form-error').text()).toBe('Delete failed')
   })
@@ -76,7 +76,7 @@ describe('ConfirmDeleteDialog', () => {
   it('does not render an error element when error is not set', () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: false },
+      props: { show: true, title: 'Delete group', submitting: false },
     })
     expect(wrapper.find('.form-error').exists()).toBe(false)
   })
@@ -84,7 +84,7 @@ describe('ConfirmDeleteDialog', () => {
   it('emits cancel when the overlay backdrop is clicked', async () => {
     const wrapper = mount(ConfirmDeleteDialog, {
       global: { stubs: { Teleport: true } },
-      props: { show: true, title: 'Delete Group', submitting: false },
+      props: { show: true, title: 'Delete group', submitting: false },
     })
     await wrapper.find('.modal-backdrop').trigger('mousedown')
     expect(wrapper.emitted('cancel')).toBeTruthy()

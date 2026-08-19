@@ -199,7 +199,7 @@ test.describe('Schedules management', () => {
     // Overview is the default tab: the Targets section lists the schedule's
     // agents, and the info summary names the repository.
     await expect(page.getByRole('heading', { name: 'Targets' })).toBeVisible()
-    const infoCard = page.locator('.info-card')
+    const infoCard = page.locator('.panel', { hasText: 'Schedule info' })
     await expect(infoCard.getByText('Repository', { exact: true })).toBeVisible()
     await expect(page.getByText('server-daily').first()).toBeVisible()
   })
@@ -341,10 +341,10 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules/new')
     await page.waitForLoadState('networkidle')
 
-    // Hosts and Repository live under the Targets section; Schedule Type
+    // Hosts and Repository live under the Targets section; Schedule type
     // stays on General, where create mode opens.
     await page.getByRole('button', { name: 'Targets' }).click()
-    const targetsSection = page.locator('.info-card', { hasText: 'Targets' })
+    const targetsSection = page.locator('.settings-pane')
 
     await targetsSection.locator('.multi-select-trigger').click()
     await targetsSection.getByText('Production Web Server').click()
@@ -359,11 +359,11 @@ test.describe('Schedules management', () => {
     // Use Integrity Check so the test doesn't depend on backup source paths.
     await page.getByRole('button', { name: 'General' }).click()
     await page
-      .locator('.field', { hasText: 'Schedule Type' })
+      .locator('.field', { hasText: 'Schedule type' })
       .locator('select')
-      .selectOption({ label: 'Integrity Check' })
+      .selectOption({ label: 'Integrity check' })
 
-    await page.getByRole('button', { name: 'Create Schedule' }).click()
+    await page.getByRole('button', { name: 'Create schedule' }).click()
 
     // The create request used to fail with "missing field `agent_ids`" because the
     // frontend sent client_ids/backup_sources_per_host instead of the names the

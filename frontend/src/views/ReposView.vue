@@ -40,7 +40,7 @@ type SortField = 'name' | 'size' | 'last_backup' | 'quota'
 const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'name', label: 'Name' },
   { field: 'size', label: 'Size' },
-  { field: 'last_backup', label: 'Last Backup' },
+  { field: 'last_backup', label: 'Last backup' },
   { field: 'quota', label: 'Quota' },
 ]
 type QuotaFilter = 'all' | 'at_risk' | 'no_quota'
@@ -596,7 +596,7 @@ onMounted(loadRepos)
       :icon="Database"
       title="No repositories configured"
       description="Add a repository to start managing backups."
-      action="Add Repository"
+      action="Add repository"
       @action="showRepoDialog = true"
     />
     <div

@@ -85,7 +85,7 @@ describe('TrendsChart', () => {
     const wrapper = renderWithPlugins(TrendsChart, {
       props: { repos: [] },
     })
-    expect(wrapper.text()).toContain('Backup Size Trends')
+    expect(wrapper.text()).toContain('Backup size trends')
   })
 
   it('renders day range toggle buttons', () => {

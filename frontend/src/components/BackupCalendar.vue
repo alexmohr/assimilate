@@ -218,12 +218,12 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title panel-title--truncate">Backup Calendar</h2>
+      <h2 class="panel-title panel-title--truncate">Backup calendar</h2>
       <select
         v-model="selectedRepoId"
         class="input cal-select"
       >
-        <option :value="undefined">All Repos</option>
+        <option :value="undefined">All repos</option>
         <option
           v-for="repo in props.repos"
           :key="repo.id"
@@ -359,7 +359,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
         @click.stop
       >
         <div class="cal-error-header">
-          <span class="cal-error-title">Backup Failed</span>
+          <span class="cal-error-title">Backup failed</span>
           <button
             class="cal-error-close"
             aria-label="Close"

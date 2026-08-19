@@ -113,7 +113,7 @@ describe('SystemView', () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    expect(wrapper.text()).toContain('SSH Public Key')
+    expect(wrapper.text()).toContain('SSH public key')
   })
 
   it('displays the SSH public key after loading', async () => {
@@ -291,7 +291,7 @@ describe('SystemView', () => {
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Database Storage')
+    expect(wrapper.text()).toContain('Database storage')
     expect(wrapper.text()).toContain('1.0 GB')
     expect(wrapper.text()).toContain('archive_files')
     expect(wrapper.text()).toContain('640.0 MB')
@@ -344,7 +344,7 @@ describe('SystemView', () => {
     expect(regenBtn).toBeDefined()
     await regenBtn!.trigger('click')
     await flushPromises()
-    expect(document.body.textContent).toContain('Regenerate SSH Key')
+    expect(document.body.textContent).toContain('Regenerate SSH key')
   })
 
   it('saves new retention values to API', async () => {
@@ -499,8 +499,8 @@ describe('SystemView', () => {
     // Both actions are irreversible from the UI's point of view, so the row
     // button only opens a dialog - it must never fire the request itself.
     it.each([
-      ['Regenerate', 'Regenerate SSH Key'],
-      ['Reset', 'Reset System State'],
+      ['Regenerate', 'Regenerate SSH key'],
+      ['Reset', 'Reset system state'],
     ])('opens a confirmation for %s rather than acting immediately', async (trigger, title) => {
       const wrapper = await render()
       mockPost.mockClear()

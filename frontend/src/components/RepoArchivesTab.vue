@@ -202,20 +202,20 @@ defineExpose({
 
         <div
           v-if="archivesLoading"
-          class="state-msg state-msg-sm"
+          class="state-msg state-msg--inline"
         >
           <BaseSpinner size="sm" />
           Loading archives...
         </div>
         <div
           v-else-if="archivesError"
-          class="state-msg state-msg-sm state-error"
+          class="state-msg state-msg--inline state-error"
         >
           {{ archivesError }}
         </div>
         <div
           v-else-if="sortedArchives.length === 0"
-          class="state-msg state-msg-sm"
+          class="state-msg state-msg--inline"
         >
           No archives found.
         </div>
@@ -263,7 +263,7 @@ defineExpose({
           </div>
           <div
             v-if="orderedArchives.length === 0"
-            class="state-msg state-msg-sm"
+            class="state-msg state-msg--inline"
           >
             No matching archives.
           </div>
@@ -389,7 +389,7 @@ defineExpose({
 
   <BaseModal
     :open="archivePendingDeletion !== null"
-    title="Delete Archive"
+    title="Delete archive"
     size="sm"
     @close="closeArchiveDeleteDialog"
   >
@@ -419,7 +419,7 @@ defineExpose({
         :disabled="archiveDeleteLoading"
         @click="confirmArchiveDeletion"
       >
-        {{ archiveDeleteLoading ? 'Deleting...' : 'Delete Archive' }}
+        {{ archiveDeleteLoading ? 'Deleting...' : 'Delete archive' }}
       </button>
     </template>
   </BaseModal>

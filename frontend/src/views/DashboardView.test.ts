@@ -493,7 +493,7 @@ describe('DashboardView success ring', () => {
     vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
     const wrapper = await renderDashboard()
 
-    expect(wrapper.text()).toContain('Backups In Progress')
+    expect(wrapper.text()).toContain('Backups in progress')
     expect(wrapper.text()).toContain('web-server-01')
     expect(wrapper.text()).toContain('server-daily')
     expect(wrapper.text()).toContain('Active')

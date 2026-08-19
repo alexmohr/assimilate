@@ -322,7 +322,7 @@ onMounted(fetchUsers)
           <th>Username</th>
           <th>Role</th>
           <th class="col-date">Created</th>
-          <th class="col-date">Last Login</th>
+          <th class="col-date">Last login</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -381,7 +381,7 @@ onMounted(fetchUsers)
     <!-- Create User Modal -->
     <BaseModal
       :open="showCreateModal"
-      title="Add User"
+      title="Add user"
       form
       @close="showCreateModal = false"
       @submit="submitCreate"
@@ -501,7 +501,7 @@ onMounted(fetchUsers)
           class="tab-content"
         >
           <div class="field">
-            <label for="edit-password">New Password</label>
+            <label for="edit-password">New password</label>
             <input
               id="edit-password"
               v-model="editPassword"
@@ -690,7 +690,7 @@ onMounted(fetchUsers)
     <!-- Delete User Modal -->
     <BaseModal
       :open="showDeleteModal"
-      title="Delete User"
+      title="Delete user"
       @close="showDeleteModal = false"
     >
       <p class="confirm-text">

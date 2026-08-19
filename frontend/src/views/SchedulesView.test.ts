@@ -268,7 +268,7 @@ describe('SchedulesView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Backup')
-    expect(wrapper.text()).toContain('Integrity Check')
+    expect(wrapper.text()).toContain('Integrity check')
   })
 
   it('displays human-readable cron expression', async () => {

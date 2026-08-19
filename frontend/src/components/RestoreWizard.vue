@@ -147,7 +147,7 @@ function cancelDownload(): void {
 <template>
   <BaseModal
     :open="open"
-    title="Restore Files"
+    title="Restore files"
     size="lg"
     @close="close"
   >
@@ -182,7 +182,7 @@ function cancelDownload(): void {
       v-else-if="step === 1"
       class="step-content"
     >
-      <label class="field-label">Select Archive</label>
+      <label class="field-label">Select archive</label>
       <select
         v-model="selectedArchiveName"
         class="input"
@@ -223,7 +223,7 @@ function cancelDownload(): void {
       v-else-if="step === 3"
       class="step-content"
     >
-      <label class="field-label">Restore Method</label>
+      <label class="field-label">Restore method</label>
       <div class="radio-group">
         <label class="radio-option">
           <input
@@ -266,7 +266,7 @@ function cancelDownload(): void {
       v-else-if="step === 4"
       class="step-content"
     >
-      <label class="field-label">Confirm Restore</label>
+      <label class="field-label">Confirm restore</label>
       <dl class="confirm-list">
         <dt>Archive</dt>
         <dd>{{ selectedArchiveName }}</dd>
@@ -327,7 +327,7 @@ function cancelDownload(): void {
           class="btn btn-ghost"
           @click="cancelDownload"
         >
-          Cancel Download
+          Cancel download
         </button>
       </template>
     </template>

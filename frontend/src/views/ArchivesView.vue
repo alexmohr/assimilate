@@ -453,11 +453,6 @@ onMounted(loadRepos)
   color: var(--text-muted);
 }
 
-.panel-actions {
-  display: flex;
-  gap: 0.25rem;
-}
-
 .td-mono {
   font-family: var(--mono);
   font-size: var(--fs-sm);

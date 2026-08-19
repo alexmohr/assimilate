@@ -102,7 +102,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
     case 'backup':
       return 'Backup'
     case 'check':
-      return 'Integrity Check'
+      return 'Integrity check'
     case 'verify':
       return 'Verify'
   }
@@ -489,7 +489,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       :icon="Clock"
       title="No schedules configured"
       description="Create a schedule to automate your backups."
-      action="Create Schedule"
+      action="Create schedule"
       @action="router.push('/schedules/new')"
     />
 

@@ -54,7 +54,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
   >
     <div class="panel-heading">
       <div>
-        <h2>Needs Attention</h2>
+        <h2>Needs attention</h2>
         <p>Current actionable findings, ordered by severity.</p>
       </div>
       <span class="finding-count">{{ findings.length }} findings</span>

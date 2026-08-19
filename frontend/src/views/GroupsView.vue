@@ -264,7 +264,7 @@ onMounted(async () => {
       :icon="Users"
       title="No groups yet"
       description="Groups let you grant a set of roles to several users at once."
-      action="Create Group"
+      action="Create group"
       @action="openCreate"
     />
     <div
@@ -322,7 +322,7 @@ onMounted(async () => {
     <!-- Create Group Modal -->
     <BaseModal
       :open="showCreateModal"
-      title="Create Group"
+      title="Create group"
       form
       @close="showCreateModal = false"
       @submit="submitCreate"
@@ -371,7 +371,7 @@ onMounted(async () => {
     <!-- Edit Group Modal -->
     <BaseModal
       :open="showEditModal"
-      title="Edit Group"
+      title="Edit group"
       form
       @close="showEditModal = false"
       @submit="submitEdit"
@@ -420,7 +420,7 @@ onMounted(async () => {
     <!-- Delete Group Modal -->
     <ConfirmDeleteDialog
       :show="showDeleteModal"
-      title="Delete Group"
+      title="Delete group"
       :submitting="deleteSubmitting"
       :error="deleteError"
       @cancel="showDeleteModal = false"
@@ -434,7 +434,7 @@ onMounted(async () => {
     <BaseModal
       :open="showMembersModal"
       size="lg"
-      title="Group Members"
+      title="Group members"
       @close="showMembersModal = false"
     >
       <p class="modal-subtitle">

@@ -162,7 +162,7 @@ function toggleRecoveryCode(): void {
           v-if="!useRecoveryCode"
           class="field"
         >
-          <label for="totp-code">Authenticator Code</label>
+          <label for="totp-code">Authenticator code</label>
           <input
             id="totp-code"
             v-model="totpCode"
@@ -180,7 +180,7 @@ function toggleRecoveryCode(): void {
           v-else
           class="field"
         >
-          <label for="totp-recovery-code">Recovery Code</label>
+          <label for="totp-recovery-code">Recovery code</label>
           <input
             id="totp-recovery-code"
             v-model="totpCode"

@@ -65,7 +65,7 @@ describe('FileSearch', () => {
 
   it('renders the File Search heading', () => {
     const wrapper = mountSearch()
-    expect(wrapper.text()).toContain('File Search')
+    expect(wrapper.text()).toContain('File search')
   })
 
   it('renders mode toggle buttons', () => {

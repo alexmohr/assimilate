@@ -290,7 +290,7 @@ onMounted(() => {
             href="/api/docs"
             target="_blank"
             class="signout-btn docs-btn"
-            title="API Reference"
+            title="API reference"
           >
             <Braces
               class="nav-icon"

@@ -200,16 +200,14 @@ const activeScopeChannel = computed((): NotificationChannel | undefined => {
 })
 
 function eventTypeLabel(et: NotificationEventType): string {
-  return et
-    .split('_')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
+  const words = et.split('_')
+  return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
 }
 
 function channelTypeLabel(ct: ChannelType): string {
   if (ct === 'email') return 'Email'
   if (ct === 'webhook') return 'Webhook'
-  return 'Web Push'
+  return 'Web push'
 }
 
 function channelTypeIcon(ct: ChannelType): typeof Mail {
@@ -698,7 +696,7 @@ onMounted(() => {
         :icon="Bell"
         title="No notification channels"
         description="Create a channel to receive alerts."
-        action="Add Channel"
+        action="Add channel"
         @action="openAddChannel"
       />
       <div
@@ -796,7 +794,7 @@ onMounted(() => {
     <BaseModal
       :open="showAddChannelDialog"
       size="lg"
-      title="New Channel"
+      title="New channel"
       @close="showAddChannelDialog = false"
     >
       <template #header="{ titleId }">
@@ -804,7 +802,7 @@ onMounted(() => {
           :id="titleId"
           class="modal-title"
         >
-          New Channel
+          New channel
         </h2>
         <span class="wizard-step-indicator">Step {{ wizardStep }} of 3</span>
       </template>
@@ -1000,7 +998,7 @@ onMounted(() => {
     <!-- Edit Channel Dialog -->
     <BaseModal
       :open="showEditChannelDialog"
-      title="Edit Channel"
+      title="Edit channel"
       @close="showEditChannelDialog = false"
     >
       <div class="field">
@@ -1056,7 +1054,7 @@ onMounted(() => {
     <!-- Delete Channel Dialog -->
     <BaseModal
       :open="showDeleteChannelDialog"
-      title="Delete Channel"
+      title="Delete channel"
       size="sm"
       @close="showDeleteChannelDialog = false"
     >

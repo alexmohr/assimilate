@@ -59,7 +59,7 @@ async function confirmMerge(): Promise<void> {
 <template>
   <BaseModal
     :open="true"
-    title="Merge Agent"
+    title="Merge agent"
     size="sm"
     @close="emit('cancel')"
   >

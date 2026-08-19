@@ -216,9 +216,17 @@
   }
 
   /* --- Panel -------------------------------------------------------------
-     The app's one card surface. `.panel` is padded; `.panel--sectioned`
-     gives it a ruled header with a flush body, which is what the detail
-     views and list panels want. */
+     The app's one card surface, for a list container and a settings block
+     alike. `.panel` is padded; `.panel--sectioned` gives it a ruled header
+     with a flush body.
+
+     There used to be a second surface, `.info-card`, with its own padding and
+     an uppercase-muted `.info-title`. Which one a view reached for turned out
+     to be a matter of which view it was rather than what the box held, so the
+     same bordered card shouted its heading on one screen and spoke it on the
+     next. Uppercase survives as `.group-label`, which captions a group of
+     values *inside* a panel - a smaller, different job, so the two no longer
+     compete. */
   .panel {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -251,8 +259,8 @@
   }
 
   /* Sentence case in primary ink: a panel heading, not a form label.
-     Uppercase-muted is reserved for `.field-label`, so the two roles stay
-     distinguishable when they sit in the same card. */
+     Uppercase-muted is reserved for `.field-label` and `.group-label`, so the
+     roles stay distinguishable when they sit in the same card. */
   .panel-title {
     font-size: var(--fs-base);
     font-weight: 600;
@@ -260,32 +268,22 @@
     margin: 0;
   }
 
-  /* --- Info card ---------------------------------------------------------
-     The detail views' settings surface: a titled block of key/value rows or
-     an inline edit form, stacked vertically down a column. Distinct from
-     `.panel`, which is a list container with a ruled header.
-
-     `.info-title` is uppercase-muted rather than `.panel-title`'s sentence
-     case because these headings label a settings *group*, the same role
-     `.field-label` plays for a single field. */
-  .info-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.5rem;
+  /* The buttons on the right of a `.panel-header`, when there is more than
+     one of them and they need to travel together. */
+  .panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
   }
 
-  .info-card + .info-card {
-    margin-top: 0.75rem;
-  }
-
-  .info-title {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 1.25rem;
+  /* A column of panels stacked down a page or a settings pane. The gap lives
+     on the container rather than on an adjacent-sibling margin, so a panel
+     can be moved between stacks without carrying spacing with it. */
+  .panel-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
   }
 
   /* Key/value rows: a muted label column sized to its content, values
@@ -309,7 +307,7 @@
     font-size: var(--fs-base);
   }
 
-  /* Ruled footer holding the card's buttons. */
+  /* Ruled footer holding a panel's buttons. */
   .info-actions {
     margin-top: 1.5rem;
     padding-top: 1rem;
@@ -401,7 +399,7 @@
     border-color: var(--danger);
   }
 
-  .danger-zone .info-title {
+  .danger-zone .panel-title {
     color: var(--danger);
   }
 
@@ -628,10 +626,148 @@
     font-weight: 600;
   }
 
+  /* --- Detail header -------------------------------------------------------
+     The identity block at the top of a detail page: what this thing is called,
+     what state it is in, what is known about it, and the one action that is
+     worth doing right now with everything else behind an overflow menu.
+
+     Agents and schedules each carried a private copy of this, identical rule
+     for rule under an `.agent-` and a `.schedule-` prefix - which is also what
+     let the duplication past the shared-rule check. Repositories had no header
+     at all, so their name only ever appeared as the last breadcrumb. */
+  .detail-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+
+  .detail-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .detail-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .detail-name {
+    font-size: var(--fs-xl);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+
+  /* A hostname or repository name is a machine identifier. Not `.mono`: that
+     class carries its own font-size and is declared later in this layer, so it
+     would shrink the page's `h1` to the size of a table cell. */
+  .detail-name--mono {
+    font-family: var(--mono);
+  }
+
+  .detail-subtitle {
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  /* The machine facts under the name: version, revision, timestamps. */
+  .detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.75rem;
+    font-family: var(--mono);
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+  }
+
+  .detail-meta b {
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .detail-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    position: relative;
+  }
+
+  .detail-header-error {
+    flex-basis: 100%;
+  }
+
+  /* --- Overflow menu -------------------------------------------------------
+     Everything the header does not promote to its accented slot. */
+  .overflow-toggle {
+    padding-inline: 0.45rem;
+  }
+
+  .overflow-menu {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    z-index: 20;
+    min-width: 200px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .overflow-menu-item {
+    font: inherit;
+    font-size: var(--fs-sm);
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .overflow-menu-item:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .overflow-menu-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* The destructive entry is ruled off from the navigation above it. */
+  .overflow-menu-item--danger {
+    color: var(--danger);
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    margin-top: 0.25rem;
+    padding-top: 0.45rem;
+  }
+
+  /* Why an entry is absent, where absence alone would read as a bug. */
+  .overflow-menu-note {
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+    padding: 0.35rem 0.5rem;
+    font-style: italic;
+  }
+
   /* --- Settings sub-nav ----------------------------------------------------
      A tab whose content is itself sectioned - AgentSettingsTab, ScheduleSettingsTab
      - gets a narrow side rail rather than a second tab strip. Each caller adds
-     its own `@media (max-width: 720px)` override for how the rail collapses,
+     its own `@media (max-width: 768px)` override for how the rail collapses,
      since that can genuinely differ (wrap into rows vs. stay one row of
      equal-width cells), but the desktop shape and the danger-section tone are
      shared so the two rails read as one control. */
@@ -683,6 +819,50 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  /* What a pane opens with. The rail already names the section, so a pane
+     carries no heading of its own: it states what the section is for, and
+     right-aligns the action that applies to the whole of it. Every pane used
+     to repeat its rail item as an uppercase card title one line below the
+     rail itself. */
+  .pane-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+  }
+
+  .pane-lede {
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 62ch;
+  }
+
+  /* A second group inside a pane, ruled off from the one above. A pane with
+     only one group needs none of this - it renders its fields straight into
+     `.settings-pane`. */
+  .pane-section {
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+  }
+
+  /* A section whose head is nothing but its label still needs the gap the
+     `.pane-section-head` row would have given it. */
+  .pane-section > .group-label {
+    margin-bottom: 0.75rem;
+  }
+
+  .pane-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.75rem;
   }
 
   .field {
@@ -821,11 +1001,18 @@
     margin-left: auto;
   }
 
+  /* A sentence under the page title. It belongs to the title, so the header
+     above it gives up most of its own bottom margin rather than leaving the
+     description floating equidistant between the title and the content. */
+  .page-header:has(+ .page-description) {
+    margin-bottom: 0.5rem;
+  }
+
   .page-description {
     font-size: var(--fs-base);
     line-height: 1.5;
     color: var(--text-secondary);
-    margin-bottom: 1rem;
+    margin-bottom: 1.5rem;
   }
 
   .toolbar {
@@ -1756,24 +1943,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-
-  /* --- Info card header ---------------------------------------------------
-     A title row with its own actions, inside an `.info-card`. */
-  .info-card-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem 1rem;
-    margin-bottom: 1.25rem;
-  }
-
-  .info-header-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
   }
 
   /* The inline edit form an `EditableInfoCard` swaps in, and its ruled

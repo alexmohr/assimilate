@@ -29,14 +29,18 @@ const refOpen = ref(false)
 
 <template>
   <div class="form-stack">
-    <div class="panel">
-      <h3 class="info-title">Options</h3>
+    <p class="pane-lede">
+      Settings most schedules leave alone: bandwidth and verification, the patterns that decide what
+      is skipped, and commands to run around each backup.
+    </p>
+    <section class="pane-section">
+      <span class="group-label group-label--lg">Options</span>
       <div class="field field-inline">
-        <label class="field-label">Canary Verification</label>
+        <label class="field-label">Canary verification</label>
         <ToggleSwitch v-model="form.canary_enabled" />
       </div>
       <div class="field field-inline">
-        <label class="field-label">Ignore Global Excludes</label>
+        <label class="field-label">Ignore global excludes</label>
         <ToggleSwitch v-model="form.ignore_global_excludes" />
       </div>
       <div class="field field-inline">
@@ -44,7 +48,7 @@ const refOpen = ref(false)
         <ToggleSwitch v-model="form.compact_enabled" />
       </div>
       <div class="field">
-        <label class="field-label">Remote Rate Limit (kB/s)</label>
+        <label class="field-label">Remote rate limit (kB/s)</label>
         <input
           v-model.number="form.rate_limit_kbps"
           type="number"
@@ -53,10 +57,10 @@ const refOpen = ref(false)
         />
         <span class="field-hint">Caps borg's upload bandwidth. Set to 0 for unlimited.</span>
       </div>
-    </div>
+    </section>
 
-    <div class="panel">
-      <h3 class="info-title">Exclude Patterns</h3>
+    <section class="pane-section">
+      <span class="group-label group-label--lg">Exclude patterns</span>
       <div
         v-if="agentIds.length > 1"
         class="field field-inline"
@@ -114,10 +118,10 @@ const refOpen = ref(false)
         </span>
         <BorgPatternReference v-if="refOpen" />
       </div>
-    </div>
+    </section>
 
-    <div class="panel">
-      <h3 class="info-title">File Change Patterns</h3>
+    <section class="pane-section">
+      <span class="group-label group-label--lg">File change patterns</span>
       <div
         v-if="agentIds.length > 1"
         class="field field-inline"
@@ -155,10 +159,10 @@ const refOpen = ref(false)
           </template>
         </PerAgentFields>
       </div>
-    </div>
+    </section>
 
-    <div class="panel">
-      <h3 class="info-title">Commands</h3>
+    <section class="pane-section">
+      <span class="group-label group-label--lg">Commands</span>
       <div
         v-if="agentIds.length > 1"
         class="field field-inline"
@@ -168,7 +172,7 @@ const refOpen = ref(false)
       </div>
       <template v-if="!overrides.usePerAgentCmds">
         <div class="field">
-          <label class="field-label">Pre-backup Commands</label>
+          <label class="field-label">Pre-backup commands</label>
           <textarea
             v-model="form.pre_backup_commands"
             class="input cmd-area"
@@ -177,7 +181,7 @@ const refOpen = ref(false)
           />
         </div>
         <div class="field">
-          <label class="field-label">Post-backup Commands</label>
+          <label class="field-label">Post-backup commands</label>
           <textarea
             v-model="form.post_backup_commands"
             class="input cmd-area"
@@ -217,7 +221,7 @@ const refOpen = ref(false)
         </template>
         <template #hint>Leave an agent empty to run no schedule-level commands.</template>
       </PerAgentFields>
-    </div>
+    </section>
   </div>
 </template>
 

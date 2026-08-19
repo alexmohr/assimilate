@@ -97,7 +97,7 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <div class="file-search">
     <div class="search-header">
-      <span class="search-title">File Search</span>
+      <span class="search-title">File search</span>
     </div>
 
     <div class="search-controls">

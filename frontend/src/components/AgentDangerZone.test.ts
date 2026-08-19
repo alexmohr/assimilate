@@ -42,16 +42,16 @@ describe('AgentDangerZone', () => {
       .mockResolvedValue({} as never)
   })
 
-  it('offers only Delete Agent for a managed host', () => {
+  it('offers only Delete agent for a managed host', () => {
     const wrapper = mount()
     const headings = wrapper.findAll('.danger-heading').map((h) => h.text())
-    expect(headings).toEqual(['Delete Agent'])
+    expect(headings).toEqual(['Delete agent'])
   })
 
-  it('offers Hide and Delete Archives for an imported host instead', () => {
+  it('offers Hide and Delete archives for an imported host instead', () => {
     const wrapper = mount(IMPORTED)
     const headings = wrapper.findAll('.danger-heading').map((h) => h.text())
-    expect(headings).toEqual(['Hide Agent', 'Delete Archives & Remove'])
+    expect(headings).toEqual(['Hide agent', 'Delete archives and remove'])
   })
 
   it('confirms before deleting a managed agent', async () => {
@@ -63,7 +63,7 @@ describe('AgentDangerZone', () => {
     expect(document.body.textContent).toContain('Permanently delete')
     expect(document.body.textContent).toContain('web-01')
 
-    dialogButton('Delete Agent').click()
+    dialogButton('Delete agent').click()
     await flushPromises()
 
     expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01')
@@ -77,7 +77,7 @@ describe('AgentDangerZone', () => {
     expect(apiClient.post).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('permanently destroy all borg archives')
 
-    dialogButton('Delete Archives & Remove').click()
+    dialogButton('Delete archives and remove').click()
     await flushPromises()
 
     expect(apiClient.post).toHaveBeenCalledWith('/agents/legacy-01/delete-archives')
@@ -96,7 +96,7 @@ describe('AgentDangerZone', () => {
     const wrapper = mount()
     await wrapper.find('.btn-danger').trigger('click')
     await flushPromises()
-    dialogButton('Delete Agent').click()
+    dialogButton('Delete agent').click()
     await flushPromises()
 
     // The button is released again rather than left disabled forever.
@@ -116,7 +116,7 @@ describe('AgentDangerZone', () => {
     const wrapper = mount(IMPORTED)
     await wrapper.find('.btn-danger').trigger('click')
     await flushPromises()
-    dialogButton('Delete Archives & Remove').click()
+    dialogButton('Delete archives and remove').click()
     await flushPromises()
 
     expect(apiClient.post).toHaveBeenCalledWith('/agents/legacy-01/delete-archives')
@@ -127,7 +127,7 @@ describe('AgentDangerZone', () => {
     const wrapper = mount(IMPORTED)
     await wrapper.find('.btn-danger').trigger('click')
     await flushPromises()
-    dialogButton('Delete Archives & Remove').click()
+    dialogButton('Delete archives and remove').click()
     await flushPromises()
 
     expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()

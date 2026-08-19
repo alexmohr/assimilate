@@ -144,10 +144,10 @@ onMounted(loadQuota)
 </script>
 
 <template>
-  <div class="quota-panel info-card">
-    <div class="info-card-header">
-      <h3 class="info-title">Storage Quota</h3>
-      <div class="info-header-actions">
+  <div class="panel">
+    <div class="panel-header">
+      <h2 class="panel-title">Storage quota</h2>
+      <div class="panel-actions">
         <span
           v-if="quota && quota.enabled"
           class="badge"
@@ -167,14 +167,14 @@ onMounted(loadQuota)
 
     <div
       v-if="loading"
-      class="state-msg state-msg-sm"
+      class="state-msg state-msg--inline"
     >
       Loading quota...
     </div>
 
     <div
       v-else-if="error"
-      class="state-msg state-msg-sm state-error"
+      class="state-msg state-msg--inline state-error"
     >
       {{ error }}
     </div>
@@ -187,7 +187,7 @@ onMounted(loadQuota)
         style="margin-top: 0.75rem"
         @click="startNewQuota"
       >
-        Configure Quota
+        Configure quota
       </button>
     </template>
 
@@ -289,17 +289,6 @@ onMounted(loadQuota)
 </template>
 
 <style scoped>
-.quota-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-}
-
-.info-title {
-  margin: 0;
-}
-
 .quota-usage {
   margin-bottom: 1rem;
 }

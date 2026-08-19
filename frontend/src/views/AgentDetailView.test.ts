@@ -845,8 +845,7 @@ describe('AgentDetailView — default file change patterns', () => {
     await flushPromises()
     await openDefaultsSettings(wrapper)
 
-    const findCard = (): DOMWrapper<Element> =>
-      wrapper.findAll('.info-card').find((c) => c.text().includes('Backup defaults'))!
+    const findCard = (): DOMWrapper<Element> => wrapper.find('.settings-pane')
 
     await findCard().find('button').trigger('click')
     await findCard()
@@ -946,9 +945,9 @@ describe('AgentDetailView - identity, token and merge', () => {
     wrapper: VueWrapper<ComponentPublicInstance>,
     label: string,
   ): Promise<void> {
-    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
-    const match = wrapper.findAll('.agent-menu-item').find((b) => b.text().trim() === label)
+    const match = wrapper.findAll('.overflow-menu-item').find((b) => b.text().trim() === label)
     if (!match) throw new Error(`no menu item labelled "${label}"`)
     await match.trigger('click')
     await flushPromises()
@@ -1027,7 +1026,7 @@ describe('AgentDetailView - identity, token and merge', () => {
     expect(wrapper.text()).toContain('Hostname changed from')
     expect(wrapper.text()).toContain('renamed-host')
 
-    await clickDialogButton(wrapper, 'Add Pattern')
+    await clickDialogButton(wrapper, 'Add pattern')
 
     expect(apiClient.post).toHaveBeenCalledWith('/agents/renamed-host/hostname-patterns', {
       pattern: 'test-host',
@@ -1231,7 +1230,7 @@ describe('AgentDetailView - tab structure and settings', () => {
   it('keeps configuration off the landing tab', async () => {
     const wrapper = await render()
     expect(wrapper.text()).not.toContain('Backup defaults')
-    expect(wrapper.text()).not.toContain('Danger Zone')
+    expect(wrapper.text()).not.toContain('Danger zone')
 
     await goTo(wrapper, { tab: 'settings', section: 'defaults' })
     expect(wrapper.text()).toContain('Backup defaults')
@@ -1277,10 +1276,10 @@ describe('AgentDetailView - tab structure and settings', () => {
   // form in the app opens through BaseModal.
   it('edits identity in a dialog rather than an inline panel', async () => {
     const wrapper = await render()
-    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
     await wrapper
-      .findAll('.agent-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text().trim() === 'Edit identity')!
       .trigger('click')
     await flushPromises()
@@ -1357,7 +1356,7 @@ describe('AgentDetailView - tab structure and settings', () => {
     await flushPromises()
 
     await wrapper
-      .findAll('.agent-actions > button')
+      .findAll('.detail-actions > button')
       .find((b) => b.text().includes('Upgrade'))!
       .trigger('click')
     await flushPromises()
@@ -1368,10 +1367,10 @@ describe('AgentDetailView - tab structure and settings', () => {
   })
 
   async function openSshKeyDialog(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
-    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
     await wrapper
-      .findAll('.agent-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text().trim() === 'Deploy SSH key')!
       .trigger('click')
     await flushPromises()
@@ -1420,10 +1419,10 @@ describe('AgentDetailView - tab structure and settings', () => {
 
   it('deploys an SSH key from a dialog', async () => {
     const wrapper = await render()
-    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
     await wrapper
-      .findAll('.agent-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text().trim() === 'Deploy SSH key')!
       .trigger('click')
     await flushPromises()
@@ -1460,7 +1459,7 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     wrapper: VueWrapper<ComponentPublicInstance>,
     label: string,
   ): Promise<void> {
-    const match = wrapper.findAll('.agent-actions > button').find((b) => b.text().trim() === label)
+    const match = wrapper.findAll('.detail-actions > button').find((b) => b.text().trim() === label)
     if (!match) throw new Error(`no action labelled "${label}"`)
     await match.trigger('click')
     await flushPromises()
@@ -1491,7 +1490,7 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     await clickAction(wrapper, 'Adopt')
 
     expect(wrapper.find('.token-text').exists()).toBe(false)
-    expect(wrapper.find('.agent-hostname').exists()).toBe(true)
+    expect(wrapper.find('.detail-name').exists()).toBe(true)
   })
 
   it('leaves the agent list after a merge', async () => {
@@ -1510,10 +1509,10 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     const wrapper = await render({ supports_restart: true })
     vi.mocked(apiClient.post).mockResolvedValue({ data: {} } as never)
 
-    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
     await wrapper
-      .findAll('.agent-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text().trim() === 'Restart agent')!
       .trigger('click')
     await flushPromises()
@@ -1525,10 +1524,10 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     const wrapper = await render({ supports_restart: true })
     vi.mocked(apiClient.post).mockRejectedValue(new Error('agent offline'))
 
-    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
     await wrapper
-      .findAll('.agent-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text().trim() === 'Restart agent')!
       .trigger('click')
     await flushPromises()
@@ -1538,10 +1537,10 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
   it('navigates to this agent’s activity log from the overflow menu', async () => {
     const wrapper = await render()
-    await wrapper.find('.agent-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
     await wrapper
-      .findAll('.agent-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text().trim() === 'Activity log')!
       .trigger('click')
     await flushPromises()
@@ -1565,7 +1564,7 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     // extractError is stubbed to a fixed string in this file, so the thrown
     // "not found" message cannot be asserted - only that it surfaced at all.
     expect(wrapper.find('.state-error').exists()).toBe(true)
-    expect(wrapper.find('.agent-hostname').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').exists()).toBe(false)
   })
 
   // The page is long-lived, so it refetches on anything that could have

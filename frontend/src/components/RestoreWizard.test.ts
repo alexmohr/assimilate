@@ -78,7 +78,7 @@ describe('RestoreWizard', () => {
   it('shows step 1 content with archive selector', () => {
     const wrapper = mountWizard()
     expect(wrapper.find('.step-content select').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Select Archive')
+    expect(wrapper.text()).toContain('Select archive')
   })
 
   it('renders all archive options in step 1', () => {
@@ -132,7 +132,7 @@ describe('RestoreWizard', () => {
     await backBtn!.trigger('click')
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('Select Archive')
+    expect(wrapper.text()).toContain('Select archive')
   })
 
   it('disables Next on step 2 until paths are entered', async () => {
@@ -171,7 +171,7 @@ describe('RestoreWizard', () => {
       .trigger('click')
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('Confirm Restore')
+    expect(wrapper.text()).toContain('Confirm restore')
     expect(wrapper.text()).toContain(ARCHIVES[0].name)
     expect(wrapper.text()).toContain('/etc/nginx/nginx.conf')
     expect(wrapper.find('button.btn-primary').text()).toBe('Restore')
@@ -288,7 +288,7 @@ describe('RestoreWizard', () => {
     await wrapper.find('button.btn-primary').trigger('click')
     await wrapper.vm.$nextTick()
 
-    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel Download')
+    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel download')
     expect(cancelBtn).toBeDefined()
     expect(capturedSignal?.aborted).toBe(false)
 

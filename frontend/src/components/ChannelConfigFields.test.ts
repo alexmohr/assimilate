@@ -43,7 +43,7 @@ describe('ChannelConfigFields', () => {
     const wrapper = mount()
     const labels = wrapper.findAll('.field-label').map((l) => l.text())
     expect(labels).toEqual(
-      expect.arrayContaining(['SMTP Host', 'SMTP User', 'Port', 'SMTP Password']),
+      expect.arrayContaining(['SMTP Host', 'SMTP user', 'Port', 'SMTP password']),
     )
   })
 
@@ -135,9 +135,9 @@ describe('ChannelConfigFields', () => {
       const config = emailConfig()
       const wrapper = mount({ emailConfig: config })
 
-      await fieldByLabel(wrapper, 'SMTP User').setValue('operator')
+      await fieldByLabel(wrapper, 'SMTP user').setValue('operator')
       await fieldByLabel(wrapper, 'Port').setValue('2525')
-      await fieldByLabel(wrapper, 'SMTP Password').setValue('correct horse')
+      await fieldByLabel(wrapper, 'SMTP password').setValue('correct horse')
       await fieldByLabel(wrapper, 'Security').setValue('tls')
 
       expect(config).toMatchObject({

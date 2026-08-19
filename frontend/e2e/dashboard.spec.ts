@@ -15,7 +15,7 @@ test.describe('Dashboard — Backups In Progress panel', () => {
 
     const panel = page.locator('.active-backups-panel')
     await expect(panel).toBeVisible()
-    await expect(panel).toContainText('Backups In Progress')
+    await expect(panel).toContainText('Backups in progress')
     await expect(panel.locator('.active-backup-schedule')).toContainText('server-daily')
     await expect(panel.locator('.active-backup-time').first()).toContainText('Running for')
   })

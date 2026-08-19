@@ -241,7 +241,7 @@ async function submitDeploy(): Promise<void> {
       </template>
 
       <div class="field">
-        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <label class="field-label">SSH host <span class="required">*</span></label>
         <input
           v-model="deployForm.ssh_host"
           class="input mono"
@@ -250,7 +250,7 @@ async function submitDeploy(): Promise<void> {
       </div>
       <div class="field-row">
         <div class="field">
-          <label class="field-label">SSH User</label>
+          <label class="field-label">SSH user</label>
           <input
             v-model="deployForm.ssh_user"
             class="input mono"
@@ -258,7 +258,7 @@ async function submitDeploy(): Promise<void> {
           />
         </div>
         <div class="field field-narrow">
-          <label class="field-label">SSH Port</label>
+          <label class="field-label">SSH port</label>
           <input
             v-model.number="deployForm.ssh_port"
             class="input"
@@ -269,7 +269,7 @@ async function submitDeploy(): Promise<void> {
         </div>
       </div>
       <div class="field">
-        <label class="field-label">SSH Password</label>
+        <label class="field-label">SSH password</label>
         <input
           v-model="deployForm.ssh_password"
           class="input mono"
@@ -293,7 +293,7 @@ async function submitDeploy(): Promise<void> {
         </span>
       </div>
       <div class="field">
-        <label class="field-label">Install Path</label>
+        <label class="field-label">Install path</label>
         <input
           v-model="deployForm.install_path"
           class="input mono"

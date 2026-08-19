@@ -51,8 +51,8 @@ function dialogButton(label: string): HTMLButtonElement {
 
 async function fillValidForm(): Promise<void> {
   await setField('Name', 'inhouse')
-  await setField('SSH Host', 'backup.example.com')
-  await setField('Repo Path', '/backup/repos/web')
+  await setField('SSH host', 'backup.example.com')
+  await setField('Repo path', '/backup/repos/web')
   await setField('Passphrase', 'correct horse')
 }
 
@@ -83,9 +83,9 @@ describe('RepoCreateDialog', () => {
   it('fills the SSH fields from a chosen target', async () => {
     mount()
     await setField('Fill SSH from existing', 'root@other.example.com:2222')
-    expect((field('SSH User') as HTMLInputElement).value).toBe('root')
-    expect((field('SSH Host') as HTMLInputElement).value).toBe('other.example.com')
-    expect((field('SSH Port') as HTMLInputElement).value).toBe('2222')
+    expect((field('SSH user') as HTMLInputElement).value).toBe('root')
+    expect((field('SSH host') as HTMLInputElement).value).toBe('other.example.com')
+    expect((field('SSH port') as HTMLInputElement).value).toBe('2222')
   })
 
   it('keeps the submit button disabled until every required field is filled', async () => {
@@ -154,7 +154,7 @@ describe('RepoCreateDialog', () => {
       data: { ssh_ok: true, borg_installed: true, borg_version: '1.4.0' },
     } as never)
     mount()
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     dialogButton('Test Connection').click()
     await flushPromises()
 
@@ -171,7 +171,7 @@ describe('RepoCreateDialog', () => {
       data: { ssh_ok: true, borg_installed: false },
     } as never)
     mount()
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     dialogButton('Test Connection').click()
     await flushPromises()
     expect(document.body.textContent).toContain('SSH OK, borg not found')
@@ -194,14 +194,14 @@ describe('RepoCreateDialog', () => {
       },
     } as never)
     mount()
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     dialogButton('Browse').click()
     await flushPromises()
 
     const entries = [...document.body.querySelectorAll('.entry-name')].map((e) => e.textContent)
     // '..' is the parent-directory row; the plain file is filtered out.
     expect(entries).toEqual(['..', 'repos'])
-    expect((field('Repo Path') as HTMLInputElement).value).toBe('/backup')
+    expect((field('Repo path') as HTMLInputElement).value).toBe('/backup')
   })
 
   it('surfaces a browse failure in the panel rather than the form error', async () => {
@@ -209,7 +209,7 @@ describe('RepoCreateDialog', () => {
       data: { path: '/', entries: [], error: 'Permission denied' },
     } as never)
     mount()
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     dialogButton('Browse').click()
     await flushPromises()
 
@@ -221,17 +221,17 @@ describe('RepoCreateDialog', () => {
   it('offers New Folder only in the create flow', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: { path: '/', entries: [] } } as never)
     mount({ mode: 'create' })
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     dialogButton('Browse').click()
     await flushPromises()
-    expect(document.body.textContent).toContain('New Folder')
+    expect(document.body.textContent).toContain('New folder')
 
     document.body.innerHTML = ''
     mount({ mode: 'import' })
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     dialogButton('Browse').click()
     await flushPromises()
-    expect(document.body.textContent).not.toContain('New Folder')
+    expect(document.body.textContent).not.toContain('New folder')
   })
 
   it('clears the form when the view reopens it', async () => {
@@ -254,7 +254,7 @@ describe('RepoCreateDialog', () => {
     }
 
     async function openBrowser(path = '/backup'): Promise<void> {
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValueOnce(listDir(path) as never)
       dialogButton('Browse').click()
       await flushPromises()
@@ -288,9 +288,9 @@ describe('RepoCreateDialog', () => {
 
     it('lists the remote directory over the entered SSH target', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
-      await setField('SSH User', 'operator')
-      await setField('SSH Port', '2222')
+      await setField('SSH host', 'backup.example.com')
+      await setField('SSH user', 'operator')
+      await setField('SSH port', '2222')
 
       vi.mocked(apiClient.post).mockResolvedValueOnce(listDir('/') as never)
       dialogButton('Browse').click()
@@ -318,7 +318,7 @@ describe('RepoCreateDialog', () => {
     it('adopts the browsed directory as the repo path', async () => {
       mount()
       await openBrowser('/backup')
-      expect((field('Repo Path') as HTMLInputElement).value).toBe('/backup')
+      expect((field('Repo path') as HTMLInputElement).value).toBe('/backup')
     })
 
     it('descends into a directory on click', async () => {
@@ -356,8 +356,8 @@ describe('RepoCreateDialog', () => {
       vi.useFakeTimers()
       try {
         const wrapper = mount()
-        await setField('SSH Host', 'backup.example.com')
-        await setField('Repo Path', '/backup/re')
+        await setField('SSH host', 'backup.example.com')
+        await setField('Repo path', '/backup/re')
         vi.mocked(apiClient.post).mockClear()
 
         wrapper.unmount()
@@ -374,8 +374,8 @@ describe('RepoCreateDialog', () => {
       vi.useFakeTimers()
       try {
         mount()
-        await setField('SSH Host', 'backup.example.com')
-        await setField('Repo Path', '/backup/re')
+        await setField('SSH host', 'backup.example.com')
+        await setField('Repo path', '/backup/re')
         vi.mocked(apiClient.post)
           .mockClear()
           .mockResolvedValue(listDir('/backup') as never)
@@ -409,7 +409,7 @@ describe('RepoCreateDialog', () => {
 
     it('reports a listing error from the server rather than showing an empty directory', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValueOnce({
         data: { path: '/root', entries: [], error: 'Permission denied' },
       } as never)
@@ -421,7 +421,7 @@ describe('RepoCreateDialog', () => {
 
     it('reports a failed listing request', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('ssh timeout'))
       dialogButton('Browse').click()
       await flushPromises()
@@ -432,13 +432,13 @@ describe('RepoCreateDialog', () => {
 
   describe('new folder', () => {
     async function openFolderDialog(): Promise<void> {
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValueOnce({
         data: { path: '/backup', entries: [] },
       } as never)
       dialogButton('Browse').click()
       await flushPromises()
-      dialogButton('New Folder').click()
+      dialogButton('New folder').click()
       await flushPromises()
     }
 
@@ -516,7 +516,7 @@ describe('RepoCreateDialog', () => {
 
     /** Types into the repo path field and lets the 300ms debounce elapse. */
     async function typePath(value: string): Promise<void> {
-      const input = field('Repo Path') as HTMLInputElement
+      const input = field('Repo path') as HTMLInputElement
       input.value = value
       input.dispatchEvent(new Event('input'))
       await vi.advanceTimersByTimeAsync(350)
@@ -547,9 +547,9 @@ describe('RepoCreateDialog', () => {
       // made the directory listing - and the ".." entry a test then clicks -
       // disappear. That is what made the browser tests intermittently fail.
       const wrapper = mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
 
-      const input = field('Repo Path') as HTMLInputElement
+      const input = field('Repo path') as HTMLInputElement
       input.value = '/backup/repos/web'
       input.dispatchEvent(new Event('input'))
 
@@ -564,7 +564,7 @@ describe('RepoCreateDialog', () => {
 
     it('lists the parent directory and filters by the typed prefix', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValue({
         data: { path: '/backup', entries: ENTRIES },
       } as never)
@@ -585,7 +585,7 @@ describe('RepoCreateDialog', () => {
 
     it('completes the last path segment rather than appending to it', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValue({
         data: { path: '/backup', entries: ENTRIES },
       } as never)
@@ -597,13 +597,13 @@ describe('RepoCreateDialog', () => {
       item?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
       await flushPromises()
 
-      expect((field('Repo Path') as HTMLInputElement).value).toBe('/backup/reports')
+      expect((field('Repo path') as HTMLInputElement).value).toBe('/backup/reports')
       expect(document.body.querySelector('.autocomplete-dropdown')).toBeNull()
     })
 
     it('offers nothing when the directory has no matching child', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValue({
         data: { path: '/backup', entries: ENTRIES },
       } as never)
@@ -615,7 +615,7 @@ describe('RepoCreateDialog', () => {
 
     it('stays quiet when the listing reports an error', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValue({
         data: { path: '/backup', entries: [], error: 'Permission denied' },
       } as never)
@@ -627,7 +627,7 @@ describe('RepoCreateDialog', () => {
 
     it('stays quiet when the listing request fails outright', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockRejectedValue(new Error('ssh timeout'))
 
       await typePath('/backup/re')
@@ -637,7 +637,7 @@ describe('RepoCreateDialog', () => {
 
     it('clears the suggestions once the field is emptied', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValue({
         data: { path: '/backup', entries: ENTRIES },
       } as never)
@@ -651,12 +651,12 @@ describe('RepoCreateDialog', () => {
 
     it('dismisses the suggestions shortly after the field loses focus', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValue({
         data: { path: '/backup', entries: ENTRIES },
       } as never)
       await typePath('/backup/re')
-      ;(field('Repo Path') as HTMLInputElement).dispatchEvent(new Event('blur'))
+      ;(field('Repo path') as HTMLInputElement).dispatchEvent(new Event('blur'))
       await vi.advanceTimersByTimeAsync(250)
       await flushPromises()
 
@@ -667,7 +667,7 @@ describe('RepoCreateDialog', () => {
     // open browser panel should follow the field rather than go stale.
     it('walks an open browser panel to a directory typed with a trailing slash', async () => {
       mount()
-      await setField('SSH Host', 'backup.example.com')
+      await setField('SSH host', 'backup.example.com')
       vi.mocked(apiClient.post).mockResolvedValue({
         data: { path: '/backup', entries: ENTRIES },
       } as never)
@@ -686,7 +686,7 @@ describe('RepoCreateDialog', () => {
 
   it('reports a connection test that throws', async () => {
     mount()
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('no route to host'))
 
     dialogButton('Test Connection').click()
@@ -713,7 +713,7 @@ describe('RepoCreateDialog', () => {
 
   it('toggles the deploy key panel', async () => {
     mount()
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     const before = document.body.textContent ?? ''
     dialogButton('+ Deploy Key').click()
     await flushPromises()
@@ -722,13 +722,13 @@ describe('RepoCreateDialog', () => {
 
   it('closes the new-folder prompt on its Cancel without creating anything', async () => {
     mount({ mode: 'create' })
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     vi.mocked(apiClient.post).mockResolvedValueOnce({
       data: { path: '/backup', entries: [] },
     } as never)
     dialogButton('Browse').click()
     await flushPromises()
-    dialogButton('New Folder').click()
+    dialogButton('New folder').click()
     await flushPromises()
     vi.mocked(apiClient.post).mockClear()
 
@@ -758,13 +758,13 @@ describe('RepoCreateDialog', () => {
 
   it('dismisses the new-folder prompt on its own modal control, leaving the form open', async () => {
     const wrapper = mount({ mode: 'create' })
-    await setField('SSH Host', 'backup.example.com')
+    await setField('SSH host', 'backup.example.com')
     vi.mocked(apiClient.post).mockResolvedValueOnce({
       data: { path: '/backup', entries: [] },
     } as never)
     dialogButton('Browse').click()
     await flushPromises()
-    dialogButton('New Folder').click()
+    dialogButton('New folder').click()
     await flushPromises()
     expect(document.body.querySelectorAll('.modal-dialog')).toHaveLength(2)
 

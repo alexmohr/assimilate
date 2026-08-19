@@ -30,7 +30,7 @@ defineEmits<{
       <tr>
         <th>Name</th>
         <th>Created</th>
-        <th>Last Used</th>
+        <th>Last used</th>
         <th>Actions</th>
       </tr>
     </thead>

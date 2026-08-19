@@ -62,13 +62,13 @@ function mockGetTokens(): void {
 }
 
 async function clickTotpTab(wrapper: ReturnType<typeof renderWithPlugins>) {
-  const totpTab = wrapper.findAll('.tab').filter((t) => t.text() === 'Two-Factor Auth')
+  const totpTab = wrapper.findAll('.tab').filter((t) => t.text() === 'Two-factor auth')
   await totpTab[0].trigger('click')
   await wrapper.vm.$nextTick()
 }
 
 async function clickSetupButton(wrapper: ReturnType<typeof renderWithPlugins>) {
-  const setupBtn = wrapper.findAll('button').find((b) => b.text().includes('Set Up Two-Factor'))
+  const setupBtn = wrapper.findAll('button').find((b) => b.text().includes('Set up two-factor'))
   await setupBtn!.trigger('click')
   await flushPromises()
 }
@@ -116,7 +116,7 @@ async function clickDisableTotp(
   password: string,
 ): Promise<void> {
   await wrapper.find('input[placeholder="Current password"]').setValue(password)
-  const disableBtn = wrapper.findAll('button').find((b) => b.text().includes('Disable Two-Factor'))
+  const disableBtn = wrapper.findAll('button').find((b) => b.text().includes('Disable two-factor'))
   await disableBtn!.trigger('click')
   await flushPromises()
 }
@@ -160,7 +160,7 @@ describe('ProfileView', () => {
       storeState: { auth: { user: { ...baseUser } } },
     })
 
-    expect(wrapper.find('.page-subtitle').text()).toContain('admin')
+    expect(wrapper.find('.page-description').text()).toContain('admin')
   })
 
   it('renders the Change Password, API Tokens, and Appearance tabs', () => {
@@ -169,9 +169,9 @@ describe('ProfileView', () => {
     })
 
     const tabs = wrapper.findAll('.tab')
-    expect(tabs.some((t) => t.text() === 'Change Password')).toBe(true)
-    expect(tabs.some((t) => t.text() === 'API Tokens')).toBe(true)
-    expect(tabs.some((t) => t.text() === 'Two-Factor Auth')).toBe(true)
+    expect(tabs.some((t) => t.text() === 'Change password')).toBe(true)
+    expect(tabs.some((t) => t.text() === 'API tokens')).toBe(true)
+    expect(tabs.some((t) => t.text() === 'Two-factor auth')).toBe(true)
     expect(tabs.some((t) => t.text() === 'Sessions')).toBe(true)
     expect(tabs.some((t) => t.text() === 'Appearance')).toBe(true)
   })
@@ -180,14 +180,14 @@ describe('ProfileView', () => {
     const wrapper = await renderInTotpTab(false)
 
     expect(wrapper.text()).toContain('not enabled')
-    expect(wrapper.text()).toContain('Set Up Two-Factor')
+    expect(wrapper.text()).toContain('Set up two-factor')
   })
 
   it('shows TOTP enabled status when totp is active', async () => {
     const wrapper = await renderInTotpTab(true)
 
     expect(wrapper.text()).toContain('enabled')
-    expect(wrapper.text()).toContain('Disable Two-Factor')
+    expect(wrapper.text()).toContain('Disable two-factor')
   })
 
   it('sessions tab loads and displays when clicked', async () => {
@@ -294,7 +294,7 @@ describe('ProfileView', () => {
     expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/auth/totp/disable', {
       password: 'passw0rd',
     })
-    expect(wrapper.text()).toContain('Set Up Two-Factor')
+    expect(wrapper.text()).toContain('Set up two-factor')
   })
 
   it('shows an error when disabling TOTP fails', async () => {
@@ -403,7 +403,7 @@ describe('ProfileView', () => {
     }
 
     async function clickApiTokensTab(wrapper: ReturnType<typeof renderWithPlugins>) {
-      const tokensTab = wrapper.findAll('.tab').filter((t) => t.text() === 'API Tokens')
+      const tokensTab = wrapper.findAll('.tab').filter((t) => t.text() === 'API tokens')
       await tokensTab[0].trigger('click')
       await wrapper.vm.$nextTick()
     }
@@ -434,7 +434,7 @@ describe('ProfileView', () => {
 
       await openDeleteTokenModal(wrapper)
 
-      expect(wrapper.find('.modal-title').text()).toBe('Delete Token')
+      expect(wrapper.find('.modal-title').text()).toBe('Delete token')
 
       const overlay = wrapper.find('.modal-backdrop')
       expect(overlay.exists()).toBe(true)
@@ -531,7 +531,7 @@ describe('ProfileView', () => {
     async function openCreateTokenModal(wrapper: ReturnType<typeof renderWithPlugins>) {
       await flushPromises()
       await clickApiTokensTab(wrapper)
-      const createBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'Create Token')
+      const createBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'Create token')
       expect(createBtn).toBeDefined()
       await createBtn!.trigger('click')
       await flushPromises()

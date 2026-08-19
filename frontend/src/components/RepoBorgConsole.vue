@@ -64,8 +64,8 @@ function exitClass(code: number): string {
 </script>
 
 <template>
-  <div class="info-card">
-    <h3 class="info-title">Borg Console</h3>
+  <div class="panel">
+    <h2 class="panel-title">Borg console</h2>
     <p class="console-desc">
       Execute borg commands directly against this repository. The repository URL and passphrase are
       injected automatically. Use <code class="console-code">::archive</code> notation to reference

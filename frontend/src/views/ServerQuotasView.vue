@@ -231,7 +231,7 @@ onMessage('DataChanged', () => loadQuotas().catch(logger.error))
       <table class="data-table">
         <thead>
           <tr>
-            <th>SSH Host</th>
+            <th>SSH host</th>
             <th>Repos</th>
             <th>Usage</th>
             <th>Warning</th>

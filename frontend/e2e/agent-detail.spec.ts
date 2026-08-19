@@ -38,7 +38,7 @@ test.describe('Agent detail', () => {
 
     await expect(page.getByRole('heading', { name: 'Recent backups' })).toBeVisible()
     await expect(page.getByText('Backup defaults')).toHaveCount(0)
-    await expect(page.getByText('Danger Zone')).toHaveCount(0)
+    await expect(page.getByText('Danger zone')).toHaveCount(0)
   })
 
   test('rare actions live behind the header overflow menu', async ({ page }) => {
@@ -95,7 +95,7 @@ test.describe('Agent detail', () => {
     // The four defaults cards became one card with five sections and one save.
     await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
     await expect(page).toHaveURL(/section=defaults/)
-    await expect(page.locator('.info-title', { hasText: 'Backup defaults' })).toBeVisible()
+    await expect(page.locator('.settings-pane .pane-lede')).toBeVisible()
     await expect(page.locator('.group-label')).toHaveText([
       'Backup paths',
       'Exclude patterns',

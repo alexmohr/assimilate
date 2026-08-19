@@ -459,7 +459,7 @@ async function fetchOverview(): Promise<void> {
           class="stat-card stat-card-link"
           @click="router.push({ name: 'agents', query: { status: 'offline' } })"
         >
-          <span class="stat-label">Online Agents</span>
+          <span class="stat-label">Online agents</span>
           <span class="stat-value stat-value--xl">
             <span
               class="stat-dot"
@@ -492,7 +492,7 @@ async function fetchOverview(): Promise<void> {
           :class="{ 'stat-card-link': summary?.last_backup_repo_id }"
           @click="navigateToLastBackup"
         >
-          <span class="stat-label">Last Backup</span>
+          <span class="stat-label">Last backup</span>
           <span class="stat-value stat-value--lg">
             {{ summary?.last_backup_at ? relativeTime(summary.last_backup_at) : '\u2014' }}
           </span>
@@ -504,7 +504,7 @@ async function fetchOverview(): Promise<void> {
             summary?.next_backup_schedule_id && navigateToSchedule(summary.next_backup_schedule_id)
           "
         >
-          <span class="stat-label">Next Backup</span>
+          <span class="stat-label">Next backup</span>
           <span class="stat-value stat-value--lg">
             <template v-if="activeBackups.length > 0">Active</template>
             <template v-else>
@@ -513,7 +513,7 @@ async function fetchOverview(): Promise<void> {
           </span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">Total Storage</span>
+          <span class="stat-label">Total storage</span>
           <span class="stat-value stat-value--lg">
             {{ formatBytes(summary?.total_storage_bytes ?? 0) }}
           </span>
@@ -523,7 +523,7 @@ async function fetchOverview(): Promise<void> {
           :class="{ 'stat-card-link': summary?.last_failure_at }"
           @click="navigateToLastFailure"
         >
-          <span class="stat-label">Last Failure</span>
+          <span class="stat-label">Last failure</span>
           <span
             class="stat-value stat-value--lg"
             :class="{ 'stat-danger': summary?.last_failure_at }"
@@ -536,7 +536,7 @@ async function fetchOverview(): Promise<void> {
           :class="{ 'stat-card-link': summary?.last_warning_at }"
           @click="navigateToLastWarning"
         >
-          <span class="stat-label">Last Warning</span>
+          <span class="stat-label">Last warning</span>
           <span
             class="stat-value stat-value--lg"
             :class="{ 'stat-warning': summary?.last_warning_at }"
@@ -551,7 +551,7 @@ async function fetchOverview(): Promise<void> {
         v-if="activeBackups.length > 0"
         class="panel active-backups-panel"
       >
-        <h2 class="panel-title">Backups In Progress</h2>
+        <h2 class="panel-title">Backups in progress</h2>
         <div class="active-backups-list">
           <div
             v-for="backup in activeBackups"
@@ -648,7 +648,7 @@ async function fetchOverview(): Promise<void> {
           <!-- Section 2: 30-Day Success Ring -->
           <section class="panel">
             <div class="panel-header">
-              <h2 class="panel-title">Success Rate</h2>
+              <h2 class="panel-title">Success rate</h2>
               <ChartRangeControls
                 v-model:repo-id="successRepoFilter"
                 v-model:days="successDaysFilter"
@@ -721,7 +721,7 @@ async function fetchOverview(): Promise<void> {
           <!-- Section 3: Storage Donut -->
           <section class="panel">
             <div class="panel-header">
-              <h2 class="panel-title">Storage Breakdown</h2>
+              <h2 class="panel-title">Storage breakdown</h2>
             </div>
             <p class="chart-desc">
               Current on-disk usage per repository — deduplicated (unique chunks across all

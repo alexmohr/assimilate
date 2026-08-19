@@ -78,7 +78,7 @@ defineExpose({ validate, reset, result })
     </div>
     <div class="field-row">
       <div class="field">
-        <label class="field-label">SMTP User</label>
+        <label class="field-label">SMTP user</label>
         <input
           v-model="emailConfig.smtp_user"
           class="input"
@@ -94,7 +94,7 @@ defineExpose({ validate, reset, result })
       </div>
     </div>
     <div class="field">
-      <label class="field-label">SMTP Password</label>
+      <label class="field-label">SMTP password</label>
       <input
         v-model="emailConfig.smtp_password"
         class="input"

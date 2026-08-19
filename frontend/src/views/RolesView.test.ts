@@ -269,7 +269,7 @@ describe('RolesView', () => {
     await flushPromises()
 
     expect(wrapper.find('table').exists()).toBe(false)
-    await clickButtonWithText(wrapper, 'Create Role')
+    await clickButtonWithText(wrapper, 'Create role')
     await flushPromises()
 
     expect(openModals(wrapper)).toHaveLength(1)

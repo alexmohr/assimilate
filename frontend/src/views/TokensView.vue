@@ -70,7 +70,7 @@ onMounted(fetchTokens)
       :icon="Key"
       title="No API tokens"
       description="Create one to get started."
-      action="Create Token"
+      action="Create token"
       @action="showCreateModal = true"
     />
 
@@ -87,7 +87,7 @@ onMounted(fetchTokens)
           <label
             class="field-label"
             for="token-name"
-            >Token Name</label
+            >Token name</label
           >
           <input
             id="token-name"
@@ -144,7 +144,7 @@ onMounted(fetchTokens)
 
     <ConfirmDeleteDialog
       :show="showDeleteModal"
-      title="Delete Token"
+      title="Delete token"
       :submitting="deleteSubmitting"
       :error="deleteError"
       @cancel="showDeleteModal = false"

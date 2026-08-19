@@ -46,12 +46,14 @@ describe('AgentDefaultsCard', () => {
     vi.mocked(apiClient.put).mockResolvedValue({ data: AGENT } as never)
   })
 
-  // The four separate cards became one card with five labelled sections, so
-  // saving can no longer write a stale copy of a sibling field.
-  it('renders a single card holding every group of defaults', () => {
+  // The four separate cards became one pane with five labelled sections, so
+  // saving can no longer write a stale copy of a sibling field. The settings
+  // rail names the pane, so the pane itself carries a lede rather than a
+  // heading repeating that name.
+  it('renders a single pane holding every group of defaults', () => {
     const wrapper = mount()
-    expect(wrapper.findAll('.info-card')).toHaveLength(1)
-    expect(wrapper.find('.info-title').text()).toBe('Backup defaults')
+    expect(wrapper.findAll('.pane-head')).toHaveLength(1)
+    expect(wrapper.find('.pane-lede').text()).toContain('What a schedule uses for this host')
     expect(wrapper.findAll('.group-label').map((l) => l.text())).toEqual([
       'Backup paths',
       'Exclude patterns',

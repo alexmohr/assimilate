@@ -71,7 +71,7 @@ async function compare(): Promise<void> {
 <template>
   <BaseModal
     :open="open"
-    title="Compare Archives"
+    title="Compare archives"
     size="lg"
     @close="close"
   >

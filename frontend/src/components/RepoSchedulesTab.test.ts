@@ -141,7 +141,7 @@ describe('RepoSchedulesTab', () => {
   // renders blank in the run-started toast, which is easy to miss.
   it.each([
     ['backup', 'Backup'],
-    ['check', 'Integrity Check'],
+    ['check', 'Integrity check'],
     ['verify', 'Verify (extract dry-run)'],
   ])('names a %s schedule when it is started', async (type, label) => {
     mockList([{ ...SCHEDULE, schedule_type: type }])

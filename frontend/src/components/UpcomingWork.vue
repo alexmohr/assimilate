@@ -19,7 +19,7 @@ defineProps<{
     id="upcoming-work"
     class="panel"
   >
-    <h2 class="panel-title">Upcoming Work</h2>
+    <h2 class="panel-title">Upcoming work</h2>
     <div
       v-if="operations.length === 0 && schedules.length === 0"
       class="empty-state"

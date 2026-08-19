@@ -62,7 +62,7 @@ describe('ApiTokenTable', () => {
   it('renders table headers', () => {
     const wrapper = mount(ApiTokenTable, { props: { tokens: mockTokens } })
     const headers = wrapper.findAll('th')
-    expect(headers.map((h) => h.text())).toEqual(['Name', 'Created', 'Last Used', 'Actions'])
+    expect(headers.map((h) => h.text())).toEqual(['Name', 'Created', 'Last used', 'Actions'])
   })
 
   it('renders one row per token', () => {

@@ -88,7 +88,7 @@ function liveRelativeTime(iso: string): string {
 
 <template>
   <section class="panel">
-    <h2 class="panel-title">Recent Activity</h2>
+    <h2 class="panel-title">Recent activity</h2>
     <div
       v-if="loading"
       class="state-msg state-msg--inline"

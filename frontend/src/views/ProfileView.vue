@@ -31,9 +31,9 @@ type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 const authStore = useAuthStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
 const tabs: TabOption<TabId>[] = [
-  { id: 'password', label: 'Change Password' },
-  { id: 'tokens', label: 'API Tokens' },
-  { id: 'totp', label: 'Two-Factor Auth' },
+  { id: 'password', label: 'Change password' },
+  { id: 'tokens', label: 'API tokens' },
+  { id: 'totp', label: 'Two-factor auth' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'appearance', label: 'Appearance' },
 ]
@@ -232,7 +232,7 @@ onMounted(async () => {
     <div class="page-header">
       <h1 class="page-title">Profile</h1>
     </div>
-    <p class="page-subtitle">
+    <p class="page-description">
       {{ authStore.user?.username }}
     </p>
 
@@ -255,7 +255,7 @@ onMounted(async () => {
           <label
             class="field-label"
             for="profile-new-pw"
-            >New Password</label
+            >New password</label
           >
           <input
             id="profile-new-pw"
@@ -272,7 +272,7 @@ onMounted(async () => {
           <label
             class="field-label"
             for="profile-confirm-pw"
-            >Confirm Password</label
+            >Confirm password</label
           >
           <input
             id="profile-confirm-pw"
@@ -320,7 +320,7 @@ onMounted(async () => {
           class="btn btn-primary btn-sm"
           @click="openCreateToken"
         >
-          Create Token
+          Create token
         </button>
       </div>
 
@@ -340,7 +340,7 @@ onMounted(async () => {
         :icon="KeyRound"
         title="No API tokens yet"
         description="Create a token to let an external tool authenticate without your password."
-        action="Create Token"
+        action="Create token"
         @action="openCreateToken"
       />
     </div>
@@ -352,7 +352,7 @@ onMounted(async () => {
     >
       <div v-if="totpShowRecoveryCodes">
         <div class="recovery-codes-section">
-          <h3 class="totp-heading">Recovery Codes</h3>
+          <h3 class="totp-heading">Recovery codes</h3>
           <p class="recovery-codes-warning">
             Save these recovery codes in a secure place. They can be used to access your account if
             you lose your authenticator device. Each code can only be used once.
@@ -376,7 +376,7 @@ onMounted(async () => {
 
       <div v-else-if="totpSetupData">
         <div class="totp-setup-section">
-          <h3 class="totp-heading">Set Up Two-Factor Authentication</h3>
+          <h3 class="totp-heading">Set up two-factor authentication</h3>
           <p class="totp-setup-desc">
             Scan the QR code below with your authenticator app (e.g., Google Authenticator, Authy).
           </p>
@@ -457,7 +457,7 @@ onMounted(async () => {
             :disabled="totpDisabling || !totpDisablePassword"
             @click="disableTotp"
           >
-            {{ totpDisabling ? 'Disabling...' : 'Disable Two-Factor Auth' }}
+            {{ totpDisabling ? 'Disabling...' : 'Disable two-factor auth' }}
           </button>
         </div>
 
@@ -477,7 +477,7 @@ onMounted(async () => {
             :disabled="totpLoading"
             @click="setupTotp"
           >
-            {{ totpLoading ? 'Setting up...' : 'Set Up Two-Factor Auth' }}
+            {{ totpLoading ? 'Setting up...' : 'Set up two-factor auth' }}
           </button>
           <div
             v-if="totpError"
@@ -517,7 +517,7 @@ onMounted(async () => {
         <thead>
           <tr>
             <th>Created</th>
-            <th>Last Active</th>
+            <th>Last active</th>
             <th>Expires</th>
             <th>Type</th>
             <th>Status</th>
@@ -631,7 +631,7 @@ onMounted(async () => {
     >
       <template v-if="!newTokenPlaintext">
         <div class="field">
-          <label class="field-label">Token Name</label>
+          <label class="field-label">Token name</label>
           <input
             v-model="createName"
             class="input"
@@ -684,7 +684,7 @@ onMounted(async () => {
     <!-- Delete Token Modal -->
     <BaseModal
       :open="showDeleteModal"
-      title="Delete Token"
+      title="Delete token"
       @close="showDeleteModal = false"
     >
       <p>
@@ -718,7 +718,7 @@ onMounted(async () => {
     <!-- Revoke Session Modal -->
     <BaseModal
       :open="revokeSessionId !== null"
-      title="Revoke Session"
+      title="Revoke session"
       @close="cancelRevokeSession"
     >
       <p>Revoke this session? The device will be signed out immediately.</p>
@@ -751,12 +751,6 @@ onMounted(async () => {
 <style scoped>
 .profile-view {
   max-width: 700px;
-}
-
-.page-subtitle {
-  color: var(--text-muted);
-  font-size: var(--fs-md);
-  margin-bottom: 1.5rem;
 }
 
 .password-form {

@@ -68,61 +68,62 @@ async function confirmDeleteArchives(): Promise<void> {
 </script>
 
 <template>
-  <div class="info-card danger-zone">
-    <h3 class="info-title">Danger Zone</h3>
-    <template v-if="agent.is_imported">
-      <div class="danger-body">
-        <div class="danger-info">
-          <span class="danger-heading">Hide Agent</span>
-          <span class="danger-desc"> Hide this imported agent from the default list view. </span>
-        </div>
-        <button
-          class="btn btn-sm btn-ghost"
-          :disabled="hideLoading"
-          @click="hideAgent"
-        >
-          {{ hideLoading ? 'Hiding...' : 'Hide' }}
-        </button>
+  <template v-if="agent.is_imported">
+    <p class="pane-lede">
+      This host was discovered in a repository rather than registered by an agent. Hiding keeps its
+      archives and drops it from the list; deleting destroys the archives themselves.
+    </p>
+    <div class="danger-body">
+      <div class="danger-info">
+        <span class="danger-heading">Hide agent</span>
+        <span class="danger-desc">Stays in the repository, out of the default list view.</span>
       </div>
-      <div class="danger-body">
-        <div class="danger-info">
-          <span class="danger-heading">Delete Archives &amp; Remove</span>
-          <span class="danger-desc">
-            Permanently delete all borg archives and remove this agent. This is irreversible.
-          </span>
-        </div>
-        <button
-          class="btn btn-sm btn-danger"
-          :disabled="deleteArchivesLoading"
-          @click="showDeleteArchivesDialog = true"
-        >
-          {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
-        </button>
+      <button
+        class="btn btn-sm btn-ghost"
+        :disabled="hideLoading"
+        @click="hideAgent"
+      >
+        {{ hideLoading ? 'Hiding...' : 'Hide' }}
+      </button>
+    </div>
+    <div class="danger-body">
+      <div class="danger-info">
+        <span class="danger-heading">Delete archives and remove</span>
+        <span class="danger-desc">Destroys every borg archive belonging to this host.</span>
       </div>
-    </template>
-    <template v-else>
-      <div class="danger-body">
-        <div class="danger-info">
-          <span class="danger-heading">Delete Agent</span>
-          <span class="danger-desc">
-            Permanently remove this agent and all associated data. This action cannot be undone.
-          </span>
-        </div>
-        <button
-          class="btn btn-sm btn-danger"
-          :disabled="deleteLoading"
-          @click="showDeleteDialog = true"
-        >
-          {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
-        </button>
+      <button
+        class="btn btn-sm btn-danger"
+        :disabled="deleteArchivesLoading"
+        @click="showDeleteArchivesDialog = true"
+      >
+        {{ deleteArchivesLoading ? 'Deleting...' : 'Delete archives' }}
+      </button>
+    </div>
+  </template>
+  <template v-else>
+    <p class="pane-lede">
+      Deleting <span class="mono">{{ agent.hostname }}</span> removes its schedules, its backup
+      reports and its token. Archives already written to a repository are not touched.
+    </p>
+    <div class="danger-body">
+      <div class="danger-info">
+        <span class="danger-heading">Delete agent</span>
+        <span class="danger-desc">Cannot be undone.</span>
       </div>
-    </template>
-  </div>
+      <button
+        class="btn btn-sm btn-danger"
+        :disabled="deleteLoading"
+        @click="showDeleteDialog = true"
+      >
+        {{ deleteLoading ? 'Deleting...' : 'Delete' }}
+      </button>
+    </div>
+  </template>
 
-  <!-- Delete Agent Confirmation Dialog -->
+  <!-- Delete agent confirmation dialog -->
   <BaseModal
     :open="showDeleteDialog"
-    title="Delete Agent"
+    title="Delete agent"
     @close="showDeleteDialog = false"
   >
     <p>
@@ -142,15 +143,15 @@ async function confirmDeleteArchives(): Promise<void> {
         :disabled="deleteLoading"
         @click="confirmDeleteHost"
       >
-        {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
+        {{ deleteLoading ? 'Deleting...' : 'Delete agent' }}
       </button>
     </template>
   </BaseModal>
 
-  <!-- Delete Archives Confirmation Dialog -->
+  <!-- Delete archives confirmation dialog -->
   <BaseModal
     :open="showDeleteArchivesDialog"
-    title="Delete Archives &amp; Remove Agent"
+    title="Delete archives and remove agent"
     @close="showDeleteArchivesDialog = false"
   >
     <p class="danger-warning-text">
@@ -174,7 +175,7 @@ async function confirmDeleteArchives(): Promise<void> {
         :disabled="deleteArchivesLoading"
         @click="confirmDeleteArchives"
       >
-        {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
+        {{ deleteArchivesLoading ? 'Deleting...' : 'Delete archives and remove' }}
       </button>
     </template>
   </BaseModal>

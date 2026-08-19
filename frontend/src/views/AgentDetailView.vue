@@ -763,7 +763,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     <!-- Hostname Alias Confirmation Dialog -->
     <BaseModal
       :open="showAliasConfirm"
-      title="Add Hostname Pattern?"
+      title="Add hostname pattern?"
       @close="declineAlias"
     >
       <p>
@@ -787,7 +787,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           class="btn btn-primary"
           @click="confirmAddAlias"
         >
-          Add Pattern
+          Add pattern
         </button>
       </template>
     </BaseModal>

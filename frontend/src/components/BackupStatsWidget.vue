@@ -70,7 +70,7 @@ function navigateToActivity(status?: string): void {
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title">Backup Stats</h2>
+      <h2 class="panel-title">Backup stats</h2>
       <ChartRangeControls
         v-model:repo-id="selectedRepoId"
         v-model:days="selectedDays"
@@ -126,7 +126,7 @@ function navigateToActivity(status?: string): void {
       </div>
       <div class="mini-stat">
         <span class="stat-value stat-value--lg">{{ formatDuration(avgDurationSecs) }}</span>
-        <span class="stat-label">Avg Duration</span>
+        <span class="stat-label">Avg duration</span>
       </div>
     </div>
   </section>

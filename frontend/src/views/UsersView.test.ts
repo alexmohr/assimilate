@@ -137,7 +137,7 @@ describe('UsersView', () => {
     await newButton!.trigger('click')
     await flushPromises()
 
-    expect(document.body.textContent).toContain('Add User')
+    expect(document.body.textContent).toContain('Add user')
   })
 
   it('shows repository names in the permissions tab', async () => {

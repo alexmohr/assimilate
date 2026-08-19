@@ -16,7 +16,7 @@ defineProps<{ repositories: DashboardRepositoryCapacity[] }>()
     id="repository-capacity"
     class="panel"
   >
-    <h2 class="panel-title">Repository Capacity</h2>
+    <h2 class="panel-title">Repository capacity</h2>
     <div
       v-if="repositories.length === 0"
       class="capacity-empty"

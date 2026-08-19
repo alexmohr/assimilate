@@ -259,12 +259,12 @@ describe('AgentDeployDialog', () => {
       await flushPromises()
       post.mockClear()
 
-      await setField('SSH Host', '10.0.0.5')
-      await setField('SSH User', 'deployer')
-      await setField('SSH Port', '2222')
-      await setField('SSH Password', 'hunter2')
+      await setField('SSH host', '10.0.0.5')
+      await setField('SSH user', 'deployer')
+      await setField('SSH port', '2222')
+      await setField('SSH password', 'hunter2')
       await setField('Server URL', 'https://assimilate.example.com')
-      await setField('Install Path', '/opt/assimilate')
+      await setField('Install path', '/opt/assimilate')
 
       await submit()
 
@@ -291,9 +291,9 @@ describe('AgentDeployDialog', () => {
       await flushPromises()
       post.mockClear()
 
-      await setField('SSH Host', '10.0.0.5')
+      await setField('SSH host', '10.0.0.5')
       await setField('Server URL', 'https://assimilate.example.com')
-      await setField('Install Path', '')
+      await setField('Install path', '')
 
       await submit()
 
@@ -312,7 +312,7 @@ describe('AgentDeployDialog', () => {
       const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
       await flushPromises()
 
-      await setField('SSH Host', '10.0.0.5')
+      await setField('SSH host', '10.0.0.5')
       await setField('Server URL', 'https://assimilate.example.com')
       await submit()
 
@@ -337,7 +337,7 @@ describe('AgentDeployDialog', () => {
       await flushPromises()
       post.mockRejectedValueOnce(new Error('ssh refused'))
 
-      await setField('SSH Host', '10.0.0.5')
+      await setField('SSH host', '10.0.0.5')
       await setField('Server URL', 'https://assimilate.example.com')
       await submit()
 

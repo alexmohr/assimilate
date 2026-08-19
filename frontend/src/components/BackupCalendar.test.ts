@@ -38,7 +38,7 @@ describe('BackupCalendar', () => {
     const wrapper = renderWithPlugins(BackupCalendar, {
       props: { repos: [] },
     })
-    expect(wrapper.text()).toContain('Backup Calendar')
+    expect(wrapper.text()).toContain('Backup calendar')
   })
 
   it('renders repo options in select', () => {

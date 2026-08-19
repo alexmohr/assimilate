@@ -9,7 +9,7 @@ import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
 import { parseLines } from '../utils/validation'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
-import EditableInfoCard from './EditableInfoCard.vue'
+import EditableSection from './EditableSection.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 import type { AgentRow } from '../types/agent'
 
@@ -76,8 +76,9 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <EditableInfoCard
-    title="Backup defaults"
+  <EditableSection
+    lede="What a schedule uses for this host when it does not set its own paths, patterns or
+      commands."
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"
@@ -267,7 +268,7 @@ async function save(): Promise<void> {
         spellcheck="false"
       />
     </template>
-  </EditableInfoCard>
+  </EditableSection>
 </template>
 
 <style scoped>

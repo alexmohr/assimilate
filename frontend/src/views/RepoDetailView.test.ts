@@ -203,6 +203,19 @@ function setupApiSuccess(
   })
 }
 
+/**
+ * Opens the Settings tab on a section. The five stacked cards that used to sit
+ * on Overview live behind a sub-nav there now, the same shape agents and
+ * schedules use.
+ */
+async function openSettings(
+  wrapper: ReturnType<typeof renderWithPlugins>,
+  section: string,
+): Promise<void> {
+  await wrapper.vm.$router.replace({ query: { tab: 'settings', section } })
+  await flushPromises()
+}
+
 async function renderRepoDetail(
   overrides: { id?: string; role?: string } = {},
 ): Promise<ReturnType<typeof renderWithPlugins>> {
@@ -260,6 +273,7 @@ describe('RepoDetailView', () => {
   it('displays compression and encryption values', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'repository')
 
     const text = wrapper.text()
     expect(text).toContain('lz4')
@@ -269,6 +283,7 @@ describe('RepoDetailView', () => {
   it('shows SSH target in info grid', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'repository')
 
     expect(wrapper.text()).toContain('borg@backup.example.com:22')
   })
@@ -276,8 +291,9 @@ describe('RepoDetailView', () => {
   it('shows accept key only when the host key mismatches', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'repository')
 
-    expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH Key')).toBe(
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH key')).toBe(
       true,
     )
     expect(wrapper.text()).toContain('ssh-ed25519 AAAAOLD')
@@ -286,8 +302,9 @@ describe('RepoDetailView', () => {
   it('hides the accept key button when the host key matches', async () => {
     setupApiSuccess({ ...mockRepo, ssh_host_key: refreshedHostKey }, refreshedHostKey)
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'repository')
 
-    expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH Key')).toBe(
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH key')).toBe(
       false,
     )
   })
@@ -295,10 +312,11 @@ describe('RepoDetailView', () => {
   it('accepts a refreshed SSH host key', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'repository')
 
     const acceptButton = wrapper
       .findAll('button')
-      .find((button) => button.text().includes('Accept SSH Key'))
+      .find((button) => button.text().includes('Accept SSH key'))
     expect(acceptButton).toBeDefined()
     await acceptButton!.trigger('click')
     await flushPromises()
@@ -324,8 +342,9 @@ describe('RepoDetailView', () => {
       },
     })
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'repository')
 
-    expect(wrapper.text()).toContain('Current Operation')
+    expect(wrapper.text()).toContain('Current operation')
     expect(wrapper.text()).toContain('Compacting repository (started by admin)')
   })
 
@@ -337,25 +356,27 @@ describe('RepoDetailView', () => {
       last_op_at: new Date().toISOString(),
     })
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'repository')
 
     expect(wrapper.text()).toContain('Compact repository')
     expect(wrapper.text()).toContain('by admin')
   })
 
-  it('renders stat cards with archive count and agent count', async () => {
+  it('opens on tiles carrying the archive count and the agents behind it', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
 
-    const text = wrapper.text()
+    const text = wrapper.find('.tiles').text()
     expect(text).toContain('30')
     expect(text).toContain('Archives')
     expect(text).toContain('2')
-    expect(text).toContain('Agents')
+    expect(text).toContain('agents')
   })
 
   it('renders QuotaPanel component', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'quota')
 
     expect(wrapper.find('[data-testid="quota-panel"]').exists()).toBe(true)
   })
@@ -682,7 +703,7 @@ describe('RepoDetailView', () => {
 
       // BaseModal teleports to document.body, outside the mounted wrapper's tree.
       const confirmBtn = Array.from(document.body.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Delete Archive',
+        (b) => b.textContent === 'Delete archive',
       )
       expect(confirmBtn).toBeDefined()
       confirmBtn!.click()
@@ -695,9 +716,9 @@ describe('RepoDetailView', () => {
   it('shows danger zone for admin users', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'danger')
 
-    expect(wrapper.text()).toContain('Danger Zone')
-    expect(wrapper.text()).toContain('Delete Repository')
+    expect(wrapper.text()).toContain('Delete repository')
   })
 
   // The danger zone renames and resets the repository, which changes the
@@ -710,6 +731,7 @@ describe('RepoDetailView', () => {
       vi.mocked(apiClient.get).mock.calls.filter((c) => String(c[0]) === '/repos/1').length
     const before = repoFetches()
 
+    await openSettings(wrapper, 'danger')
     wrapper.findComponent(RepoDangerZone).vm.$emit('changed')
     await flushPromises()
 
@@ -721,6 +743,7 @@ describe('RepoDetailView', () => {
   it('surfaces a danger-zone failure on the page', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
+    await openSettings(wrapper, 'danger')
 
     wrapper.findComponent(RepoDangerZone).vm.$emit('error', 'repository is locked')
     await flushPromises()
@@ -731,8 +754,11 @@ describe('RepoDetailView', () => {
   it('hides danger zone for non-admin users', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail({ role: 'viewer' })
+    // The section is absent from the rail rather than disabled, so asking for
+    // it by URL lands on the one section a viewer does have.
+    await openSettings(wrapper, 'danger')
 
-    expect(wrapper.find('.danger-zone').exists()).toBe(false)
+    expect(wrapper.findComponent(RepoDangerZone).exists()).toBe(false)
   })
 
   it('shows error message when repo load fails', async () => {
@@ -748,13 +774,13 @@ describe('RepoDetailView', () => {
 
     const wrapper = await renderRepoDetail()
 
-    const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Full Resync')
+    const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Sync now')
     expect(syncBtn).toBeDefined()
     await syncBtn!.trigger('click')
     await flushPromises()
 
     // After 202 response loading clears -- button returns to normal label
-    expect(wrapper.findAll('button').find((b) => b.text() === 'Full Resync')).toBeDefined()
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Sync now')).toBeDefined()
     expect(wrapper.findAll('button').find((b) => b.text() === 'Syncing...')).toBeUndefined()
 
     expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync?build_index=true')
@@ -766,13 +792,13 @@ describe('RepoDetailView', () => {
 
     const wrapper = await renderRepoDetail()
 
-    const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Full Resync')
+    const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Sync now')
     expect(syncBtn).toBeDefined()
     await syncBtn!.trigger('click')
     await flushPromises()
 
     // Loading clears even on failure
-    expect(wrapper.findAll('button').find((b) => b.text() === 'Full Resync')).toBeDefined()
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Sync now')).toBeDefined()
     expect(wrapper.findAll('button').find((b) => b.text() === 'Syncing...')).toBeUndefined()
 
     // Error message visible in the page (toast container is teleported so check apiClient call)
@@ -948,7 +974,7 @@ describe('RepoDetailView', () => {
         '.modal-dialog button.btn-danger',
       )
       expect(confirmBtn).not.toBeNull()
-      expect(confirmBtn!.textContent).toBe('Delete Archive')
+      expect(confirmBtn!.textContent).toBe('Delete archive')
       confirmBtn!.click()
       await flushPromises()
     }
@@ -1290,7 +1316,8 @@ describe('RepoDetailView', () => {
     async function openBreakLockDialog(
       wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
     ): Promise<void> {
-      const breakLockBtn = wrapper.findAll('button').find((b) => b.text() === 'Break Lock')
+      await openSettings(wrapper, 'danger')
+      const breakLockBtn = wrapper.findAll('button').find((b) => b.text() === 'Break lock')
       expect(breakLockBtn).toBeDefined()
       await breakLockBtn!.trigger('click')
       await flushPromises()
@@ -1301,7 +1328,7 @@ describe('RepoDetailView', () => {
         '.modal-dialog button.btn-danger',
       )
       expect(confirmBtn).not.toBeNull()
-      expect(confirmBtn!.textContent).toBe('Yes, Break Lock')
+      expect(confirmBtn!.textContent).toBe('Yes, break lock')
       confirmBtn!.click()
       await flushPromises()
     }

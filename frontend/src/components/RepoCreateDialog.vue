@@ -453,7 +453,7 @@ defineExpose({ reset })
       </div>
 
       <div class="field">
-        <label class="field-label">SSH User</label>
+        <label class="field-label">SSH user</label>
         <input
           v-model="form.ssh_user"
           class="input mono"
@@ -461,7 +461,7 @@ defineExpose({ reset })
         />
       </div>
       <div class="field">
-        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <label class="field-label">SSH host <span class="required">*</span></label>
         <input
           v-model="form.ssh_host"
           class="input mono"
@@ -469,7 +469,7 @@ defineExpose({ reset })
         />
       </div>
       <div class="field field-narrow">
-        <label class="field-label">SSH Port</label>
+        <label class="field-label">SSH port</label>
         <input
           v-model.number="form.ssh_port"
           class="input"
@@ -521,7 +521,7 @@ defineExpose({ reset })
     <!-- Folder Browser / Repo Path -->
     <div class="browser-section">
       <div class="browser-header">
-        <label class="field-label">Repo Path <span class="required">*</span></label>
+        <label class="field-label">Repo path <span class="required">*</span></label>
         <div class="browser-path-row">
           <div class="path-autocomplete-wrapper">
             <input
@@ -579,7 +579,7 @@ defineExpose({ reset })
             @click="createFolder"
           >
             <FolderPlus :size="14" />
-            New Folder
+            New folder
           </button>
         </div>
 
@@ -689,7 +689,7 @@ defineExpose({ reset })
 
   <BaseModal
     :open="folderModal.open"
-    title="New Folder"
+    title="New folder"
     size="sm"
     @close="folderModal.open = false"
   >

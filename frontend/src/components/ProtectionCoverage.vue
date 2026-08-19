@@ -15,7 +15,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     id="protection-coverage"
     class="panel"
   >
-    <h2 class="panel-title">Protection Coverage</h2>
+    <h2 class="panel-title">Protection coverage</h2>
     <RouterLink
       class="coverage-score"
       to="/agents?coverage=protected"

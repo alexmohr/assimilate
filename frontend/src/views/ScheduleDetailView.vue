@@ -192,7 +192,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
     case 'backup':
       return 'Backup'
     case 'check':
-      return 'Integrity Check'
+      return 'Integrity check'
     case 'verify':
       return 'Verify (extract dry-run)'
   }
@@ -735,7 +735,7 @@ watch(activeTab, (tab) => {
           :disabled="saving"
           @click="save"
         >
-          {{ saving ? 'Saving...' : isCreate ? 'Create Schedule' : 'Save Changes' }}
+          {{ saving ? 'Saving...' : isCreate ? 'Create schedule' : 'Save changes' }}
         </button>
       </div>
     </template>
@@ -743,7 +743,7 @@ watch(activeTab, (tab) => {
     <!-- Delete Confirmation Dialog -->
     <BaseModal
       :open="showDeleteDialog"
-      title="Delete Schedule"
+      title="Delete schedule"
       @close="showDeleteDialog = false"
     >
       <p>
@@ -765,7 +765,7 @@ watch(activeTab, (tab) => {
           :disabled="deleteLoading"
           @click="confirmDeleteSchedule"
         >
-          {{ deleteLoading ? 'Deleting...' : 'Delete Schedule' }}
+          {{ deleteLoading ? 'Deleting...' : 'Delete schedule' }}
         </button>
       </template>
     </BaseModal>

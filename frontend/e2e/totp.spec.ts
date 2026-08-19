@@ -42,8 +42,8 @@ async function enrollTotp(page: Page): Promise<{ secret: string; recovery_codes:
   await page.goto('/profile')
   await page.waitForLoadState('networkidle')
 
-  await page.getByRole('tab', { name: 'Two-Factor Auth' }).click()
-  await page.getByRole('button', { name: 'Set Up Two-Factor Auth' }).click()
+  await page.getByRole('tab', { name: 'Two-factor auth' }).click()
+  await page.getByRole('button', { name: 'Set up two-factor auth' }).click()
 
   const setupResponse = await page.waitForResponse(
     (resp) => resp.url().includes('/api/auth/totp/setup') && resp.status() === 200,
@@ -90,12 +90,12 @@ async function disableTotpIfEnabled(page: Page): Promise<void> {
   try {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
-    const tab = page.getByRole('tab', { name: 'Two-Factor Auth' })
+    const tab = page.getByRole('tab', { name: 'Two-factor auth' })
     if (!(await tab.isVisible().catch(() => false))) {
       return
     }
     await tab.click()
-    const disableButton = page.getByRole('button', { name: 'Disable Two-Factor Auth' })
+    const disableButton = page.getByRole('button', { name: 'Disable two-factor auth' })
     if (await disableButton.isVisible().catch(() => false)) {
       await page.locator('input[placeholder="Current password"]').fill('totpuser')
       await disableButton.click()
@@ -119,7 +119,7 @@ test.describe('TOTP / 2FA', () => {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('tab', { name: 'Two-Factor Auth' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Two-factor auth' })).toBeVisible()
   })
 
   test('Sessions tab on profile shows active sessions', async ({ page }) => {

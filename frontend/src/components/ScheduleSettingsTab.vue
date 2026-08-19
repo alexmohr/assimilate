@@ -147,11 +147,8 @@ onBeforeUnmount(() => {
     </nav>
 
     <div class="settings-pane">
-      <div
-        v-if="currentSection === 'general'"
-        class="info-card"
-      >
-        <h3 class="info-title">General</h3>
+      <template v-if="currentSection === 'general'">
+        <p class="pane-lede">What this schedule is called, and when it runs.</p>
         <div class="field">
           <label class="field-label">Name</label>
           <input
@@ -174,26 +171,26 @@ onBeforeUnmount(() => {
           v-if="isCreate"
           class="field"
         >
-          <label class="field-label">Schedule Type</label>
+          <label class="field-label">Schedule type</label>
           <select
             v-model="selectedType"
             class="input"
           >
             <option value="backup">Backup</option>
-            <option value="check">Integrity Check</option>
+            <option value="check">Integrity check</option>
             <option value="verify">Verify (extract dry-run)</option>
           </select>
           <span class="field-hint">
             Backup creates archives; Check validates repo integrity; Verify tests extractability.
           </span>
         </div>
-      </div>
+      </template>
 
-      <div
-        v-else-if="currentSection === 'targets'"
-        class="info-card"
-      >
-        <h3 class="info-title">Targets</h3>
+      <template v-else-if="currentSection === 'targets'">
+        <p class="pane-lede">
+          Which hosts this schedule runs on, which repository they write to, and what happens when
+          one of them fails.
+        </p>
         <div class="field">
           <label class="field-label"
             >Hosts
@@ -273,7 +270,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="field">
-          <label class="field-label">On Failure</label>
+          <label class="field-label">On failure</label>
           <select
             v-model="onFailure"
             class="input"
@@ -290,7 +287,7 @@ onBeforeUnmount(() => {
           v-if="selectedAgentIds.length > 1"
           class="field"
         >
-          <label class="field-label">Execution Order</label>
+          <label class="field-label">Execution order</label>
           <div class="order-list">
             <div
               v-for="(agentId, idx) in selectedAgentIds"
@@ -336,7 +333,7 @@ onBeforeUnmount(() => {
             v-if="!usePerHostPaths"
             class="field"
           >
-            <label class="field-label">Backup Paths</label>
+            <label class="field-label">Backup paths</label>
             <textarea
               v-model="form.backup_sources"
               class="input area-input"
@@ -352,7 +349,7 @@ onBeforeUnmount(() => {
             v-else
             class="field"
           >
-            <label class="field-label">Backup Paths</label>
+            <label class="field-label">Backup paths</label>
             <PerAgentFields
               :agent-ids="selectedAgentIds"
               :agent-label="agentLabel"
@@ -373,13 +370,13 @@ onBeforeUnmount(() => {
             </PerAgentFields>
           </div>
         </template>
-      </div>
+      </template>
 
-      <div
-        v-else-if="currentSection === 'retention'"
-        class="info-card"
-      >
-        <h3 class="info-title">Retention</h3>
+      <template v-else-if="currentSection === 'retention'">
+        <p class="pane-lede">
+          How many archives borg keeps when this schedule prunes. Blank or zero keeps none of that
+          interval.
+        </p>
         <div class="retention-grid">
           <div class="field">
             <label class="field-label">Hourly</label>
@@ -427,7 +424,7 @@ onBeforeUnmount(() => {
             />
           </div>
         </div>
-      </div>
+      </template>
 
       <ScheduleAdvancedTab
         v-else-if="currentSection === 'advanced'"
@@ -609,7 +606,7 @@ onBeforeUnmount(() => {
 
 /* Four sections fit one row at any width, so the sub-nav never wraps to a
    second row the way an unbounded list would. */
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .settings-tab {
     flex-direction: column;
   }

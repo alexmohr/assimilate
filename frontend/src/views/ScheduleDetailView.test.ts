@@ -218,7 +218,7 @@ async function renderEditModeAndSave(): Promise<ReturnType<typeof renderWithPlug
   await flushPromises()
   await goToSettings(wrapper)
 
-  const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
+  const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save changes')
   await saveBtn!.trigger('click')
   await flushPromises()
   return wrapper
@@ -264,7 +264,7 @@ describe('ScheduleDetailView - edit mode', () => {
   it('shows the next run date in the info summary', async () => {
     const wrapper = await createEditWrapper()
 
-    expect(infoValueFor(wrapper, 'Next Run')).not.toContain('—')
+    expect(infoValueFor(wrapper, 'Next run')).not.toContain('—')
   })
 
   it('shows a human-readable cron in the info summary', async () => {
@@ -278,7 +278,7 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    expect(infoValueFor(wrapper, 'Next Run')).toContain('—')
+    expect(infoValueFor(wrapper, 'Next run')).toContain('—')
   })
 
   it('shows Never for a null last_run_at', async () => {
@@ -286,7 +286,7 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    expect(infoValueFor(wrapper, 'Last Run')).toContain('Never')
+    expect(infoValueFor(wrapper, 'Last run')).toContain('Never')
   })
 
   it('shows retention fields under Settings > Retention for a backup schedule', async () => {
@@ -347,7 +347,7 @@ describe('ScheduleDetailView - edit mode', () => {
     await goToSettings(wrapper)
     await goToSection(wrapper, 'Advanced')
 
-    expect(wrapper.text()).toContain('Remote Rate Limit')
+    expect(wrapper.text()).toContain('Remote rate limit')
     const rateLimitInput = wrapper
       .findAll('input[type="number"]')
       .find((i) => i.element.value === '0')
@@ -355,7 +355,7 @@ describe('ScheduleDetailView - edit mode', () => {
 
     await rateLimitInput!.setValue(2000)
 
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save changes')
     await saveBtn!.trigger('click')
     await flushPromises()
 
@@ -387,12 +387,12 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(tabs.some((t) => t.text() === 'Advanced')).toBe(false)
   })
 
-  it('shows Save Changes only on the Settings tab', async () => {
+  it('shows Save changes only on the Settings tab', async () => {
     const wrapper = await createEditWrapper()
 
     expect(wrapper.find('.save-bar').exists()).toBe(false)
     await goToSettings(wrapper)
-    expect(wrapper.findAll('button').find((b) => b.text() === 'Save Changes')).toBeTruthy()
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Save changes')).toBeTruthy()
   })
 
   it('calls PUT on save', async () => {
@@ -441,26 +441,26 @@ describe('ScheduleDetailView - edit mode', () => {
     await flushPromises()
     await goToSettings(wrapper)
 
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save changes')
     await saveBtn!.trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.error-inline').exists()).toBe(true)
   })
 
-  it('shows Run Now and no Cancel Backup button when nothing is running', async () => {
+  it('shows Run now and no Cancel backup button when nothing is running', async () => {
     const wrapper = await createEditWrapper()
 
     const buttons = wrapper.findAll('button').map((b) => b.text())
-    expect(buttons).toContain('Run Now')
-    expect(buttons).not.toContain('Cancel Backup')
+    expect(buttons).toContain('Run now')
+    expect(buttons).not.toContain('Cancel backup')
   })
 
-  it('clicking Run Now triggers the schedule with an empty body', async () => {
+  it('clicking Run now triggers the schedule with an empty body', async () => {
     mockApiClient.post.mockResolvedValue({ data: {} })
     const wrapper = await createEditWrapper()
 
-    const runNowButton = wrapper.findAll('button').find((b) => b.text() === 'Run Now')
+    const runNowButton = wrapper.findAll('button').find((b) => b.text() === 'Run now')
     expect(runNowButton).toBeTruthy()
     await runNowButton!.trigger('click')
     await flushPromises()
@@ -550,23 +550,23 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', { agent_ids: [10] })
   })
 
-  it('seeds running state from recent reports and shows Cancel Backup instead of Run Now', async () => {
+  it('seeds running state from recent reports and shows Cancel backup instead of Run now', async () => {
     setupEditModeWithReport({ id: 1, status: 'started' })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
     const buttons = wrapper.findAll('button').map((b) => b.text())
-    expect(buttons).toContain('Cancel Backup')
-    expect(buttons).not.toContain('Run Now')
+    expect(buttons).toContain('Cancel backup')
+    expect(buttons).not.toContain('Run now')
   })
 
-  it('calls cancel API when Cancel Backup is clicked', async () => {
+  it('calls cancel API when Cancel backup is clicked', async () => {
     setupEditModeWithReport({ id: 1, status: 'pending' })
     mockApiClient.post.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel Backup')
+    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel backup')
     await cancelBtn!.trigger('click')
     await flushPromises()
 
@@ -630,7 +630,7 @@ describe('ScheduleDetailView - edit mode', () => {
     await wrapper.find('.order-btn[title="Move down"]').trigger('click')
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Save Changes')!
+      .find((b) => b.text() === 'Save changes')!
       .trigger('click')
     await flushPromises()
 
@@ -689,7 +689,7 @@ describe('ScheduleDetailView - edit mode', () => {
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Save Changes')!
+      .find((b) => b.text() === 'Save changes')!
       .trigger('click')
     await flushPromises()
 
@@ -729,7 +729,7 @@ describe('ScheduleDetailView - edit mode', () => {
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Save Changes')!
+      .find((b) => b.text() === 'Save changes')!
       .trigger('click')
     await flushPromises()
 
@@ -792,21 +792,21 @@ describe('ScheduleDetailView - create mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Schedule Type')
-    expect(wrapper.text()).toContain('Integrity Check')
+    expect(wrapper.text()).toContain('Schedule type')
+    expect(wrapper.text()).toContain('Integrity check')
     expect(wrapper.text()).toContain('Verify (extract dry-run)')
   })
 
-  it('shows Create Schedule button', async () => {
+  it('shows Create schedule button', async () => {
     setupCreateMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === 'Create Schedule')
+    const createBtn = wrapper.findAll('button').find((b) => b.text() === 'Create schedule')
     expect(createBtn).toBeTruthy()
   })
 
-  it('propagates the Schedule Type select into the create payload', async () => {
+  it('propagates the Schedule type select into the create payload', async () => {
     setupCreateMode()
     mockApiClient.post.mockResolvedValue({ data: { id: 5 } })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
@@ -820,7 +820,7 @@ describe('ScheduleDetailView - create mode', () => {
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Create Schedule')!
+      .find((b) => b.text() === 'Create schedule')!
       .trigger('click')
     await flushPromises()
 
@@ -1254,7 +1254,7 @@ describe('ScheduleDetailView - header actions', () => {
   })
 
   async function openMenu(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
-    await wrapper.find('.schedule-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
   }
 
@@ -1263,7 +1263,7 @@ describe('ScheduleDetailView - header actions', () => {
     await openMenu(wrapper)
 
     const deleteItem = wrapper
-      .findAll('.schedule-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text() === 'Delete schedule')
     expect(deleteItem).toBeTruthy()
     await deleteItem!.trigger('click')
@@ -1278,7 +1278,7 @@ describe('ScheduleDetailView - header actions', () => {
     await openMenu(wrapper)
 
     await wrapper
-      .findAll('.schedule-menu-item')
+      .findAll('.overflow-menu-item')
       .find((i) => i.text() === 'Logs')!
       .trigger('click')
     await flushPromises()
@@ -1294,9 +1294,9 @@ describe('ScheduleDetailView - delete confirmation', () => {
 
   async function openDeleteDialog(): Promise<ReturnType<typeof renderWithPlugins>> {
     const wrapper = await createEditWrapper()
-    await wrapper.find('.schedule-menu-toggle').trigger('click')
+    await wrapper.find('.overflow-toggle').trigger('click')
     await wrapper
-      .findAll('.schedule-menu-item')
+      .findAll('.overflow-menu-item')
       .find((b) => b.text().trim() === 'Delete schedule')!
       .trigger('click')
     await flushPromises()
@@ -1317,7 +1317,7 @@ describe('ScheduleDetailView - delete confirmation', () => {
 
     await wrapper
       .findAll('.modal-footer button')
-      .find((b) => b.text().trim() === 'Delete Schedule')!
+      .find((b) => b.text().trim() === 'Delete schedule')!
       .trigger('click')
     await flushPromises()
 
@@ -1330,7 +1330,7 @@ describe('ScheduleDetailView - delete confirmation', () => {
 
     await wrapper
       .findAll('.modal-footer button')
-      .find((b) => b.text().trim() === 'Delete Schedule')!
+      .find((b) => b.text().trim() === 'Delete schedule')!
       .trigger('click')
     await flushPromises()
 
@@ -1398,7 +1398,7 @@ describe('ScheduleDetailView - per-agent overrides', () => {
   async function save(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Save Changes')!
+      .find((b) => b.text() === 'Save changes')!
       .trigger('click')
     await flushPromises()
   }

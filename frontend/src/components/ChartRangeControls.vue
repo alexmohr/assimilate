@@ -24,7 +24,7 @@ const days = defineModel<T>('days', { required: true })
       v-model="repoId"
       class="input chart-range-select"
     >
-      <option :value="undefined">All Repos</option>
+      <option :value="undefined">All repos</option>
       <option
         v-for="repo in repos"
         :key="repo.id"

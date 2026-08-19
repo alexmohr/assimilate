@@ -113,7 +113,7 @@ test.describe('Repositories management journey', () => {
     await expect(breakLockBtn).toBeVisible()
     await breakLockBtn.click()
 
-    await expect(page.locator('.modal-title')).toHaveText('Break Repository Lock')
+    await expect(page.locator('.modal-title')).toHaveText('Break repository lock')
     await expect(page.locator('.break-lock-warning').first()).toContainText(
       'stale local cache lock',
     )

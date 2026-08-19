@@ -787,7 +787,7 @@ watch(
       :icon="Server"
       title="No agents registered"
       description="Add your first agent to start backing up."
-      action="Add Agent"
+      action="Add agent"
       @action="showAddDialog = true"
     />
     <div
@@ -937,7 +937,7 @@ watch(
           >
         </div>
         <div class="field">
-          <label class="field-label">Display Name</label>
+          <label class="field-label">Display name</label>
           <input
             v-model="addForm.display_name"
             class="input"

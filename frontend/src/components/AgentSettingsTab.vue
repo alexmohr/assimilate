@@ -109,44 +109,42 @@ const currentSection = computed<SettingsSection>(() =>
 
     <div class="settings-pane">
       <template v-if="currentSection === 'identity'">
-        <div class="info-card">
-          <div class="info-title-row">
-            <h3 class="info-title">Identity</h3>
-            <button
-              v-if="!isImported"
-              class="btn btn-sm"
-              type="button"
-              @click="emit('editIdentity')"
-            >
-              Edit
-            </button>
-          </div>
-          <dl class="info-grid">
-            <dt>Hostname</dt>
-            <dd class="mono">{{ agent.hostname }}</dd>
-            <dt>Display name</dt>
-            <dd>{{ agent.display_name ?? 'Not set' }}</dd>
-            <template v-if="!isImported">
-              <dt>Agent version</dt>
-              <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
-              <dt>Revision</dt>
-              <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
-              <dt>Built</dt>
-              <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
-            </template>
-            <dt>Registered</dt>
-            <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
-            <dt>Last seen</dt>
-            <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
-          </dl>
+        <div class="pane-head">
+          <p class="pane-lede">How this host names itself, and what the server knows about it.</p>
+          <button
+            v-if="!isImported"
+            class="btn btn-sm"
+            type="button"
+            @click="emit('editIdentity')"
+          >
+            Edit
+          </button>
         </div>
+        <dl class="info-grid">
+          <dt>Hostname</dt>
+          <dd class="mono">{{ agent.hostname }}</dd>
+          <dt>Display name</dt>
+          <dd>{{ agent.display_name ?? 'Not set' }}</dd>
+          <template v-if="!isImported">
+            <dt>Agent version</dt>
+            <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
+            <dt>Revision</dt>
+            <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
+            <dt>Built</dt>
+            <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
+          </template>
+          <dt>Registered</dt>
+          <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
+          <dt>Last seen</dt>
+          <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
+        </dl>
 
-        <div
+        <section
           v-if="!isImported"
-          class="info-card"
+          class="pane-section"
         >
-          <div class="info-title-row">
-            <h3 class="info-title">Connection</h3>
+          <div class="pane-section-head">
+            <span class="group-label">Connection</span>
             <button
               class="btn btn-sm"
               type="button"
@@ -160,7 +158,7 @@ const currentSection = computed<SettingsSection>(() =>
             Regenerating invalidates the current token immediately. The agent stays disconnected
             until it is restarted with the new one.
           </p>
-        </div>
+        </section>
       </template>
 
       <AgentDefaultsCard
@@ -195,7 +193,7 @@ const currentSection = computed<SettingsSection>(() =>
 /* Base .settings-tab/.settings-nav/.settings-nav-item/.settings-pane shapes
    live in style.css, shared with ScheduleSettingsTab. Only this page's mobile
    collapse (wrap into rows) is its own. */
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .settings-tab {
     flex-direction: column;
   }

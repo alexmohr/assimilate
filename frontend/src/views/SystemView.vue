@@ -268,9 +268,9 @@ async function resetSystem(): Promise<void> {
       <h1 class="page-title">System</h1>
     </div>
 
-    <div class="info-card">
+    <div class="panel">
       <div class="card-header">
-        <h3 class="info-title">Version</h3>
+        <h2 class="panel-title">Version</h2>
       </div>
 
       <BaseSpinner
@@ -305,9 +305,9 @@ async function resetSystem(): Promise<void> {
       </div>
     </div>
 
-    <div class="info-card">
+    <div class="panel">
       <div class="card-header">
-        <h3 class="info-title">SSH Public Key</h3>
+        <h2 class="panel-title">SSH public key</h2>
         <button
           class="btn btn-sm btn-ghost btn-danger-text"
           @click="showRegenConfirm = true"
@@ -345,7 +345,7 @@ async function resetSystem(): Promise<void> {
 
     <div class="info-card settings-card">
       <div class="card-header">
-        <h3 class="info-title">Settings</h3>
+        <h2 class="panel-title">Settings</h2>
       </div>
 
       <BaseSpinner
@@ -389,7 +389,7 @@ async function resetSystem(): Promise<void> {
               class="setting-label"
               for="settings-retention"
             >
-              Retention Days
+              Retention days
             </label>
             <div class="setting-input-group">
               <input
@@ -409,7 +409,7 @@ async function resetSystem(): Promise<void> {
               class="setting-label"
               for="settings-report-retention"
             >
-              Report Retention (days)
+              Report retention (days)
             </label>
             <div class="setting-input-group">
               <input
@@ -431,7 +431,7 @@ async function resetSystem(): Promise<void> {
               class="setting-label"
               for="settings-failed-retention"
             >
-              Failed Report Retention (days)
+              Failed report retention (days)
             </label>
             <div class="setting-input-group">
               <input
@@ -453,7 +453,7 @@ async function resetSystem(): Promise<void> {
               class="setting-label"
               for="settings-event-retention"
             >
-              System Event Retention (days)
+              System event retention (days)
             </label>
             <div class="setting-input-group">
               <input
@@ -473,7 +473,7 @@ async function resetSystem(): Promise<void> {
               class="setting-label"
               for="settings-notification-delivery-retention"
             >
-              Notification Delivery Retention (days)
+              Notification delivery retention (days)
             </label>
             <div class="setting-input-group">
               <input
@@ -495,7 +495,7 @@ async function resetSystem(): Promise<void> {
               class="setting-label"
               for="settings-borg-timeout"
             >
-              Borg Timeout
+              Borg timeout
             </label>
             <div class="setting-input-group">
               <input
@@ -518,7 +518,7 @@ async function resetSystem(): Promise<void> {
               class="setting-label"
               for="settings-idle-timeout"
             >
-              Session Idle Timeout
+              Session idle timeout
             </label>
             <div class="setting-input-group">
               <input
@@ -554,9 +554,9 @@ async function resetSystem(): Promise<void> {
       </template>
     </div>
 
-    <div class="info-card">
+    <div class="panel">
       <div class="card-header">
-        <h3 class="info-title">Database Storage</h3>
+        <h2 class="panel-title">Database storage</h2>
         <button
           class="btn btn-sm btn-ghost"
           :disabled="databaseStorageLoading"
@@ -640,9 +640,9 @@ async function resetSystem(): Promise<void> {
       </template>
     </div>
 
-    <div class="info-card">
+    <div class="panel">
       <div class="card-header">
-        <h3 class="info-title">Configuration Export / Import</h3>
+        <h2 class="panel-title">Configuration export / import</h2>
       </div>
       <p class="info-description">
         Export host and schedule configuration as JSON for backup or migration. Importing restores
@@ -739,7 +739,7 @@ async function resetSystem(): Promise<void> {
 
     <div class="info-card danger-zone-card">
       <div class="card-header">
-        <h3 class="info-title danger-title">Danger Zone</h3>
+        <h3 class="info-title danger-title">Danger zone</h3>
       </div>
       <p class="info-description">
         Emergency actions to bring the system back to a safe state. Use when backups are stuck or
@@ -774,7 +774,7 @@ async function resetSystem(): Promise<void> {
     <!-- Regenerate Confirmation -->
     <BaseModal
       :open="showRegenConfirm"
-      title="Regenerate SSH Key"
+      title="Regenerate SSH key"
       @close="showRegenConfirm = false"
     >
       <p class="warning-text">
@@ -811,7 +811,7 @@ async function resetSystem(): Promise<void> {
     <!-- Reset Confirmation -->
     <BaseModal
       :open="showResetConfirm"
-      title="Reset System State"
+      title="Reset system state"
       @close="showResetConfirm = false"
     >
       <p class="warning-text">This will immediately:</p>

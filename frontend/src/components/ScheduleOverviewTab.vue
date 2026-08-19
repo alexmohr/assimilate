@@ -156,8 +156,8 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
       </div>
     </div>
 
-    <div class="info-card">
-      <h3 class="info-title">Schedule Info</h3>
+    <div class="panel">
+      <h2 class="panel-title">Schedule info</h2>
       <dl class="info-grid">
         <dt>Repository</dt>
         <dd>
@@ -166,11 +166,11 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
             (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned')
           }}
         </dd>
-        <dt>On Failure</dt>
+        <dt>On failure</dt>
         <dd>{{ schedule.on_failure === 'continue' ? 'Continue' : 'Stop' }}</dd>
-        <dt>Next Run</dt>
+        <dt>Next run</dt>
         <dd>{{ formatDateShort(schedule.next_run_at) }}</dd>
-        <dt>Last Run</dt>
+        <dt>Last run</dt>
         <dd>{{ formatDateShort(schedule.last_run_at, 'Never') }}</dd>
         <dt>Cron (human)</dt>
         <dd>{{ cronSummary }}</dd>

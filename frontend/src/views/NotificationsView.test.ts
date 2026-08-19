@@ -267,7 +267,7 @@ describe('NotificationsView', () => {
     const newBtn = wrapper.findAll('button').find((b) => b.text().includes('New'))
     await newBtn!.trigger('click')
     await flushPromises()
-    expect(document.body.textContent).toContain('New Channel')
+    expect(document.body.textContent).toContain('New channel')
   })
 
   it('switches to webhook config in add wizard', async () => {
@@ -893,7 +893,7 @@ describe('NotificationsView', () => {
 
       // MOCK_RULES already has backup_failed enabled for this channel.
       const item = [...document.body.querySelectorAll('.event-item')].find((el) =>
-        el.textContent?.includes('Failed'),
+        el.textContent?.includes('failed'),
       )
       expect(item).toBeDefined()
       ;(item!.querySelector('input, button') as HTMLElement | null)?.click()

@@ -12,18 +12,18 @@ import { useWebSocket } from '../composables/useWebSocket'
 
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
+import { formatBytes, relativeTime } from '../utils/format'
+import { cronToHuman } from '../utils/cron'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import QuotaPanel from '../components/QuotaPanel.vue'
 import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
 import BaseTabs from '../components/BaseTabs.vue'
 import RepoSchedulesTab from '../components/RepoSchedulesTab.vue'
-import RepoBorgConsole from '../components/RepoBorgConsole.vue'
 import RepoArchivesTab from '../components/RepoArchivesTab.vue'
-import RepoDangerZone from '../components/RepoDangerZone.vue'
-import EntityTags from '../components/EntityTags.vue'
-import RepoOverviewCard from '../components/RepoOverviewCard.vue'
+import RepoHeader from '../components/RepoHeader.vue'
+import RepoSettingsTab from '../components/RepoSettingsTab.vue'
+import { isRepoSettingsSection, type RepoSettingsSection } from '../utils/repoSettings'
 
-type TabId = 'overview' | 'archives' | 'schedules'
+type TabId = 'overview' | 'archives' | 'schedules' | 'settings'
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
@@ -35,7 +35,7 @@ const repoId = computed(() => Number(props.id))
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab as string | undefined
-    if (t === 'archives' || t === 'schedules') return t
+    if (t === 'archives' || t === 'schedules' || t === 'settings') return t
     return 'overview'
   },
   set(val: TabId) {
@@ -47,7 +47,20 @@ const tabs: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'archives', label: 'Archives' },
   { id: 'schedules', label: 'Schedules' },
+  { id: 'settings', label: 'Settings' },
 ]
+
+/** Which settings section the Settings tab shows, kept in the URL so a link
+    can point at one. Same shape as the agent detail view. */
+const settingsSection = computed<RepoSettingsSection>({
+  get() {
+    const s = route.query.section
+    return isRepoSettingsSection(s) ? s : 'repository'
+  },
+  set(val: RepoSettingsSection) {
+    router.replace({ query: { ...route.query, section: val } })
+  },
+})
 
 const repo = ref<RepoWithStats | null>(null)
 const { loading, error, run } = useAsyncAction()
@@ -154,6 +167,13 @@ const archivesTab = ref<InstanceType<typeof RepoArchivesTab> | null>(null)
 
 const isAdmin = computed(() => authStore.isAdmin)
 
+/** The disk-sync cadence in words, for the Overview tile. */
+const syncSummary = computed(() =>
+  repo.value?.sync_schedule
+    ? (cronToHuman(repo.value.sync_schedule) ?? repo.value.sync_schedule)
+    : 'Disabled',
+)
+
 async function loadRepo(): Promise<void> {
   await run(async () => {
     const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
@@ -205,7 +225,7 @@ onMounted(async () => {
     />
     <div
       v-else-if="error && !repo"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -219,10 +239,18 @@ onMounted(async () => {
       -->
       <div
         v-if="error"
-        class="state-msg state-error"
+        class="error-banner"
       >
         {{ error }}
       </div>
+
+      <RepoHeader
+        :repo="repo"
+        :is-admin="isAdmin"
+        :import-phase-verb="importPhaseVerb"
+        @import-reset="refreshRepo"
+      />
+
       <BaseTabs
         v-model="activeTab"
         :tabs="tabs"
@@ -234,40 +262,48 @@ onMounted(async () => {
         v-if="activeTab === 'overview'"
         class="tab-content fade-in"
       >
-        <RepoOverviewCard
-          :repo="repo"
-          :is-admin="isAdmin"
-          :current-op="currentOp"
-          :import-phase-verb="importPhaseVerb"
-          @saved="refreshRepo"
-          @import-reset="refreshRepo"
-        />
+        <div class="tiles">
+          <div class="tile">
+            <span class="stat-label">Archives</span>
+            <span class="stat-value stat-value--lg">{{ repo.archive_count }}</span>
+            <span class="stat-sub">across {{ repo.agent_count }} agents</span>
+          </div>
+          <div class="tile">
+            <span class="stat-label">Deduplicated</span>
+            <span class="stat-value stat-value--lg">
+              {{ formatBytes(repo.total_deduplicated_size) }}
+            </span>
+            <span class="stat-sub"> of {{ formatBytes(repo.total_original_size) }} original </span>
+          </div>
+          <div class="tile">
+            <span class="stat-label">Last write</span>
+            <span class="stat-value stat-value--lg">
+              {{ relativeTime(repo.last_backup_at ?? '') }}
+            </span>
+            <span class="stat-sub"> {{ formatBytes(repo.total_compressed_size) }} compressed </span>
+          </div>
+          <div class="tile">
+            <span class="stat-label">Disk sync</span>
+            <span class="stat-value stat-value--lg">{{ syncSummary }}</span>
+            <span class="stat-sub">
+              last {{ repo.last_synced_at ? relativeTime(repo.last_synced_at) : 'never' }}
+            </span>
+          </div>
+        </div>
 
-        <!-- Tags -->
-        <QuotaPanel
-          :repo-id="repoId"
-          :is-admin="isAdmin"
-          :current-usage-bytes="repo.total_deduplicated_size"
-        />
-
-        <EntityTags
-          v-if="isAdmin"
-          scope="repo"
-          :entity-path="`/repos/${repoId}`"
-        />
-
-        <RepoBorgConsole
-          v-if="isAdmin"
-          :repo-id="repoId"
-        />
-
-        <RepoDangerZone
-          v-if="isAdmin"
-          :repo="repo"
-          :current-op="currentOp"
-          @error="error = $event"
-          @changed="refreshRepo"
-        />
+        <section>
+          <div class="section-head">
+            <h2 class="section-title">Schedules</h2>
+            <button
+              class="btn btn-sm btn-ghost section-link"
+              type="button"
+              @click="activeTab = 'schedules'"
+            >
+              View all
+            </button>
+          </div>
+          <RepoSchedulesTab :repo-id="repoId" />
+        </section>
       </div>
 
       <!-- Archives Tab -->
@@ -292,6 +328,21 @@ onMounted(async () => {
         class="tab-content fade-in"
       >
         <RepoSchedulesTab :repo-id="repoId" />
+      </div>
+
+      <!-- Settings Tab -->
+      <div
+        v-if="activeTab === 'settings'"
+        class="tab-content fade-in"
+      >
+        <RepoSettingsTab
+          v-model:section="settingsSection"
+          :repo="repo"
+          :is-admin="isAdmin"
+          :current-op="currentOp"
+          @changed="refreshRepo"
+          @error="error = $event"
+        />
       </div>
     </template>
   </div>

@@ -13,15 +13,15 @@ describe('EditFormActions', () => {
         .text(),
     ).toBe('Save')
     expect(
-      mount(EditFormActions, { props: { saving: false, saveLabel: 'Save Changes' } })
+      mount(EditFormActions, { props: { saving: false, saveLabel: 'Save changes' } })
         .findAll('button')[1]
         .text(),
-    ).toBe('Save Changes')
+    ).toBe('Save changes')
   })
 
   it('swaps to a busy label and disables saving while in flight', () => {
     const save = mount(EditFormActions, {
-      props: { saving: true, saveLabel: 'Save Changes' },
+      props: { saving: true, saveLabel: 'Save changes' },
     }).findAll('button')[1]
     expect(save.text()).toBe('Saving...')
     expect(save.attributes('disabled')).toBeDefined()

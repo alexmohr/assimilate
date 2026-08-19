@@ -80,7 +80,8 @@ describe('ScheduleSettingsTab', () => {
 
   it('falls back to General when the section prop is unavailable for this schedule type', () => {
     const wrapper = mount({ isBackup: false, section: 'advanced' })
-    expect(wrapper.find('.info-title').text()).toBe('General')
+    expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe('General')
+    expect(wrapper.find('.pane-lede').text()).toContain('What this schedule is called')
   })
 
   it('shows the Name field and writes into it', async () => {
@@ -94,9 +95,9 @@ describe('ScheduleSettingsTab', () => {
     expect((nameInput.element as HTMLInputElement).value).toBe('Nightly production backup')
   })
 
-  it('shows the Schedule Type selector only in create mode', () => {
-    expect(mount({ isCreate: true }).text()).toContain('Schedule Type')
-    expect(mount({ isCreate: false }).text()).not.toContain('Schedule Type')
+  it('shows the Schedule type selector only in create mode', () => {
+    expect(mount({ isCreate: true }).text()).toContain('Schedule type')
+    expect(mount({ isCreate: false }).text()).not.toContain('Schedule type')
   })
 
   it('shows required markers on Hosts and Repository only in create mode', () => {
@@ -133,10 +134,10 @@ describe('ScheduleSettingsTab', () => {
 
   it('shows Execution Order only with more than one target', () => {
     expect(mount({ section: 'targets', selectedAgentIds: [10, 11] }).text()).toContain(
-      'Execution Order',
+      'Execution order',
     )
     expect(mount({ section: 'targets', selectedAgentIds: [10] }).text()).not.toContain(
-      'Execution Order',
+      'Execution order',
     )
   })
 
@@ -189,8 +190,8 @@ describe('ScheduleSettingsTab', () => {
 
   it('renders the Advanced section via ScheduleAdvancedTab', () => {
     const wrapper = mount({ section: 'advanced' })
-    expect(wrapper.text()).toContain('Exclude Patterns')
-    expect(wrapper.text()).toContain('Remote Rate Limit')
+    expect(wrapper.text()).toContain('Exclude patterns')
+    expect(wrapper.text()).toContain('Remote rate limit')
   })
 
   it('closes the agent dropdown when clicking outside it', async () => {
@@ -218,7 +219,7 @@ describe('ScheduleSettingsTab', () => {
     expect(form.enabled).toBe(!DEFAULT_SCHEDULE_FORM_STATE.enabled)
   })
 
-  it('changes the Schedule Type select in create mode', async () => {
+  it('changes the Schedule type select in create mode', async () => {
     const wrapper = mount({ isCreate: true })
     await wrapper.find('select').setValue('check')
     expect(wrapper.emitted('update:selectedType')?.at(-1)?.[0]).toBe('check')

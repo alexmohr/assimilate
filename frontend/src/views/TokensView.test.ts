@@ -99,7 +99,7 @@ describe('TokensView', () => {
     const headerText = headers.map((h) => h.text())
     expect(headerText).toContain('Name')
     expect(headerText).toContain('Created')
-    expect(headerText).toContain('Last Used')
+    expect(headerText).toContain('Last used')
   })
 
   it('does not display token secret in the list (masked)', async () => {

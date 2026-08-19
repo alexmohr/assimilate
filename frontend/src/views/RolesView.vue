@@ -258,7 +258,7 @@ onMounted((): void => {
       :icon="ShieldCheck"
       title="No roles yet"
       description="Roles bundle permissions so they can be granted to users and groups."
-      action="Create Role"
+      action="Create role"
       @action="showCreateModal = true"
     />
 
@@ -335,7 +335,7 @@ onMounted((): void => {
     <BaseModal
       :open="showCreateModal"
       size="lg"
-      title="Create Role"
+      title="Create role"
       form
       @close="showCreateModal = false"
       @submit="submitCreate"
@@ -424,7 +424,7 @@ onMounted((): void => {
     <!-- Delete Role Modal -->
     <ConfirmDeleteDialog
       :show="showDeleteModal"
-      title="Delete Role"
+      title="Delete role"
       :submitting="deleteSubmitting"
       :error="deleteError"
       @cancel="showDeleteModal = false"

@@ -583,7 +583,7 @@ function filterByRun(runId: string): void {
                 v-model="filterMachine"
                 class="input input-sm select-input"
               >
-                <option value="">All Machines</option>
+                <option value="">All machines</option>
                 <option
                   v-for="m in agents"
                   :key="m.hostname"
@@ -600,7 +600,7 @@ function filterByRun(runId: string): void {
                 v-model="filterScheduleId"
                 class="input input-sm select-input"
               >
-                <option :value="null">All Schedules</option>
+                <option :value="null">All schedules</option>
                 <option
                   v-for="s in schedules"
                   :key="s.id"

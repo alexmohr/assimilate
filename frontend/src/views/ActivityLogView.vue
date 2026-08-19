@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search, SlidersHorizontal, Activity } from '@lucide/vue'
+import { Search, SlidersHorizontal, Activity, X } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -619,11 +619,12 @@ function filterByRun(runId: string): void {
               <div class="run-id-filter">
                 <span class="run-id-label">{{ filterRunId.slice(0, 8) }}...</span>
                 <button
-                  class="btn-clear-run"
+                  class="btn btn-xs btn-ghost"
                   title="Clear run filter"
+                  aria-label="Clear run filter"
                   @click="filterRunId = null"
                 >
-                  ✕
+                  <X :size="12" />
                 </button>
               </div>
             </div>
@@ -713,7 +714,7 @@ function filterByRun(runId: string): void {
           </template>
 
           <button
-            class="btn-clear"
+            class="btn btn-sm btn-ghost"
             @click="clearFilters"
           >
             Clear
@@ -801,7 +802,7 @@ function filterByRun(runId: string): void {
         >
           <article
             v-if="row.kind === 'backup' && row.backup"
-            class="run-card"
+            class="panel panel--sectioned run-card"
             :class="{ expanded: expandedId === row.backup.id }"
           >
             <div
@@ -833,7 +834,7 @@ function filterByRun(runId: string): void {
                 }}</span>
                 <button
                   v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
-                  class="btn-run-filter"
+                  class="btn btn-xs btn-ghost"
                   title="View all events for this run"
                   @click.stop="filterByRun(row.backup.run_id)"
                 >
@@ -859,7 +860,7 @@ function filterByRun(runId: string): void {
               >
                 <div class="detail-section">
                   <h3 class="detail-heading">Timing</h3>
-                  <dl class="detail-dl">
+                  <dl class="info-grid">
                     <dt>Started</dt>
                     <dd>{{ formatDateShort(expandedDetail.started_at) }}</dd>
                     <dt>Finished</dt>
@@ -870,7 +871,7 @@ function filterByRun(runId: string): void {
                 </div>
                 <div class="detail-section">
                   <h3 class="detail-heading">Sizes</h3>
-                  <dl class="detail-dl">
+                  <dl class="info-grid">
                     <dt>Original</dt>
                     <dd>{{ formatBytes(expandedDetail.original_size) }}</dd>
                     <dt>Compressed</dt>
@@ -881,7 +882,7 @@ function filterByRun(runId: string): void {
                 </div>
                 <div class="detail-section">
                   <h3 class="detail-heading">Stats</h3>
-                  <dl class="detail-dl">
+                  <dl class="info-grid">
                     <dt>Files processed</dt>
                     <dd>{{ expandedDetail.files_processed.toLocaleString() }}</dd>
                     <dt>Borg version</dt>
@@ -924,7 +925,7 @@ function filterByRun(runId: string): void {
 
           <article
             v-if="row.kind === 'system' && row.event"
-            class="run-card run-card-system"
+            class="panel panel--sectioned run-card run-card-system"
             :class="{ expanded: expandedSystemId === row.event.id }"
           >
             <div
@@ -961,11 +962,11 @@ function filterByRun(runId: string): void {
         class="load-more"
       >
         <button
-          class="btn-load-more"
+          class="btn btn-sm btn-ghost"
           :disabled="loadingMore"
           @click="loadMore"
         >
-          {{ loadingMore ? 'Loading...' : 'Load More' }}
+          {{ loadingMore ? 'Loading...' : 'Load more' }}
         </button>
       </div>
     </template>
@@ -978,25 +979,6 @@ function filterByRun(runId: string): void {
   flex-direction: column;
   gap: 1.25rem;
   color: var(--text-primary);
-}
-
-.btn-clear {
-  padding: 0.4rem 0.9rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-  cursor: pointer;
-  transition:
-    color var(--duration-base),
-    border-color var(--duration-base);
-  align-self: flex-end;
-}
-
-.btn-clear:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
 }
 
 .loading,
@@ -1025,13 +1007,6 @@ function filterByRun(runId: string): void {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-}
-
-.run-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
 }
 
 .run-card.expanded {
@@ -1144,25 +1119,6 @@ function filterByRun(runId: string): void {
   color: var(--warning);
 }
 
-.detail-dl {
-  margin: 0;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.2rem 0.75rem;
-}
-
-.detail-dl dt {
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-  white-space: nowrap;
-}
-
-.detail-dl dd {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: var(--fs-sm);
-}
-
 .detail-warning-section {
   flex: 1 1 100%;
 }
@@ -1188,29 +1144,6 @@ function filterByRun(runId: string): void {
   display: flex;
   justify-content: center;
   padding: 0.5rem 0;
-}
-
-.btn-load-more {
-  padding: 0.6rem 2rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-  cursor: pointer;
-  transition:
-    background var(--duration-base),
-    border-color var(--duration-base);
-}
-
-.btn-load-more:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--text-muted);
-}
-
-.btn-load-more:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .filter-group-search {
@@ -1277,23 +1210,6 @@ function filterByRun(runId: string): void {
   margin-top: 0.1rem;
 }
 
-.btn-run-filter {
-  display: block;
-  margin-top: 0.2rem;
-  padding: 0.15rem 0.4rem;
-  font-size: var(--fs-2xs);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--accent);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.btn-run-filter:hover {
-  background: var(--bg-hover);
-}
-
 .run-id-filter {
   display: flex;
   align-items: center;
@@ -1308,20 +1224,6 @@ function filterByRun(runId: string): void {
 
 .run-id-label {
   font-family: monospace;
-}
-
-.btn-clear-run {
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 0;
-  font-size: var(--fs-sm);
-  line-height: 1;
-}
-
-.btn-clear-run:hover {
-  color: var(--text-primary);
 }
 
 .live-sessions {

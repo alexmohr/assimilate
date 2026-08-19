@@ -269,7 +269,7 @@ async function resetSystem(): Promise<void> {
     </div>
 
     <div class="panel">
-      <div class="card-header">
+      <div class="panel-header">
         <h2 class="panel-title">Version</h2>
       </div>
 
@@ -283,30 +283,23 @@ async function resetSystem(): Promise<void> {
       >
         {{ versionError }}
       </div>
-      <div
+      <dl
         v-else-if="versionInfo"
-        class="version-grid"
+        class="info-grid"
       >
-        <div class="version-row">
-          <span class="version-label">Server</span>
-          <span class="version-value mono">{{ versionInfo.server_version }}</span>
-        </div>
-        <div class="version-row">
-          <span class="version-label">Built</span>
-          <span class="version-value mono">{{ versionInfo.build_timestamp }}</span>
-        </div>
-        <div
-          v-if="versionInfo.agent_version"
-          class="version-row"
-        >
-          <span class="version-label">Agent</span>
-          <span class="version-value mono">{{ versionInfo.agent_version }}</span>
-        </div>
-      </div>
+        <dt>Server</dt>
+        <dd class="mono">{{ versionInfo.server_version }}</dd>
+        <dt>Built</dt>
+        <dd class="mono">{{ versionInfo.build_timestamp }}</dd>
+        <template v-if="versionInfo.agent_version">
+          <dt>Agent</dt>
+          <dd class="mono">{{ versionInfo.agent_version }}</dd>
+        </template>
+      </dl>
     </div>
 
     <div class="panel">
-      <div class="card-header">
+      <div class="panel-header">
         <h2 class="panel-title">SSH public key</h2>
         <button
           class="btn btn-sm btn-ghost btn-danger-text"
@@ -315,7 +308,7 @@ async function resetSystem(): Promise<void> {
           Regenerate
         </button>
       </div>
-      <p class="info-description">
+      <p class="pane-lede">
         Add this key to <code>~/.ssh/authorized_keys</code> on your borg repository host.
       </p>
 
@@ -331,9 +324,9 @@ async function resetSystem(): Promise<void> {
       </div>
       <div
         v-else
-        class="key-box"
+        class="token-box token-box--block"
       >
-        <pre class="key-text">{{ publicKey }}</pre>
+        <pre class="token-text token-text--plain">{{ publicKey }}</pre>
         <button
           class="btn btn-sm btn-ghost"
           @click="copyToClipboard(publicKey)"
@@ -343,8 +336,8 @@ async function resetSystem(): Promise<void> {
       </div>
     </div>
 
-    <div class="info-card settings-card">
-      <div class="card-header">
+    <div class="panel">
+      <div class="panel-header">
         <h2 class="panel-title">Settings</h2>
       </div>
 
@@ -361,181 +354,165 @@ async function resetSystem(): Promise<void> {
         </div>
 
         <form
-          class="settings-form"
+          class="form-stack"
           @submit.prevent="saveSettings"
         >
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-timezone"
             >
               Timezone
             </label>
-            <div class="setting-input-group">
-              <TimezoneSelect
-                id="settings-timezone"
-                v-model="settingsForm.timezone"
-                placeholder="e.g. Europe/Berlin"
-              />
-              <span class="field-hint"
-                >IANA timezone for schedule evaluation and time display. Leave empty to use the
-                server's local timezone.</span
-              >
-            </div>
+            <TimezoneSelect
+              id="settings-timezone"
+              v-model="settingsForm.timezone"
+              placeholder="e.g. Europe/Berlin"
+            />
+            <span class="field-hint"
+              >IANA timezone for schedule evaluation and time display. Leave empty to use the
+              server's local timezone.</span
+            >
           </div>
 
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-retention"
             >
               Retention days
             </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-retention"
-                v-model.number="settingsForm.retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input retention-input"
-              />
-              <span class="field-hint">Number of days to keep backup job history.</span>
-            </div>
+            <input
+              id="settings-retention"
+              v-model.number="settingsForm.retention_days"
+              type="number"
+              min="0"
+              step="1"
+              class="input field-narrow"
+            />
+            <span class="field-hint">Number of days to keep backup job history.</span>
           </div>
 
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-report-retention"
             >
               Report retention (days)
             </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-report-retention"
-                v-model.number="settingsForm.report_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input retention-input"
-              />
-              <span class="field-hint"
-                >Days to keep successful/archived reports. 0 = keep forever.</span
-              >
-            </div>
+            <input
+              id="settings-report-retention"
+              v-model.number="settingsForm.report_retention_days"
+              type="number"
+              min="0"
+              step="1"
+              class="input field-narrow"
+            />
+            <span class="field-hint"
+              >Days to keep successful/archived reports. 0 = keep forever.</span
+            >
           </div>
 
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-failed-retention"
             >
               Failed report retention (days)
             </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-failed-retention"
-                v-model.number="settingsForm.failed_report_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input retention-input"
-              />
-              <span class="field-hint"
-                >Days to keep failed/archive-less reports. 0 = keep forever.</span
-              >
-            </div>
+            <input
+              id="settings-failed-retention"
+              v-model.number="settingsForm.failed_report_retention_days"
+              type="number"
+              min="0"
+              step="1"
+              class="input field-narrow"
+            />
+            <span class="field-hint"
+              >Days to keep failed/archive-less reports. 0 = keep forever.</span
+            >
           </div>
 
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-event-retention"
             >
               System event retention (days)
             </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-event-retention"
-                v-model.number="settingsForm.system_event_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input retention-input"
-              />
-              <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
-            </div>
+            <input
+              id="settings-event-retention"
+              v-model.number="settingsForm.system_event_retention_days"
+              type="number"
+              min="0"
+              step="1"
+              class="input field-narrow"
+            />
+            <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
           </div>
 
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-notification-delivery-retention"
             >
               Notification delivery retention (days)
             </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-notification-delivery-retention"
-                v-model.number="settingsForm.notification_delivery_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input retention-input"
-              />
-              <span class="field-hint"
-                >Days to keep notification delivery-attempt history. 0 = keep forever.</span
-              >
-            </div>
+            <input
+              id="settings-notification-delivery-retention"
+              v-model.number="settingsForm.notification_delivery_retention_days"
+              type="number"
+              min="0"
+              step="1"
+              class="input field-narrow"
+            />
+            <span class="field-hint"
+              >Days to keep notification delivery-attempt history. 0 = keep forever.</span
+            >
           </div>
 
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-borg-timeout"
             >
               Borg timeout
             </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-borg-timeout"
-                v-model.number="settingsForm.borg_query_timeout_secs"
-                type="number"
-                min="1"
-                step="1"
-                class="input retention-input"
-              />
-              <span class="field-hint"
-                >Maximum seconds to wait for a single <code>borg list</code> or
-                <code>borg info</code> invocation. Increase for slow or remote repositories.</span
-              >
-            </div>
+            <input
+              id="settings-borg-timeout"
+              v-model.number="settingsForm.borg_query_timeout_secs"
+              type="number"
+              min="1"
+              step="1"
+              class="input field-narrow"
+            />
+            <span class="field-hint"
+              >Maximum seconds to wait for a single <code>borg list</code> or
+              <code>borg info</code> invocation. Increase for slow or remote repositories.</span
+            >
           </div>
 
-          <div class="setting-row">
+          <div class="field">
             <label
-              class="setting-label"
+              class="field-label"
               for="settings-idle-timeout"
             >
               Session idle timeout
             </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-idle-timeout"
-                v-model.number="settingsForm.session_idle_timeout_minutes"
-                type="number"
-                min="1"
-                class="input retention-input"
-              />
-              <span class="field-hint"
-                >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
-                apply to "Remember Me" sessions.</span
-              >
-            </div>
+            <input
+              id="settings-idle-timeout"
+              v-model.number="settingsForm.session_idle_timeout_minutes"
+              type="number"
+              min="1"
+              class="input field-narrow"
+            />
+            <span class="field-hint"
+              >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
+              apply to "Remember Me" sessions.</span
+            >
           </div>
 
-          <div class="settings-actions">
+          <div class="info-actions">
             <button
               class="btn btn-primary"
               type="submit"
@@ -555,7 +532,7 @@ async function resetSystem(): Promise<void> {
     </div>
 
     <div class="panel">
-      <div class="card-header">
+      <div class="panel-header">
         <h2 class="panel-title">Database storage</h2>
         <button
           class="btn btn-sm btn-ghost"
@@ -565,7 +542,7 @@ async function resetSystem(): Promise<void> {
           {{ databaseStorageLoading ? 'Loading...' : 'Refresh' }}
         </button>
       </div>
-      <p class="info-description">
+      <p class="pane-lede">
         PostgreSQL allocation by application table, including table data, indexes, and TOAST data.
       </p>
 
@@ -610,9 +587,9 @@ async function resetSystem(): Promise<void> {
                   <div class="storage-share-value">
                     {{ storagePercent(relation.total_bytes).toFixed(1) }}%
                   </div>
-                  <div class="storage-bar">
+                  <div class="progress-track">
                     <div
-                      class="storage-bar-fill"
+                      class="progress-bar"
                       :style="{ width: `${storagePercent(relation.total_bytes)}%` }"
                     ></div>
                   </div>
@@ -626,9 +603,9 @@ async function resetSystem(): Promise<void> {
                   <div class="storage-share-value">
                     {{ storagePercent(databaseStorage.other_bytes).toFixed(1) }}%
                   </div>
-                  <div class="storage-bar">
+                  <div class="progress-track">
                     <div
-                      class="storage-bar-fill storage-bar-fill-muted"
+                      class="progress-bar progress-bar--muted"
                       :style="{ width: `${storagePercent(databaseStorage.other_bytes)}%` }"
                     ></div>
                   </div>
@@ -641,10 +618,10 @@ async function resetSystem(): Promise<void> {
     </div>
 
     <div class="panel">
-      <div class="card-header">
+      <div class="panel-header">
         <h2 class="panel-title">Configuration export / import</h2>
       </div>
-      <p class="info-description">
+      <p class="pane-lede">
         Export host and schedule configuration as JSON for backup or migration. Importing restores
         hosts and schedules by name; repositories must exist before importing.
       </p>
@@ -737,22 +714,22 @@ async function resetSystem(): Promise<void> {
       </div>
     </div>
 
-    <div class="info-card danger-zone-card">
-      <div class="card-header">
-        <h3 class="info-title danger-title">Danger zone</h3>
+    <div class="panel danger-zone">
+      <div class="panel-header">
+        <h2 class="panel-title">Danger zone</h2>
       </div>
-      <p class="info-description">
+      <p class="pane-lede">
         Emergency actions to bring the system back to a safe state. Use when backups are stuck or
         the system is in an inconsistent state.
       </p>
 
-      <div class="danger-action">
-        <div class="danger-action-info">
-          <div class="danger-action-name">Cancel All Running Backups</div>
-          <div class="danger-action-desc">
+      <div class="danger-body">
+        <div class="danger-info">
+          <span class="danger-heading">Cancel all running backups</span>
+          <span class="danger-desc">
             Cancels all running and pending backup operations and notifies connected agents to abort
             immediately. Schedules are left unchanged.
-          </div>
+          </span>
         </div>
         <button
           class="btn btn-sm btn-danger"
@@ -851,48 +828,6 @@ async function resetSystem(): Promise<void> {
   max-width: 800px;
 }
 
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-}
-
-.info-description {
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
-.info-description code {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  background: var(--bg-hover);
-  padding: 0.125rem 0.375rem;
-  border-radius: var(--radius-sm);
-}
-
-.key-box {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1rem;
-}
-
-.key-text {
-  flex: 1;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  line-height: 1.5;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin: 0;
-}
-
 .warning-text {
   font-size: var(--fs-base);
   color: var(--text-secondary);
@@ -904,48 +839,6 @@ async function resetSystem(): Promise<void> {
   color: var(--danger);
 }
 
-.settings-card {
-  margin-top: 1.5rem;
-}
-
-.settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.setting-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 1rem;
-}
-
-.setting-label {
-  flex-shrink: 0;
-  width: 120px;
-  font-size: var(--fs-base);
-  font-weight: 500;
-  color: var(--text-primary);
-  padding-top: 0.5rem;
-}
-
-.setting-input-group {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.retention-input {
-  max-width: 120px !important;
-}
-
-.settings-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding-top: 0.5rem;
-}
 
 .database-total {
   display: flex;
@@ -960,12 +853,6 @@ async function resetSystem(): Promise<void> {
 .database-total strong {
   color: var(--text-primary);
   font-size: var(--fs-lg);
-}
-
-.data-table th,
-.data-table th:first-child,
-.data-table td:first-child {
-  text-align: left;
 }
 
 .storage-name {
@@ -984,48 +871,6 @@ async function resetSystem(): Promise<void> {
 
 .storage-share-value {
   margin-bottom: 0.25rem;
-}
-
-.storage-bar {
-  height: 4px;
-  overflow: hidden;
-  background: var(--bg-hover);
-  border-radius: var(--radius-pill);
-}
-
-.storage-bar-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: inherit;
-}
-
-.storage-bar-fill-muted {
-  background: var(--text-muted);
-}
-
-.version-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.version-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.version-label {
-  flex-shrink: 0;
-  width: 80px;
-  font-size: var(--fs-base);
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.version-value {
-  font-size: var(--fs-base);
-  color: var(--text-primary);
 }
 
 .config-io-section {
@@ -1102,38 +947,6 @@ async function resetSystem(): Promise<void> {
   padding-left: 1.25rem;
   color: var(--warning);
   font-size: var(--fs-sm);
-}
-
-.danger-zone-card {
-  border-color: var(--danger);
-}
-
-.danger-title {
-  color: var(--danger);
-}
-
-.danger-action {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.danger-action-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.danger-action-name {
-  font-size: var(--fs-base);
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.danger-action-desc {
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
 }
 
 .reset-result {

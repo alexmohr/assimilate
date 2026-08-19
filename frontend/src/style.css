@@ -1203,6 +1203,18 @@
     padding: 0;
   }
 
+  /* A key or fingerprint that wraps over several lines and is not a secret,
+     so it takes primary ink rather than the one-time-reveal green. */
+  .token-box--block {
+    align-items: flex-start;
+  }
+
+  .token-text--plain {
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
   /* Green marks "this is the only time you will see it". */
   .token-text {
     font-size: var(--fs-xs);
@@ -1340,6 +1352,95 @@
     flex-direction: column;
     gap: 0.2rem;
     min-width: 0;
+  }
+
+  /* The dashboard's headline row sits at a larger step than an overview
+     tab's, and its tiles are navigational. */
+  .tile--lg {
+    padding: 1rem 1.25rem;
+    gap: 0.35rem;
+  }
+
+  .tile--link {
+    cursor: pointer;
+    transition:
+      border-color var(--duration-base),
+      background var(--duration-base);
+  }
+
+  .tile--link:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+  }
+
+  /* --- Chart legend --------------------------------------------------------
+     One legend for every chart. The dashboard carried two vocabularies in one
+     file - `.legend-*` for the success ring and `.storage-legend-*` for the
+     storage bar - which had already drifted into two swatch shapes and two
+     type sizes. `--stack` is the vertical form beside a bar; the default runs
+     along the bottom of a ring. */
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1.25rem;
+  }
+
+  .chart-legend--stack {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 0.4rem;
+  }
+
+  .chart-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+  }
+
+  /* Clickable when the legend also toggles its series. */
+  .chart-legend-item--toggle {
+    cursor: pointer;
+    user-select: none;
+    transition: opacity var(--duration-base);
+  }
+
+  .chart-legend-item--toggle:hover {
+    opacity: 0.7;
+  }
+
+  .chart-legend-item--off {
+    opacity: 0.4;
+  }
+
+  .chart-legend-item--off .chart-legend-name {
+    text-decoration: line-through;
+  }
+
+  .chart-legend-swatch {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+  }
+
+  /* A series that is one slice of a whole reads as a square; a status that is
+     a state reads as a dot. */
+  .chart-legend-swatch--dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .chart-legend-name {
+    color: var(--text-primary);
+  }
+
+  .chart-legend-detail {
+    color: var(--text-muted);
+    margin-left: auto;
   }
 
   .section-head {
@@ -2071,6 +2172,11 @@
     background: var(--accent);
     border-radius: var(--radius-pill);
     transition: width var(--duration-value) ease;
+  }
+
+  /* The bar is showing a share of a total rather than work in flight. */
+  .progress-bar--muted {
+    background: var(--text-muted);
   }
 
   .progress-row {

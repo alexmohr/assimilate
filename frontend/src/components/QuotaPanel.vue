@@ -5,21 +5,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { apiClient } from '../api/client'
+import { getRepoQuota, updateRepoQuota } from '../api/repos'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import type { QuotaAction } from '../types/generated'
+import type { QuotaData } from '../api/repos'
 import ToggleSwitch from './ToggleSwitch.vue'
 import EditFormActions from './EditFormActions.vue'
-
-interface QuotaData {
-  warn_bytes: number
-  critical_bytes: number
-  warn_action: QuotaAction
-  critical_action: QuotaAction
-  enabled: boolean
-}
 
 type QuotaStatus = 'ok' | 'warning' | 'critical'
 
@@ -80,8 +73,7 @@ async function loadQuota(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const res = await apiClient.get<QuotaData>(`/repos/${props.repoId}/quota`)
-    quota.value = res.data
+    quota.value = await getRepoQuota(props.repoId)
   } catch (e: unknown) {
     const status = (e as { response?: { status?: number } }).response?.status
     if (status === 404) {
@@ -124,7 +116,7 @@ async function saveQuota(): Promise<void> {
   editLoading.value = true
   editError.value = null
   try {
-    await apiClient.put(`/repos/${props.repoId}/quota`, {
+    await updateRepoQuota(props.repoId, {
       warn_bytes: gbToBytes(editForm.warn_gb),
       critical_bytes: gbToBytes(editForm.critical_gb),
       warn_action: editForm.warn_action,

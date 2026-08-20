@@ -5,7 +5,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { apiClient } from '../api/client'
+import { deployAgentSshKey } from '../api/agents'
+import type { DeploySshKeyResult } from '../api/agents'
 import { extractError } from '../utils/error'
 import ToggleSwitch from './ToggleSwitch.vue'
 
@@ -29,7 +30,7 @@ const localPort = ref(props.sshPort)
 const password = ref('')
 const useSftp = ref(true)
 const loading = ref(false)
-const result = ref<{ success: boolean; already_deployed: boolean; error?: string } | null>(null)
+const result = ref<DeploySshKeyResult | null>(null)
 
 const effectiveHost = computed(() => (props.showCredentials ? localHost.value : props.sshHost))
 
@@ -39,18 +40,13 @@ async function deploy(): Promise<void> {
   loading.value = true
   result.value = null
   try {
-    const res = await apiClient.post<{
-      success: boolean
-      already_deployed: boolean
-      error?: string
-    }>('/ssh/deploy-key', {
+    result.value = await deployAgentSshKey({
       ssh_host: effectiveHost.value.trim(),
       ssh_user: (props.showCredentials ? localUser.value : props.sshUser).trim(),
       ssh_port: props.showCredentials ? localPort.value : props.sshPort,
       password: password.value,
       use_sftp: useSftp.value,
     })
-    result.value = res.data
   } catch (e: unknown) {
     result.value = { success: false, already_deployed: false, error: extractError(e) }
   } finally {

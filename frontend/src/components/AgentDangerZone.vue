@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
+import { deleteAgent, hideAgent as hideAgentRequest, deleteAgentArchives } from '../api/agents'
 import { logger } from '../utils/logger'
 import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
@@ -26,7 +26,7 @@ const deleteLoading = ref(false)
 async function confirmDeleteHost(): Promise<void> {
   deleteLoading.value = true
   try {
-    await apiClient.delete(`/agents/${props.agent.hostname}`)
+    await deleteAgent(props.agent.hostname)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete host', e)
@@ -41,7 +41,7 @@ const hideLoading = ref(false)
 async function hideAgent(): Promise<void> {
   hideLoading.value = true
   try {
-    await apiClient.put(`/agents/${props.agent.hostname}/hide`)
+    await hideAgentRequest(props.agent.hostname)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to hide agent', e)
@@ -57,7 +57,7 @@ const deleteArchivesLoading = ref(false)
 async function confirmDeleteArchives(): Promise<void> {
   deleteArchivesLoading.value = true
   try {
-    await apiClient.post(`/agents/${props.agent.hostname}/delete-archives`)
+    await deleteAgentArchives(props.agent.hostname)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete archives', e)

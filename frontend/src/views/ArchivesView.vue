@@ -7,7 +7,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted, useTemplateRef } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RefreshCw } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import { listRepoArchives } from '../api/archives'
+import { getRepoPassphrase, listRepos } from '../api/repos'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
@@ -49,8 +50,7 @@ async function loadRepos(): Promise<void> {
   reposLoading.value = true
   reposError.value = null
   try {
-    const res = await apiClient.get<Repo[]>('/repos')
-    repos.value = res.data
+    repos.value = await listRepos()
   } catch (e: unknown) {
     reposError.value = extractError(e)
   } finally {
@@ -76,8 +76,7 @@ async function loadArchives(silent = false): Promise<void> {
   if (!silent) archivesLoading.value = true
   archivesError.value = null
   try {
-    const res = await apiClient.get<ArchiveEntry[]>(`/repos/${selectedRepoId.value}/archives`)
-    archives.value = res.data
+    archives.value = await listRepoArchives(selectedRepoId.value)
   } catch (e: unknown) {
     archivesError.value = extractError(e)
   } finally {
@@ -104,10 +103,8 @@ async function revealPassphrase(): Promise<void> {
   passphrase.value = null
   passphraseCopied.value = false
   try {
-    const res = await apiClient.get<{ passphrase: string }>(
-      `/repos/${selectedRepoId.value}/passphrase`,
-    )
-    passphrase.value = res.data.passphrase
+    const res = await getRepoPassphrase(selectedRepoId.value)
+    passphrase.value = res.passphrase
     showPassphraseDialog.value = true
   } catch (e: unknown) {
     passphraseError.value = extractError(e)

@@ -7,8 +7,23 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import {
+  getSchedule,
+  createSchedule,
+  updateSchedule,
+  deleteSchedule,
+  runSchedule,
+  cancelSchedule,
+  listScheduleTargets,
+  getScheduleBackupSources,
+  listScheduleReports,
+  getScheduleHealth,
+  type CreateScheduleRequest,
+  type UpdateScheduleRequest,
+} from '../api/schedules'
+import { listAgents } from '../api/agents'
+import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -30,7 +45,6 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
-import type { ScheduleBackupSourcesResponse } from '../types/generated'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
@@ -275,36 +289,40 @@ function populateForm(s: ScheduleRow): void {
 async function loadData(): Promise<void> {
   await run(async () => {
     if (isCreate.value) {
-      const [agentsRes, reposRes] = await Promise.all([
-        apiClient.get<AgentRow[]>('/agents'),
-        apiClient.get<Repo[]>('/repos'),
-      ])
-      agents.value = agentsRes.data
-      repos.value = reposRes.data
+      const [agentRows, repoRows] = await Promise.all([listAgents(), listRepos()])
+      agents.value = agentRows
+      repos.value = repoRows
       const queryAgentId = Number(route.query.agent_id)
       if (queryAgentId && agents.value.some((c) => c.id === queryAgentId)) {
         selectedAgentIds.value = [queryAgentId]
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, agentsRes, reposRes, targetsRes, sourcesRes, recentReportsRes, healthRes] =
-        await Promise.all([
-          apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
-          apiClient.get<AgentRow[]>('/agents'),
-          apiClient.get<Repo[]>('/repos'),
-          apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
-          apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
-          apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, { params: { limit: 20 } }),
-          apiClient.get<HealthSummaryResponse[]>('/stats/health'),
-        ])
-      schedule.value = schedRes.data
-      agents.value = agentsRes.data
-      repos.value = reposRes.data
-      scheduleTargets.value = targetsRes.data
-      selectedRepoId.value = schedRes.data.repo_id ?? null
-      reports.value = recentReportsRes.data
-      health.value = healthRes.data
-      const runningReport = recentReportsRes.data.find((r) => {
+      const [
+        scheduleRow,
+        agentRows,
+        repoRows,
+        targetRows,
+        sourcesResponse,
+        recentReports,
+        healthRows,
+      ] = await Promise.all([
+        getSchedule(props.id),
+        listAgents(),
+        listRepos(),
+        listScheduleTargets(props.id),
+        getScheduleBackupSources(props.id),
+        listScheduleReports(props.id, 20),
+        getScheduleHealth(),
+      ])
+      schedule.value = scheduleRow
+      agents.value = agentRows
+      repos.value = repoRows
+      scheduleTargets.value = targetRows
+      selectedRepoId.value = scheduleRow.repo_id ?? null
+      reports.value = recentReports
+      health.value = healthRows
+      const runningReport = recentReports.find((r) => {
         const status = normalizeBackupStatus(r.status)
         return status === 'pending' || status === 'started'
       })
@@ -314,11 +332,11 @@ async function loadData(): Promise<void> {
         backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
         backupStartedAt.value = new Date(runningReport.started_at).getTime()
       }
-      const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
+      const sorted = [...targetRows].sort((a, b) => a.execution_order - b.execution_order)
       selectedAgentIds.value = sorted.map((t) => t.agent_id)
-      populateForm(schedRes.data)
+      populateForm(scheduleRow)
 
-      const sources = sourcesRes.data
+      const sources = sourcesResponse
       form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
       const perHost = sources.backup_sources_per_agent ?? []
       if (perHost.length > 0) {
@@ -443,28 +461,28 @@ async function save(): Promise<void> {
         saveError.value = 'Please select at least one agent and a repository.'
         return
       }
-      const res = await apiClient.post<ScheduleRow>('/schedules', {
+      const created = await createSchedule({
         ...payload,
         agent_ids: selectedAgentIds.value,
         repo_id: selectedRepoId.value,
         schedule_type: selectedType.value,
         on_failure: onFailure.value,
-      })
-      router.push(`/schedules/${res.data.id}`)
+      } as CreateScheduleRequest)
+      router.push(`/schedules/${created.id}`)
     } else {
       const scheduleId = schedule.value?.id
       if (scheduleId == null) {
         saveError.value = 'Schedule not found'
         return
       }
-      const res = await apiClient.put<ScheduleRow>(`/schedules/${scheduleId}`, {
+      const updated = await updateSchedule(scheduleId, {
         ...payload,
         agent_ids: selectedAgentIds.value,
         repo_id: selectedRepoId.value,
         on_failure: onFailure.value,
-      })
-      schedule.value = res.data
-      populateForm(res.data)
+      } as UpdateScheduleRequest)
+      schedule.value = updated
+      populateForm(updated)
       saveSuccess.value = true
       setTimeout(() => {
         saveSuccess.value = false
@@ -480,7 +498,7 @@ async function save(): Promise<void> {
 async function confirmDeleteSchedule(): Promise<void> {
   deleteLoading.value = true
   try {
-    await apiClient.delete(`/schedules/${props.id}`)
+    await deleteSchedule(props.id)
     router.push('/schedules')
   } catch (e: unknown) {
     error.value = extractError(e, 'Failed to delete schedule')
@@ -497,10 +515,7 @@ async function runNow(agentId?: number): Promise<void> {
     runNowLoading.value = true
   }
   try {
-    await apiClient.post(
-      `/schedules/${props.id}/run`,
-      agentId != null ? { agent_ids: [agentId] } : {},
-    )
+    await runSchedule(props.id, agentId != null ? { agent_ids: [agentId] } : {})
     toastSuccess(
       agentId != null
         ? `Retry started for ${agentLabel(agentId)}.`
@@ -521,11 +536,9 @@ async function loadReports(): Promise<void> {
   reportsLoading.value = true
   reportsError.value = null
   try {
-    const res = await apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, {
-      params: { limit: 100 },
-    })
-    reports.value = res.data
-    backupRunning.value = res.data.some((r) => {
+    const reportRows = await listScheduleReports(props.id, 100)
+    reports.value = reportRows
+    backupRunning.value = reportRows.some((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'
     })
@@ -539,7 +552,7 @@ async function loadReports(): Promise<void> {
 async function cancelBackup(): Promise<void> {
   cancelLoading.value = true
   try {
-    await apiClient.post(`/schedules/${props.id}/cancel`)
+    await cancelSchedule(props.id)
     toastSuccess('Cancel request sent.')
   } catch (e: unknown) {
     toastError(extractError(e))

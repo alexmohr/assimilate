@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { apiClient } from '../api/client'
+import { getRepoPassphrase, resetImportRepo, syncRepo as syncRepoApi } from '../api/repos'
 import { formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -76,7 +76,7 @@ const statusLabel = computed(() => {
 async function syncRepo(): Promise<void> {
   syncLoading.value = true
   try {
-    await apiClient.post(`/repos/${props.repo.id}/sync?build_index=true`)
+    await syncRepoApi(props.repo.id)
     toastSuccess('Sync started. Archive contents are being indexed in the background.')
   } catch (e: unknown) {
     toastError(extractError(e))
@@ -88,7 +88,7 @@ async function syncRepo(): Promise<void> {
 async function resetImport(): Promise<void> {
   resetImportLoading.value = true
   try {
-    await apiClient.post(`/repos/${props.repo.id}/reset-import`)
+    await resetImportRepo(props.repo.id)
     toastSuccess('Import state reset.')
     emit('import-reset')
   } catch (e: unknown) {
@@ -117,8 +117,8 @@ async function revealPassphrase(): Promise<void> {
   passphrase.value = null
   passphraseCopied.value = false
   try {
-    const res = await apiClient.get<{ passphrase: string }>(`/repos/${props.repo.id}/passphrase`)
-    passphrase.value = res.data.passphrase
+    const data = await getRepoPassphrase(props.repo.id)
+    passphrase.value = data.passphrase
     showPassphraseDialog.value = true
   } catch (e: unknown) {
     passphraseError.value = extractError(e)

@@ -3,13 +3,18 @@
 
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
-import { apiClient } from '../api/client'
+import {
+  deleteArchive as deleteArchiveRequest,
+  getArchiveContents,
+  getArchiveIndexStatus,
+  listRepoArchives,
+  restoreArchiveFiles,
+} from '../api/archives'
 import { extractError } from '../utils/error'
 import { formatBytes, formatDate } from '../utils/format'
 import type {
   ArchiveEntryResponse as ArchiveEntry,
   ContentEntryResponse as ContentEntry,
-  ContentsResponse,
 } from '../types/generated'
 
 export type { ContentEntry }
@@ -100,10 +105,8 @@ interface UseArchiveBrowserReturn {
  * when an `ArchiveDeleted` event confirms it.
  */
 export async function requestArchiveDelete(repoId: number, archiveName: string): Promise<void> {
-  const response = await apiClient.delete<{ success: boolean; archive_name: string }>(
-    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}`,
-  )
-  if (!response.data.success) {
+  const response = await deleteArchiveRequest(repoId, archiveName)
+  if (!response.success) {
     throw new Error('Archive delete failed')
   }
 }
@@ -133,10 +136,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     stopPolling()
     pollTimer = setInterval(async () => {
       try {
-        const res = await apiClient.get<{ status: string; file_count?: number; error?: string }>(
-          `/repos/${repoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
-        )
-        const status = normalizeIndexStatus(res.data.status)
+        const res = await getArchiveIndexStatus(repoId.value, archiveName)
+        const status = normalizeIndexStatus(res.status)
         if (status === 'done') {
           stopPolling()
           indexing.value = false
@@ -144,7 +145,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         } else if (status === 'failed') {
           stopPolling()
           indexing.value = false
-          contentsError.value = res.data.error ?? 'Archive indexing failed'
+          contentsError.value = res.error ?? 'Archive indexing failed'
         }
       } catch (e: unknown) {
         stopPolling()
@@ -301,9 +302,9 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     }
     archivesError.value = null
     try {
-      const res = await apiClient.get<ArchiveEntry[]>(`/repos/${repoId.value}/archives`)
+      const data = await listRepoArchives(repoId.value)
       if (seq !== loadArchivesSeq) return
-      archives.value = res.data
+      archives.value = data
     } catch (e: unknown) {
       if (seq !== loadArchivesSeq) return
       archivesError.value = extractError(e)
@@ -333,11 +334,12 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     currentPath.value = normalizedPath
     try {
       const apiPath = normalizedPath === ROOT_PATH ? undefined : normalizedPath.replace(/^\//, '')
-      const res = await apiClient.get<ContentsResponse>(
-        `/repos/${repoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
-        { params: apiPath ? { path: apiPath } : {} },
+      const res = await getArchiveContents(
+        repoId.value,
+        selectedArchive.value.name,
+        apiPath ? { path: apiPath } : {},
       )
-      const { index_status, entries } = res.data
+      const { index_status, entries } = res
       const status = normalizeIndexStatus(index_status)
       if (status === 'done' || status === 'failed') {
         indexing.value = false
@@ -393,16 +395,13 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const name = entry.path.length > 0 ? entry.path : 'the whole archive'
     if (!window.confirm(`Restore ${name} to its original location on ${hostname}?`)) return false
 
-    const response = await apiClient.post<{ success: boolean; error_message?: string }>(
-      `/repos/${repoId.value}/archives/${encodeURIComponent(archive.name)}/restore`,
-      {
-        paths: entry.path.length > 0 ? [entry.path] : [],
-        target_path: '/',
-        hostname,
-      },
-    )
-    if (!response.data.success) {
-      throw new Error(response.data.error_message ?? 'Restore failed')
+    const response = await restoreArchiveFiles(repoId.value, archive.name, {
+      paths: entry.path.length > 0 ? [entry.path] : [],
+      target_path: '/',
+      hostname,
+    })
+    if (!response.success) {
+      throw new Error(response.error_message ?? 'Restore failed')
     }
     return true
   }

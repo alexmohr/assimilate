@@ -693,7 +693,7 @@ describe('ActivityLogView', () => {
       mountView()
       await flushPromises()
 
-      expect(mockGet).toHaveBeenCalledWith('/agents')
+      expect(mockGet).toHaveBeenCalledWith('/agents', { params: undefined })
       expect(mockGet).toHaveBeenCalledWith('/stats/activity', expect.any(Object))
       expect(mockGet).toHaveBeenCalledWith('/stats/system-events', expect.any(Object))
     })

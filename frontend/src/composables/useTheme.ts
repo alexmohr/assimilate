@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, watch } from 'vue'
-import { apiClient } from '../api/client'
+import { getPreferences, updatePreferences } from '../api/auth'
 import { logger } from '../utils/logger'
 import { readStorage, writeStorage } from '../utils/storage'
 
@@ -57,7 +57,7 @@ let syncing = false
 
 async function syncToBackend(t: Theme): Promise<void> {
   try {
-    await apiClient.put('/auth/preferences', { theme: t })
+    await updatePreferences(t)
   } catch (e: unknown) {
     logger.debug('theme sync failed', e)
   }
@@ -82,8 +82,8 @@ export function useTheme(): {
 
   async function loadFromBackend(): Promise<void> {
     try {
-      const res = await apiClient.get<{ theme?: string }>('/auth/preferences')
-      const backendTheme = res.data?.theme
+      const preferences = await getPreferences()
+      const backendTheme = preferences?.theme
       if (backendTheme !== undefined && isTheme(backendTheme)) {
         syncing = true
         theme.value = backendTheme

@@ -2,17 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, type Ref } from 'vue'
-import { apiClient } from '../api/client'
+import { createToken, deleteToken, listTokens, type ApiToken } from '../api/tokens'
 import { extractError } from '../utils/error'
 import { useClipboard } from './useClipboard'
-
-interface ApiToken {
-  id: number
-  user_id: number
-  name: string
-  created_at: string
-  last_used_at: string | null
-}
 
 interface UseApiTokensReturn {
   tokens: Ref<ApiToken[]>
@@ -57,8 +49,7 @@ export function useApiTokens(): UseApiTokensReturn {
     loading.value = true
     loadError.value = ''
     try {
-      const res = await apiClient.get<{ tokens: ApiToken[] }>('/tokens')
-      tokens.value = res.data.tokens
+      tokens.value = await listTokens()
     } catch (e: unknown) {
       loadError.value = extractError(e, 'Failed to load API tokens')
     } finally {
@@ -77,10 +68,8 @@ export function useApiTokens(): UseApiTokensReturn {
     createError.value = ''
     createSubmitting.value = true
     try {
-      const res = await apiClient.post<{ token: ApiToken; plaintext: string }>('/tokens', {
-        name: createName.value,
-      })
-      newTokenPlaintext.value = res.data.plaintext
+      const res = await createToken(createName.value)
+      newTokenPlaintext.value = res.plaintext
       await fetchTokens()
     } catch (e: unknown) {
       createError.value = extractError(e, 'Failed to create token')
@@ -106,7 +95,7 @@ export function useApiTokens(): UseApiTokensReturn {
     deleteError.value = ''
     deleteSubmitting.value = true
     try {
-      await apiClient.delete(`/tokens/${deleteTarget.value.id}`)
+      await deleteToken(deleteTarget.value.id)
       showDeleteModal.value = false
       deleteTarget.value = null
       await fetchTokens()

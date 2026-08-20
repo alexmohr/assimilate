@@ -7,6 +7,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
+import {
+  listAgents,
+  createAgent,
+  updateAgent,
+  regenerateAgentToken,
+  unhideAgent as unhideAgentRequest,
+} from '../api/agents'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -29,7 +36,6 @@ import AgentCoverageMeter from '../components/AgentCoverageMeter.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
-import type { CreateAgentResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 
 interface AgentTagRow {
@@ -321,10 +327,7 @@ async function loadAgents(): Promise<void> {
     error.value = null
   }
   try {
-    const agentsRes = await apiClient.get<AgentRow[]>('/agents', {
-      params: showHidden.value ? { include_hidden: true } : undefined,
-    })
-    agents.value = agentsRes.data
+    agents.value = await listAgents(showHidden.value)
     error.value = null
     loading.value = false
 
@@ -485,12 +488,12 @@ async function submitAdd(): Promise<void> {
   addLoading.value = true
   addError.value = null
   try {
-    const res = await apiClient.post<CreateAgentResponse>('/agents', {
+    const res = await createAgent({
       hostname,
       display_name: addForm.display_name.trim() || null,
     })
-    agents.value.push({ ...res.data.agent, id: Number(res.data.agent.id) })
-    newToken.value = res.data.token
+    agents.value.push({ ...res.agent, id: Number(res.agent.id) })
+    newToken.value = res.token
   } catch (e: unknown) {
     addError.value = extractError(e)
   } finally {
@@ -510,24 +513,22 @@ function navigateToAgent(agent: AgentRow): void {
 async function adoptAgent(agent: AgentRow): Promise<void> {
   try {
     const cleanDisplayName = agent.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await apiClient.put(`/agents/${agent.hostname}`, {
+    await updateAgent(agent.hostname, {
       display_name: cleanDisplayName,
     })
-    const res = await apiClient.post<CreateAgentResponse>(
-      `/agents/${agent.hostname}/regenerate-token`,
-    )
+    const res = await regenerateAgentToken(agent.hostname)
     const idx = agents.value.findIndex((m) => m.id === agent.id)
     if (idx !== -1) {
       agents.value[idx] = {
         ...agents.value[idx],
-        ...res.data.agent,
-        id: Number(res.data.agent.id),
+        ...res.agent,
+        id: Number(res.agent.id),
         is_imported: false,
         display_name: cleanDisplayName,
       }
     }
     adoptHostname.value = agent.hostname
-    adoptToken.value = res.data.token
+    adoptToken.value = res.token
     tokenCopied.value = false
     showAdoptDialog.value = true
   } catch (e: unknown) {
@@ -547,7 +548,7 @@ function openMergeDialog(agent: AgentRow): void {
 
 async function unhideAgent(agent: AgentRow): Promise<void> {
   try {
-    await apiClient.put(`/agents/${agent.hostname}/unhide`)
+    await unhideAgentRequest(agent.hostname)
     await loadAgents()
   } catch (e: unknown) {
     logger.error('Failed to unhide agent', e)

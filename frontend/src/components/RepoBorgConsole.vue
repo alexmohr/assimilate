@@ -5,14 +5,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { apiClient } from '../api/client'
+import { execRepoCommand } from '../api/repos'
 import { extractError } from '../utils/error'
-
-interface BorgExecResult {
-  stdout: string
-  stderr: string
-  exit_code: number
-}
+import type { ExecBorgResponse } from '../types/generated'
 
 const props = defineProps<{ repoId: number }>()
 
@@ -32,7 +27,7 @@ const SUGGESTED_COMMANDS = [
 const command = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
-const result = ref<BorgExecResult | null>(null)
+const result = ref<ExecBorgResponse | null>(null)
 
 async function run(): Promise<void> {
   const trimmed = command.value.trim()
@@ -42,8 +37,7 @@ async function run(): Promise<void> {
   result.value = null
   try {
     const args = trimmed.split(/\s+/).filter((s) => s.length > 0)
-    const res = await apiClient.post<BorgExecResult>(`/repos/${props.repoId}/exec`, { args })
-    result.value = res.data
+    result.value = await execRepoCommand(props.repoId, args)
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {

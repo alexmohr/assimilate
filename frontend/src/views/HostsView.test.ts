@@ -947,4 +947,18 @@ describe('HostsView deploy button label', () => {
       expect(wrapper.findComponent(AgentDeployDialog).exists()).toBe(false)
     })
   })
+
+  it('unhides a hidden agent', async () => {
+    vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
+
+    const wrapper = await mountWithAgent({ is_hidden: true }, {})
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().trim() === 'Unhide')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent/unhide')
+  })
 })

@@ -371,6 +371,28 @@ describe('UsersView', () => {
       expect((groupBox.element as HTMLInputElement).checked).toBe(true)
     })
 
+    it('saves the selected roles and groups', async () => {
+      mockEditData()
+      const put = apiClient.put as ReturnType<typeof vi.fn>
+      put.mockResolvedValue({ data: {} })
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Roles & Groups')
+
+      const boxes = wrapper.findAll('.rg-item input[type="checkbox"]')
+      await boxes[1].setValue(true)
+      await boxes[boxes.length - 1].setValue(true)
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Save')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(put).toHaveBeenCalledWith('/users/2/roles', { role_ids: [ROLES[0].id, ROLES[1].id] })
+      expect(put).toHaveBeenCalledWith('/users/2/groups', { group_ids: [GROUPS[0].id] })
+    })
+
     // Each column writes the whole permission row back, so a toggle on one
     // flag must not silently clear the others.
     it('sends the full permission row when one flag is toggled', async () => {

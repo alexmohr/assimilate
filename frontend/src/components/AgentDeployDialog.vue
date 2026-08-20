@@ -6,7 +6,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ArrowRight, Upload, KeyRound, CheckCircle } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import { previewAgentServiceUnit, deployAgent } from '../api/agents'
+import type { DeployAgentResult, ServiceUnitPreviewResponse } from '../api/agents'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
 import BaseModal from './BaseModal.vue'
@@ -52,13 +53,7 @@ const deployError = ref<string | null>(null)
 const fetchServiceLoading = ref(false)
 const fetchServiceError = ref<string | null>(null)
 const serviceContentTouched = ref(false)
-const deployResult = ref<{
-  success: boolean
-  skipped: boolean
-  token?: string
-  available_version?: string
-  error?: string
-} | null>(null)
+const deployResult = ref<DeployAgentResult | null>(null)
 
 const deployForm = reactive({
   ssh_host: '',
@@ -109,20 +104,17 @@ async function loadExistingServiceUnit(options: { silent?: boolean } = {}): Prom
   fetchServiceLoading.value = true
   if (!options.silent) fetchServiceError.value = null
   try {
-    const res = await apiClient.post<{ content: string | null }>(
-      `/agents/${props.hostname}/service-unit`,
-      {
-        ssh_host: deployForm.ssh_host.trim(),
-        ssh_user: deployForm.ssh_user.trim(),
-        ssh_port: deployForm.ssh_port,
-        ssh_password: deployForm.ssh_password || undefined,
-      },
-    )
+    const res: ServiceUnitPreviewResponse = await previewAgentServiceUnit(props.hostname, {
+      ssh_host: deployForm.ssh_host.trim(),
+      ssh_user: deployForm.ssh_user.trim(),
+      ssh_port: deployForm.ssh_port,
+      ssh_password: deployForm.ssh_password || undefined,
+    })
     // A silent (auto-triggered) load must not clobber content the user has already
     // started editing while the request was in flight.
     if (options.silent && serviceContentTouched.value) return
-    if (res.data.content) {
-      deployForm.systemd_service_content = res.data.content
+    if (res.content) {
+      deployForm.systemd_service_content = res.content
     } else if (!options.silent) {
       fetchServiceError.value = 'No existing service unit found on remote host.'
     }
@@ -152,13 +144,7 @@ async function submitDeploy(): Promise<void> {
   deployError.value = null
   deployResult.value = null
   try {
-    const res = await apiClient.post<{
-      success: boolean
-      skipped: boolean
-      token?: string
-      available_version?: string
-      error?: string
-    }>(`/agents/${props.hostname}/deploy`, {
+    const res = await deployAgent(props.hostname, {
       ssh_host: deployForm.ssh_host.trim(),
       ssh_user: deployForm.ssh_user.trim(),
       ssh_port: deployForm.ssh_port,
@@ -168,9 +154,9 @@ async function submitDeploy(): Promise<void> {
       systemd_service_content: deployForm.systemd_service_content.trim() || undefined,
       force: isRedeploy.value || undefined,
     })
-    deployResult.value = res.data
-    if (res.data.success) {
-      emit('deployed', res.data.available_version)
+    deployResult.value = res
+    if (res.success) {
+      emit('deployed', res.available_version)
     }
   } catch (e: unknown) {
     deployError.value = extractError(e)

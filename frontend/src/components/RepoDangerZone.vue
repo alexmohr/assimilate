@@ -6,7 +6,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
+import {
+  breakRepoLock,
+  confirmRepoRelocation,
+  deleteRepo,
+  destroyRepo,
+  resetAndSyncRepo,
+} from '../api/repos'
 import { extractError } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useEscapeKey } from '../composables/useEscapeKey'
@@ -53,10 +59,8 @@ async function doConfirmRelocation(): Promise<void> {
   confirmRelocationError.value = null
   confirmRelocationResult.value = null
   try {
-    const res = await apiClient.post<{ message: string }>(
-      `/repos/${props.repo.id}/confirm-relocation`,
-    )
-    confirmRelocationResult.value = res.data.message
+    const data = await confirmRepoRelocation(props.repo.id)
+    confirmRelocationResult.value = data.message
     // The flag lives on the repo row the parent owns, so ask it to refresh
     // rather than mutating a prop.
     emit('changed')
@@ -72,16 +76,12 @@ async function confirmBreakLock(): Promise<void> {
   breakLockError.value = null
   breakLockResult.value = null
   try {
-    const res = await apiClient.post<{ message: string; borg_output: string }>(
-      `/repos/${props.repo.id}/break-lock`,
-    )
+    const data = await breakRepoLock(props.repo.id)
     // borg_output carries the actual detail of what happened - notably
     // whether a stale local cache lock was found and cleared (or found but
     // left in place) - which message alone never conveys; it's the static
     // "lock broken on repository '<name>'" confirmation every time.
-    breakLockResult.value = res.data.borg_output
-      ? `${res.data.message}\n${res.data.borg_output}`
-      : res.data.message
+    breakLockResult.value = data.borg_output ? `${data.message}\n${data.borg_output}` : data.message
   } catch (e: unknown) {
     breakLockError.value = extractError(e)
   } finally {
@@ -92,7 +92,7 @@ async function confirmBreakLock(): Promise<void> {
 async function confirmRemove(): Promise<void> {
   removeLoading.value = true
   try {
-    await apiClient.delete(`/repos/${props.repo.id}`)
+    await deleteRepo(props.repo.id)
     showRemoveDialog.value = false
     void router.push('/repos')
   } catch (e: unknown) {
@@ -105,7 +105,7 @@ async function confirmRemove(): Promise<void> {
 async function confirmDelete(): Promise<void> {
   deleteLoading.value = true
   try {
-    await apiClient.post(`/repos/${props.repo.id}/destroy`)
+    await destroyRepo(props.repo.id)
     showDeleteDialog.value = false
     void router.push('/repos')
   } catch (e: unknown) {
@@ -119,7 +119,7 @@ async function resetAndSync(): Promise<void> {
   showResetAndSyncDialog.value = false
   resetAndSyncLoading.value = true
   try {
-    await apiClient.post(`/repos/${props.repo.id}/reset-and-sync?build_index=true`)
+    await resetAndSyncRepo(props.repo.id)
     toastSuccess('Archive metadata reset and re-import started. Progress is shown via WebSocket.')
   } catch (e: unknown) {
     toastError(extractError(e))

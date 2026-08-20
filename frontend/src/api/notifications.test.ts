@@ -2,24 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiClient } from './client'
 
-type MockedApiClient = {
-  get: ReturnType<typeof vi.fn>
-  post: ReturnType<typeof vi.fn>
-  put: ReturnType<typeof vi.fn>
-  delete: ReturnType<typeof vi.fn>
-}
-
-const apiClient = vi.hoisted<MockedApiClient>(() => ({
-  get: vi.fn(),
-  post: vi.fn(),
-  put: vi.fn(),
-  delete: vi.fn(),
-}))
-
-vi.mock('./client', () => ({
-  apiClient,
-}))
+vi.mock('./client')
 
 import {
   createChannel,
@@ -41,14 +26,14 @@ import {
 
 describe('notifications api', () => {
   beforeEach(() => {
-    apiClient.get.mockReset()
-    apiClient.post.mockReset()
-    apiClient.put.mockReset()
-    apiClient.delete.mockReset()
+    vi.mocked(apiClient.get).mockReset()
+    vi.mocked(apiClient.post).mockReset()
+    vi.mocked(apiClient.put).mockReset()
+    vi.mocked(apiClient.delete).mockReset()
   })
 
   it('lists channels', async () => {
-    apiClient.get.mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
     await listChannels()
 
@@ -56,7 +41,7 @@ describe('notifications api', () => {
   })
 
   it('creates a channel', async () => {
-    apiClient.post.mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
 
     await createChannel({
       name: 'Ops email',
@@ -90,7 +75,7 @@ describe('notifications api', () => {
   })
 
   it('updates a channel', async () => {
-    apiClient.put.mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.put).mockResolvedValue({ data: {} })
 
     await updateChannel(4, { enabled: false })
 
@@ -98,7 +83,7 @@ describe('notifications api', () => {
   })
 
   it('deletes a channel', async () => {
-    apiClient.delete.mockResolvedValue({})
+    vi.mocked(apiClient.delete).mockResolvedValue({})
 
     await deleteChannel(4)
 
@@ -106,7 +91,7 @@ describe('notifications api', () => {
   })
 
   it('tests a channel', async () => {
-    apiClient.post.mockResolvedValue({})
+    vi.mocked(apiClient.post).mockResolvedValue({})
 
     await testChannel(4)
 
@@ -114,7 +99,7 @@ describe('notifications api', () => {
   })
 
   it('lists rules', async () => {
-    apiClient.get.mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
     await listRules()
 
@@ -122,7 +107,7 @@ describe('notifications api', () => {
   })
 
   it('creates a rule', async () => {
-    apiClient.post.mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
 
     await createRule({
       channel_id: 1,
@@ -138,7 +123,7 @@ describe('notifications api', () => {
   })
 
   it('deletes a rule', async () => {
-    apiClient.delete.mockResolvedValue({})
+    vi.mocked(apiClient.delete).mockResolvedValue({})
 
     await deleteRule(9)
 
@@ -146,14 +131,14 @@ describe('notifications api', () => {
   })
 
   it('maps vapid key responses', async () => {
-    apiClient.get.mockResolvedValue({ data: { public_key: 'abc', configured: true } })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { public_key: 'abc', configured: true } })
 
     await expect(getVapidPublicKey()).resolves.toEqual({ key: 'abc', configured: true })
     expect(apiClient.get).toHaveBeenCalledWith('/notifications/push/vapid-key')
   })
 
   it('saves vapid keys', async () => {
-    apiClient.put.mockResolvedValue({})
+    vi.mocked(apiClient.put).mockResolvedValue({})
 
     await saveVapidKeys('pub', 'priv')
 
@@ -164,7 +149,7 @@ describe('notifications api', () => {
   })
 
   it('subscribes push notifications', async () => {
-    apiClient.post.mockResolvedValue({})
+    vi.mocked(apiClient.post).mockResolvedValue({})
 
     await subscribePush({ endpoint: 'https://push.example.com', keys: { p256dh: 'a', auth: 'b' } })
 
@@ -175,7 +160,7 @@ describe('notifications api', () => {
   })
 
   it('unsubscribes push notifications', async () => {
-    apiClient.post.mockResolvedValue({})
+    vi.mocked(apiClient.post).mockResolvedValue({})
 
     await unsubscribePush('https://push.example.com')
 
@@ -185,7 +170,7 @@ describe('notifications api', () => {
   })
 
   it('lists push subscriptions', async () => {
-    apiClient.get.mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
     await listPushSubscriptions()
 
@@ -193,7 +178,7 @@ describe('notifications api', () => {
   })
 
   it('lists deliveries with and without limit', async () => {
-    apiClient.get.mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
     await listDeliveries()
     await listDeliveries(25)
@@ -207,7 +192,7 @@ describe('notifications api', () => {
   })
 
   it('validates smtp settings', async () => {
-    apiClient.post.mockResolvedValue({})
+    vi.mocked(apiClient.post).mockResolvedValue({})
 
     await validateSmtp({
       smtp_host: 'smtp.example.com',

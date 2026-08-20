@@ -5,7 +5,24 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { apiClient } from '../api/client'
+import {
+  changeUserPassword,
+  createUser,
+  deleteUser,
+  getUserGroups,
+  getUserPermissions,
+  getUserRoles,
+  listUsers,
+  updateUserGroups,
+  updateUserRole,
+  updateUserRoles,
+} from '../api/users'
+import type { RepoPermission, User } from '../api/users'
+import { listRoles } from '../api/roles'
+import type { Role } from '../api/roles'
+import { listGroups } from '../api/groups'
+import type { Group } from '../api/groups'
+import { listRepos, updateRepoPermission } from '../api/repos'
 import { useAuthStore } from '../stores/auth'
 import { formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
@@ -16,34 +33,6 @@ import EmptyState from '../components/EmptyState.vue'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
-
-interface User {
-  id: number
-  username: string
-  role: 'admin' | 'user'
-  created_at: string
-  last_login_at: string | null
-}
-
-interface RepoPermission {
-  user_id: number
-  repo_id: number
-  can_view: boolean
-  can_backup: boolean
-  can_modify_schedules: boolean
-  can_extract: boolean
-  can_delete: boolean
-}
-
-interface RoleRow {
-  id: number
-  name: string
-}
-
-interface GroupRow {
-  id: number
-  name: string
-}
 
 const authStore = useAuthStore()
 const users = ref<User[]>([])
@@ -81,8 +70,8 @@ const editPasswordError = ref('')
 const editPasswordSuccess = ref(false)
 
 const editRolesLoading = ref(false)
-const allRoles = ref<RoleRow[]>([])
-const allGroups = ref<GroupRow[]>([])
+const allRoles = ref<Role[]>([])
+const allGroups = ref<Group[]>([])
 const userRoleIds = ref<number[]>([])
 const userGroupIds = ref<number[]>([])
 const editRolesSubmitting = ref(false)
@@ -96,8 +85,7 @@ async function fetchUsers(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await apiClient.get<User[]>('/users')
-    users.value = res.data
+    users.value = await listUsers()
   } catch (e: unknown) {
     loadError.value = extractError(e, 'Failed to load users')
   } finally {
@@ -115,7 +103,7 @@ async function submitCreate(): Promise<void> {
   createError.value = ''
   createSubmitting.value = true
   try {
-    await apiClient.post('/users', createForm.value)
+    await createUser(createForm.value)
     showCreateModal.value = false
     await fetchUsers()
   } catch (e: unknown) {
@@ -142,16 +130,16 @@ function openEdit(user: User): void {
 async function loadEditRoles(user: User): Promise<void> {
   editRolesLoading.value = true
   try {
-    const [rolesRes, groupsRes, userRolesRes, userGroupsRes] = await Promise.all([
-      apiClient.get<RoleRow[]>('/roles'),
-      apiClient.get<GroupRow[]>('/groups'),
-      apiClient.get<RoleRow[]>(`/users/${user.id}/roles`),
-      apiClient.get<GroupRow[]>(`/users/${user.id}/groups`),
+    const [allRolesList, allGroupsList, userRolesList, userGroupsList] = await Promise.all([
+      listRoles(),
+      listGroups(),
+      getUserRoles(user.id),
+      getUserGroups(user.id),
     ])
-    allRoles.value = rolesRes.data
-    allGroups.value = groupsRes.data
-    userRoleIds.value = userRolesRes.data.map((r) => r.id)
-    userGroupIds.value = userGroupsRes.data.map((g) => g.id)
+    allRoles.value = allRolesList
+    allGroups.value = allGroupsList
+    userRoleIds.value = userRolesList.map((r) => r.id)
+    userGroupIds.value = userGroupsList.map((g) => g.id)
   } finally {
     editRolesLoading.value = false
   }
@@ -160,12 +148,9 @@ async function loadEditRoles(user: User): Promise<void> {
 async function loadEditPermissions(user: User): Promise<void> {
   editPermsLoading.value = true
   try {
-    const [reposRes, permsRes] = await Promise.all([
-      apiClient.get<Repo[]>('/repos'),
-      apiClient.get<RepoPermission[]>(`/users/${user.id}/permissions`),
-    ])
-    permissionsRepos.value = reposRes.data
-    permissionsData.value = permsRes.data
+    const [repoList, permsList] = await Promise.all([listRepos(), getUserPermissions(user.id)])
+    permissionsRepos.value = repoList
+    permissionsData.value = permsList
   } finally {
     editPermsLoading.value = false
   }
@@ -176,7 +161,7 @@ async function saveRole(): Promise<void> {
   editRoleSubmitting.value = true
   editRoleError.value = ''
   try {
-    await apiClient.put(`/users/${editUser.value.id}/role`, { role: editRole.value })
+    await updateUserRole(editUser.value.id, { role: editRole.value })
     const idx = users.value.findIndex((u) => u.id === editUser.value!.id)
     if (idx !== -1) {
       users.value[idx] = { ...users.value[idx], role: editRole.value }
@@ -195,7 +180,7 @@ async function savePassword(): Promise<void> {
   editPasswordError.value = ''
   editPasswordSuccess.value = false
   try {
-    await apiClient.put(`/users/${editUser.value.id}/password`, {
+    await changeUserPassword(editUser.value.id, {
       password: editPassword.value,
     })
     editPassword.value = ''
@@ -231,8 +216,8 @@ async function saveRolesGroups(): Promise<void> {
   editRolesError.value = ''
   try {
     await Promise.all([
-      apiClient.put(`/users/${editUser.value.id}/roles`, { role_ids: userRoleIds.value }),
-      apiClient.put(`/users/${editUser.value.id}/groups`, { group_ids: userGroupIds.value }),
+      updateUserRoles(editUser.value.id, { role_ids: userRoleIds.value }),
+      updateUserGroups(editUser.value.id, { group_ids: userGroupIds.value }),
     ])
   } catch (e: unknown) {
     editRolesError.value = extractError(e, 'Failed to save assignments')
@@ -259,7 +244,7 @@ async function togglePermission(repoId: number, field: keyof RepoPermission): Pr
   if (!editUser.value) return
   const perm = getPermission(repoId)
   const updated = { ...perm, [field]: !perm[field] }
-  await apiClient.put(`/repos/${repoId}/permissions/${editUser.value.id}`, {
+  await updateRepoPermission(repoId, editUser.value.id, {
     can_view: updated.can_view,
     can_backup: updated.can_backup,
     can_modify_schedules: updated.can_modify_schedules,
@@ -283,7 +268,7 @@ async function confirmDelete(): Promise<void> {
   if (!deleteTarget.value) return
   deleteSubmitting.value = true
   try {
-    await apiClient.delete(`/users/${deleteTarget.value.id}`)
+    await deleteUser(deleteTarget.value.id)
     showDeleteModal.value = false
     deleteTarget.value = null
     await fetchUsers()

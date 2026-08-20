@@ -3,8 +3,8 @@
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
 import axios from 'axios'
+import { mockApiClientRead, mockErrorUtilsPassthrough } from '../test-utils/sharedMocks'
 
 vi.mock('../api/client', () => mockApiClientRead())
 vi.mock('../utils/error', () => mockErrorUtilsPassthrough())
@@ -45,24 +45,27 @@ function mountWizard(open = true): ReturnType<typeof mount> {
   })
 }
 
-/**
- * Walks the wizard from step 1 to the confirmation step with a fixed archive
- * and path. Four tests need to be *at* step 4 before they assert anything, and
- * the walk itself is only interesting to the two tests that assert on it.
- */
-async function advanceToConfirm(wrapper: ReturnType<typeof mountWizard>): Promise<void> {
-  const next = async (): Promise<void> => {
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
-  }
-  await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-  await next()
-  await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')
-  await next()
-  await next()
+async function clickNext(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await wrapper
+    .findAll('button')
+    .find((b) => b.text() === 'Next')!
+    .trigger('click')
+  await wrapper.vm.$nextTick()
+}
+
+// Advances from step 1 (archive selection) through step 2 (paths) to step 3
+// (restore method) -- the prefix every non-trivial test needs before it can
+// exercise its own step-3/step-4 behavior.
+async function advanceToStep3(
+  wrapper: ReturnType<typeof mount>,
+  archiveName: string,
+  paths: string,
+): Promise<void> {
+  await wrapper.find('.step-content select').setValue(archiveName)
+  await clickNext(wrapper)
+
+  await wrapper.find('textarea').setValue(paths)
+  await clickNext(wrapper)
 }
 
 describe('RestoreWizard', () => {
@@ -114,11 +117,7 @@ describe('RestoreWizard', () => {
   it('advances to step 2 after selecting archive and clicking Next', async () => {
     const wrapper = mountWizard()
     await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
+    await clickNext(wrapper)
 
     expect(wrapper.text()).toContain('Paths to restore')
     expect(wrapper.find('textarea').exists()).toBe(true)
@@ -127,11 +126,7 @@ describe('RestoreWizard', () => {
   it('shows Back button on step 2 and navigates back to step 1', async () => {
     const wrapper = mountWizard()
     await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
+    await clickNext(wrapper)
 
     const backBtn = wrapper.findAll('button').find((b) => b.text() === 'Back')
     expect(backBtn).toBeDefined()
@@ -144,11 +139,7 @@ describe('RestoreWizard', () => {
   it('disables Next on step 2 until paths are entered', async () => {
     const wrapper = mountWizard()
     await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Next')!
-      .trigger('click')
-    await wrapper.vm.$nextTick()
+    await clickNext(wrapper)
 
     const nextBtn = wrapper.findAll('button').find((b) => b.text() === 'Next')
     expect(nextBtn!.attributes('disabled')).toBeDefined()
@@ -156,8 +147,8 @@ describe('RestoreWizard', () => {
 
   it('advances through all steps and reaches step 4 confirmation', async () => {
     const wrapper = mountWizard()
-
-    await advanceToConfirm(wrapper)
+    await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
+    await clickNext(wrapper)
 
     expect(wrapper.text()).toContain('Confirm restore')
     expect(wrapper.text()).toContain(ARCHIVES[0].name)
@@ -174,8 +165,8 @@ describe('RestoreWizard', () => {
     global.URL.revokeObjectURL = vi.fn()
 
     const wrapper = mountWizard()
-
-    await advanceToConfirm(wrapper)
+    await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
+    await clickNext(wrapper)
 
     await wrapper.find('button.btn-primary').trigger('click')
     await wrapper.vm.$nextTick()
@@ -189,12 +180,38 @@ describe('RestoreWizard', () => {
     expect(wrapper.text()).toContain('Restore completed successfully.')
   })
 
+  it('restores to the agent filesystem when that method is selected', async () => {
+    mockPost.mockResolvedValue({ data: { success: true } })
+
+    const wrapper = mountWizard()
+    await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
+
+    await wrapper.find('input[type="radio"][value="agent"]').setValue()
+    await wrapper.find('input[placeholder="backup-host-01"]').setValue('web-server-01')
+    await wrapper.find('input[placeholder="/tmp/restore"]').setValue('/tmp/restore')
+    await clickNext(wrapper)
+
+    await wrapper.find('button.btn-primary').trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(mockPost).toHaveBeenCalledWith(
+      expect.stringContaining('/restore'),
+      expect.objectContaining({
+        paths: ['/etc/nginx/nginx.conf'],
+        target_path: '/tmp/restore',
+        hostname: 'web-server-01',
+      }),
+    )
+    expect(wrapper.text()).toContain('Restore completed successfully.')
+  })
+
   it('shows error on step 4 when API fails', async () => {
     mockPost.mockRejectedValue(new Error('Restore failed'))
 
     const wrapper = mountWizard()
-
-    await advanceToConfirm(wrapper)
+    await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
+    await clickNext(wrapper)
 
     await wrapper.find('button.btn-primary').trigger('click')
     await wrapper.vm.$nextTick()
@@ -216,8 +233,8 @@ describe('RestoreWizard', () => {
     )
 
     const wrapper = mountWizard()
-
-    await advanceToConfirm(wrapper)
+    await advanceToStep3(wrapper, ARCHIVES[0].name, '/etc/nginx/nginx.conf')
+    await clickNext(wrapper)
 
     await wrapper.find('button.btn-primary').trigger('click')
     await wrapper.vm.$nextTick()

@@ -403,6 +403,73 @@ describe('SystemView', () => {
     expect(document.body.textContent).toContain('Regenerate SSH key')
   })
 
+  it('regenerates the SSH key and shows the new public key', async () => {
+    setupSuccessMocks()
+    mockPost.mockResolvedValue({ data: { public_key: 'ssh-ed25519 AAAA-new' } })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Regenerate')!
+      .trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Regenerate Key')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockPost).toHaveBeenCalledWith('/system/ssh-regenerate-key')
+    expect(wrapper.text()).toContain('ssh-ed25519 AAAA-new')
+    expect(document.body.textContent).not.toContain('Regenerate SSH Key')
+  })
+
+  it('exports the config as a downloadable JSON file', async () => {
+    setupSuccessMocks()
+    const baseGet = mockGet.getMockImplementation()!
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/config/export') return Promise.resolve({ data: { version: 1 } })
+      return baseGet(url)
+    })
+    global.URL.createObjectURL = vi.fn().mockReturnValue('blob:test')
+    global.URL.revokeObjectURL = vi.fn()
+
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Download JSON'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenCalledWith('/config/export')
+    expect(global.URL.createObjectURL).toHaveBeenCalled()
+    expect(global.URL.revokeObjectURL).toHaveBeenCalledWith('blob:test')
+  })
+
+  it('resets the system state', async () => {
+    setupSuccessMocks()
+    mockPost.mockResolvedValue({ data: { cancelled_backups: 2, notified_agents: 1 } })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Reset')!
+      .trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Reset System')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockPost).toHaveBeenCalledWith('/system/reset')
+    expect(document.body.textContent).not.toContain('Reset System State')
+  })
+
   it('saves new retention values to API', async () => {
     setupSuccessMocks()
     mockPut.mockResolvedValue({

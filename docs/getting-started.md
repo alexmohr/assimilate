@@ -6,13 +6,13 @@ This guide walks you through installing and running Assimilate for the first tim
 
 The fastest way to get started. Pre-built images for the server and agent are published to the GitHub Container Registry on every release and nightly from `main`:
 
-| Image                               | Tags                                                              |
-| ----------------------------------- | ----------------------------------------------------------------- |
-| `ghcr.io/alexmohr/assimilate`       | `latest`, semver (`1.2.3`, `1.2`, `1`), `nightly`, `sha-<commit>` |
+| Image | Tags |
+|---|---|
+| `ghcr.io/alexmohr/assimilate` | `latest`, semver (`1.2.3`, `1.2`, `1`), `nightly`, `sha-<commit>` |
 | `ghcr.io/alexmohr/assimilate-agent` | `latest`, semver (`1.2.3`, `1.2`, `1`), `nightly`, `sha-<commit>` |
 
 !!! tip
-Use `nightly` for the latest development build from `main`, or pin to a release tag for stability.
+    Use `nightly` for the latest development build from `main`, or pin to a release tag for stability.
 
 ### Server: docker-compose.yml (pre-built images)
 
@@ -91,14 +91,14 @@ docker compose up -d
 
 ### Environment variables
 
-| Variable                | Required   | Default       | Description                                                                  |
-| ----------------------- | ---------- | ------------- | ---------------------------------------------------------------------------- |
-| `ASSIMILATE_SECRET_KEY` | **Yes**    | —             | 32-byte hex key used to encrypt repository passphrases at rest (AES-256-GCM) |
-| `POSTGRES_PASSWORD`     | No         | `borg_secret` | Password for the PostgreSQL `borg` user                                      |
-| `BORG_AGENT_TOKEN`      | Agent only | —             | Token copied from the server UI after creating an agent                      |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `ASSIMILATE_SECRET_KEY` | **Yes** | — | 32-byte hex key used to encrypt repository passphrases at rest (AES-256-GCM) |
+| `POSTGRES_PASSWORD` | No | `borg_secret` | Password for the PostgreSQL `borg` user |
+| `BORG_AGENT_TOKEN` | Agent only | — | Token copied from the server UI after creating an agent |
 
 !!! warning "Protect `ASSIMILATE_SECRET_KEY`"
-This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
+    This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
 
 ### Server: `docker-compose.yml`
 
@@ -166,7 +166,7 @@ Install the following before proceeding:
 - **BorgBackup** — must be installed on every machine running the agent
 
 !!! tip
-The [Devcontainer Setup](#devcontainer-setup) section provides a fully self-contained environment with all dependencies pre-installed — recommended for contributors and evaluation.
+    The [Devcontainer Setup](#devcontainer-setup) section provides a fully self-contained environment with all dependencies pre-installed — recommended for contributors and evaluation.
 
 Build the server and agent binaries:
 
@@ -213,7 +213,7 @@ Open `http://localhost:8080` in your browser.
 ![Login](assets/screenshots/login.png)
 
 !!! warning "Change the default password immediately"
-The server creates a default admin account with credentials `admin` / `admin`. You are required to change the password on first login. Do not skip this step on any internet-facing deployment.
+    The server creates a default admin account with credentials `admin` / `admin`. You are required to change the password on first login. Do not skip this step on any internet-facing deployment.
 
 After changing the password, the dashboard loads and shows no agents yet.
 
@@ -221,7 +221,7 @@ After changing the password, the dashboard loads and shows no agents yet.
 
 ## Adding Your First Agent
 
-An _agent_ represents a machine running the Assimilate agent binary.
+An *agent* represents a machine running the Assimilate agent binary.
 
 1. Navigate to **Agents** and click **New agent**.
 2. Enter a display name for the machine.
@@ -241,7 +241,7 @@ See [Agent Management](agents.md) for systemd unit examples and advanced options
 
 ## Adding Your First Repository
 
-A _repository_ is a Borg backup repository, typically accessed over SSH.
+A *repository* is a Borg backup repository, typically accessed over SSH.
 
 ### SSH key setup
 
@@ -253,20 +253,20 @@ echo "<public key from System page>" >> ~/.ssh/authorized_keys
 ```
 
 !!! tip
-Use [SSH Agent Forwarding](ssh-agent-forwarding.md) so agent machines authenticate using the server's key — no SSH keys need to be distributed to agent machines.
+    Use [SSH Agent Forwarding](ssh-agent-forwarding.md) so agent machines authenticate using the server's key — no SSH keys need to be distributed to agent machines.
 
 ### Create the repository
 
 1. Navigate to **Repos** and click **New repository**.
 2. Fill in the connection details:
 
-   | Field      | Example                    |
-   | ---------- | -------------------------- |
-   | SSH Host   | `backup.example.com`       |
-   | SSH User   | `borg`                     |
-   | SSH Port   | `22`                       |
-   | Repo Path  | `/backup/repos/myhost`     |
-   | Passphrase | a strong random passphrase |
+    | Field | Example |
+    |---|---|
+    | SSH Host | `backup.example.com` |
+    | SSH User | `borg` |
+    | SSH Port | `22` |
+    | Repo Path | `/backup/repos/myhost` |
+    | Passphrase | a strong random passphrase |
 
 3. Click **Test Connection** to verify SSH access.
 4. Click **Initialize** to run `borg init` and create the repository.
@@ -292,10 +292,10 @@ The project includes a devcontainer for contributors. It provides a fully self-c
 
 ### Services
 
-| Service     | Purpose                                           |
-| ----------- | ------------------------------------------------- |
-| `dev`       | Rust nightly + Node.js + borg — your workspace    |
-| `postgres`  | PostgreSQL database                               |
+| Service | Purpose |
+|---|---|
+| `dev` | Rust nightly + Node.js + borg — your workspace |
+| `postgres` | PostgreSQL database |
 | `borg-repo` | SSH server + borg acting as the repository target |
 
 ### Start the environment
@@ -319,16 +319,16 @@ BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN=<token> cargo run -p agen
 
 When creating a repository in the devcontainer, use these settings:
 
-| Field      | Value                      |
-| ---------- | -------------------------- |
-| SSH Host   | `localhost` or `borg-repo` |
-| SSH User   | `borg`                     |
-| SSH Port   | `22`                       |
-| Repo Path  | `/backup/repos/<name>`     |
+| Field | Value |
+|---|---|
+| SSH Host | `localhost` or `borg-repo` |
+| SSH User | `borg` |
+| SSH Port | `22` |
+| Repo Path | `/backup/repos/<name>` |
 | Passphrase | any value (e.g. `devpass`) |
 
 !!! tip
-Without a devcontainer, start PostgreSQL manually and set `DATABASE_URL` and `ASSIMILATE_SECRET_KEY` before running `cargo run -p server`. Run `cd frontend && npm run dev` in a separate terminal for hot-reload.
+    Without a devcontainer, start PostgreSQL manually and set `DATABASE_URL` and `ASSIMILATE_SECRET_KEY` before running `cargo run -p server`. Run `cd frontend && npm run dev` in a separate terminal for hot-reload.
 
 <!--
 SPDX-License-Identifier: Apache-2.0

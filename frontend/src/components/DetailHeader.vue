@@ -19,6 +19,12 @@ defineProps<{
   name: string
   /** Renders the name in the monospace face, for machine identifiers. */
   mono?: boolean
+  /**
+   * Renders the meta line in the monospace face. Same distinction as `mono`:
+   * versions, revisions and build stamps line up in it; counts and sizes read
+   * better in the proportional face.
+   */
+  monoMeta?: boolean
   /** The line under the name: a display name, a type and cadence, a path. */
   subtitle?: string | null
 }>()
@@ -45,6 +51,7 @@ defineProps<{
       <div
         v-if="$slots.meta"
         class="detail-meta"
+        :class="{ 'detail-meta--mono': monoMeta }"
       >
         <slot name="meta" />
       </div>

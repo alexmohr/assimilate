@@ -781,9 +781,14 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2) var(--space-5);
-    font-family: var(--mono);
     font-size: var(--fs-2xs);
     color: var(--text-muted);
+  }
+
+  /* Opt-in, the same way `.detail-name--mono` is: a meta line of versions and
+     revisions wants the monospace face, one of counts and sizes does not. */
+  .detail-meta--mono {
+    font-family: var(--mono);
   }
 
   .detail-meta b {
@@ -2206,7 +2211,7 @@
     gap: var(--space-5);
   }
 
-  /* The inline edit form an `EditableInfoCard` swaps in, and its ruled
+  /* The inline edit form an `EditableSection` swaps in, and its ruled
      footer. */
   .edit-form {
     display: flex;

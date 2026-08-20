@@ -58,6 +58,7 @@ const canRestart = computed(
   <DetailHeader
     :name="agent.hostname"
     mono
+    mono-meta
     :subtitle="agent.display_name"
   >
     <template #badges>

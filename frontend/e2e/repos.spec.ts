@@ -60,8 +60,10 @@ test.describe('Repositories management journey', () => {
     await expect(rail.locator('.settings-nav-item[aria-current="true"]')).toHaveText('Repository')
     await expect(pane).toContainText('borg@')
 
+    // The rail names each pane, so a pane proves it mounted by its own
+    // content rather than by a heading repeating the rail item.
     await rail.getByRole('button', { name: 'Storage quota' }).click()
-    await expect(pane.locator('.panel-title')).toHaveText('Storage quota')
+    await expect(pane.locator('.pane-lede')).toContainText('How much space this repository may use')
     await expect(page).toHaveURL(/section=quota/)
 
     await rail.getByRole('button', { name: 'Tags' }).click()
@@ -69,7 +71,7 @@ test.describe('Repositories management journey', () => {
     await expect(page).toHaveURL(/section=tags/)
 
     await rail.getByRole('button', { name: 'Borg console' }).click()
-    await expect(pane.locator('.panel-title')).toHaveText('Borg console')
+    await expect(pane.getByLabel('borg command')).toBeVisible()
     await expect(page).toHaveURL(/section=console/)
   })
 

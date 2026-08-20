@@ -1161,9 +1161,10 @@ function filterByRun(runId: string): void {
   align-items: center;
 }
 
+/* The inset `.search-input--icon`'s padding is derived from. */
 .search-icon {
   position: absolute;
-  left: 0.5rem;
+  left: var(--space-4);
   color: var(--text-muted);
   pointer-events: none;
 }

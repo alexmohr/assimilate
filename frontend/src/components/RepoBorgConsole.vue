@@ -64,9 +64,8 @@ function exitClass(code: number): string {
 </script>
 
 <template>
-  <div class="panel">
-    <h2 class="panel-title">Borg console</h2>
-    <p class="console-desc">
+  <div>
+    <p class="pane-lede console-lede">
       Execute borg commands directly against this repository. The repository URL and passphrase are
       injected automatically. Use <code class="console-code">::archive</code> notation to reference
       a specific archive.
@@ -133,11 +132,10 @@ function exitClass(code: number): string {
 </template>
 
 <style scoped>
-.console-desc {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
+/* The lede doubles as this pane's instructions, so it needs the gap a
+   `.pane-head` would have put under it. */
+.console-lede {
   margin-bottom: var(--space-5);
-  line-height: 1.5;
 }
 
 .console-code {

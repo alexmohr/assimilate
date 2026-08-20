@@ -144,9 +144,11 @@ onMounted(loadQuota)
 </script>
 
 <template>
-  <div class="panel">
-    <div class="panel-header">
-      <h2 class="panel-title">Storage quota</h2>
+  <div>
+    <div class="pane-head">
+      <p class="pane-lede">
+        How much space this repository may use, and what Assimilate does as it fills up.
+      </p>
       <div class="panel-actions">
         <span
           v-if="quota && quota.enabled"

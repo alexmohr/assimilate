@@ -1794,10 +1794,13 @@
     min-width: 280px;
   }
 
-  /* Search box with a leading icon, positioned by `.search-input-wrap`. */
+  /* Search box with a leading icon, positioned by `.search-input-wrap`. The
+     padding clears the icon rather than sitting on the spacing scale: the
+     icon's own inset, its 14px box, and a gap after it. A scale step here
+     lands the text 2px from the glyph. */
   .search-input--icon {
     width: 100%;
-    padding-left: var(--space-8);
+    padding-left: calc(var(--space-4) + 14px + var(--space-3));
   }
 
   /* Column-level typography. Six files each had their own `.cell-*` set, and

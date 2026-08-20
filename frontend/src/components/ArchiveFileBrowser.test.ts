@@ -18,6 +18,16 @@ vi.mock('./BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
 }))
 
+// The meta bar links the archive's host into the agent page. These tests mount
+// the browser bare, without the router, so stub the link rather than pull a
+// router plugin into every mount below.
+vi.mock('./BaseHostLink.vue', () => ({
+  default: {
+    props: ['hostname'],
+    template: '<a class="host-link">{{ hostname }}</a>',
+  },
+}))
+
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
 vi.mock('../composables/useToast', () => ({
@@ -248,6 +258,60 @@ describe('ArchiveFileBrowser', () => {
 
     expect(toastError).toHaveBeenCalledWith('Restore failed: disk full')
     expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('puts the whole-archive actions in the header, not on a hidden table row', async () => {
+    // Download, restore and delete used to be reachable only through the file
+    // table's "." row, with delete transparent until the pointer hovered it.
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    const header = wrapper.find('.browser-actions')
+    expect(header.exists()).toBe(true)
+    expect(header.find('button[title="Download whole archive"]').text()).toContain('Download')
+    expect(header.find('button[title="Restore whole archive to host"]').text()).toContain('Restore')
+    expect(header.find('button[title="Delete whole archive"]').text()).toContain('Delete')
+
+    // The table's action column keeps per-entry download and restore only.
+    const rowActions = wrapper.findAll('.td-action')
+    for (const cell of rowActions) {
+      expect(cell.find('button[title*="Delete"]').exists()).toBe(false)
+    }
+  })
+
+  it('names the archive and its host beside the file list', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+    })
+
+    expect(wrapper.find('.browser-title-name').text()).toBe('test-archive')
+    expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('web-server-01')
+  })
+
+  it('offers a way back up that is disabled at the archive root', async () => {
+    const wrapper = await mountWithEntries()
+
+    const up = wrapper.find('.browser-up')
+    expect(up.attributes('disabled')).toBeDefined()
+
+    const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
+    await subdirRow!.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.browser-up').attributes('disabled')).toBeUndefined()
+
+    const callsBefore = vi.mocked(apiClient.get).mock.calls.length
+    await wrapper.find('.browser-up').trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callsBefore + 1)
+    expect(wrapper.findAll('.crumb')).toHaveLength(1)
   })
 
   it('clicking the whole-archive delete button emits delete-archive with the archive', async () => {

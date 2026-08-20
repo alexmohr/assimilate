@@ -1155,20 +1155,6 @@ function filterByRun(runId: string): void {
   min-width: 180px;
 }
 
-.search-input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-/* `.search-input--icon` derives its padding from this inset. */
-.search-icon {
-  position: absolute;
-  left: var(--space-4);
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
 .log-panel {
   overflow-x: auto;
 }

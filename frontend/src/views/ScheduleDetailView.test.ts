@@ -1200,11 +1200,10 @@ describe('ScheduleDetailView - Backups tab', () => {
 
     await goToBackups(wrapper)
 
-    const archiveRow = wrapper.find('.archive-row')
-    await archiveRow.trigger('click')
+    await wrapper.find('.archive-row-select').trigger('click')
     await flushPromises()
 
-    expect(archiveRow.classes()).toContain('selected')
+    expect(wrapper.find('.archive-row').classes()).toContain('selected')
     expect(wrapper.find('.archive-file-browser-stub').exists()).toBe(true)
   })
 

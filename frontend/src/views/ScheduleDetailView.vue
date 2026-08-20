@@ -6,7 +6,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { apiClient } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -54,6 +56,8 @@ const router = useRouter()
 const NEW_SCHEDULE_ROUTE_ID = 'new'
 
 const isCreate = computed(() => props.id === NEW_SCHEDULE_ROUTE_ID)
+
+const { isAdmin } = storeToRefs(useAuthStore())
 
 const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
@@ -693,6 +697,9 @@ watch(activeTab, (tab) => {
           :error="reportsError"
           :agents="agentMap"
           :repo-id="schedule?.repo_id ?? null"
+          :repo-name="repoName ?? ''"
+          :is-admin="isAdmin"
+          :reload="loadReports"
         />
 
         <ScheduleSettingsTab

@@ -139,7 +139,7 @@ test.describe('Archive browsing & diff journey', () => {
     const browserPanel = page.locator('.browser-panel')
     await expect(browserPanel).toContainText('Select an archive to browse its contents.')
 
-    const archiveRow = page.locator('.archives-panel .td-mono').first()
+    const archiveRow = page.locator('.archives-panel .archive-name').first()
     await expect(archiveRow).toBeVisible({ timeout: 15_000 })
     await archiveRow.click()
 
@@ -162,7 +162,7 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(repoSelect).toBeVisible({ timeout: 15_000 })
     await repoSelect.selectOption({ index: 1 })
 
-    const archiveRow = page.locator('.archives-panel .td-mono').first()
+    const archiveRow = page.locator('.archives-panel .archive-name').first()
     await expect(archiveRow).toBeVisible({ timeout: 15_000 })
     await archiveRow.click()
 
@@ -174,6 +174,30 @@ test.describe('Archive browsing & diff journey', () => {
     await tmpEntry.click()
 
     await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp')
+  })
+
+  test('the file browser header offers download, restore and delete outright', async ({ page }) => {
+    // These used to hang off the file table's "." row, with delete rendered at
+    // zero opacity until the pointer happened to hover that row.
+    await loginAsAdmin(page)
+    await page.goto('/repos/1?tab=archives')
+    await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
+
+    await page
+      .getByText(/web-server-01-backup/)
+      .first()
+      .click()
+
+    const header = page.locator('.browser-actions')
+    await expect(header).toBeVisible({ timeout: 30_000 })
+    await expect(header.locator('button[title="Download whole archive"]')).toBeVisible()
+    await expect(header.locator('button[title="Restore whole archive to host"]')).toBeVisible()
+    await expect(header.locator('button[title="Delete whole archive"]')).toBeVisible()
+
+    // The archive says what it is beside its files.
+    await expect(page.locator('.browser-title-name')).toContainText('web-server-01-backup')
+    await expect(page.locator('.archive-meta-bar')).toContainText('Dedup')
   })
 
   test('archive tags API endpoint is accessible and returns structured data', async ({ page }) => {

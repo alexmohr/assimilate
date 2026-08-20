@@ -9,10 +9,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 // instead of drifting out of sync with its own copy of the grid.
 withDefaults(
   defineProps<{
-    // Sizes the list pane to a fixed narrow column instead of splitting the
-    // width with the browser. The repo view's list carries five detailed
-    // columns and needs the room; the schedule view's carries four narrow
-    // ones and would otherwise sit in a half-empty pane on a wide screen.
+    // Sizes the list pane to a fixed column instead of splitting the width
+    // with the browser. The archive list is a column of two-line rows that
+    // does not get more readable with more width, while the file table does -
+    // so every archive screen asks for this.
     narrowList?: boolean
   }>(),
   {
@@ -40,7 +40,7 @@ withDefaults(
 }
 
 .archive-browser-layout.layout-narrow-list {
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 380px minmax(0, 1fr);
 }
 
 .archive-browser-layout > * {

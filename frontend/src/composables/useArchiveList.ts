@@ -12,6 +12,14 @@ export type ArchiveSortMode =
   | 'dedup-desc'
   | 'dedup-asc'
 
+/**
+ * Above this many hosts the grouped list stops being something you read and
+ * becomes something you navigate, so the groups start closed. At or below it -
+ * a schedule targeting two or three hosts, a repository with one - starting
+ * closed just hides the whole list behind a click.
+ */
+export const GROUP_COLLAPSE_THRESHOLD = 3
+
 export interface ArchiveGroup {
   hostname: string
   matched: boolean
@@ -53,7 +61,10 @@ export function useArchiveList(
   const filter = ref('')
   const sortMode = ref<ArchiveSortMode>('date-desc')
   const groupByHost = ref(true)
-  const expandedGroups = ref<Set<string>>(new Set())
+  // Groups the user has clicked, held as "the opposite of the default" rather
+  // than as "expanded": the default flips with the number of hosts, and a
+  // user's own click has to survive that flip.
+  const toggledGroups = ref<Set<string>>(new Set())
 
   const unmatchedCount = computed(() => archives.value.filter((a) => a.matched !== true).length)
 
@@ -115,23 +126,24 @@ export function useArchiveList(
     return [...groups.values()].sort((a, b) => a.hostname.localeCompare(b.hostname))
   })
 
+  const collapsedByDefault = computed(() => grouped.value.length > GROUP_COLLAPSE_THRESHOLD)
+
   function toggleGroup(hostname: string): void {
-    if (expandedGroups.value.has(hostname)) {
-      expandedGroups.value.delete(hostname)
-    } else {
-      expandedGroups.value.add(hostname)
-    }
+    const next = new Set(toggledGroups.value)
+    if (next.has(hostname)) next.delete(hostname)
+    else next.add(hostname)
+    toggledGroups.value = next
   }
 
-  /** Groups start collapsed: a repo can hold archives from many hosts. */
   function isGroupCollapsed(hostname: string): boolean {
-    return !expandedGroups.value.has(hostname)
+    const flipped = toggledGroups.value.has(hostname)
+    return collapsedByDefault.value ? !flipped : flipped
   }
 
   /** Clears the filter and collapse state, e.g. when the repository changes. */
   function reset(): void {
     filter.value = ''
-    expandedGroups.value = new Set()
+    toggledGroups.value = new Set()
   }
 
   return {

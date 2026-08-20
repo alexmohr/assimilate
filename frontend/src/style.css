@@ -1819,6 +1819,21 @@
     padding-left: calc(var(--space-4) + 14px + var(--space-3));
   }
 
+  /* Positions that leading icon: the field is `position: relative`'s child,
+     so the icon can sit inside the padding the rule above reserves for it. */
+  .search-input-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: var(--space-4);
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
   /* Column-level typography. Six files each had their own `.cell-*` set, and
      one of them reached for a literal font stack instead of `--mono`. */
   .cell-ts,
@@ -2292,7 +2307,15 @@
     text-decoration: underline;
   }
 
-  /* Agreement/disagreement markers beside a matched value. */
+  /* Agreement/disagreement markers beside a matched value. The base class
+     carries the layout so the icon sits on the text baseline wherever it is
+     used; the two modifiers carry the tone. */
+  .match-icon {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+  }
+
   .match-ok {
     color: var(--success);
   }

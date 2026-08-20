@@ -151,11 +151,15 @@ defineExpose({
 
     <template #browser>
       <div class="panel panel--sectioned browser-panel">
+        <!--
+          `canDelete`, not `isAdmin`: restore and delete both need a resolved
+          repository to act against, and a schedule can render this before its
+          own repository has loaded.
+        -->
         <ArchiveFileBrowser
           :repo-id="repoId"
           :archive="selected"
-          :is-admin="isAdmin"
-          :can-delete="canDelete"
+          :is-admin="canDelete"
           :deleting="selectedDeleting"
           @delete-archive="request"
         />

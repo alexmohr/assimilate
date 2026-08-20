@@ -78,6 +78,15 @@ describe('ArchiveExplorer', () => {
     expect(explorer({ repoId: null }).find('.archive-row-delete').exists()).toBe(false)
   })
 
+  it('gates the browser on the same rule, so restore needs a repository too', () => {
+    const browser = (props: Record<string, unknown>) =>
+      explorer({ selected: ARCHIVE, ...props }).findComponent({ name: 'ArchiveFileBrowser' })
+
+    expect(browser({}).props('isAdmin')).toBe(true)
+    expect(browser({ isAdmin: false }).props('isAdmin')).toBe(false)
+    expect(browser({ repoId: null }).props('isAdmin')).toBe(false)
+  })
+
   it('names the archive and the repository in the confirmation', async () => {
     const wrapper = explorer()
     await wrapper.find('.archive-row-delete').trigger('click')

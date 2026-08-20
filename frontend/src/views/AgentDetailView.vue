@@ -833,13 +833,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           deployForceRedeploy = false
         }
       "
-      @deployed="
-        () => {
-          showDeployDialog = false
-          deployForceRedeploy = false
-          loadAgent()
-        }
-      "
+      @deployed="loadAgent"
     />
   </div>
 </template>

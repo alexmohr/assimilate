@@ -973,6 +973,17 @@ mod tests {
         }
     }
 
+    /// Generates a fresh ed25519 key pair. Shared by [`generate_test_key`]
+    /// and [`TestSshKeyDir::setup`], which each PEM-encode the result
+    /// differently (one round-trips it into a `russh` key, the other writes
+    /// it straight to disk) - factoring out the PEM encoding too would mean
+    /// naming `to_openssh`'s `Zeroizing<String>` return type, which isn't
+    /// reachable without adding the `zeroize` crate as a direct dependency.
+    fn generate_ed25519_key() -> ssh_key::PrivateKey {
+        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
+            .expect("generate test key")
+    }
+
     /// Generates a fresh ed25519 key pair. `russh::keys::PrivateKey` pins its
     /// own `ssh-key`/`rand_core` versions internally (not the crate's direct
     /// `ssh-key` dependency used elsewhere, e.g. in `api::system`), so this
@@ -981,12 +992,7 @@ mod tests {
     /// `crate::ssh::load_server_private_key` already does when loading a key
     /// from disk.
     fn generate_test_key() -> russh::keys::PrivateKey {
-        let key = ssh_key::PrivateKey::random(
-            &mut ssh_key::rand_core::OsRng,
-            ssh_key::Algorithm::Ed25519,
-        )
-        .expect("generate test key");
-        let pem = key
+        let pem = generate_ed25519_key()
             .to_openssh(ssh_key::LineEnding::LF)
             .expect("encode test key as OpenSSH PEM");
         russh::keys::decode_secret_key(&pem, None).expect("decode test key")
@@ -1160,12 +1166,7 @@ mod tests {
         fn setup() -> Self {
             let dir = tempfile::tempdir().expect("create tempdir");
             unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
-            let key = ssh_key::PrivateKey::random(
-                &mut ssh_key::rand_core::OsRng,
-                ssh_key::Algorithm::Ed25519,
-            )
-            .expect("generate test server key");
-            let pem = key
+            let pem = generate_ed25519_key()
                 .to_openssh(ssh_key::LineEnding::LF)
                 .expect("encode test server key as OpenSSH PEM");
             std::fs::write(dir.path().join("id_ed25519"), pem.as_bytes())

@@ -77,7 +77,7 @@ async function syncRepo(): Promise<void> {
   syncLoading.value = true
   try {
     await apiClient.post(`/repos/${props.repo.id}/sync?build_index=true`)
-    toastSuccess('Full resync started. Archive contents are being indexed in the background.')
+    toastSuccess('Sync started. Archive contents are being indexed in the background.')
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {

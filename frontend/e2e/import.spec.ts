@@ -212,7 +212,7 @@ test('full resync completes and preserves archives', async ({ page }) => {
   // The request resolves quickly on CI, so the transient "Syncing..." label is
   // not a stable contract. Assert the accepted action via toast and the final
   // steady-state button label instead.
-  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText('Sync started.')).toBeVisible({ timeout: 120_000 })
 
   // Button must return to its resting state (same API call as the toast above)
   await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
@@ -231,7 +231,7 @@ test('full resync preserves unmatched-banner', async ({ page }) => {
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText('Sync started.')).toBeVisible({ timeout: 120_000 })
 
   // Switch to archives tab - unmatched old-webserver archive must survive a resync
   await page.getByRole('tab', { name: 'Archives', exact: true }).click()
@@ -257,7 +257,7 @@ test('broken repo resync does not navigate to /error page', async ({ page }) => 
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  // The sync request is accepted immediately - "Full resync started." toast must appear
+  // The sync request is accepted immediately - "Sync started." toast must appear
   // and the page must stay on the repo detail view, never redirecting to /error
   await expect(page.locator('.toast-success').first()).toBeVisible({ timeout: 30_000 })
   await expect(page).not.toHaveURL(/\/error/)
@@ -415,7 +415,7 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText('Sync started.')).toBeVisible({ timeout: 120_000 })
   await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
 
   // Switch to Archives tab and confirm the deleted archive is no longer listed.

@@ -212,6 +212,14 @@ function formatPayload(payload: unknown): string {
    row instead of scrolling horizontally, so long values (errors, payloads)
    wrap in place rather than forcing the whole table wider than the viewport. */
 @media (max-width: 640px) {
+  /* Each row becomes its own bordered card below, so the shared scroll
+     container has nothing left to scroll and its border would double up
+     around them. */
+  .table-wrap {
+    overflow-x: visible;
+    border: none;
+  }
+
   .data-table-expandable thead {
     display: none;
   }

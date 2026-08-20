@@ -811,7 +811,7 @@
 
   .overflow-menu {
     position: absolute;
-    top: calc(100% + 0.35rem);
+    top: calc(100% + var(--space-3));
     right: 0;
     z-index: 20;
     min-width: 200px;
@@ -874,12 +874,14 @@
   }
 
   /* --- Settings sub-nav ----------------------------------------------------
-     A tab whose content is itself sectioned - AgentSettingsTab, ScheduleSettingsTab
-     - gets a narrow side rail rather than a second tab strip. Each caller adds
-     its own `@media (max-width: 768px)` override for how the rail collapses,
-     since that can genuinely differ (wrap into rows vs. stay one row of
-     equal-width cells), but the desktop shape and the danger-section tone are
-     shared so the two rails read as one control. */
+     A tab whose content is itself sectioned - AgentSettingsTab,
+     ScheduleSettingsTab, RepoSettingsTab - gets a narrow side rail rather than
+     a second tab strip. Everything about the rail lives here, including how it
+     collapses below the md breakpoint: the three tabs each carried their own
+     copy of that media query and all three wanted the same thing. Where a rail
+     genuinely differs - a small, fixed set of sections that should spread into
+     equal cells rather than wrap - it says so with `--even` instead of
+     redeclaring the breakpoint. */
   .settings-tab {
     display: flex;
     gap: var(--space-7);

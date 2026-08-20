@@ -405,8 +405,16 @@ const HOOKS = new Set([
   'import-status-msg',
 ])
 
+/**
+ * Comments are stripped first, or a class name would count as "defined" just
+ * for being *discussed* in prose. The `.panel` section header below explains
+ * why `.info-card` and `.info-title` were retired, and naming them there would
+ * otherwise re-admit both to this set - defeating the one guard whose job is to
+ * notice a retired class coming back.
+ */
 function classSelectors(css: string): Set<string> {
-  return new Set([...css.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]))
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  return new Set([...code.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]))
 }
 
 describe('class names', () => {

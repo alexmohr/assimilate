@@ -121,7 +121,7 @@ describe('RepoHeader', () => {
     })
   })
 
-  describe('full resync', () => {
+  describe('sync now', () => {
     it('starts the sync and reports it', async () => {
       const wrapper = mount()
       await findButton(wrapper, /Sync now/).trigger('click')

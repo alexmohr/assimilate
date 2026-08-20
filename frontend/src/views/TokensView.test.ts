@@ -68,6 +68,19 @@ describe('TokensView', () => {
     expect(wrapper.text()).toContain('deploy-bot')
   })
 
+  // F-47, the same gap UsersView had: before this the view rendered an empty
+  // table on a failed load, which reads as "no tokens exist" rather than "we
+  // could not ask".
+  it('explains a failed load instead of showing an empty table', async () => {
+    mockApiGet.mockRejectedValue(new Error('tokens unavailable'))
+
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').text()).toContain('tokens unavailable')
+    expect(wrapper.find('table').exists()).toBe(false)
+  })
+
   it('renders New button for creating tokens', async () => {
     const wrapper = renderWithPlugins(TokensView)
 

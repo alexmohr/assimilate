@@ -540,6 +540,23 @@ describe('ProfileView', () => {
     // An empty token list is a place to start, not a dead end: the state
     // says what a token is for and offers the same action as the header
     // button, rather than a bare centred sentence.
+    // A failed load must not read as "you have no tokens" - the empty state
+    // and the error state say very different things about your account.
+    it('explains a failed token load instead of showing the empty state', async () => {
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url === '/auth/sessions') return Promise.resolve({ data: { sessions: [] } })
+        return Promise.reject(new Error('tokens unavailable'))
+      })
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await flushPromises()
+      await clickApiTokensTab(wrapper)
+      await flushPromises()
+
+      expect(wrapper.find('.error-banner').text()).toContain('tokens unavailable')
+      expect(wrapper.find('.empty-state').exists()).toBe(false)
+    })
+
     it('offers token creation from the empty state', async () => {
       mockGetTokens()
       const wrapper = renderWithPlugins(ProfileView)

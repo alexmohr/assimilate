@@ -27,6 +27,7 @@ function mount(agentOverrides: Record<string, unknown> = {}, props: Record<strin
     props: {
       agent: { ...AGENT, ...agentOverrides },
       deployLabel: null,
+      canRedeploy: false,
       restartLoading: false,
       regenLoading: false,
       restartError: null,
@@ -98,6 +99,39 @@ describe('AgentHeader', () => {
       .trigger('click')
 
     expect(wrapper.emitted('deploy')).toHaveLength(1)
+  })
+
+  // Once an agent has been deployed at least once, Redeploy is always
+  // reachable through the menu, regardless of whether an upgrade is also on
+  // offer in the primary slot.
+  it('offers Redeploy agent in the menu once the agent can be redeployed', async () => {
+    const wrapper = mount({}, { canRedeploy: true })
+    await openMenu(wrapper)
+    expect(menuLabels(wrapper)).toEqual([
+      'Activity log',
+      'Edit identity',
+      'Deploy SSH key',
+      'Redeploy agent',
+      'Regenerate token',
+      'Restart agent',
+    ])
+  })
+
+  it('omits Redeploy agent from the menu until the agent can be redeployed', async () => {
+    const wrapper = mount()
+    await openMenu(wrapper)
+    expect(menuLabels(wrapper)).not.toContain('Redeploy agent')
+  })
+
+  it('emits redeploy from the menu', async () => {
+    const wrapper = mount({}, { canRedeploy: true })
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text().trim() === 'Redeploy agent')!
+      .trigger('click')
+
+    expect(wrapper.emitted('redeploy')).toHaveLength(1)
   })
 
   it('emits activityLog from the menu', async () => {

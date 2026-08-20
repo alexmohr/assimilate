@@ -25,6 +25,8 @@ const props = defineProps<{
   agent: AgentRow
   /** Non-null when a newer agent build is available and may be deployed. */
   deployLabel: string | null
+  /** True once the agent has been deployed at least once and the caller may redeploy it. */
+  canRedeploy: boolean
   restartLoading: boolean
   regenLoading: boolean
   restartError: string | null
@@ -34,6 +36,7 @@ const emit = defineEmits<{
   adopt: []
   merge: []
   deploy: []
+  redeploy: []
   activityLog: []
   editIdentity: []
   deploySshKey: []
@@ -164,6 +167,15 @@ const canRestart = computed(
             @click="run(() => emit('deploySshKey'))"
           >
             Deploy SSH key
+          </button>
+          <button
+            v-if="canRedeploy"
+            class="overflow-menu-item"
+            role="menuitem"
+            type="button"
+            @click="run(() => emit('redeploy'))"
+          >
+            Redeploy agent
           </button>
           <button
             class="overflow-menu-item"

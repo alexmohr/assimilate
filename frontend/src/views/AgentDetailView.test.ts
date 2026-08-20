@@ -64,7 +64,7 @@ vi.mock('../components/AgentDeployDialog.vue', () => ({
   default: {
     name: 'AgentDeployDialog',
     template: '<div />',
-    props: ['hostname', 'agentVersion', 'availableVersion', 'lastSshUser'],
+    props: ['hostname', 'agentVersion', 'availableVersion', 'lastSshUser', 'forceRedeploy'],
   },
 }))
 
@@ -904,6 +904,58 @@ describe('AgentDetailView — deploy/upgrade button permission gate', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('Upgrade')
+  })
+
+  function setupApiAlreadyCurrent(): void {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/system/version')
+        return Promise.resolve({ data: { agent_version: '1.0.0', server_commit_count: null } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+  }
+
+  // Once the agent is already current there is nothing to upgrade, but the
+  // host may still need reinstalling (a reimaged machine, a lost service
+  // unit) - that is Redeploy, reached through the menu rather than the
+  // primary slot.
+  it('offers Redeploy agent from the menu once the agent is already current', async () => {
+    setupApiAlreadyCurrent()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Upgrade')
+
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text().trim() === 'Redeploy agent')!
+      .trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.findComponent({ name: 'AgentDeployDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('forceRedeploy')).toBe(true)
+  })
+
+  it('hides Redeploy agent from the menu without can_upgrade_agent permission', async () => {
+    setupApiAlreadyCurrent()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: false } } },
+    })
+    await flushPromises()
+
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().trim() === 'Redeploy agent'),
+    ).toBe(false)
   })
 })
 

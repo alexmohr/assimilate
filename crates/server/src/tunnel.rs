@@ -1278,13 +1278,38 @@ mod tests {
         .await
         .expect("insert test tunnel");
 
-        let mgr = TunnelManager::new(pool, UiBroadcast::new(), "127.0.0.1:0".parse().unwrap());
+        let ui_broadcast = UiBroadcast::new();
+        let mut ui_events = ui_broadcast.subscribe();
+        let mgr = TunnelManager::new(pool, ui_broadcast, "127.0.0.1:0".parse().unwrap());
         mgr.start_tunnel(tunnel.id).await;
 
-        // The reconnect loop's first backoff is 1s; wait past it so the loop
-        // has run a second iteration (`ConnectionOutcome::Retry`'s `backoff =
-        // next_backoff` arm) before cleaning up.
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+        // The first `Reconnecting` status change comes from the initial
+        // failed connect attempt; a second one only happens after
+        // `run_reconnect_loop`'s `ConnectionOutcome::Retry` arm re-loops and
+        // `connect_and_forward` fails again. Waiting for two proves the
+        // Retry arm actually ran, instead of just inferring it from
+        // wall-clock timing (which can't tell a broken Retry arm from a
+        // slow-but-working one).
+        let reconnecting_count = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut count = 0u32;
+            while count < 2 {
+                match ui_events.recv().await {
+                    Ok(shared::protocol::ServerToUi::TunnelStatusChanged {
+                        status: shared::protocol::TunnelStatus::Reconnecting,
+                        ..
+                    }) => count = count.saturating_add(1),
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            count
+        })
+        .await;
+        assert_eq!(
+            reconnecting_count,
+            Ok(2),
+            "retry loop should reach Reconnecting twice, proving the Retry arm ran"
+        );
 
         mgr.stop_tunnel(tunnel.id).await;
         assert!(mgr.tunnel_status(tunnel.id).await.is_none());

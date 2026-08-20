@@ -10,8 +10,20 @@ interface ScheduleListEntry {
   target_hostnames: string[]
 }
 
-// Navigates to the schedules list with schedule 1 ("server-daily") forced
-// overdue, and returns its card and Overdue chip locators.
+/**
+ * The card for one seeded schedule, selected by its id.
+ *
+ * Not by its repository name: an unnamed schedule's card is titled after the
+ * repository it backs up, and more than one seeded schedule backs up to
+ * `server-daily` - so a repo-name filter matches several cards and every
+ * assertion under it is one status chip away from a strict-mode violation.
+ */
+function scheduleCard(page: Page, id: number): Locator {
+  return page.locator(`.entity-card[data-schedule-id="${id}"]`)
+}
+
+// Navigates to the schedules list with schedule 1 forced overdue, and returns
+// its card and Overdue chip locators.
 async function openOverdueScheduleCard(
   page: Page,
 ): Promise<{ card: Locator; overdueChip: Locator }> {
@@ -21,7 +33,7 @@ async function openOverdueScheduleCard(
   await page.goto('/schedules')
   await page.waitForLoadState('networkidle')
 
-  const card = page.locator('.entity-card', { hasText: 'server-daily' })
+  const card = scheduleCard(page, 1)
   const overdueChip = card.locator('.entity-issue-chip.sev-warning')
   return { card, overdueChip }
 }
@@ -89,7 +101,9 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card', { hasText: 'server-daily' })
+    // Same reasoning as scheduleCard(): this mocks schedule one's health, so
+    // it has to assert against schedule one's card.
+    const card = scheduleCard(page, 1)
     const runningPill = card.locator('.entity-running-pill')
     await expect(runningPill).toBeVisible()
     await expect(runningPill).toContainText('Running')

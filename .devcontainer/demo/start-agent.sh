@@ -64,12 +64,16 @@ case "$AGENT_HOST" in
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
-        # A couple of archives into the shared server-daily repo too, at the
-        # multi-host schedule's own 04:00 slot. Without archives from more than
-        # one host on a single schedule there is nothing for the Backups tab's
-        # host grouping to group.
-        for i in 1 2; do
-            ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT04:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT04:00:00)
+        # A couple of archives into the shared server-daily repo too. Without
+        # archives from more than one host on a single schedule there is
+        # nothing for the Backups tab's host grouping to group.
+        #
+        # Hours rather than days: the multi-host schedule runs daily, so
+        # day-old archives would leave it permanently Overdue and add an
+        # attention item the demo never had. The newest must stay inside one
+        # cadence.
+        for i in 6 30; do
+            ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/etc/postgresql"
             echo "shared_buffers = 256MB" > "$ARCHIVE_DIR/etc/postgresql/postgresql.conf"
@@ -94,8 +98,8 @@ case "$AGENT_HOST" in
         done
         # The second host on the shared server-daily schedule - see the
         # db-server-01 branch above.
-        for i in 1 2; do
-            ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT04:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT04:00:00)
+        for i in 5 29; do
+            ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/etc/samba"
             echo "[global] workgroup = DEMO" > "$ARCHIVE_DIR/etc/samba/smb.conf"

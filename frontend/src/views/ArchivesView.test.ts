@@ -82,11 +82,15 @@ function mountView(): ReturnType<typeof mount> {
         BaseSpinner: { template: '<div class="stub-spinner" />' },
         RestoreWizard: {
           props: ['open'],
-          template: '<div class="stub-restore">{{ open ? "open" : "closed" }}</div>',
+          emits: ['close'],
+          template:
+            '<div class="stub-restore">{{ open ? "open" : "closed" }}<button class="stub-restore-close" @click="$emit(\'close\')" /></div>',
         },
         ArchiveDiff: {
           props: ['open'],
-          template: '<div class="stub-diff">{{ open ? "open" : "closed" }}</div>',
+          emits: ['close'],
+          template:
+            '<div class="stub-diff">{{ open ? "open" : "closed" }}<button class="stub-diff-close" @click="$emit(\'close\')" /></div>',
         },
         FileSearch: { template: '<div class="stub-search" />' },
         ArchiveFileBrowser: {
@@ -185,6 +189,48 @@ describe('ArchivesView', () => {
     expect(wrapper.find('.empty-state').text()).toContain('No archives')
   })
 
+  it('refetches through the refresh action, as a visible load', async () => {
+    // The handler is wrapped (`loadArchives()`) rather than passed by
+    // reference: `loadArchives` takes a `silent` flag, and handing it straight
+    // to @click would pass the MouseEvent as that flag and make every manual
+    // refresh a silent one.
+    mockReposAndArchives()
+    const wrapper = mountView()
+    await flushPromises()
+    await pickFirstRepo(wrapper)
+
+    const archiveCalls = (): number =>
+      mockGet.mock.calls.filter((c) => String(c[0]).includes('/archives')).length
+    const before = archiveCalls()
+
+    const refresh = wrapper.find('button[aria-label="Refresh archives"]')
+    expect(refresh.exists()).toBe(true)
+    await refresh.trigger('click')
+    await flushPromises()
+
+    expect(archiveCalls()).toBe(before + 1)
+    // Still rendering the list rather than having blanked it to an error.
+    expect(wrapper.findAll('.archive-name')).toHaveLength(ARCHIVES.length)
+  })
+
+  it('surfaces a failed archive load instead of an empty list', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/repos') return Promise.resolve({ data: REPOS })
+      // A real Error, not an object shaped like an axios failure: only a
+      // genuine AxiosError carries a server message through extractError, and
+      // a plain literal would resolve to "Unknown error" and assert nothing.
+      if (url.includes('/archives')) return Promise.reject(new Error('Repository is locked'))
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+    await pickFirstRepo(wrapper)
+
+    expect(wrapper.find('.error-banner').text()).toBe('Repository is locked')
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
+  })
+
   it('fetches archives when repo is selected', async () => {
     mockReposAndArchives()
 
@@ -231,6 +277,13 @@ describe('ArchivesView', () => {
 
     await diff.trigger('click')
     expect(wrapper.find('.stub-diff').text()).toBe('open')
+
+    // Both dialogs own their dismissal and report it back up, so the view has
+    // to take the close event or the button silently stops re-opening them.
+    await wrapper.find('.stub-restore-close').trigger('click')
+    await wrapper.find('.stub-diff-close').trigger('click')
+    expect(wrapper.find('.stub-restore').text()).toBe('closed')
+    expect(wrapper.find('.stub-diff').text()).toBe('closed')
   })
 
   it('narrows the list through the shared search control', async () => {

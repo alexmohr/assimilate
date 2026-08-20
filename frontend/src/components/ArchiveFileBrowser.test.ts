@@ -292,6 +292,21 @@ describe('ArchiveFileBrowser', () => {
     expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('web-server-01')
   })
 
+  it('names the host borg recorded when no agent claims the archive', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive', {
+        matched: false,
+        hostname: 'legacy-nas',
+        agent_hostname: 'web-server-01',
+      }),
+    })
+
+    // The agent hostname is meaningless on an unmatched archive - it is
+    // whichever agent the name happened to resemble, not its origin.
+    expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('legacy-nas')
+  })
+
   it('offers a way back up that is disabled at the archive root', async () => {
     const wrapper = await mountWithEntries()
 

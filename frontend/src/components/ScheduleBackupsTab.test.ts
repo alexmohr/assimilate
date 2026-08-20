@@ -108,6 +108,13 @@ describe('ScheduleBackupsTab', () => {
     expect(wrapper.findAll('.group-hostname').map((g) => g.text())).toEqual(['db-01', 'web-01'])
   })
 
+  it('still renders for a caller that passes no reload', () => {
+    // `reload` is optional; the tab falls back to a resolved promise so the
+    // explorer's post-delete refresh has something to await either way.
+    const wrapper = mount({ reload: undefined })
+    expect(wrapper.find('.archive-row').exists()).toBe(true)
+  })
+
   it('marks the selected row', () => {
     const wrapper = mount({ selected: report({}) })
     expect(wrapper.find('.archive-row').classes()).toContain('selected')

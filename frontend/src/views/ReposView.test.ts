@@ -892,6 +892,17 @@ describe('ReposView group by host', () => {
     expect(wrapper.text()).toContain('server-daily')
   })
 
+  it('still loads the repo list when the repo-tags request fails', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: mockRepos })
+      if (url === '/repo-tags') return Promise.reject(new Error('network error'))
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = await mountAsAdmin()
+
+    expect(wrapper.text()).toContain('server-daily')
+  })
+
   it('navigates to the repo detail page when a card inside a host group is clicked', async () => {
     setupApiSuccess()
     const wrapper = await mountAsAdmin()

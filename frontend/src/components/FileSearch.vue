@@ -8,7 +8,7 @@ import { ref, computed } from 'vue'
 import { Search } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { apiClient } from '../api/client'
+import { searchAcrossArchives, searchArchive } from '../api/archives'
 import { formatBytes, formatDate } from '../utils/format'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from './BaseSpinner.vue'
@@ -25,13 +25,6 @@ interface SearchResultItem {
   mtime: string
   type: string
   archive_name?: string
-}
-
-interface SingleArchiveResponse {
-  items: SearchResultItem[]
-  total: number
-  limit: number
-  offset: number
 }
 
 interface Props {
@@ -64,25 +57,28 @@ const canSearch = computed<boolean>(() => {
 })
 
 async function doSearch(): Promise<void> {
-  if (!canSearch.value || props.repoId === null) return
+  const repoId = props.repoId
+  if (!canSearch.value || repoId === null) return
   results.value = []
   totalResults.value = 0
   hasSearched.value = true
 
   await run(async () => {
     if (searchMode.value === 'single' && selectedArchiveName.value) {
-      const res = await apiClient.get<SingleArchiveResponse>(
-        `/repos/${props.repoId}/archives/${encodeURIComponent(selectedArchiveName.value)}/search`,
-        { params: { pattern: pattern.value, limit: 100, offset: 0 } },
-      )
-      results.value = res.data.items
-      totalResults.value = res.data.total
-    } else {
-      const res = await apiClient.get<SearchResultItem[]>(`/repos/${props.repoId}/search`, {
-        params: { pattern: pattern.value, max_archives: maxArchives.value },
+      const res = await searchArchive(repoId, selectedArchiveName.value, {
+        pattern: pattern.value,
+        limit: 100,
+        offset: 0,
       })
-      results.value = res.data
-      totalResults.value = res.data.length
+      results.value = res.items
+      totalResults.value = res.total_matched
+    } else {
+      const res = await searchAcrossArchives(repoId, {
+        pattern: pattern.value,
+        maxArchives: maxArchives.value,
+      })
+      results.value = res.items
+      totalResults.value = res.items.length
     }
   })
 }

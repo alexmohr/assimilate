@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { apiClient } from '../api/client'
+import { updateAgent } from '../api/agents'
 import { extractError } from '../utils/error'
 import { parseLines } from '../utils/validation'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
@@ -57,7 +57,7 @@ async function save(): Promise<void> {
   saving.value = true
   error.value = null
   try {
-    const res = await apiClient.put<AgentRow>(`/agents/${props.agent.hostname}`, {
+    const res = await updateAgent(props.agent.hostname, {
       display_name: props.agent.display_name,
       default_backup_paths: parseLines(pathsText.value),
       default_exclude_patterns: parseLines(excludesText.value),
@@ -65,7 +65,7 @@ async function save(): Promise<void> {
       default_post_backup_commands: parseLines(postCmdsText.value),
       default_file_change_patterns_raw: fcpText.value,
     })
-    emit('saved', res.data)
+    emit('saved', res)
     editing.value = false
   } catch (e: unknown) {
     error.value = extractError(e)

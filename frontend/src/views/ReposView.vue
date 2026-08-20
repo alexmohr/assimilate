@@ -24,8 +24,9 @@ import RepoQuotaMeter from '../components/RepoQuotaMeter.vue'
 import RepoQuotaSlice from '../components/RepoQuotaSlice.vue'
 import type { Repo, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
-import type { ServerQuotaResponse } from '../types/generated'
+import type { RepoTagEntryResponse, ServerQuotaResponse } from '../types/generated'
 import { listServerQuotas } from '../api/serverQuotas'
+import { listRepoStats, listRepoTags } from '../api/repos'
 import {
   actionForHealth,
   actionLabel,
@@ -44,12 +45,6 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'quota', label: 'Quota' },
 ]
 type QuotaFilter = 'all' | 'at_risk' | 'no_quota'
-
-interface RepoTagRow {
-  repo_id: number
-  tag_name: string
-  tag_color: string
-}
 
 interface TagGroup {
   label: string
@@ -333,9 +328,9 @@ function repoImportPhaseVerb(repo: RepoWithStats): string {
 
 async function loadRepos(): Promise<void> {
   await run(async () => {
-    const [reposRes, repoTagAssocRes, repoTagsRes, serverQuotasRes] = await Promise.all([
-      apiClient.get<RepoWithStats[]>('/repos/stats'),
-      apiClient.get<RepoTagRow[]>('/repo-tags').catch(() => ({ data: [] as RepoTagRow[] })),
+    const [reposRes, repoTagAssoc, repoTagsRes, serverQuotasRes] = await Promise.all([
+      listRepoStats(),
+      listRepoTags().catch(() => [] as RepoTagEntryResponse[]),
       apiClient
         .get<TagRow[]>('/tags', { params: { scope: 'repo' } })
         .catch(() => ({ data: [] as TagRow[] })),
@@ -343,11 +338,11 @@ async function loadRepos(): Promise<void> {
         ? listServerQuotas().catch(() => [] as ServerQuotaResponse[])
         : Promise.resolve([] as ServerQuotaResponse[]),
     ])
-    repos.value = reposRes.data
+    repos.value = reposRes
 
     allRepoTags.value = repoTagsRes.data
     const tagMap: Record<number, { name: string; color: string }[]> = {}
-    repoTagAssocRes.data.forEach((rt) => {
+    repoTagAssoc.forEach((rt) => {
       if (!tagMap[rt.repo_id]) tagMap[rt.repo_id] = []
       tagMap[rt.repo_id].push({ name: rt.tag_name, color: rt.tag_color })
     })

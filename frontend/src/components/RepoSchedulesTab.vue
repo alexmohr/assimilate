@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { CalendarClock } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import { listRepoSchedules, getScheduleHealth } from '../api/schedules'
 import { formatDate } from '../utils/format'
 import { useScheduleRun } from '../composables/useScheduleRun'
 import {
@@ -51,12 +51,12 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const [schRes, healthRes] = await Promise.all([
-      apiClient.get<ScheduleRow[]>(`/repos/${props.repoId}/schedules`),
-      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
+    const [scheduleRows, healthRows] = await Promise.all([
+      listRepoSchedules(props.repoId),
+      getScheduleHealth(),
     ])
-    schedules.value = schRes.data
-    health.value = healthRes.data
+    schedules.value = scheduleRows
+    health.value = healthRows
   } catch {
     error.value = 'Failed to load schedules.'
   } finally {

@@ -6,27 +6,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
+import { getCalendar } from '../api/stats'
 import { logger } from '../utils/logger'
 import type { Repo } from '../types/repo'
+import type { CalendarDayResponse, CalendarEventResponse } from '../types/generated'
 import { X, ChevronLeft, ChevronRight } from '@lucide/vue'
-
-interface CalendarEvent {
-  type: string
-  status: string
-  repo_name: string
-  time: string
-  report_id?: number
-  repo_id?: number
-  schedule_id?: number
-  archive_name?: string
-  error_message?: string
-}
-
-interface CalendarDay {
-  date: string
-  events: CalendarEvent[]
-}
 
 type CalendarEventStatus = 'success' | 'failed' | 'warning' | 'scheduled' | 'other'
 
@@ -45,9 +29,9 @@ const props = defineProps<{
 const selectedRepoId = ref<number | undefined>(undefined)
 const currentYear = ref(new Date().getFullYear())
 const currentMonth = ref(new Date().getMonth() + 1)
-const calendarDays = ref<CalendarDay[]>([])
+const calendarDays = ref<CalendarDayResponse[]>([])
 const loading = ref(true)
-const selectedDay = ref<CalendarDay | null>(null)
+const selectedDay = ref<CalendarDayResponse | null>(null)
 
 const monthLabel = computed((): string => {
   const d = new Date(currentYear.value, currentMonth.value - 1, 1)
@@ -79,12 +63,10 @@ function nextMonth(): void {
 async function fetchCalendar(): Promise<void> {
   loading.value = true
   try {
-    const params = new URLSearchParams({ month: monthStr.value })
-    if (selectedRepoId.value !== undefined) {
-      params.set('repo_id', String(selectedRepoId.value))
-    }
-    const response = await apiClient.get<CalendarDay[]>(`/stats/calendar?${params.toString()}`)
-    calendarDays.value = response.data
+    calendarDays.value = await getCalendar({
+      month: monthStr.value,
+      repo_id: selectedRepoId.value,
+    })
   } finally {
     loading.value = false
   }
@@ -103,7 +85,7 @@ interface GridCell {
   day: number
   date: string
   inMonth: boolean
-  events: CalendarEvent[]
+  events: CalendarEventResponse[]
 }
 
 const calendarGrid = computed((): GridCell[][] => {
@@ -111,7 +93,7 @@ const calendarGrid = computed((): GridCell[][] => {
   const startDow = firstDay.getDay()
   const daysInMonth = new Date(currentYear.value, currentMonth.value, 0).getDate()
 
-  const eventMap = new Map<string, CalendarEvent[]>()
+  const eventMap = new Map<string, CalendarEventResponse[]>()
   for (const day of calendarDays.value) {
     eventMap.set(day.date, day.events)
   }
@@ -164,14 +146,14 @@ function eventColor(status: string): string {
 const router = useRouter()
 const errorPopup = ref<{
   repo_name: string
-  repo_id?: number
-  schedule_id?: number
+  repo_id: number | null
+  schedule_id: number | null
   schedule_name?: string
   time: string
   message: string
 } | null>(null)
 
-function onEventClick(evt: CalendarEvent): void {
+function onEventClick(evt: CalendarEventResponse): void {
   const status = classifyCalendarEventStatus(evt.status)
   if (status === 'success' && evt.repo_id) {
     const query: Record<string, string> = { tab: 'archives' }

@@ -5,7 +5,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { apiClient } from '../api/client'
+import {
+  createGroup,
+  deleteGroup,
+  listGroupMembers,
+  listGroups,
+  updateGroup,
+  updateGroupMembers,
+} from '../api/groups'
+import type { Group } from '../api/groups'
+import { listUsers } from '../api/users'
+import type { User } from '../api/users'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -16,25 +26,8 @@ import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 
-interface Group {
-  id: number
-  name: string
-  description: string | null
-  created_at: string
-}
-
-interface UserRow {
-  id: number
-  username: string
-  role: string
-}
-
-interface GroupMember {
-  user_id: number
-}
-
 const groups = ref<Group[]>([])
-const allUsers = ref<UserRow[]>([])
+const allUsers = ref<User[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load groups')
 loading.value = true
 
@@ -84,14 +77,14 @@ const filteredGroups = computed((): Group[] => {
 
 async function fetchGroups(): Promise<void> {
   await run(async () => {
-    const res = await apiClient.get<Group[]>('/groups')
-    groups.value = res.data
+    const fetchedGroups = await listGroups()
+    groups.value = fetchedGroups
     const counts: Record<number, number> = {}
     await Promise.all(
-      res.data.map(async (g) => {
+      fetchedGroups.map(async (g) => {
         try {
-          const membersRes = await apiClient.get<GroupMember[]>(`/groups/${g.id}/members`)
-          counts[g.id] = membersRes.data.length
+          const members = await listGroupMembers(g.id)
+          counts[g.id] = members.length
         } catch (e: unknown) {
           logger.error(`fetchGroups: failed to load members for group ${g.id}`, e)
           counts[g.id] = 0
@@ -104,8 +97,7 @@ async function fetchGroups(): Promise<void> {
 
 async function fetchUsers(): Promise<void> {
   try {
-    const res = await apiClient.get<UserRow[]>('/users')
-    allUsers.value = res.data
+    allUsers.value = await listUsers()
   } catch (e: unknown) {
     logger.error('fetchUsers failed', e)
     allUsers.value = []
@@ -124,7 +116,7 @@ async function submitCreate(): Promise<void> {
     return
   }
   await runCreate(async () => {
-    await apiClient.post('/groups', {
+    await createGroup({
       name: createForm.value.name.trim(),
       description: createForm.value.description.trim() || null,
     })
@@ -148,7 +140,7 @@ async function submitEdit(): Promise<void> {
     return
   }
   await runEdit(async () => {
-    await apiClient.put(`/groups/${target.id}`, {
+    await updateGroup(target.id, {
       name: editForm.value.name.trim(),
       description: editForm.value.description.trim() || null,
     })
@@ -167,7 +159,7 @@ async function confirmDelete(): Promise<void> {
   const target = deleteTarget.value
   if (!target) return
   await runDelete(async () => {
-    await apiClient.delete(`/groups/${target.id}`)
+    await deleteGroup(target.id)
     showDeleteModal.value = false
     await fetchGroups()
   })
@@ -180,8 +172,8 @@ async function openMembers(group: Group): Promise<void> {
   memberUserIds.value = []
   showMembersModal.value = true
   try {
-    const res = await apiClient.get<GroupMember[]>(`/groups/${group.id}/members`)
-    memberUserIds.value = res.data.map((m) => m.user_id)
+    const members = await listGroupMembers(group.id)
+    memberUserIds.value = members.map((m) => m.user_id)
   } catch (e: unknown) {
     membersError.value = extractError(e, 'Failed to load members')
   } finally {
@@ -203,7 +195,7 @@ async function saveMembers(): Promise<void> {
   membersSubmitting.value = true
   membersError.value = null
   try {
-    await apiClient.put(`/groups/${membersTarget.value.id}/members`, {
+    await updateGroupMembers(membersTarget.value.id, {
       user_ids: memberUserIds.value,
     })
     showMembersModal.value = false

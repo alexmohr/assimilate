@@ -17,7 +17,7 @@ import {
   deleteTunnel,
   reconnectTunnel,
 } from '../api/tunnels'
-import { apiClient } from '../api/client'
+import { listAgents } from '../api/agents'
 import { Plus, Trash2, Cable, RefreshCw } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -94,8 +94,7 @@ async function loadTunnels(): Promise<void> {
 
 async function loadAgents(): Promise<void> {
   try {
-    const res = await apiClient.get<AgentOption[]>('/agents')
-    agents.value = res.data
+    agents.value = await listAgents()
   } catch (e: unknown) {
     logger.error('loadAgents failed', e)
   }

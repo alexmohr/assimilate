@@ -24,6 +24,9 @@ import {
   subscribePush,
   listDeliveries,
 } from '../api/notifications'
+import { listRepos } from '../api/repos'
+import { listAgents } from '../api/agents'
+import { listSchedules } from '../api/schedules'
 import { Plus, Trash2, Bell, Send, Mail, Globe, BellRing } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -43,8 +46,6 @@ import type {
   NotificationDelivery,
   ChannelScope,
 } from '../types/notifications'
-import type { Repo } from '../types/repo'
-import { apiClient } from '../api/client'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
@@ -308,17 +309,17 @@ async function loadPushStatus(): Promise<void> {
 
 async function loadScopeOptions(): Promise<void> {
   try {
-    const [reposRes, agentsRes, schedulesRes] = await Promise.all([
-      apiClient.get<Repo[]>('/repos'),
-      apiClient.get<{ id: number; hostname: string; display_name: string | null }[]>('/agents'),
-      apiClient.get<{ id: number; agent_id: number; repo_id: number | null }[]>('/schedules'),
+    const [repoRows, agentRows, scheduleRows] = await Promise.all([
+      listRepos(),
+      listAgents(),
+      listSchedules(),
     ])
-    scopeRepos.value = reposRes.data.map((r) => ({ id: r.id, label: r.name }))
-    scopeAgents.value = agentsRes.data.map((c) => ({
+    scopeRepos.value = repoRows.map((r) => ({ id: r.id, label: r.name }))
+    scopeAgents.value = agentRows.map((c) => ({
       id: c.id,
       label: c.display_name ?? c.hostname,
     }))
-    scopeSchedules.value = schedulesRes.data.map((s) => ({
+    scopeSchedules.value = scheduleRows.map((s) => ({
       id: s.id,
       label: `Schedule #${s.id}`,
     }))

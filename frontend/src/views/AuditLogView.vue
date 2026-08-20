@@ -10,15 +10,14 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import { apiClient } from '../api/client'
+import { getAuditLog } from '../api/auditLog'
 import { formatDateShort } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import type { AuditEntryResponse, AuditLogResponse } from '../types/generated'
+import type { AuditEntryResponse } from '../types/generated'
 import { badgeClass } from '../utils/badge'
 
 type AuditEntry = AuditEntryResponse
-type AuditResponse = AuditLogResponse
 
 const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.isAdmin)
@@ -42,18 +41,16 @@ const perPageOptions = [10, 25, 50]
 
 async function fetchAuditLog(): Promise<void> {
   await run(async () => {
-    const params: Record<string, string | number> = {
+    const res = await getAuditLog({
       page: page.value,
       per_page: perPage.value,
-    }
-    if (filters.action) params.action = filters.action
-    if (filters.user) params.user_id = filters.user
-    if (filters.from) params.from = filters.from
-    if (filters.to) params.to = filters.to
-
-    const res = await apiClient.get<AuditResponse>('/audit-log', { params })
-    entries.value = res.data.items
-    total.value = Number(res.data.total)
+      action: filters.action,
+      user_id: filters.user,
+      from: filters.from,
+      to: filters.to,
+    })
+    entries.value = res.items
+    total.value = Number(res.total)
   })
 }
 

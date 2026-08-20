@@ -82,15 +82,20 @@ describe('FileSearch', () => {
 
   it('calls API and displays results on Search click', async () => {
     mockGet.mockResolvedValue({
-      data: [
-        {
-          path: '/etc/nginx/nginx.conf',
-          size: 1024,
-          mtime: '2026-05-30T10:00:00',
-          type: '-',
-          archive_name: 'web-server-01-2026-05-30T12:00:00',
-        },
-      ],
+      data: {
+        items: [
+          {
+            path: '/etc/nginx/nginx.conf',
+            size: 1024,
+            mtime: '2026-05-30T10:00:00',
+            type: '-',
+            archive_name: 'web-server-01-2026-05-30T12:00:00',
+          },
+        ],
+        total_archives_searched: 1,
+        limit: 200,
+        offset: 0,
+      },
     })
 
     const wrapper = mountSearch()
@@ -106,8 +111,43 @@ describe('FileSearch', () => {
     expect(wrapper.text()).toContain('1 result')
   })
 
+  it('searches within a single selected archive and shows the match count', async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        items: [
+          {
+            path: '/etc/nginx/nginx.conf',
+            size: 1024,
+            mtime: '2026-05-30T10:00:00',
+            type: '-',
+          },
+        ],
+        total_matched: 1,
+        limit: 100,
+        offset: 0,
+      },
+    })
+
+    const wrapper = mountSearch()
+    const singleBtn = wrapper.findAll('button').find((b) => b.text() === 'Single archive')
+    await singleBtn!.trigger('click')
+    await wrapper.find('select').setValue(ARCHIVES[0].name)
+    await wrapper.find('input[placeholder*="*.sql"]').setValue('*.conf')
+    await wrapper.find('button.btn-primary').trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(mockGet).toHaveBeenCalledWith(
+      `/repos/1/archives/${encodeURIComponent(ARCHIVES[0].name)}/search`,
+      expect.objectContaining({ params: expect.objectContaining({ pattern: '*.conf' }) }),
+    )
+    expect(wrapper.text()).toContain('1 result')
+  })
+
   it('shows empty state when search returns no results', async () => {
-    mockGet.mockResolvedValue({ data: [] })
+    mockGet.mockResolvedValue({
+      data: { items: [], total_archives_searched: 0, limit: 200, offset: 0 },
+    })
 
     const wrapper = mountSearch()
     await wrapper.find('input[placeholder*="*.sql"]').setValue('*.xyz')
@@ -120,7 +160,9 @@ describe('FileSearch', () => {
   })
 
   it('triggers search on Enter key', async () => {
-    mockGet.mockResolvedValue({ data: [] })
+    mockGet.mockResolvedValue({
+      data: { items: [], total_archives_searched: 0, limit: 200, offset: 0 },
+    })
 
     const wrapper = mountSearch()
     const input = wrapper.find('input[placeholder*="*.sql"]')

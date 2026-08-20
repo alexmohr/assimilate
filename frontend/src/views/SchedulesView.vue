@@ -7,6 +7,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
+import { listSchedules, updateSchedule, cancelSchedule, getScheduleHealth } from '../api/schedules'
+import { listRepos } from '../api/repos'
+import { listAgents } from '../api/agents'
 import { formatDateShort } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
@@ -321,11 +324,11 @@ function overdueMessage(entries: ScheduleHealthEntry[]): string {
 
 async function fetchAll(): Promise<void> {
   await run(async () => {
-    const [schRes, repoRes, agentsRes, healthRes, activityRes] = await Promise.all([
-      apiClient.get<ScheduleRow[]>('/schedules'),
-      apiClient.get<Repo[]>('/repos'),
-      apiClient.get<AgentRow[]>('/agents'),
-      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
+    const [scheduleRows, repoRows, agentRows, healthRows, activityRes] = await Promise.all([
+      listSchedules(),
+      listRepos(),
+      listAgents(),
+      getScheduleHealth(),
       // The backend caps this per schedule (not the result set overall), so
       // RUN_HISTORY_BARS alone is enough to guarantee every card gets its
       // own last-N runs regardless of how many schedules exist or how often
@@ -336,10 +339,10 @@ async function fetchAll(): Promise<void> {
         >(`/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit_per_schedule=${RUN_HISTORY_BARS}`)
         .catch(() => ({ data: [] as ScheduleActivityEntry[] })),
     ])
-    schedules.value = schRes.data
-    repos.value = repoRes.data
-    agents.value = agentsRes.data
-    health.value = healthRes.data
+    schedules.value = scheduleRows
+    repos.value = repoRows
+    agents.value = agentRows
+    health.value = healthRows
     activity.value = activityRes.data
   })
 }
@@ -352,7 +355,7 @@ async function toggleScheduleEnabled(s: ScheduleRow): Promise<void> {
   const nextEnabled = !s.enabled
   toggleLoading.value = s.id
   try {
-    const res = await apiClient.put<ScheduleRow>(`/schedules/${s.id}`, {
+    const updated = await updateSchedule(s.id, {
       name: s.name,
       cron_expression: s.cron_expression,
       enabled: nextEnabled,
@@ -366,14 +369,14 @@ async function toggleScheduleEnabled(s: ScheduleRow): Promise<void> {
       keep_monthly: s.keep_monthly,
       keep_yearly: s.keep_yearly,
       compact_enabled: s.compact_enabled,
-      rate_limit_kbps: s.rate_limit_kbps,
+      rate_limit_kbps: s.rate_limit_kbps ?? 0,
       pre_backup_commands: s.pre_backup_commands,
       post_backup_commands: s.post_backup_commands,
       on_failure: s.on_failure,
     })
     const index = schedules.value.findIndex((row) => row.id === s.id)
     if (index !== -1) {
-      schedules.value[index] = res.data
+      schedules.value[index] = updated
     }
     toastSuccess(nextEnabled ? 'Schedule enabled.' : 'Schedule disabled.')
   } catch (e: unknown) {
@@ -386,7 +389,7 @@ async function toggleScheduleEnabled(s: ScheduleRow): Promise<void> {
 async function cancelBackup(s: ScheduleRow): Promise<void> {
   cancelLoading.value = s.id
   try {
-    await apiClient.post(`/schedules/${s.id}/cancel`)
+    await cancelSchedule(s.id)
     toastSuccess('Cancel request sent.')
   } catch (e: unknown) {
     toastError(extractError(e))

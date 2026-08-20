@@ -5,40 +5,26 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { apiClient } from '../api/client'
+import {
+  exportConfig as apiExportConfig,
+  getDatabaseStorage,
+  getSshPublicKey,
+  getSystemSettings,
+  getSystemVersion,
+  importConfig as apiImportConfig,
+  regenerateSshKey,
+  resetSystem as apiResetSystem,
+  updateSystemSettings,
+} from '../api/system'
+import type { DatabaseStorageResponse, VersionInfo } from '../api/system'
 import { useClipboard } from '../composables/useClipboard'
 import { useTimezone } from '../composables/useTimezone'
 import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
-import type {
-  ImportResultResponse,
-  SettingsResponse,
-  SystemResetResponse,
-} from '../types/generated'
+import type { ImportResultResponse, SystemResetResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
-
-interface VersionInfo {
-  server_version: string
-  server_git_sha: string
-  build_timestamp: string
-  agent_version: string | null
-}
-
-interface DatabaseRelationSize {
-  table_name: string
-  table_bytes: number
-  index_bytes: number
-  toast_bytes: number
-  total_bytes: number
-}
-
-interface DatabaseStorageResponse {
-  database_bytes: number
-  other_bytes: number
-  relations: DatabaseRelationSize[]
-}
 
 const publicKey = ref('')
 const loading = ref(true)
@@ -74,8 +60,8 @@ const databaseStorageError = ref('')
 
 onMounted(async () => {
   try {
-    const res = await apiClient.get<{ public_key: string }>('/system/ssh-public-key')
-    publicKey.value = res.data.public_key
+    const res = await getSshPublicKey()
+    publicKey.value = res.public_key
   } catch (e: unknown) {
     error.value = extractError(e, 'Failed to load SSH public key')
   } finally {
@@ -83,17 +69,17 @@ onMounted(async () => {
   }
 
   try {
-    const res = await apiClient.get<SettingsResponse>('/system/settings')
-    settingsForm.timezone = res.data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
-    settingsForm.retention_days = Number(res.data.retention_days)
-    settingsForm.report_retention_days = Number(res.data.report_retention_days)
-    settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
-    settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
+    const res = await getSystemSettings()
+    settingsForm.timezone = res.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
+    settingsForm.retention_days = Number(res.retention_days)
+    settingsForm.report_retention_days = Number(res.report_retention_days)
+    settingsForm.failed_report_retention_days = Number(res.failed_report_retention_days)
+    settingsForm.system_event_retention_days = Number(res.system_event_retention_days)
     settingsForm.notification_delivery_retention_days = Number(
-      res.data.notification_delivery_retention_days,
+      res.notification_delivery_retention_days,
     )
-    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
-    settingsForm.session_idle_timeout_minutes = res.data.session_idle_timeout_minutes ?? 480
+    settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
+    settingsForm.session_idle_timeout_minutes = res.session_idle_timeout_minutes ?? 480
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -101,8 +87,7 @@ onMounted(async () => {
   }
 
   try {
-    const res = await apiClient.get<VersionInfo>('/system/version')
-    versionInfo.value = res.data
+    versionInfo.value = await getSystemVersion()
   } catch (e: unknown) {
     versionError.value = extractError(e, 'Failed to load version info')
   } finally {
@@ -116,8 +101,7 @@ async function loadDatabaseStorage(): Promise<void> {
   databaseStorageLoading.value = true
   databaseStorageError.value = ''
   try {
-    const res = await apiClient.get<DatabaseStorageResponse>('/system/database-storage')
-    databaseStorage.value = res.data
+    databaseStorage.value = await getDatabaseStorage()
   } catch (e: unknown) {
     databaseStorageError.value = extractError(e, 'Failed to load database storage')
   } finally {
@@ -134,8 +118,8 @@ async function regenerateKey(): Promise<void> {
   regenerating.value = true
   regenError.value = ''
   try {
-    const res = await apiClient.post<{ public_key: string }>('/system/ssh-regenerate-key')
-    publicKey.value = res.data.public_key
+    const res = await regenerateSshKey()
+    publicKey.value = res.public_key
     showRegenConfirm.value = false
   } catch (e: unknown) {
     regenError.value = extractError(e, 'Failed to regenerate key')
@@ -157,8 +141,8 @@ async function exportConfig(): Promise<void> {
   exporting.value = true
   exportError.value = ''
   try {
-    const res = await apiClient.get<unknown>('/config/export')
-    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
+    const data = await apiExportConfig()
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -192,8 +176,7 @@ async function importConfig(): Promise<void> {
   try {
     const text = await file.text()
     const payload: unknown = JSON.parse(text)
-    const res = await apiClient.post<ImportResultResponse>('/config/import', payload)
-    importResult.value = res.data
+    importResult.value = await apiImportConfig(payload)
     if (importFileInput.value) {
       importFileInput.value.value = ''
     }
@@ -210,7 +193,7 @@ async function saveSettings(): Promise<void> {
   settingsSaved.value = false
   settingsError.value = ''
   try {
-    const res = await apiClient.put<SettingsResponse>('/system/settings', {
+    const res = await updateSystemSettings({
       retention_days: settingsForm.retention_days,
       report_retention_days: settingsForm.report_retention_days,
       failed_report_retention_days: settingsForm.failed_report_retention_days,
@@ -220,16 +203,16 @@ async function saveSettings(): Promise<void> {
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
       session_idle_timeout_minutes: settingsForm.session_idle_timeout_minutes,
     })
-    settingsForm.timezone = res.data.timezone
-    settingsForm.retention_days = Number(res.data.retention_days)
-    settingsForm.report_retention_days = Number(res.data.report_retention_days)
-    settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
-    settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
+    settingsForm.timezone = res.timezone
+    settingsForm.retention_days = Number(res.retention_days)
+    settingsForm.report_retention_days = Number(res.report_retention_days)
+    settingsForm.failed_report_retention_days = Number(res.failed_report_retention_days)
+    settingsForm.system_event_retention_days = Number(res.system_event_retention_days)
     settingsForm.notification_delivery_retention_days = Number(
-      res.data.notification_delivery_retention_days,
+      res.notification_delivery_retention_days,
     )
-    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
-    setTimezone(res.data.timezone || undefined)
+    settingsForm.borg_query_timeout_secs = Number(res.borg_query_timeout_secs)
+    setTimezone(res.timezone || undefined)
     settingsSaved.value = true
     setTimeout(() => {
       settingsSaved.value = false
@@ -251,8 +234,7 @@ async function resetSystem(): Promise<void> {
   resetError.value = ''
   resetResult.value = null
   try {
-    const res = await apiClient.post<SystemResetResponse>('/system/reset')
-    resetResult.value = res.data
+    resetResult.value = await apiResetSystem()
     showResetConfirm.value = false
   } catch (e: unknown) {
     resetError.value = extractError(e, 'Reset failed')

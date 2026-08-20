@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import axios from 'axios'
-import { apiClient } from '../api/client'
+import { downloadArchiveFiles, restoreArchiveFiles } from '../api/archives'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseModal from './BaseModal.vue'
 
@@ -99,25 +99,20 @@ function back(): void {
 }
 
 async function execute(): Promise<void> {
-  if (props.repoId === null || selectedArchiveName.value === null) return
-
-  const archiveEncoded = encodeURIComponent(selectedArchiveName.value)
+  const repoId = props.repoId
+  const archiveName = selectedArchiveName.value
+  if (repoId === null || archiveName === null) return
 
   await run(async () => {
     if (restoreMethod.value === 'download') {
       const controller = new AbortController()
       downloadAbortController.value = controller
       try {
-        const response = await apiClient.post(
-          `/repos/${props.repoId}/archives/${archiveEncoded}/download`,
-          { paths: paths.value },
-          { responseType: 'blob', signal: controller.signal },
-        )
-        const blob = response.data as Blob
+        const blob = await downloadArchiveFiles(repoId, archiveName, paths.value, controller.signal)
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `restore-${selectedArchiveName.value}.tar`
+        a.download = `restore-${archiveName}.tar`
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
@@ -129,7 +124,7 @@ async function execute(): Promise<void> {
         downloadAbortController.value = null
       }
     } else {
-      await apiClient.post(`/repos/${props.repoId}/archives/${archiveEncoded}/restore`, {
+      await restoreArchiveFiles(repoId, archiveName, {
         paths: paths.value,
         target_path: targetPath.value.trim(),
         hostname: hostname.value.trim(),

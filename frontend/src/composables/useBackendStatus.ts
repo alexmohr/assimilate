@@ -4,6 +4,7 @@
 import { type ComputedRef, type Ref, ref, computed, watch } from 'vue'
 import { useWebSocket } from './useWebSocket'
 import { apiClient } from '../api/client'
+import { getHealth } from '../api/system'
 
 const RETRY_INTERVAL_MS = 30_000
 const FAILURE_THRESHOLD = 2
@@ -49,7 +50,7 @@ async function retryNow(): Promise<void> {
   if (checking.value) return
   checking.value = true
   try {
-    await apiClient.get('/health')
+    await getHealth()
     consecutiveFailures.value = 0
     stopCountdown()
     forceReconnect()

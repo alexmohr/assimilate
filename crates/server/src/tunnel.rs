@@ -203,20 +203,9 @@ impl TunnelManager {
         }
 
         let manager = self.clone();
-        tokio::spawn(async move {
-            let _completion = TunnelTaskCompletion(completion);
-            let mut backoff = Duration::from_secs(1);
-            loop {
-                match run_tunnel_connection_attempt(
-                    &manager, tunnel_id, &hostname, &cancel, backoff,
-                )
-                .await
-                {
-                    ConnectionOutcome::Stop => return,
-                    ConnectionOutcome::Retry(next_backoff) => backoff = next_backoff,
-                }
-            }
-        });
+        tokio::spawn(run_reconnect_loop(
+            manager, tunnel_id, hostname, cancel, completion,
+        ));
     }
 
     /// Stop a running tunnel by its ID, cancelling the task and waiting for it to complete.
@@ -311,9 +300,34 @@ impl TunnelManager {
     }
 }
 
+#[derive(Debug)]
 enum ConnectionOutcome {
     Stop,
     Retry(Duration),
+}
+
+/// Runs a tunnel's connect/retry loop until `ConnectionOutcome::Stop`.
+/// Spawned in the background by `start_tunnel`; factored out of that
+/// `tokio::spawn` closure so tests can await it directly instead of racing a
+/// detached background task against the test's own completion - previously
+/// nothing in the test suite drove this loop at all, so its coverage in CI
+/// depended entirely on incidental scheduling from unrelated tests.
+async fn run_reconnect_loop(
+    manager: TunnelManager,
+    tunnel_id: i64,
+    hostname: String,
+    cancel: CancellationToken,
+    completion: Arc<Notify>,
+) {
+    let _completion = TunnelTaskCompletion(completion);
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        match run_tunnel_connection_attempt(&manager, tunnel_id, &hostname, &cancel, backoff).await
+        {
+            ConnectionOutcome::Stop => return,
+            ConnectionOutcome::Retry(next_backoff) => backoff = next_backoff,
+        }
+    }
 }
 
 struct TunnelConnectionParams {
@@ -556,6 +570,25 @@ async fn run_tunnel_connection_attempt(
             Err(outcome) => return outcome,
         };
 
+    run_connected_session(manager, tunnel_id, hostname, cancel, session, backoff).await
+}
+
+/// Waits for a connected tunnel session to end - either the caller cancels
+/// it, or the periodic liveness check finds it closed - then decides
+/// whether the reconnect loop should stop entirely or retry after backoff.
+/// Split out of `run_tunnel_connection_attempt` so it can be exercised
+/// directly against a local test SSH server: reaching this code otherwise
+/// requires a real successful SSH connect-authenticate-forward cycle, which
+/// nothing in the test suite ever drove, so its coverage in CI depended
+/// entirely on incidental scheduling from unrelated tests.
+async fn run_connected_session(
+    manager: &TunnelManager,
+    tunnel_id: i64,
+    hostname: &str,
+    cancel: &CancellationToken,
+    session: client::Handle<TunnelSshHandler>,
+    backoff: Duration,
+) -> ConnectionOutcome {
     loop {
         tokio::select! {
             () = cancel.cancelled() => {
@@ -632,13 +665,14 @@ mod tests {
         time::Duration,
     };
 
-    use russh::{client::Handler, keys::PublicKey};
+    use russh::{client::Handler, keys::PublicKey, server::Server as _};
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        TunnelManager, TunnelState, TunnelTaskCompletion, resolve_and_persist_host_key,
-        tunnel_ssh_config, tunnel_target_addr,
+        ConnectionOutcome, TunnelConnectionParams, TunnelManager, TunnelState,
+        TunnelTaskCompletion, connect_and_forward, resolve_and_persist_host_key,
+        run_connected_session, run_reconnect_loop, tunnel_ssh_config, tunnel_target_addr,
     };
     use crate::ws::ui_broadcast::UiBroadcast;
 
@@ -868,5 +902,198 @@ mod tests {
         )
         .await;
         assert_eq!(result, Some("ssh-ed25519 EXISTING".to_string()));
+    }
+
+    /// Regression: `run_reconnect_loop`'s outer `match` (the `Stop => return` /
+    /// `Retry => backoff = ...` arms) previously had no dedicated test - it was
+    /// only ever covered by chance, when some other test's leftover
+    /// `start_tunnel`-spawned background task happened to still be scheduled
+    /// when the coverage-instrumented process exited. That produced
+    /// non-deterministic coverage on this loop (see #440). `dummy_manager()`'s
+    /// pool points at a nonexistent database, so the very first
+    /// `run_tunnel_connection_attempt` call fails its DB lookup and returns
+    /// `ConnectionOutcome::Stop` on the first iteration, deterministically.
+    #[tokio::test]
+    async fn reconnect_loop_stops_immediately_when_tunnel_lookup_fails() {
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+        let completion = Arc::new(Notify::new());
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            run_reconnect_loop(mgr, 999, "unreachable-host".to_string(), cancel, completion),
+        )
+        .await
+        .expect("reconnect loop should stop immediately on DB lookup failure");
+    }
+
+    /// Minimal local SSH server accepting any public key and granting any
+    /// `tcpip_forward` request, so `connect_and_forward`/`run_connected_session`
+    /// can be exercised against a real SSH session instead of only through
+    /// incidental background-task scheduling during unrelated tests (see
+    /// #440's coverage-diff investigation for how that showed up as
+    /// non-deterministic coverage on these functions).
+    struct AcceptAllHandler;
+
+    impl russh::server::Handler for AcceptAllHandler {
+        type Error = russh::Error;
+
+        async fn auth_publickey(
+            &mut self,
+            _user: &str,
+            _public_key: &russh::keys::PublicKey,
+        ) -> Result<russh::server::Auth, Self::Error> {
+            Ok(russh::server::Auth::Accept)
+        }
+
+        async fn tcpip_forward(
+            &mut self,
+            _address: &str,
+            port: &mut u32,
+            _session: &mut russh::server::Session,
+        ) -> Result<bool, Self::Error> {
+            if *port == 0 {
+                *port = 2222;
+            }
+            Ok(true)
+        }
+    }
+
+    struct AcceptAllServer;
+
+    impl russh::server::Server for AcceptAllServer {
+        type Handler = AcceptAllHandler;
+
+        fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
+            AcceptAllHandler
+        }
+    }
+
+    /// Generates a fresh ed25519 key pair. `russh::keys::PrivateKey` pins its
+    /// own `ssh-key`/`rand_core` versions internally (not the crate's direct
+    /// `ssh-key` dependency used elsewhere, e.g. in `api::system`), so this
+    /// generates with the crate's own `ssh_key::PrivateKey::random` and
+    /// round-trips through OpenSSH PEM - the same conversion
+    /// `crate::ssh::load_server_private_key` already does when loading a key
+    /// from disk.
+    fn generate_test_key() -> russh::keys::PrivateKey {
+        let key = ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
+            .expect("generate test key");
+        let pem = key
+            .to_openssh(ssh_key::LineEnding::LF)
+            .expect("encode test key as OpenSSH PEM");
+        russh::keys::decode_secret_key(&pem, None).expect("decode test key")
+    }
+
+    /// Starts [`AcceptAllServer`] on an ephemeral loopback port and returns it.
+    async fn spawn_test_ssh_server() -> u16 {
+        let host_key = generate_test_key();
+        let config = Arc::new(russh::server::Config {
+            keys: vec![host_key],
+            ..Default::default()
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test SSH server");
+        let port = listener.local_addr().expect("listener addr").port();
+
+        tokio::spawn(async move {
+            let _ = AcceptAllServer.run_on_socket(config, &listener).await;
+        });
+
+        port
+    }
+
+    fn test_tunnel_row(ssh_port: u16) -> crate::db::SshTunnel {
+        crate::db::SshTunnel {
+            id: 1,
+            agent_id: 1,
+            ssh_host: "127.0.0.1".to_string(),
+            ssh_user: "test".to_string(),
+            ssh_port: i32::from(ssh_port),
+            tunnel_port: 0,
+            ssh_host_key: None,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    fn test_connection_params(ssh_port: u16) -> TunnelConnectionParams {
+        let client_key = generate_test_key();
+
+        TunnelConnectionParams {
+            tunnel: test_tunnel_row(ssh_port),
+            ssh_port,
+            tunnel_port: 0,
+            key: client_key,
+            handler: super::TunnelSshHandler {
+                server_addr: "127.0.0.1:0".parse().unwrap(),
+                ui_broadcast: UiBroadcast::new(),
+                agent_id: 1,
+                expected_host_key: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_and_forward_succeeds_against_local_ssh_server() {
+        let ssh_port = spawn_test_ssh_server().await;
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+
+        let session = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_and_forward(
+                &mgr,
+                1,
+                "test-host",
+                &cancel,
+                test_connection_params(ssh_port),
+                Duration::from_millis(10),
+            ),
+        )
+        .await
+        .expect("connect_and_forward should not hang")
+        .expect("connect_and_forward should succeed against the local test server");
+
+        drop(session);
+    }
+
+    /// Regression: reaching `run_connected_session`'s cancellation branch
+    /// (disconnect the live session, mark the tunnel disconnected, return
+    /// `Stop`) requires a real successful SSH connect-authenticate-forward
+    /// cycle, which nothing in the test suite drove before this test existed
+    /// - see #440.
+    #[tokio::test]
+    async fn connected_session_disconnects_and_stops_when_cancelled() {
+        let ssh_port = spawn_test_ssh_server().await;
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+
+        let session = connect_and_forward(
+            &mgr,
+            1,
+            "test-host",
+            &cancel,
+            test_connection_params(ssh_port),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("connect_and_forward should succeed against the local test server");
+
+        // Cancel before waiting so the `cancel.cancelled()` arm wins the
+        // `tokio::select!` deterministically instead of racing the 5-second
+        // liveness-check sleep.
+        cancel.cancel();
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_connected_session(&mgr, 1, "test-host", &cancel, session, Duration::from_millis(10)),
+        )
+        .await
+        .expect("run_connected_session should not hang");
+
+        assert!(matches!(outcome, ConnectionOutcome::Stop));
     }
 }

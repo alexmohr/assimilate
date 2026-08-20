@@ -66,7 +66,7 @@ type SortField = 'hostname' | 'status' | 'last_seen' | 'version'
 const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'hostname', label: 'Name' },
   { field: 'status', label: 'Status' },
-  { field: 'last_seen', label: 'Last Seen' },
+  { field: 'last_seen', label: 'Last seen' },
   { field: 'version', label: 'Version' },
 ]
 type FilterStatus = 'all' | 'online' | 'offline'

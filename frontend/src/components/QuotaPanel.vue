@@ -185,8 +185,7 @@ onMounted(loadQuota)
       <div class="muted">No quota configured for this repository.</div>
       <button
         v-if="isAdmin"
-        class="btn btn-sm btn-ghost"
-        style="margin-top: 0.75rem"
+        class="btn btn-sm btn-ghost quota-empty-action"
         @click="startNewQuota"
       >
         Configure quota
@@ -291,6 +290,12 @@ onMounted(loadQuota)
 </template>
 
 <style scoped>
+/* The button sits under the "nothing configured" line rather than beside it,
+   so it needs the gap the pane's own layout does not give a sibling. */
+.quota-empty-action {
+  margin-top: var(--space-5);
+}
+
 .quota-usage {
   margin-bottom: var(--space-6);
 }

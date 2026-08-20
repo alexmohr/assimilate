@@ -427,14 +427,8 @@ async function fetchOverview(): Promise<void> {
 <template>
   <div class="dashboard">
     <template v-if="loading">
-      <div style="display: flex; flex-direction: column; gap: 1.5rem">
-        <div
-          style="
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 1rem;
-          "
-        >
+      <div class="dashboard-skeleton">
+        <div class="dashboard-skeleton-tiles">
           <BaseSkeleton
             v-for="i in 6"
             :key="i"
@@ -695,21 +689,21 @@ async function fetchOverview(): Promise<void> {
             </div>
             <div class="chart-legend">
               <span
-                class="chart-legend-item chart-legend-item--toggle legend-pass"
+                class="chart-legend-item chart-legend-item--link legend-pass"
                 @click="router.push({ name: 'schedules', query: { filter: 'success' } })"
               >
                 <span class="chart-legend-swatch chart-legend-swatch--dot" />
                 Passed: {{ successCount }}
               </span>
               <span
-                class="chart-legend-item chart-legend-item--toggle legend-warn"
+                class="chart-legend-item chart-legend-item--link legend-warn"
                 @click="router.push({ name: 'schedules', query: { filter: 'warning' } })"
               >
                 <span class="chart-legend-swatch chart-legend-swatch--dot" />
                 Warned: {{ warnedCount }}
               </span>
               <span
-                class="chart-legend-item chart-legend-item--toggle legend-fail"
+                class="chart-legend-item chart-legend-item--link legend-fail"
                 @click="router.push({ name: 'schedules', query: { filter: 'failed' } })"
               >
                 <span class="chart-legend-swatch chart-legend-swatch--dot" />
@@ -799,6 +793,20 @@ async function fetchOverview(): Promise<void> {
   gap: var(--space-8);
   max-width: 1100px;
   margin: 0 auto;
+}
+
+/* The loading placeholder mirrors the loaded layout: one column of cards
+   over a row of tiles. */
+.dashboard-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.dashboard-skeleton-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-6);
 }
 
 .stats-coverage-row {

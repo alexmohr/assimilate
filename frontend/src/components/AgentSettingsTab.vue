@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
 import EntityTags from './EntityTags.vue'
-import SettingsRail, { type SettingsSectionOption } from './SettingsRail.vue'
+import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentDangerZone from './AgentDangerZone.vue'
@@ -51,18 +51,17 @@ defineExpose({ reloadAliases })
 const isImported = computed(() => props.agent.is_imported)
 
 /** The danger zone is admin-only, so it is absent rather than disabled. */
-const sections = computed<SettingsSectionOption<SettingsSection>[]>(() => {
-  const list: SettingsSectionOption<SettingsSection>[] = [
-    { id: 'identity', label: 'Identity' },
-    { id: 'defaults', label: 'Backup defaults' },
-    { id: 'aliases', label: 'Hostname aliases' },
-  ]
-  if (props.isAdmin) {
-    list.push({ id: 'tags', label: 'Tags' })
-    list.push({ id: 'danger', label: 'Danger zone', danger: true })
-  }
-  return list
-})
+const sections = computed<SettingsSections<SettingsSection>>(() => [
+  { id: 'identity', label: 'Identity' },
+  { id: 'defaults', label: 'Backup defaults' },
+  { id: 'aliases', label: 'Hostname aliases' },
+  ...(props.isAdmin
+    ? [
+        { id: 'tags', label: 'Tags' } as const,
+        { id: 'danger', label: 'Danger zone', danger: true } as const,
+      ]
+    : []),
+])
 </script>
 
 <template>

@@ -27,7 +27,7 @@ The Schedules list page shows all configured backup schedules with:
 - **Status filter** — show All, Enabled only, or Disabled only
 - **Type filter** — filter by Backup, Check, or Verify
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
-- **Sort buttons** — sort by Agent, Next Run, Last Run, or Type
+- **Sort buttons** — sort by Agent, Next run, Last run, or Type
 
 Schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
 

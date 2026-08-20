@@ -98,6 +98,19 @@ async function resetImport(): Promise<void> {
   }
 }
 
+/**
+ * Drops the plaintext passphrase the moment its dialog is dismissed, rather
+ * than leaving it in memory until the next reveal. The dialog's title is
+ * driven by `passphraseError` rather than by the passphrase itself so that
+ * wiping it here does not relabel the box while it fades out.
+ */
+function closePassphraseDialog(): void {
+  showPassphraseDialog.value = false
+  passphrase.value = null
+  passphraseError.value = null
+  passphraseCopied.value = false
+}
+
 async function revealPassphrase(): Promise<void> {
   passphraseLoading.value = true
   passphraseError.value = null
@@ -220,8 +233,8 @@ async function revealPassphrase(): Promise<void> {
 
   <BaseModal
     :open="showPassphraseDialog"
-    :title="passphrase ? 'Repository passphrase' : 'Error'"
-    @close="showPassphraseDialog = false"
+    :title="passphraseError ? 'Error' : 'Repository passphrase'"
+    @close="closePassphraseDialog"
   >
     <template v-if="passphrase">
       <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
@@ -245,7 +258,7 @@ async function revealPassphrase(): Promise<void> {
     <template #footer>
       <button
         class="btn btn-primary"
-        @click="showPassphraseDialog = false"
+        @click="closePassphraseDialog"
       >
         Done
       </button>

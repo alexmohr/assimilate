@@ -109,6 +109,23 @@ describe('design tokens', () => {
     expect(literals).toEqual([])
   })
 
+  it('uses the spacing scale in inline style attributes too', () => {
+    // A `<style>` block is not the only place a spacing value can hide: an
+    // inline `style=` on the element escapes the rule above entirely, which
+    // is how a lone `margin-top: 0.75rem` survived the migration.
+    const attrs = /:?style="([^"]*)"/g
+    const spacing =
+      /(?<![-\w])(?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?:\s*[^;"]*?\d*\.?\d+rem/
+    const literals: string[] = []
+    for (const file of FILES) {
+      const text = readFileSync(file, 'utf-8')
+      for (const m of text.matchAll(attrs)) {
+        if (spacing.test(m[1])) literals.push(`${relative(SRC, file)}: ${m[1].trim()}`)
+      }
+    }
+    expect(literals).toEqual([])
+  })
+
   it('uses radius tokens for every rounded corner', () => {
     const literals: string[] = []
     for (const file of FILES) {

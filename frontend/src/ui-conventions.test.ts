@@ -181,66 +181,94 @@ describe('component conventions', () => {
     expect(offenders).toEqual([])
   })
 
+  const PROPER = new Set([
+    'SSH',
+    'SMTP',
+    'IMAP',
+    'API',
+    'TOTP',
+    'URL',
+    'URI',
+    'ID',
+    'UI',
+    'CPU',
+    'RAM',
+    'TLS',
+    'HTTP',
+    'HTTPS',
+    'JSON',
+    'YAML',
+    'CSV',
+    'DNS',
+    'IP',
+    'UTC',
+    'GiB',
+    'TiB',
+    'MiB',
+    'MB',
+    'GB',
+    'Borg',
+    'Gotify',
+    'Telegram',
+    'Slack',
+    'Discord',
+    'Matrix',
+    'Ntfy',
+    'Pushover',
+    'Assimilate',
+    'GitHub',
+    'Linux',
+    'Prometheus',
+    'Docker',
+    'Webhook',
+    'OTP',
+    'SFTP',
+  ])
+  /** Capitalised words after the first, minus the names of real things. */
+  function shoutedWords(label: string): string[] {
+    return label
+      .split(/\s+/)
+      .slice(1)
+      .filter((w) => {
+        const bare = w.replace(/[^A-Za-z0-9/-]/g, '')
+        return /^[A-Z]/.test(bare) && !PROPER.has(bare) && bare.toUpperCase() !== bare
+      })
+  }
+
   it('writes labels, headings and buttons in sentence case', () => {
     // Title Case and sentence case were both in use, twice inside one file:
     // `Display Name` against `Display name`, `Exclude Patterns` against
     // `Exclude patterns`. Page titles keep their Title Case - they are the
     // names of pages, not labels.
-    const PROPER = new Set([
-      'SSH',
-      'SMTP',
-      'IMAP',
-      'API',
-      'TOTP',
-      'URL',
-      'URI',
-      'ID',
-      'UI',
-      'CPU',
-      'RAM',
-      'TLS',
-      'HTTP',
-      'HTTPS',
-      'JSON',
-      'YAML',
-      'CSV',
-      'DNS',
-      'IP',
-      'UTC',
-      'GiB',
-      'TiB',
-      'MiB',
-      'MB',
-      'GB',
-      'Borg',
-      'Gotify',
-      'Telegram',
-      'Slack',
-      'Discord',
-      'Matrix',
-      'Ntfy',
-      'Pushover',
-      'Assimilate',
-      'GitHub',
-      'Linux',
-      'Prometheus',
-      'Docker',
-      'Webhook',
-      'OTP',
-      'SFTP',
-    ])
     const LABEL =
       /<(?:label|span|h2|h3|dt|th)[^>]*class="[^"]*(?:field-label|panel-title|group-label|section-title|stat-label)[^"]*"[^>]*>\s*([A-Za-z][^<>{}]*?)\s*</g
     const offenders: string[] = []
     for (const f of VUE) {
       const text = readFileSync(f, 'utf-8')
       for (const m of text.matchAll(LABEL)) {
-        const words = m[1].split(/\s+/).slice(1)
-        const shouted = words.filter((w) => {
-          const bare = w.replace(/[^A-Za-z0-9/-]/g, '')
-          return /^[A-Z]/.test(bare) && !PROPER.has(bare) && bare.toUpperCase() !== bare
-        })
-        if (shouted.length > 0) offenders.push(`${relative(SRC, f)}: ${m[1]}`)
+        if (shoutedWords(m[1]).length > 0) offenders.push(`${relative(SRC, f)}: ${m[1]}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('writes sort buttons and rail sections the same way', () => {
+    // These two carry their labels in a `label:` property rather than in
+    // markup, which is how `Last Seen` and `Next Run` outlived the sweep that
+    // fixed every label the check above can see.
+    //
+    // Only these two lists, not every `label:` in a script: a nav entry naming
+    // a page, a permission, and a chart series are names of things rather than
+    // labels on controls, and they keep their capitals for the same reason a
+    // page title does.
+    const LISTS = /(?:SORT_OPTIONS[^=]*=|SettingsSections<[^>]*>>\(\(\) =>)\s*\[([\s\S]*?)\n\s*\]/g
+    const offenders: string[] = []
+    for (const f of VUE) {
+      const script = readFileSync(f, 'utf-8').split('<template>')[0]
+      for (const list of script.matchAll(LISTS)) {
+        for (const m of list[1].matchAll(/\blabel: '([A-Za-z][^']*)'/g)) {
+          if (shoutedWords(m[1]).length > 0) offenders.push(`${relative(SRC, f)}: ${m[1]}`)
+        }
       }
     }
     expect(offenders).toEqual([])

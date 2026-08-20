@@ -66,8 +66,8 @@ type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
 
 const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'agent', label: 'Agent' },
-  { field: 'next_run', label: 'Next Run' },
-  { field: 'last_run', label: 'Last Run' },
+  { field: 'next_run', label: 'Next run' },
+  { field: 'last_run', label: 'Last run' },
   { field: 'type', label: 'Type' },
 ]
 type FilterStatus = 'all' | 'enabled' | 'disabled'

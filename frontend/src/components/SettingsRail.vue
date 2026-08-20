@@ -26,8 +26,20 @@ export interface SettingsSectionOption<V extends string> {
   danger?: boolean
 }
 
+/**
+ * A rail's sections, of which there is always at least one - a rail with no
+ * sections has no first section to fall back to, and a settings tab showing
+ * nothing at all is not a state any caller wants. The tuple says so to the
+ * compiler, so callers whose list shrinks by role cannot shrink it to nothing
+ * and no unreachable empty-state branch has to be written or tested here.
+ */
+export type SettingsSections<V extends string> = readonly [
+  SettingsSectionOption<V>,
+  ...SettingsSectionOption<V>[],
+]
+
 const props = defineProps<{
-  sections: readonly SettingsSectionOption<T>[]
+  sections: SettingsSections<T>
   /** The requested section, which may be one this viewer cannot open. */
   section: T
   /** Names the rail for assistive tech, e.g. "Agent settings sections". */

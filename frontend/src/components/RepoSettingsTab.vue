@@ -10,7 +10,7 @@ import EntityTags from './EntityTags.vue'
 import RepoBorgConsole from './RepoBorgConsole.vue'
 import RepoDangerZone from './RepoDangerZone.vue'
 import RepoOverviewCard from './RepoOverviewCard.vue'
-import SettingsRail, { type SettingsSectionOption } from './SettingsRail.vue'
+import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
 import type { RepoSettingsSection } from '../utils/repoSettings'
 
@@ -37,18 +37,17 @@ const emit = defineEmits<{
 
 /** Everything but the repository's own fields is admin-only, so it is absent
     rather than disabled for everyone else. */
-const sections = computed<SettingsSectionOption<RepoSettingsSection>[]>(() => {
-  const list: SettingsSectionOption<RepoSettingsSection>[] = [
-    { id: 'repository', label: 'Repository' },
-  ]
-  if (props.isAdmin) {
-    list.push({ id: 'quota', label: 'Storage quota' })
-    list.push({ id: 'tags', label: 'Tags' })
-    list.push({ id: 'console', label: 'Borg console' })
-    list.push({ id: 'danger', label: 'Danger zone', danger: true })
-  }
-  return list
-})
+const sections = computed<SettingsSections<RepoSettingsSection>>(() => [
+  { id: 'repository', label: 'Repository' },
+  ...(props.isAdmin
+    ? [
+        { id: 'quota', label: 'Storage quota' } as const,
+        { id: 'tags', label: 'Tags' } as const,
+        { id: 'console', label: 'Borg console' } as const,
+        { id: 'danger', label: 'Danger zone', danger: true } as const,
+      ]
+    : []),
+])
 </script>
 
 <template>

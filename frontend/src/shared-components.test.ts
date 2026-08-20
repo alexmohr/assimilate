@@ -417,6 +417,48 @@ function classSelectors(css: string): Set<string> {
   return new Set([...code.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]))
 }
 
+/**
+ * The class names a `:class` binding can apply, in any of the three shapes
+ * Vue accepts: an object whose keys are the names, an array of either, and a
+ * bare expression choosing between string literals.
+ *
+ * The first cut of this only read *quoted* object keys, which meant it skipped
+ * every `{ active: ... }` in the codebase - the majority shape - and every
+ * array binding, while its own comment claimed to resolve every class in a
+ * template. A key is whatever precedes the first colon of an entry, so a
+ * ternary in the *value* cannot be mistaken for one.
+ *
+ * Names assembled from an interpolation stay out of reach: `badge--${tone}`
+ * has no spelling until it runs. That is the one shape this guard cannot
+ * cover, and the rules those names reach are held open by `OWNED` instead.
+ */
+function boundClasses(binding: string): Set<string> {
+  const names = new Set<string>()
+  const isName = /^[a-zA-Z][\w-]*$/
+  const expr = binding.replace(/`[^`]*`/g, '')
+
+  // Object entries: `{ 'a-b': x, active: y }`, including objects nested in an
+  // array binding.
+  for (const obj of expr.matchAll(/\{([^{}]*)\}/g)) {
+    for (const entry of obj[1].split(',')) {
+      const key = entry.split(':')[0].trim().replace(/^'|'$/g, '')
+      if (isName.test(key)) names.add(key)
+    }
+  }
+
+  // String literals outside those objects: array members and the arms of a
+  // ternary. A literal being compared against rather than applied (`x === 'y'`)
+  // is not a class, and reads as a value, not a name, often enough that the
+  // shape alone cannot tell - so only literals in binding position count.
+  const literals = expr.replace(/\{[^{}]*\}/g, '').replace(/[!=]==?\s*'[^']*'/g, '')
+  for (const lit of literals.matchAll(/'([^']*)'/g)) {
+    for (const name of lit[1].split(/\s+/).filter(Boolean)) {
+      if (isName.test(name)) names.add(name)
+    }
+  }
+  return names
+}
+
 describe('class names', () => {
   it('resolves every class used in a template to a rule somewhere', () => {
     const defined = classSelectors(STYLE_CSS)
@@ -437,12 +479,11 @@ describe('class names', () => {
         ? text.split('<template>')[1].split('</template>')[0]
         : ''
       const used = new Set<string>()
-      // Static class lists, and the keys of an object-syntax `:class`.
       for (const m of template.matchAll(/(?<![:\w-])class="([^"{}]*)"/g)) {
         for (const name of m[1].split(/\s+/).filter(Boolean)) used.add(name)
       }
-      for (const m of template.matchAll(/:class="\{([^"]*)\}"/g)) {
-        for (const k of m[1].matchAll(/'([a-zA-Z][\w-]*)'\s*:/g)) used.add(k[1])
+      for (const m of template.matchAll(/:class="([^"]*)"/g)) {
+        for (const name of boundClasses(m[1])) used.add(name)
       }
       for (const name of used) {
         if (!defined.has(name) && !HOOKS.has(name)) {

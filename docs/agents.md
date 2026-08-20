@@ -28,7 +28,7 @@ The Agents list page provides:
 - **Coverage filter** — show protected, unassigned, never-succeeded, or disabled-only agents; dashboard coverage links set this filter automatically
 - **Show hidden toggle** — reveal hidden imported agents (admin-only)
 - **Tag filter** — filter by one or more tags
-- **Sort buttons** — sort by Name, Status, Last seen, or Agent version
+- **Sort buttons** — sort by Name, Status, Last seen, or Version
 
 A fleet summary band above the list rolls up the whole fleet: total agent count, how many are online, total schedule count, and a breakdown of agent versions in use, with the version matching the server's available binary marked current.
 

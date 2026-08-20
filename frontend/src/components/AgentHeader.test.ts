@@ -35,12 +35,10 @@ function mount(agentOverrides: Record<string, unknown> = {}, props: Record<strin
   })
 }
 
-/** Buttons on the header row itself, excluding the overflow toggle. */
+/** Buttons on the header row itself. The overflow toggle is not one: it
+    lives inside `OverflowMenu`'s own wrapper, so it is not a direct child. */
 function visibleActions(wrapper: ReturnType<typeof mount>): string[] {
-  return wrapper
-    .findAll('.detail-actions > button')
-    .filter((b) => !b.classes().includes('agent-menu-toggle'))
-    .map((b) => b.text().trim())
+  return wrapper.findAll('.detail-actions > button').map((b) => b.text().trim())
 }
 
 describe('AgentHeader', () => {

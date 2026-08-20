@@ -159,6 +159,12 @@ describe('RepoHeader', () => {
   })
 
   describe('passphrase', () => {
+    /** The plaintext the component is holding, which outlives the dialog's
+        markup and so cannot be read from the DOM. */
+    function revealedPassphrase(wrapper: ReturnType<typeof mount>): string | null {
+      return (wrapper.vm as unknown as { passphrase: string | null }).passphrase
+    }
+
     it('fetches the passphrase on demand and shows it in the dialog', async () => {
       const wrapper = mount()
       await openMenu(wrapper)
@@ -207,6 +213,21 @@ describe('RepoHeader', () => {
       await flushPromises()
 
       expect(document.body.querySelector('.modal-dialog')).toBeNull()
+    })
+
+    it('forgets the passphrase once the dialog is dismissed', async () => {
+      const wrapper = mount()
+      await openMenu(wrapper)
+      await findButton(wrapper, /passphrase/i).trigger('click')
+      await flushPromises()
+      expect(revealedPassphrase(wrapper)).toBe('hunter2')
+
+      dialogButton('Done').click()
+      await flushPromises()
+
+      // Off the screen is not enough: the plaintext must leave the component
+      // too, rather than sitting in memory for the rest of the page's life.
+      expect(revealedPassphrase(wrapper)).toBeNull()
     })
 
     it('opens the dialog with the error when the fetch fails', async () => {

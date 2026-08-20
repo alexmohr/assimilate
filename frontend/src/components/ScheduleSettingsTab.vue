@@ -10,7 +10,7 @@ import CronBuilder from './CronBuilder.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
-import SettingsRail, { type SettingsSectionOption } from './SettingsRail.vue'
+import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import type { ScheduleType } from '../types/schedule'
 import type { AgentRow } from '../types/agent'
@@ -51,17 +51,16 @@ const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
 /** Retention and Advanced only apply to backup-type schedules. */
-const sections = computed<SettingsSectionOption<ScheduleSettingsSection>[]>(() => {
-  const list: SettingsSectionOption<ScheduleSettingsSection>[] = [
-    { id: 'general', label: 'General' },
-    { id: 'targets', label: 'Targets' },
-  ]
-  if (props.isBackup) {
-    list.push({ id: 'retention', label: 'Retention' })
-    list.push({ id: 'advanced', label: 'Advanced' })
-  }
-  return list
-})
+const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
+  { id: 'general', label: 'General' },
+  { id: 'targets', label: 'Targets' },
+  ...(props.isBackup
+    ? [
+        { id: 'retention', label: 'Retention' } as const,
+        { id: 'advanced', label: 'Advanced' } as const,
+      ]
+    : []),
+])
 
 function multiSelectLabel(): string {
   const ids = selectedAgentIds.value

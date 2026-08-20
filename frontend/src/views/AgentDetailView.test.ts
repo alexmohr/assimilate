@@ -1418,6 +1418,33 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(dialog.props('availableVersion')).toBe('2.0.0')
   })
 
+  it('closes the deploy dialog when it is dismissed', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/system/version')
+        return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+
+    await wrapper
+      .findAll('.detail-actions > button')
+      .find((b) => b.text().includes('Upgrade'))!
+      .trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'AgentDeployDialog' }).vm.$emit('close')
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(false)
+  })
+
   async function openSshKeyDialog(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
     await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()

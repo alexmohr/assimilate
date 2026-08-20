@@ -198,6 +198,52 @@ describe('ArchiveFileBrowser', () => {
     expect(subdirRow).toBeTruthy()
   })
 
+  it('downloads one file from its own row, not the whole archive', async () => {
+    // The header now carries the whole-archive Download, so `.btn-ghost`
+    // resolves there first: the per-row action needs selecting explicitly or
+    // it goes untested.
+    const wrapper = await mountWithEntries()
+
+    const createElementSpy = vi.spyOn(document, 'createElement')
+    const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+    expect(fileRow).toBeDefined()
+
+    await fileRow!.find('.td-action button[title="Download"]').trigger('click')
+    await flushPromises()
+
+    const anchor = createElementSpy.mock.results
+      .filter((_, i) => createElementSpy.mock.calls[i][0] === 'a')
+      .map((r) => r.value as HTMLAnchorElement)
+      .at(-1)
+    expect(anchor?.getAttribute('href')).toContain('/extract?path=readme.txt')
+    expect(anchor?.download).toBe('readme.txt')
+
+    // `resetAllMocks` clears calls but leaves the spy installed, and the next
+    // test spies on document.createElement too - restore it so its own anchor
+    // count is its own.
+    createElementSpy.mockRestore()
+  })
+
+  it('restores one entry from its own row', async () => {
+    window.confirm = vi.fn().mockReturnValue(true)
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+    await fileRow!.find('.td-action button[title="Restore to host"]').trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      expect.stringContaining('/restore'),
+      expect.objectContaining({ paths: ['readme.txt'] }),
+    )
+  })
+
   it('download button renders in action column and triggers download', async () => {
     const wrapper = await mountWithEntries()
 

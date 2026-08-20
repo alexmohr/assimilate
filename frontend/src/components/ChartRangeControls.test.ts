@@ -14,13 +14,13 @@ const options = [
 ]
 
 describe('ChartRangeControls', () => {
-  it('renders an "All Repos" option plus one per repo', () => {
+  it('renders an "All repos" option plus one per repo', () => {
     const wrapper = mount(ChartRangeControls, {
       props: { repos, options, label: 'Range', repoId: undefined, days: 30 },
     })
 
     const optionTexts = wrapper.findAll('option').map((o) => o.text())
-    expect(optionTexts).toEqual(['All Repos', 'repo-a', 'repo-b'])
+    expect(optionTexts).toEqual(['All repos', 'repo-a', 'repo-b'])
   })
 
   it('marks the selected day option active in the segmented control', () => {

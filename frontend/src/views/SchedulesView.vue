@@ -66,8 +66,8 @@ type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
 
 const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'agent', label: 'Agent' },
-  { field: 'next_run', label: 'Next Run' },
-  { field: 'last_run', label: 'Last Run' },
+  { field: 'next_run', label: 'Next run' },
+  { field: 'last_run', label: 'Last run' },
   { field: 'type', label: 'Type' },
 ]
 type FilterStatus = 'all' | 'enabled' | 'disabled'
@@ -102,7 +102,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
     case 'backup':
       return 'Backup'
     case 'check':
-      return 'Integrity Check'
+      return 'Integrity check'
     case 'verify':
       return 'Verify'
   }
@@ -489,7 +489,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       :icon="Clock"
       title="No schedules configured"
       description="Create a schedule to automate your backups."
-      action="Create Schedule"
+      action="New schedule"
       @action="router.push('/schedules/new')"
     />
 
@@ -603,7 +603,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 .schedule-toggle {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .schedule-toggle-label {
@@ -613,14 +613,14 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 }
 
 .schedule-group + .schedule-group {
-  margin-top: 1.75rem;
+  margin-top: var(--space-8);
 }
 
 .schedule-group-header {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .schedule-group-title {

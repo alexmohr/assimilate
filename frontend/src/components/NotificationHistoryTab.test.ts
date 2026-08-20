@@ -28,11 +28,10 @@ function delivery(overrides: Partial<NotificationDelivery> = {}): NotificationDe
   } as unknown as NotificationDelivery
 }
 
-const eventTypeLabel = (event: NotificationEventType): string =>
-  event
-    .split('_')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
+const eventTypeLabel = (event: NotificationEventType): string => {
+  const words = event.split('_')
+  return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
+}
 
 function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(NotificationHistoryTab, {
@@ -61,7 +60,7 @@ describe('NotificationHistoryTab', () => {
   })
 
   it('labels the event type through the callers formatter', () => {
-    expect(mount().text()).toContain('Backup Failed')
+    expect(mount().text()).toContain('Backup failed')
   })
 
   it('tones the status by outcome', () => {

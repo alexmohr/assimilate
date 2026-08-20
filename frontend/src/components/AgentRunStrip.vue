@@ -152,13 +152,13 @@ const isSingleIncident = computed(() => {
 .run-strip {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-2);
 }
 
 .run-strip-head {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .run-strip-value--bad {
@@ -168,7 +168,7 @@ const isSingleIncident = computed(() => {
 .run-strip-cells {
   display: flex;
   gap: 2px;
-  margin-top: 0.15rem;
+  margin-top: var(--space-1);
 }
 
 .run-cell {

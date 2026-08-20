@@ -56,13 +56,18 @@ Each repository card shows the name, SSH target, encryption type, compression al
 
 ![Repository Detail](assets/screenshots/repo-detail.png)
 
-The repository detail page shows full connection information, storage statistics (original, compressed, deduplicated sizes), storage quota status with a progress bar, tags, and danger zone actions (Refresh SSH Key, Break Lock, Remove Repository, Delete Repository).
+The repository detail page opens with a header naming the repository, its SSH target, its status and what it holds, with **Sync now** as its primary action and **Show passphrase** behind the overflow menu. Four tabs follow:
 
-!!! warning "Break Lock"
-    **Break Lock** clears a stale `borg` lock on the repository. It also detects and clears a
+- **Overview** — archives, deduplicated and original size, last write and disk-sync cadence, plus the repository's schedules
+- **Archives** — the archive list and the file browser
+- **Schedules** — every schedule writing to this repository
+- **Settings** — the repository's own connection fields, its [storage quota](quotas.md), its tags, the borg console, and the danger zone (Confirm relocation, Break lock, Remove repository, Delete repository, Reset and re-import)
+
+!!! warning "Break lock"
+    **Break lock** clears a stale `borg` lock on the repository. It also detects and clears a
     stale *local cache lock* left behind by a backup process that was crashed, OOM-killed, or
     forcibly terminated (e.g. a killed container) — something plain `borg break-lock` does not
-    do, since it only ever clears the repository's own lock. Only use Break Lock when you are
+    do, since it only ever clears the repository's own lock. Only use Break lock when you are
     certain no backup is currently running against the repository; breaking a lock during an
     active backup will corrupt it.
 
@@ -101,7 +106,7 @@ During a full repository sync, Assimilate also prunes archives that no longer ex
 
 ### Full resync and content indexing
 
-The **Full Resync** action on the repository detail page re-reads every archive from borg and then builds the browsable **content index** (the file tree used for archive browsing, search, diff, and restore). Because borg archives are immutable:
+The **Sync now** action on the repository detail page re-reads every archive from borg and then builds the browsable **content index** (the file tree used for archive browsing, search, diff, and restore). Because borg archives are immutable:
 
 - Archives whose content index is already complete are **skipped** — a resync never re-scans an archive it has already indexed.
 - Stats are only re-fetched for archives that don't have them yet.
@@ -214,7 +219,7 @@ A host with no configured server quota, or when viewing as a non-admin user, sti
 
 The passphrase is required by borg to encrypt and decrypt archives. Assimilate stores it encrypted at rest using AES-256-GCM, derived from the `ASSIMILATE_SECRET_KEY` environment variable.
 
-**Viewing the passphrase** is restricted to admins. Navigate to the repository detail page and click **Show Passphrase**. The decrypted passphrase is fetched from the server and displayed once.
+**Viewing the passphrase** is restricted to admins. Navigate to the repository detail page and choose **Show passphrase** from the header’s overflow menu. The decrypted passphrase is fetched from the server and displayed once.
 
 The passphrase is never logged or transmitted in plaintext. See [Security](security.md) for details on the encryption scheme.
 

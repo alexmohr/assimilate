@@ -58,10 +58,10 @@ test('repo detail page loads without error', async ({ page }) => {
   await expect(page).not.toHaveURL(/\/error/)
 })
 
-test('repo detail shows Full Resync button when not importing', async ({ page }) => {
+test('repo detail shows Sync now button when not importing', async ({ page }) => {
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
-  await expect(page.getByRole('button', { name: /full resync/i })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('button', { name: /sync now/i })).toBeVisible({ timeout: 10_000 })
 })
 
 test('repo detail shows archive list with entries', async ({ page }) => {
@@ -142,10 +142,10 @@ test('Cancel Import button appears when repo is in importing state', async ({ pa
 
   await page.goto(`/repos/${repo.id}`)
 
-  // Either Cancel Import (if caught mid-sync) or Full Resync (already done) must be visible.
-  // Both buttons share the same toolbar, so we assert at least one is there.
+  // Either Cancel import (if caught mid-sync) or Sync now (already done) must be visible.
+  // Both take the header's primary slot, so we assert at least one is there.
   const cancelBtn = page.getByRole('button', { name: /cancel import/i })
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(cancelBtn.or(resyncBtn)).toBeVisible({ timeout: 15_000 })
 
   // Wait for any in-progress sync to finish so subsequent tests start with a clean state.
@@ -170,7 +170,7 @@ test('Cancel Import cancels a live resync under borg lock contention', async ({ 
   try {
     await page.goto(`/repos/${repo.id}`)
 
-    const resyncBtn = page.getByRole('button', { name: /full resync/i })
+    const resyncBtn = page.getByRole('button', { name: /sync now/i })
     await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
     await resyncBtn.click()
 
@@ -205,14 +205,14 @@ test('full resync completes and preserves archives', async ({ page }) => {
   await navigateToRepo(page, 'server-daily')
 
   // Wait for the page to settle and button to be ready
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
   // The request resolves quickly on CI, so the transient "Syncing..." label is
   // not a stable contract. Assert the accepted action via toast and the final
   // steady-state button label instead.
-  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText('Sync started.')).toBeVisible({ timeout: 120_000 })
 
   // Button must return to its resting state (same API call as the toast above)
   await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
@@ -227,11 +227,11 @@ test('full resync preserves unmatched-banner', async ({ page }) => {
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText('Sync started.')).toBeVisible({ timeout: 120_000 })
 
   // Switch to archives tab - unmatched old-webserver archive must survive a resync
   await page.getByRole('tab', { name: 'Archives', exact: true }).click()
@@ -253,11 +253,11 @@ test('broken repo resync does not navigate to /error page', async ({ page }) => 
   })
 
   await page.goto(`/repos/${repo.id}`)
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  // The sync request is accepted immediately - "Full resync started." toast must appear
+  // The sync request is accepted immediately - "Sync started." toast must appear
   // and the page must stay on the repo detail view, never redirecting to /error
   await expect(page.locator('.toast-success').first()).toBeVisible({ timeout: 30_000 })
   await expect(page).not.toHaveURL(/\/error/)
@@ -272,7 +272,7 @@ test('status badge transitions to importing class when resync starts', async ({ 
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
 
   const statusBadge = page.locator('.repo-status-badge')
@@ -294,7 +294,7 @@ test('status badge text shows importing phase verb during resync', async ({ page
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
@@ -310,7 +310,7 @@ test('import-status-msg appears with live status text during resync', async ({ p
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
@@ -336,7 +336,7 @@ test('import-progress bar appears when archive count is known', async ({ page })
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
@@ -352,7 +352,7 @@ test('import badge count starts at 1 not 0', async ({ page }) => {
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
@@ -374,7 +374,7 @@ test('status badge shows Enabled and no importing elements after resync complete
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
@@ -409,13 +409,13 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
 
   // Full resync should prune the stale record.
   await navigateToRepo(page, 'server-daily', 'Archives')
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   // Resync button is in the Overview tab toolbar; switch back to trigger it.
   await page.getByRole('tab', { name: 'Overview', exact: true }).click()
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText('Sync started.')).toBeVisible({ timeout: 120_000 })
   await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
 
   // Switch to Archives tab and confirm the deleted archive is no longer listed.
@@ -438,7 +438,7 @@ test('import-status-msg shows waiting-for-lock during borg lock contention', asy
   // Pre-create the lock file to prevent borg from acquiring the exclusive lock.
   dockerExec(container, `touch ${lockFile}`)
 
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  const resyncBtn = page.getByRole('button', { name: /sync now/i })
   try {
     await navigateToRepo(page, 'server-daily')
     await expect(resyncBtn).toBeVisible({ timeout: 60_000 })

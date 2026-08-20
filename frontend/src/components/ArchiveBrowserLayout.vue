@@ -35,7 +35,7 @@ withDefaults(
 .archive-browser-layout {
   display: grid;
   grid-template-columns: 1fr 1.2fr;
-  gap: 1rem;
+  gap: var(--space-6);
   align-items: start;
 }
 

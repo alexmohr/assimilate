@@ -196,7 +196,7 @@ const displayValue = computed((): string => {
 }
 
 .tz-option {
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   font-size: var(--fs-base);
   color: var(--text-primary);
   cursor: pointer;
@@ -212,7 +212,7 @@ const displayValue = computed((): string => {
 }
 
 .tz-no-results {
-  padding: 0.75rem;
+  padding: var(--space-5);
   font-size: var(--fs-base);
   color: var(--text-muted);
   text-align: center;

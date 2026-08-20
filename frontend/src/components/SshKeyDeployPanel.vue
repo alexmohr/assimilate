@@ -67,7 +67,7 @@ async function deploy(): Promise<void> {
     <div class="deploy-fields">
       <template v-if="showCredentials">
         <div class="field">
-          <label class="field-label">SSH Host <span class="required">*</span></label>
+          <label class="field-label">SSH host <span class="required">*</span></label>
           <input
             v-model="localHost"
             class="input mono"
@@ -76,7 +76,7 @@ async function deploy(): Promise<void> {
         </div>
         <div class="field-row">
           <div class="field">
-            <label class="field-label">SSH User</label>
+            <label class="field-label">SSH user</label>
             <input
               v-model="localUser"
               class="input mono"
@@ -84,7 +84,7 @@ async function deploy(): Promise<void> {
             />
           </div>
           <div class="field field-narrow">
-            <label class="field-label">SSH Port</label>
+            <label class="field-label">SSH port</label>
             <input
               v-model.number="localPort"
               class="input"
@@ -96,7 +96,7 @@ async function deploy(): Promise<void> {
         </div>
       </template>
       <div class="field">
-        <label class="field-label">SSH Password <span class="required">*</span></label>
+        <label class="field-label">SSH password <span class="required">*</span></label>
         <input
           v-model="password"
           class="input"
@@ -134,14 +134,14 @@ async function deploy(): Promise<void> {
 .deploy-hint {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
 }
 
 .deploy-fields {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 
 .deploy-fields .field {
@@ -151,7 +151,7 @@ async function deploy(): Promise<void> {
 .deploy-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .result-error {

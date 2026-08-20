@@ -144,10 +144,12 @@ onMounted(loadQuota)
 </script>
 
 <template>
-  <div class="quota-panel info-card">
-    <div class="info-card-header">
-      <h3 class="info-title">Storage Quota</h3>
-      <div class="info-header-actions">
+  <div>
+    <div class="pane-head">
+      <p class="pane-lede">
+        How much space this repository may use, and what Assimilate does as it fills up.
+      </p>
+      <div class="panel-actions">
         <span
           v-if="quota && quota.enabled"
           class="badge"
@@ -167,14 +169,14 @@ onMounted(loadQuota)
 
     <div
       v-if="loading"
-      class="state-msg state-msg-sm"
+      class="state-msg state-msg--inline"
     >
       Loading quota...
     </div>
 
     <div
       v-else-if="error"
-      class="state-msg state-msg-sm state-error"
+      class="state-msg state-msg--inline state-error"
     >
       {{ error }}
     </div>
@@ -183,11 +185,10 @@ onMounted(loadQuota)
       <div class="muted">No quota configured for this repository.</div>
       <button
         v-if="isAdmin"
-        class="btn btn-sm btn-ghost"
-        style="margin-top: 0.75rem"
+        class="btn btn-sm btn-ghost quota-empty-action"
         @click="startNewQuota"
       >
-        Configure Quota
+        Configure quota
       </button>
     </template>
 
@@ -289,26 +290,21 @@ onMounted(loadQuota)
 </template>
 
 <style scoped>
-.quota-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-}
-
-.info-title {
-  margin: 0;
+/* The button sits under the "nothing configured" line rather than beside it,
+   so it needs the gap the pane's own layout does not give a sibling. */
+.quota-empty-action {
+  margin-top: var(--space-5);
 }
 
 .quota-usage {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 
 .usage-labels {
   display: flex;
   justify-content: space-between;
   font-size: var(--fs-sm);
-  margin-bottom: 0.4rem;
+  margin-bottom: var(--space-3);
 }
 
 .usage-current {
@@ -348,7 +344,7 @@ onMounted(loadQuota)
 .quota-details {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 0.4rem 1rem;
+  gap: var(--space-3) var(--space-6);
   margin: 0;
   font-size: var(--fs-base);
 }

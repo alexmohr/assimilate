@@ -88,7 +88,7 @@ describe('RepoSchedulesTab', () => {
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    expect(wrapper.find('.state-error').text()).toBe('Failed to load schedules.')
+    expect(wrapper.find('.error-banner').text()).toBe('Failed to load schedules.')
     expect(wrapper.find('.empty-state').exists()).toBe(false)
   })
 
@@ -141,7 +141,7 @@ describe('RepoSchedulesTab', () => {
   // renders blank in the run-started toast, which is easy to miss.
   it.each([
     ['backup', 'Backup'],
-    ['check', 'Integrity Check'],
+    ['check', 'Integrity check'],
     ['verify', 'Verify (extract dry-run)'],
   ])('names a %s schedule when it is started', async (type, label) => {
     mockList([{ ...SCHEDULE, schedule_type: type }])

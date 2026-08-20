@@ -16,7 +16,7 @@ defineProps<{ repositories: DashboardRepositoryCapacity[] }>()
     id="repository-capacity"
     class="panel"
   >
-    <h2 class="panel-title">Repository Capacity</h2>
+    <h2 class="panel-title">Repository capacity</h2>
     <div
       v-if="repositories.length === 0"
       class="capacity-empty"
@@ -57,9 +57,9 @@ defineProps<{ repositories: DashboardRepositoryCapacity[] }>()
 .capacity-row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto auto;
-  gap: 0.75rem;
+  gap: var(--space-5);
   align-items: center;
-  padding: 0.75rem 0;
+  padding: var(--space-5) 0;
   border-top: 1px solid var(--border);
   color: inherit;
   text-decoration: none;

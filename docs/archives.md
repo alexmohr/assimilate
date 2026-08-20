@@ -75,7 +75,7 @@ New archives from successful backup runs are recorded and indexed in the backgro
 The index is stored one compressed record per directory rather than one row per file, which is how the browser reads it. This keeps the index small even for repositories with many archives of the same file tree — on a repository whose index had grown to 10 GB, the packed layout is roughly a quarter of the size. Directories with very large numbers of entries are split across several records so that a listing only reads the part it displays.
 
 !!! note "Indexes rebuild after upgrading"
-    The content index is derived data, so upgrading to a release that changes its storage layout discards the existing index instead of converting it. Archives are re-indexed automatically the next time they are browsed, or through **Full Resync**. Nothing else is lost: archive tags, backup reports, and the archives themselves are unaffected.
+    The content index is derived data, so upgrading to a release that changes its storage layout discards the existing index instead of converting it. Archives are re-indexed automatically the next time they are browsed, or through **Sync now**. Nothing else is lost: archive tags, backup reports, and the archives themselves are unaffected.
 
 ## Extracting Files
 
@@ -95,7 +95,7 @@ All server-side borg operations for a repository (backup, sync, content indexing
 
 Deleting an archive only unlinks it from the repository's manifest — the segment data it referenced is not reclaimed until the repository is compacted. Assimilate automatically runs `borg compact` after each successful archive deletion to reclaim that space, shown as a **Compacting repository** indicator. If the compact itself fails, the deletion still stands — the failure is logged as an `archive_compact_failed` system event and the freed space is reclaimed on the next opportunity (for example, a scheduled backup's own compact step).
 
-To pull in new archives and index their contents, use **Full Resync** (admin only), which re-reads the repository from borg and indexes any archives that are not already indexed.
+To pull in new archives and index their contents, use **Sync now** (admin only), which re-reads the repository from borg and indexes any archives that are not already indexed.
 
 !!! warning "Restores overwrite files"
     Restoring writes directly to the original filesystem location on the matched host. Existing files may be overwritten without another prompt from borg.

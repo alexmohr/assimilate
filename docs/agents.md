@@ -7,7 +7,7 @@ See [Getting Started](getting-started.md) for initial setup instructions.
 ## Adding an Agent
 
 1. Navigate to **Agents** in the sidebar.
-2. Click **Add Agent**.
+2. Click **New agent**.
 3. Enter the machine's hostname (must be unique).
 4. Optionally set a display name.
 5. Click **Create** — the server generates a 32-byte random token and shows it once.
@@ -28,7 +28,7 @@ The Agents list page provides:
 - **Coverage filter** — show protected, unassigned, never-succeeded, or disabled-only agents; dashboard coverage links set this filter automatically
 - **Show hidden toggle** — reveal hidden imported agents (admin-only)
 - **Tag filter** — filter by one or more tags
-- **Sort buttons** — sort by Name, Status, Last Seen, or Agent Version
+- **Sort buttons** — sort by Name, Status, Last seen, or Version
 
 A fleet summary band above the list rolls up the whole fleet: total agent count, how many are online, total schedule count, and a breakdown of agent versions in use, with the version matching the server's available binary marked current.
 
@@ -98,7 +98,7 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
     | SSH User | SSH user on the remote machine (prefilled with the username last used to deploy this agent, defaulting to `root` the first time) |
     | SSH Port | SSH port (default: 22) |
     | Server URL | URL the agent will use to connect back to the server |
-    | Install Path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
+    | Install path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
 
 3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically.
 
@@ -278,7 +278,7 @@ Tags let you organize agents for filtering on the Agents list page.
 ## Deleting an Agent
 
 1. Open the agent detail page.
-2. Open **Settings > Danger zone**, click **Delete Agent** and confirm in the dialog.
+2. Open **Settings > Danger zone**, click **Delete** and confirm in the dialog.
 
 **What is removed:**
 
@@ -307,7 +307,7 @@ Hidden agents are excluded from:
 ### Hiding an Agent
 
 1. Open the imported agent's detail page.
-2. In the **Danger Zone** section, click **Hide**.
+2. In the **Danger zone** section, click **Hide**.
 3. The agent disappears from all views immediately.
 
 ### Viewing and Unhiding Hidden Agents
@@ -325,7 +325,7 @@ Hidden agents are excluded from:
 For imported agents whose archive data is no longer needed, you can permanently delete all borg archives and remove the agent record.
 
 1. Open the imported agent's detail page.
-2. In the **Danger Zone** section, click **Delete Archives & Remove**.
+2. In the **Danger zone** section, click **Delete archives**.
 3. Confirm in the dialog — this action is irreversible.
 
 The server sends `borg delete` commands to connected agents for each repository containing archives from this agent. Once all archives are deleted, the agent record is removed from the database.

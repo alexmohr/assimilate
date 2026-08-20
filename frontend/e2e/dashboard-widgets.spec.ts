@@ -10,14 +10,14 @@ test.describe('Dashboard widgets', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(
-      page.getByText('Online Agents').or(page.getByText('ONLINE AGENTS')).first(),
+      page.getByText('Online agents').or(page.getByText('ONLINE AGENTS')).first(),
     ).toBeVisible()
     await expect(page.getByText('Overdue').or(page.getByText('OVERDUE')).first()).toBeVisible()
     await expect(
-      page.getByText('Last Backup').or(page.getByText('LAST BACKUP')).first(),
+      page.getByText('Last backup').or(page.getByText('LAST BACKUP')).first(),
     ).toBeVisible()
     await expect(
-      page.getByText('Total Storage').or(page.getByText('TOTAL STORAGE')).first(),
+      page.getByText('Total storage').or(page.getByText('TOTAL STORAGE')).first(),
     ).toBeVisible()
   })
 
@@ -117,7 +117,7 @@ test.describe('Dashboard widgets', () => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
-    const activityHeading = page.getByRole('heading', { name: 'Recent Activity' })
+    const activityHeading = page.getByRole('heading', { name: 'Recent activity' })
     await expect(activityHeading).toBeVisible()
     await expect(activityHeading.locator('..').getByText('db-server-01').first()).toBeVisible()
   })
@@ -127,7 +127,7 @@ test.describe('Dashboard widgets', () => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('heading', { name: 'Backup Stats' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Backup stats' })).toBeVisible()
   })
 })
 

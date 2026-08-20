@@ -164,7 +164,7 @@ describe('TunnelsView', () => {
 
     expect(wrapper.text()).toContain('No SSH tunnels configured')
     expect(wrapper.text()).toContain('Create a tunnel to access remote hosts.')
-    expect(wrapper.text()).toContain('Add Tunnel')
+    expect(wrapper.text()).toContain('New tunnel')
   })
 
   describe('tunnel dialogs', () => {
@@ -245,13 +245,13 @@ describe('TunnelsView', () => {
       const create = () => wrapper.findAll('button').find((b) => b.text() === 'Create')!
       expect(create().attributes('disabled')).toBeDefined()
 
-      await setByLabel(wrapper, 'SSH Host', '10.0.0.99')
+      await setByLabel(wrapper, 'SSH host', '10.0.0.99')
       expect(create().attributes('disabled')).toBeDefined()
 
       await setByLabel(wrapper, 'Agent', '4')
       expect(create().attributes('disabled')).toBeDefined()
 
-      await setByLabel(wrapper, 'Tunnel Port', '2225')
+      await setByLabel(wrapper, 'Tunnel port', '2225')
       expect(create().attributes('disabled')).toBeUndefined()
     })
 
@@ -271,9 +271,9 @@ describe('TunnelsView', () => {
       const wrapper = await render([...mockAgents, SPARE_AGENT])
       await openAdd(wrapper)
       await setByLabel(wrapper, 'Agent', '4')
-      await setByLabel(wrapper, 'SSH Host', '10.0.0.99')
-      await setByLabel(wrapper, 'SSH Port', '2022')
-      await setByLabel(wrapper, 'Tunnel Port', '2225')
+      await setByLabel(wrapper, 'SSH host', '10.0.0.99')
+      await setByLabel(wrapper, 'SSH port', '2022')
+      await setByLabel(wrapper, 'Tunnel port', '2225')
 
       await clickButton(wrapper, 'Create')
 
@@ -302,9 +302,9 @@ describe('TunnelsView', () => {
       const wrapper = await render([...mockAgents, SPARE_AGENT])
       await openAdd(wrapper)
       await setByLabel(wrapper, 'Agent', '4')
-      await setByLabel(wrapper, 'SSH Host', '10.0.0.99')
-      await setByLabel(wrapper, 'Tunnel Port', '2225')
-      await setByLabel(wrapper, 'SSH User', 'operator')
+      await setByLabel(wrapper, 'SSH host', '10.0.0.99')
+      await setByLabel(wrapper, 'Tunnel port', '2225')
+      await setByLabel(wrapper, 'SSH user', 'operator')
       await wrapper.find('.field-checkbox input[type="checkbox"]').setValue(false)
 
       await clickButton(wrapper, 'Create')
@@ -318,7 +318,7 @@ describe('TunnelsView', () => {
       const { createTunnel } = await import('../api/tunnels')
       const wrapper = await render([...mockAgents, SPARE_AGENT])
       await openAdd(wrapper)
-      expect(wrapper.text()).toContain('Add Tunnel')
+      expect(wrapper.text()).toContain('New tunnel')
 
       await clickButton(wrapper, 'Cancel')
 
@@ -337,10 +337,10 @@ describe('TunnelsView', () => {
         .trigger('click')
       await flushPromises()
 
-      await setByLabel(wrapper, 'SSH Host', '10.0.0.88')
-      await setByLabel(wrapper, 'SSH User', 'operator')
-      await setByLabel(wrapper, 'SSH Port', '2200')
-      await setByLabel(wrapper, 'Tunnel Port', '2299')
+      await setByLabel(wrapper, 'SSH host', '10.0.0.88')
+      await setByLabel(wrapper, 'SSH user', 'operator')
+      await setByLabel(wrapper, 'SSH port', '2200')
+      await setByLabel(wrapper, 'Tunnel port', '2299')
       await wrapper.find('.field-checkbox input[type="checkbox"]').setValue(false)
 
       await clickButton(wrapper, 'Save')
@@ -375,8 +375,8 @@ describe('TunnelsView', () => {
       const wrapper = await render([...mockAgents, SPARE_AGENT])
       await openAdd(wrapper)
       await setByLabel(wrapper, 'Agent', '4')
-      await setByLabel(wrapper, 'SSH Host', '10.0.0.99')
-      await setByLabel(wrapper, 'Tunnel Port', '2225')
+      await setByLabel(wrapper, 'SSH host', '10.0.0.99')
+      await setByLabel(wrapper, 'Tunnel port', '2225')
 
       await clickButton(wrapper, 'Create')
 
@@ -392,11 +392,11 @@ describe('TunnelsView', () => {
         .trigger('click')
       await flushPromises()
 
-      expect((fieldByLabel(wrapper, 'SSH Host').element as HTMLInputElement).value).toBe(
+      expect((fieldByLabel(wrapper, 'SSH host').element as HTMLInputElement).value).toBe(
         '10.0.0.12',
       )
-      expect((fieldByLabel(wrapper, 'SSH User').element as HTMLInputElement).value).toBe('borg')
-      expect((fieldByLabel(wrapper, 'SSH Port').element as HTMLInputElement).value).toBe('2222')
+      expect((fieldByLabel(wrapper, 'SSH user').element as HTMLInputElement).value).toBe('borg')
+      expect((fieldByLabel(wrapper, 'SSH port').element as HTMLInputElement).value).toBe('2222')
     })
 
     it('saves the edited tunnel back into the table', async () => {
@@ -412,7 +412,7 @@ describe('TunnelsView', () => {
         .find((b) => b.text() === 'Edit')!
         .trigger('click')
       await flushPromises()
-      await setByLabel(wrapper, 'SSH Host', '10.0.0.77')
+      await setByLabel(wrapper, 'SSH host', '10.0.0.77')
 
       await clickButton(wrapper, 'Save')
 

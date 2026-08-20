@@ -17,6 +17,8 @@ interface ApiToken {
 interface UseApiTokensReturn {
   tokens: Ref<ApiToken[]>
   loading: Ref<boolean>
+  /** Why the list is empty, when it is empty because the load failed. */
+  loadError: Ref<string>
   showCreateModal: Ref<boolean>
   createName: Ref<string>
   createError: Ref<string>
@@ -39,6 +41,7 @@ interface UseApiTokensReturn {
 export function useApiTokens(): UseApiTokensReturn {
   const tokens = ref<ApiToken[]>([])
   const loading = ref(true)
+  const loadError = ref('')
   const showCreateModal = ref(false)
   const createName = ref('')
   const createError = ref('')
@@ -52,9 +55,12 @@ export function useApiTokens(): UseApiTokensReturn {
 
   async function fetchTokens(): Promise<void> {
     loading.value = true
+    loadError.value = ''
     try {
       const res = await apiClient.get<{ tokens: ApiToken[] }>('/tokens')
       tokens.value = res.data.tokens
+    } catch (e: unknown) {
+      loadError.value = extractError(e, 'Failed to load API tokens')
     } finally {
       loading.value = false
     }
@@ -114,6 +120,7 @@ export function useApiTokens(): UseApiTokensReturn {
   return {
     tokens,
     loading,
+    loadError,
     showCreateModal,
     createName,
     createError,

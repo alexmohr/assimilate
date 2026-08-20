@@ -97,7 +97,7 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <div class="file-search">
     <div class="search-header">
-      <span class="search-title">File Search</span>
+      <span class="search-title">File search</span>
     </div>
 
     <div class="search-controls">
@@ -255,7 +255,7 @@ function handleKeydown(event: KeyboardEvent): void {
 .search-header {
   display: flex;
   align-items: center;
-  padding: 0.875rem 1.25rem;
+  padding: var(--space-5) var(--space-7);
   border-bottom: 1px solid var(--border);
 }
 
@@ -268,10 +268,10 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .search-controls {
-  padding: 1rem 1.25rem;
+  padding: var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .archive-select-row,
@@ -279,7 +279,7 @@ function handleKeydown(event: KeyboardEvent): void {
 .pattern-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .field-label {
@@ -296,11 +296,11 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .search-results {
-  padding: 0 1.25rem 1.25rem;
+  padding: 0 var(--space-7) var(--space-7);
 }
 
 .results-summary {
-  margin-top: 0.75rem;
+  margin-top: var(--space-5);
   font-size: var(--fs-sm);
   color: var(--text-muted);
 }

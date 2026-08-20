@@ -15,7 +15,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     id="protection-coverage"
     class="panel"
   >
-    <h2 class="panel-title">Protection Coverage</h2>
+    <h2 class="panel-title">Protection coverage</h2>
     <RouterLink
       class="coverage-score"
       to="/agents?coverage=protected"
@@ -68,8 +68,8 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 .coverage-score {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
-  margin-bottom: 1rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
   color: inherit;
   text-decoration: none;
 }
@@ -95,7 +95,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 
 .coverage-facts {
   display: grid;
-  gap: 0.6rem;
+  gap: var(--space-4);
   margin: 0;
 }
 
@@ -106,8 +106,8 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 .coverage-facts a {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
-  padding-top: 0.6rem;
+  gap: var(--space-6);
+  padding-top: var(--space-4);
   color: inherit;
   text-decoration: none;
 }
@@ -125,12 +125,12 @@ dd {
 .host-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 1rem;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
 }
 
 .host-links a {
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-pill);
   background: var(--bg-base);
   color: var(--accent);

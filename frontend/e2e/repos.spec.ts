@@ -44,6 +44,37 @@ test.describe('Repositories management journey', () => {
     expect(hasEncryption).toBe(true)
   })
 
+  // The five cards that used to stack on Overview now sit behind a settings
+  // sub-nav, so simply loading /repos/1 no longer mounts them - and no longer
+  // calls the endpoints they read. Walking the rail keeps that server-side
+  // path exercised (quota, tags, the repository record and its SSH host key)
+  // and covers the navigation itself, which only had the danger pane before.
+  test('the repository Settings rail opens each of its panes', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos/1?tab=settings&section=repository')
+    await page.waitForLoadState('networkidle')
+
+    const rail = page.locator('.settings-nav')
+    const pane = page.locator('.settings-pane')
+
+    await expect(rail.locator('.settings-nav-item[aria-current="true"]')).toHaveText('Repository')
+    await expect(pane).toContainText('borg@')
+
+    // The rail names each pane, so a pane proves it mounted by its own
+    // content rather than by a heading repeating the rail item.
+    await rail.getByRole('button', { name: 'Storage quota' }).click()
+    await expect(pane.locator('.pane-lede')).toContainText('How much space this repository may use')
+    await expect(page).toHaveURL(/section=quota/)
+
+    await rail.getByRole('button', { name: 'Tags' }).click()
+    await expect(pane.getByPlaceholder('New tag name')).toBeVisible()
+    await expect(page).toHaveURL(/section=tags/)
+
+    await rail.getByRole('button', { name: 'Borg console' }).click()
+    await expect(pane.getByLabel('borg command')).toBeVisible()
+    await expect(page).toHaveURL(/section=console/)
+  })
+
   test('clicking a repo from the list navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/repos')
@@ -105,20 +136,20 @@ test.describe('Repositories management journey', () => {
     page,
   }) => {
     await loginAsAdmin(page)
-    await page.goto('/repos/1')
+    await page.goto('/repos/1?tab=settings&section=danger')
     await page.waitForLoadState('networkidle')
 
-    const dangerZone = page.locator('.danger-zone')
-    const breakLockBtn = dangerZone.getByRole('button', { name: 'Break Lock', exact: true })
+    const dangerZone = page.locator('.settings-pane')
+    const breakLockBtn = dangerZone.getByRole('button', { name: 'Break lock', exact: true })
     await expect(breakLockBtn).toBeVisible()
     await breakLockBtn.click()
 
-    await expect(page.locator('.modal-title')).toHaveText('Break Repository Lock')
+    await expect(page.locator('.modal-title')).toHaveText('Break repository lock')
     await expect(page.locator('.break-lock-warning').first()).toContainText(
       'stale local cache lock',
     )
 
-    await page.getByRole('button', { name: 'Yes, Break Lock', exact: true }).click()
+    await page.getByRole('button', { name: 'Yes, break lock', exact: true }).click()
 
     // Demo repo has no active lock, so borg break-lock is a safe no-op that
     // still reports success - the exact wording isn't asserted since it's

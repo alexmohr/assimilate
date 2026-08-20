@@ -281,7 +281,7 @@ onMounted(() => {
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -290,7 +290,7 @@ onMounted(() => {
       :icon="Cable"
       title="No SSH tunnels configured"
       description="Create a tunnel to access remote hosts."
-      action="Add Tunnel"
+      action="New tunnel"
       @action="showAddDialog = true"
     />
 
@@ -302,10 +302,10 @@ onMounted(() => {
         <thead>
           <tr>
             <th>Agent</th>
-            <th>SSH Host</th>
-            <th>SSH User</th>
-            <th>SSH Port</th>
-            <th>Tunnel Port</th>
+            <th>SSH host</th>
+            <th>SSH user</th>
+            <th>SSH port</th>
+            <th>Tunnel port</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
@@ -370,7 +370,7 @@ onMounted(() => {
     <!-- Add Tunnel Dialog -->
     <BaseModal
       :open="showAddDialog"
-      title="Add Tunnel"
+      title="New tunnel"
       @close="showAddDialog = false"
     >
       <div class="field">
@@ -395,7 +395,7 @@ onMounted(() => {
         </select>
       </div>
       <div class="field">
-        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <label class="field-label">SSH host <span class="required">*</span></label>
         <input
           v-model="addForm.ssh_host"
           class="input mono"
@@ -404,7 +404,7 @@ onMounted(() => {
       </div>
       <div class="field-row">
         <div class="field">
-          <label class="field-label">SSH User</label>
+          <label class="field-label">SSH user</label>
           <input
             v-model="addForm.ssh_user"
             class="input mono"
@@ -412,7 +412,7 @@ onMounted(() => {
           />
         </div>
         <div class="field field-narrow">
-          <label class="field-label">SSH Port</label>
+          <label class="field-label">SSH port</label>
           <input
             v-model.number="addForm.ssh_port"
             class="input"
@@ -423,7 +423,7 @@ onMounted(() => {
         </div>
       </div>
       <div class="field">
-        <label class="field-label">Tunnel Port <span class="required">*</span></label>
+        <label class="field-label">Tunnel port <span class="required">*</span></label>
         <input
           v-model.number="addForm.tunnel_port"
           class="input"
@@ -472,11 +472,11 @@ onMounted(() => {
     <!-- Edit Tunnel Dialog -->
     <BaseModal
       :open="showEditDialog"
-      title="Edit Tunnel"
+      title="Edit tunnel"
       @close="showEditDialog = false"
     >
       <div class="field">
-        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <label class="field-label">SSH host <span class="required">*</span></label>
         <input
           v-model="editForm.ssh_host"
           class="input mono"
@@ -485,7 +485,7 @@ onMounted(() => {
       </div>
       <div class="field-row">
         <div class="field">
-          <label class="field-label">SSH User</label>
+          <label class="field-label">SSH user</label>
           <input
             v-model="editForm.ssh_user"
             class="input mono"
@@ -493,7 +493,7 @@ onMounted(() => {
           />
         </div>
         <div class="field field-narrow">
-          <label class="field-label">SSH Port</label>
+          <label class="field-label">SSH port</label>
           <input
             v-model.number="editForm.ssh_port"
             class="input"
@@ -504,7 +504,7 @@ onMounted(() => {
         </div>
       </div>
       <div class="field">
-        <label class="field-label">Tunnel Port <span class="required">*</span></label>
+        <label class="field-label">Tunnel port <span class="required">*</span></label>
         <input
           v-model.number="editForm.tunnel_port"
           class="input"
@@ -549,7 +549,7 @@ onMounted(() => {
     <!-- Delete Tunnel Dialog -->
     <BaseModal
       :open="showDeleteDialog"
-      title="Delete Tunnel"
+      title="Delete tunnel"
       size="sm"
       @close="showDeleteDialog = false"
     >
@@ -584,7 +584,7 @@ onMounted(() => {
     <!-- Error Detail Dialog -->
     <BaseModal
       :open="expandedErrorId !== null"
-      title="Tunnel Error"
+      title="Tunnel error"
       size="sm"
       @close="closeErrorDetail"
     >
@@ -614,7 +614,7 @@ onMounted(() => {
 .status-cell {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .status-dot {
@@ -652,7 +652,7 @@ onMounted(() => {
 
 .row-actions {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 
 .field-checkbox {
@@ -663,7 +663,7 @@ onMounted(() => {
 .checkbox-label {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   cursor: pointer;
   font-size: var(--fs-base);
   color: var(--text-secondary);

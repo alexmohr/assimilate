@@ -130,113 +130,114 @@ async function resetAndSync(): Promise<void> {
 </script>
 
 <template>
-  <div class="info-card danger-zone">
-    <h3 class="info-title">Danger Zone</h3>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Confirm Repository Relocation</span>
-        <span class="danger-desc">
-          Allow the next backup to accept this repository at its current location. Use this when
-          borg reports the repository was previously at a different path. The flag is cleared
-          automatically after the backup succeeds.
-        </span>
-      </div>
-      <div class="danger-action-wrap">
-        <button
-          class="btn btn-sm btn-danger"
-          :disabled="confirmRelocationLoading"
-          @click="showConfirmRelocationDialog = true"
-        >
-          {{ confirmRelocationLoading ? 'Confirming...' : 'Confirm Relocation' }}
-        </button>
-        <span
-          v-if="repo.relocation_pending"
-          class="danger-hint"
-        >
-          Relocation already pending — will apply on the next backup run.
-        </span>
-      </div>
+  <p class="pane-lede">
+    Irreversible or disruptive operations on <span class="mono">{{ repo.name }}</span
+    >. Each one confirms before it acts.
+  </p>
+  <div class="danger-body">
+    <div class="danger-info">
+      <span class="danger-heading">Confirm repository relocation</span>
+      <span class="danger-desc">
+        Allow the next backup to accept this repository at its current location. Use this when borg
+        reports the repository was previously at a different path. The flag is cleared automatically
+        after the backup succeeds.
+      </span>
     </div>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Break Repository Lock</span>
-        <span class="danger-desc">
-          Remove a stale lock from the repository, including a stale local cache lock left behind by
-          a crashed or forcibly killed backup process. Using this while a backup is in progress will
-          corrupt the repository.
-        </span>
-      </div>
-      <div class="danger-action-wrap">
-        <button
-          class="btn btn-sm btn-danger"
-          :disabled="!!currentOp || breakLockLoading"
-          :title="currentOp ? repoOpLabel(currentOp) : undefined"
-          @click="showBreakLockDialog = true"
-        >
-          {{ breakLockLoading ? 'Breaking...' : 'Break Lock' }}
-        </button>
-        <span
-          v-if="currentOp"
-          class="danger-hint"
-        >
-          {{ repoOpLabel(currentOp) }}
-        </span>
-      </div>
-    </div>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Remove Repository</span>
-        <span class="danger-desc"
-          >Remove this repository from the UI and database. All associated schedules will be
-          <strong>disabled</strong> and their repository link removed — they must be fixed manually.
-          Reports will be deleted. The repository data on disk is NOT touched.</span
-        >
-      </div>
+    <div class="danger-action-wrap">
       <button
         class="btn btn-sm btn-danger"
-        @click="showRemoveDialog = true"
+        :disabled="confirmRelocationLoading"
+        @click="showConfirmRelocationDialog = true"
       >
-        Remove Repository
+        {{ confirmRelocationLoading ? 'Confirming...' : 'Confirm relocation' }}
       </button>
+      <span
+        v-if="repo.relocation_pending"
+        class="danger-hint"
+      >
+        Relocation already pending — will apply on the next backup run.
+      </span>
     </div>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Delete Repository</span>
-        <span class="danger-desc"
-          >PERMANENTLY DESTROY this repository from disk (rm -rf via SSH). This is irreversible and
-          all backup data will be lost forever.</span
-        >
-      </div>
+  </div>
+  <div class="danger-body">
+    <div class="danger-info">
+      <span class="danger-heading">Break repository lock</span>
+      <span class="danger-desc">
+        Remove a stale lock from the repository, including a stale local cache lock left behind by a
+        crashed or forcibly killed backup process. Using this while a backup is in progress will
+        corrupt the repository.
+      </span>
+    </div>
+    <div class="danger-action-wrap">
       <button
         class="btn btn-sm btn-danger"
-        @click="showDeleteDialog = true"
+        :disabled="!!currentOp || breakLockLoading"
+        :title="currentOp ? repoOpLabel(currentOp) : undefined"
+        @click="showBreakLockDialog = true"
       >
-        Delete Repository
+        {{ breakLockLoading ? 'Breaking...' : 'Break lock' }}
       </button>
-    </div>
-    <div class="danger-body">
-      <div class="danger-info">
-        <span class="danger-heading">Reset &amp; Re-import</span>
-        <span class="danger-desc">
-          Delete ALL archive metadata (backup reports, file indexes, tags) and re-import from the
-          borg repository on disk. Use this when archives show as unmatched despite matching
-          hostnames. The repository data on disk is NOT touched.
-        </span>
-      </div>
-      <button
-        class="btn btn-sm btn-danger"
-        :disabled="resetAndSyncLoading"
-        @click="showResetAndSyncDialog = true"
+      <span
+        v-if="currentOp"
+        class="danger-hint"
       >
-        {{ resetAndSyncLoading ? 'Resetting...' : 'Reset &amp; Re-import' }}
-      </button>
+        {{ repoOpLabel(currentOp) }}
+      </span>
     </div>
+  </div>
+  <div class="danger-body">
+    <div class="danger-info">
+      <span class="danger-heading">Remove repository</span>
+      <span class="danger-desc"
+        >Remove this repository from the UI and database. All associated schedules will be
+        <strong>disabled</strong> and their repository link removed — they must be fixed manually.
+        Reports will be deleted. The repository data on disk is NOT touched.</span
+      >
+    </div>
+    <button
+      class="btn btn-sm btn-danger"
+      @click="showRemoveDialog = true"
+    >
+      Remove repository
+    </button>
+  </div>
+  <div class="danger-body">
+    <div class="danger-info">
+      <span class="danger-heading">Delete repository</span>
+      <span class="danger-desc"
+        >PERMANENTLY DESTROY this repository from disk (rm -rf via SSH). This is irreversible and
+        all backup data will be lost forever.</span
+      >
+    </div>
+    <button
+      class="btn btn-sm btn-danger"
+      @click="showDeleteDialog = true"
+    >
+      Delete repository
+    </button>
+  </div>
+  <div class="danger-body">
+    <div class="danger-info">
+      <span class="danger-heading">Reset and re-import</span>
+      <span class="danger-desc">
+        Delete ALL archive metadata (backup reports, file indexes, tags) and re-import from the borg
+        repository on disk. Use this when archives show as unmatched despite matching hostnames. The
+        repository data on disk is NOT touched.
+      </span>
+    </div>
+    <button
+      class="btn btn-sm btn-danger"
+      :disabled="resetAndSyncLoading"
+      @click="showResetAndSyncDialog = true"
+    >
+      {{ resetAndSyncLoading ? 'Resetting...' : 'Reset and re-import' }}
+    </button>
   </div>
 
   <!-- Delete Confirmation Dialog -->
   <BaseModal
     :open="showDeleteDialog"
-    title="⚠️ DESTROY Repository From Disk"
+    title="Destroy repository from disk"
     @close="showDeleteDialog = false"
   >
     <p style="color: var(--danger); font-weight: 600">
@@ -273,7 +274,7 @@ async function resetAndSync(): Promise<void> {
   <!-- Remove (DB only) Confirmation Dialog -->
   <BaseModal
     :open="showRemoveDialog"
-    title="Remove Repository"
+    title="Remove repository"
     @close="showRemoveDialog = false"
   >
     <p>
@@ -305,7 +306,7 @@ async function resetAndSync(): Promise<void> {
   <!-- Confirm Relocation Dialog -->
   <BaseModal
     :open="showConfirmRelocationDialog"
-    title="Confirm Repository Relocation"
+    title="Confirm repository relocation"
     @close="showConfirmRelocationDialog = false"
   >
     <p class="break-lock-warning">
@@ -339,7 +340,7 @@ async function resetAndSync(): Promise<void> {
         :disabled="confirmRelocationLoading"
         @click="doConfirmRelocation"
       >
-        {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, Confirm Relocation' }}
+        {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, confirm relocation' }}
       </button>
     </template>
   </BaseModal>
@@ -347,7 +348,7 @@ async function resetAndSync(): Promise<void> {
   <!-- Reset & Re-import Confirmation Dialog -->
   <BaseModal
     :open="showResetAndSyncDialog"
-    title="Reset &amp; Re-import?"
+    title="Reset &amp; re-import?"
     @close="showResetAndSyncDialog = false"
   >
     <p style="color: var(--danger); font-weight: 600">
@@ -379,7 +380,7 @@ async function resetAndSync(): Promise<void> {
   <!-- Break Lock Confirmation Dialog -->
   <BaseModal
     :open="showBreakLockDialog"
-    title="Break Repository Lock"
+    title="Break repository lock"
     @close="showBreakLockDialog = false"
   >
     <p class="break-lock-warning">
@@ -414,7 +415,7 @@ async function resetAndSync(): Promise<void> {
         :disabled="breakLockLoading"
         @click="confirmBreakLock"
       >
-        {{ breakLockLoading ? 'Breaking Lock...' : 'Yes, Break Lock' }}
+        {{ breakLockLoading ? 'Breaking lock...' : 'Yes, break lock' }}
       </button>
     </template>
   </BaseModal>
@@ -422,8 +423,8 @@ async function resetAndSync(): Promise<void> {
 
 <style scoped>
 .break-lock-success {
-  margin-top: 0.75rem;
-  padding: 0.75rem;
+  margin-top: var(--space-5);
+  padding: var(--space-5);
   background: var(--success-subtle);
   border-radius: var(--radius-sm);
   font-size: var(--fs-base);

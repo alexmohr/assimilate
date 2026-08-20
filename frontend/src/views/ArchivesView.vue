@@ -134,7 +134,7 @@ onMounted(loadRepos)
     </div>
     <div
       v-else-if="reposError"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ reposError }}
     </div>
@@ -218,7 +218,7 @@ onMounted(loadRepos)
             </div>
             <div
               v-else-if="archivesError"
-              class="state-msg state-error"
+              class="error-banner"
             >
               {{ archivesError }}
             </div>
@@ -435,8 +435,8 @@ onMounted(loadRepos)
 .repo-selector {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
 }
 
 .selector-label {
@@ -451,11 +451,6 @@ onMounted(loadRepos)
 .muted-hint {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-}
-
-.panel-actions {
-  display: flex;
-  gap: 0.25rem;
 }
 
 .td-mono {

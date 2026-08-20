@@ -70,7 +70,7 @@ withDefaults(defineProps<Props>(), {
 .skeleton-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .skeleton-line,
@@ -89,8 +89,8 @@ withDefaults(defineProps<Props>(), {
 .skeleton-card {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 1.25rem;
+  gap: var(--space-5);
+  padding: var(--space-7);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
 }

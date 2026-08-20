@@ -427,14 +427,8 @@ async function fetchOverview(): Promise<void> {
 <template>
   <div class="dashboard">
     <template v-if="loading">
-      <div style="display: flex; flex-direction: column; gap: 1.5rem">
-        <div
-          style="
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 1rem;
-          "
-        >
+      <div class="dashboard-skeleton">
+        <div class="dashboard-skeleton-tiles">
           <BaseSkeleton
             v-for="i in 6"
             :key="i"
@@ -456,10 +450,10 @@ async function fetchOverview(): Promise<void> {
     <template v-else>
       <section class="status-banner">
         <div
-          class="stat-card stat-card-link"
+          class="tile tile--lg tile--link"
           @click="router.push({ name: 'agents', query: { status: 'offline' } })"
         >
-          <span class="stat-label">Online Agents</span>
+          <span class="stat-label">Online agents</span>
           <span class="stat-value stat-value--xl">
             <span
               class="stat-dot"
@@ -469,14 +463,14 @@ async function fetchOverview(): Promise<void> {
           </span>
         </div>
         <div
-          class="stat-card stat-card-link"
+          class="tile tile--lg tile--link"
           @click="router.push({ name: 'repos' })"
         >
           <span class="stat-label">Repositories</span>
           <span class="stat-value stat-value--xl">{{ summary?.total_repos ?? 0 }}</span>
         </div>
         <div
-          class="stat-card stat-card-link"
+          class="tile tile--lg tile--link"
           @click="router.push({ name: 'schedules', query: { filter: 'overdue' } })"
         >
           <span class="stat-label">Overdue</span>
@@ -488,23 +482,23 @@ async function fetchOverview(): Promise<void> {
           </span>
         </div>
         <div
-          class="stat-card"
-          :class="{ 'stat-card-link': summary?.last_backup_repo_id }"
+          class="tile tile--lg"
+          :class="{ 'tile--link': summary?.last_backup_repo_id }"
           @click="navigateToLastBackup"
         >
-          <span class="stat-label">Last Backup</span>
+          <span class="stat-label">Last backup</span>
           <span class="stat-value stat-value--lg">
             {{ summary?.last_backup_at ? relativeTime(summary.last_backup_at) : '\u2014' }}
           </span>
         </div>
         <div
-          class="stat-card"
-          :class="{ 'stat-card-link': summary?.next_backup_schedule_id }"
+          class="tile tile--lg"
+          :class="{ 'tile--link': summary?.next_backup_schedule_id }"
           @click="
             summary?.next_backup_schedule_id && navigateToSchedule(summary.next_backup_schedule_id)
           "
         >
-          <span class="stat-label">Next Backup</span>
+          <span class="stat-label">Next backup</span>
           <span class="stat-value stat-value--lg">
             <template v-if="activeBackups.length > 0">Active</template>
             <template v-else>
@@ -512,18 +506,18 @@ async function fetchOverview(): Promise<void> {
             </template>
           </span>
         </div>
-        <div class="stat-card">
-          <span class="stat-label">Total Storage</span>
+        <div class="tile tile--lg">
+          <span class="stat-label">Total storage</span>
           <span class="stat-value stat-value--lg">
             {{ formatBytes(summary?.total_storage_bytes ?? 0) }}
           </span>
         </div>
         <div
-          class="stat-card"
-          :class="{ 'stat-card-link': summary?.last_failure_at }"
+          class="tile tile--lg"
+          :class="{ 'tile--link': summary?.last_failure_at }"
           @click="navigateToLastFailure"
         >
-          <span class="stat-label">Last Failure</span>
+          <span class="stat-label">Last failure</span>
           <span
             class="stat-value stat-value--lg"
             :class="{ 'stat-danger': summary?.last_failure_at }"
@@ -532,11 +526,11 @@ async function fetchOverview(): Promise<void> {
           </span>
         </div>
         <div
-          class="stat-card"
-          :class="{ 'stat-card-link': summary?.last_warning_at }"
+          class="tile tile--lg"
+          :class="{ 'tile--link': summary?.last_warning_at }"
           @click="navigateToLastWarning"
         >
-          <span class="stat-label">Last Warning</span>
+          <span class="stat-label">Last warning</span>
           <span
             class="stat-value stat-value--lg"
             :class="{ 'stat-warning': summary?.last_warning_at }"
@@ -551,7 +545,7 @@ async function fetchOverview(): Promise<void> {
         v-if="activeBackups.length > 0"
         class="panel active-backups-panel"
       >
-        <h2 class="panel-title">Backups In Progress</h2>
+        <h2 class="panel-title">Backups in progress</h2>
         <div class="active-backups-list">
           <div
             v-for="backup in activeBackups"
@@ -648,7 +642,7 @@ async function fetchOverview(): Promise<void> {
           <!-- Section 2: 30-Day Success Ring -->
           <section class="panel">
             <div class="panel-header">
-              <h2 class="panel-title">Success Rate</h2>
+              <h2 class="panel-title">Success rate</h2>
               <ChartRangeControls
                 v-model:repo-id="successRepoFilter"
                 v-model:days="successDaysFilter"
@@ -693,26 +687,26 @@ async function fetchOverview(): Promise<void> {
                 <span class="ring-sub"> {{ successCount }}/{{ successTotal }} OK </span>
               </div>
             </div>
-            <div class="ring-legend">
+            <div class="chart-legend">
               <span
-                class="legend-item legend-pass legend-link"
+                class="chart-legend-item chart-legend-item--link legend-pass"
                 @click="router.push({ name: 'schedules', query: { filter: 'success' } })"
               >
-                <span class="legend-dot" />
+                <span class="chart-legend-swatch chart-legend-swatch--dot" />
                 Passed: {{ successCount }}
               </span>
               <span
-                class="legend-item legend-warn legend-link"
+                class="chart-legend-item chart-legend-item--link legend-warn"
                 @click="router.push({ name: 'schedules', query: { filter: 'warning' } })"
               >
-                <span class="legend-dot" />
+                <span class="chart-legend-swatch chart-legend-swatch--dot" />
                 Warned: {{ warnedCount }}
               </span>
               <span
-                class="legend-item legend-fail legend-link"
+                class="chart-legend-item chart-legend-item--link legend-fail"
                 @click="router.push({ name: 'schedules', query: { filter: 'failed' } })"
               >
-                <span class="legend-dot" />
+                <span class="chart-legend-swatch chart-legend-swatch--dot" />
                 Failed: {{ failedCount }}
               </span>
             </div>
@@ -721,7 +715,7 @@ async function fetchOverview(): Promise<void> {
           <!-- Section 3: Storage Donut -->
           <section class="panel">
             <div class="panel-header">
-              <h2 class="panel-title">Storage Breakdown</h2>
+              <h2 class="panel-title">Storage breakdown</h2>
             </div>
             <p class="chart-desc">
               Current on-disk usage per repository — deduplicated (unique chunks across all
@@ -761,20 +755,20 @@ async function fetchOverview(): Promise<void> {
                 <span class="ring-sub">{{ storageDonuts.length }} repos</span>
               </div>
             </div>
-            <div class="storage-legend">
+            <div class="chart-legend chart-legend--stack">
               <div
                 v-for="seg in storageLegendItems"
                 :key="seg.name"
-                class="storage-legend-item"
-                :class="{ 'storage-legend-item-hidden': seg.hidden }"
+                class="chart-legend-item chart-legend-item--toggle"
+                :class="{ 'chart-legend-item--off': seg.hidden }"
                 @click="toggleSegment(seg.name)"
               >
                 <span
-                  class="legend-color"
+                  class="chart-legend-swatch"
                   :style="{ background: seg.hidden ? 'var(--border)' : seg.color }"
                 />
-                <span class="legend-name">{{ seg.name }}</span>
-                <span class="legend-detail"
+                <span class="chart-legend-name">{{ seg.name }}</span>
+                <span class="chart-legend-detail"
                   >{{ formatBytes(seg.compressedSize) }} compressed &middot;
                   {{ formatBytes(seg.size) }} dedup</span
                 >
@@ -796,15 +790,29 @@ async function fetchOverview(): Promise<void> {
 .dashboard {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--space-8);
   max-width: 1100px;
   margin: 0 auto;
+}
+
+/* The loading placeholder mirrors the loaded layout: one column of cards
+   over a row of tiles. */
+.dashboard-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.dashboard-skeleton-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-6);
 }
 
 .stats-coverage-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
   align-items: stretch;
   min-width: 0;
 }
@@ -837,14 +845,14 @@ async function fetchOverview(): Promise<void> {
 .attention-row {
   display: grid;
   grid-template-columns: 3fr 2fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
   align-items: start;
 }
 
 .attention-sidebar {
   display: grid;
   grid-template-rows: 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .attention-row-full {
@@ -860,7 +868,7 @@ async function fetchOverview(): Promise<void> {
 .status-banner {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 @media (max-width: 640px) {
@@ -871,28 +879,6 @@ async function fetchOverview(): Promise<void> {
     flex-direction: column;
     align-items: flex-start;
   }
-}
-
-.stat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.stat-card-link {
-  cursor: pointer;
-  transition:
-    border-color var(--duration-base),
-    background var(--duration-base);
-}
-
-.stat-card-link:hover {
-  border-color: var(--accent);
-  background: var(--bg-hover);
 }
 
 .stat-danger {
@@ -914,13 +900,13 @@ async function fetchOverview(): Promise<void> {
 .main-grid {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .rings-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 /* Panel */
@@ -935,7 +921,7 @@ async function fetchOverview(): Promise<void> {
   position: relative;
   width: 160px;
   height: 160px;
-  margin: 0 auto 1rem;
+  margin: 0 auto var(--space-6);
 }
 
 .ring-svg {
@@ -972,99 +958,20 @@ async function fetchOverview(): Promise<void> {
 }
 
 /* Success ring legend */
-.ring-legend {
-  display: flex;
-  justify-content: center;
-  gap: 1.25rem;
-}
 
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-}
-
-.legend-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.legend-pass .legend-dot {
+.legend-pass .chart-legend-swatch {
   background: var(--success);
 }
 
-.legend-warn .legend-dot {
+.legend-warn .chart-legend-swatch {
   background: var(--warning);
 }
 
-.legend-fail .legend-dot {
+.legend-fail .chart-legend-swatch {
   background: var(--danger);
 }
 
-.legend-link {
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  padding: 2px 6px;
-  transition: background var(--duration-base);
-}
-
-.legend-link:hover {
-  background: var(--bg-hover);
-  text-decoration: underline;
-}
-
 /* Storage legend */
-.storage-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.storage-legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  user-select: none;
-  transition: opacity var(--duration-base);
-}
-
-.storage-legend-item:hover {
-  opacity: 0.7;
-}
-
-.storage-legend-item-hidden {
-  opacity: 0.4;
-}
-
-.storage-legend-item-hidden .legend-name {
-  text-decoration: line-through;
-}
-
-.legend-color {
-  width: 10px;
-  height: 10px;
-  border-radius: 0;
-  flex-shrink: 0;
-}
-
-.legend-name {
-  font-weight: 600;
-  color: var(--text-primary);
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.legend-detail {
-  color: var(--text-muted);
-  white-space: nowrap;
-}
 
 /* Health Cards */
 
@@ -1072,7 +979,7 @@ async function fetchOverview(): Promise<void> {
 .trends-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
+  gap: var(--space-8);
   align-items: start;
 }
 
@@ -1099,20 +1006,20 @@ async function fetchOverview(): Promise<void> {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem;
+  padding: var(--space-7);
 }
 
 .active-backups-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .active-backup-item {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   font-size: var(--fs-base);
 }
 

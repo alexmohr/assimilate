@@ -146,7 +146,7 @@ const dedupOptions = computed(() => {
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title panel-title--truncate">Backup Size Trends (Deduplicated)</h2>
+      <h2 class="panel-title panel-title--truncate">Backup size trends (deduplicated)</h2>
       <ChartRangeControls
         v-model:repo-id="selectedRepoId"
         v-model:days="selectedDays"
@@ -198,6 +198,6 @@ const dedupOptions = computed(() => {
 .charts-row {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-7);
 }
 </style>

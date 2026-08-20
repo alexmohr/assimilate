@@ -96,14 +96,14 @@ const SECTIONS: readonly PatternSection[] = [
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.875rem;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .ref-panel--inline {
-  margin-top: 0.5rem;
+  margin-top: var(--space-4);
 }
 
 /* The excludes page shows it as a sticky column beside the editor. */
@@ -112,8 +112,8 @@ const SECTIONS: readonly PatternSection[] = [
   flex-shrink: 0;
   background: var(--bg-card);
   border-radius: var(--radius);
-  padding: 1.25rem;
-  gap: 1rem;
+  padding: var(--space-7);
+  gap: var(--space-6);
   position: sticky;
   top: 1rem;
 }
@@ -124,24 +124,24 @@ const SECTIONS: readonly PatternSection[] = [
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
-  padding-bottom: 0.5rem;
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 
 .ref-panel--sidebar .ref-title {
   font-size: var(--fs-base);
-  padding-bottom: 0.75rem;
+  padding-bottom: var(--space-5);
 }
 
 .ref-section {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-3);
 }
 
 .ref-panel--sidebar .ref-section-title {
   font-size: var(--fs-xs);
-  margin-bottom: 0.2rem;
+  margin-bottom: var(--space-2);
 }
 
 .ref-section-title code {
@@ -156,14 +156,14 @@ const SECTIONS: readonly PatternSection[] = [
 .ref-entry {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 /* The sidebar is too narrow for a code/meaning pair on one line. */
 .ref-panel--sidebar .ref-entry {
   flex-direction: column;
   align-items: stretch;
-  gap: 0.1rem;
+  gap: var(--space-1);
 }
 
 .ref-entry code {
@@ -171,7 +171,7 @@ const SECTIONS: readonly PatternSection[] = [
   font-size: var(--fs-xs);
   color: var(--text-primary);
   background: var(--bg-card);
-  padding: 0.1rem 0.35rem;
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-sm);
 }
 
@@ -179,7 +179,7 @@ const SECTIONS: readonly PatternSection[] = [
   font-size: var(--fs-sm);
   display: inline-block;
   background: var(--bg-base);
-  padding: 0.15rem 0.4rem;
+  padding: var(--space-1) var(--space-3);
 }
 
 .ref-entry span {
@@ -191,12 +191,12 @@ const SECTIONS: readonly PatternSection[] = [
   font-size: var(--fs-xs);
   color: var(--text-muted);
   line-height: 1.5;
-  padding-top: 0.5rem;
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
 
 .ref-panel--sidebar .ref-entry span {
   font-size: var(--fs-xs);
-  padding-left: 0.25rem;
+  padding-left: var(--space-2);
 }
 </style>

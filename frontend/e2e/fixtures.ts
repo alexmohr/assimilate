@@ -175,19 +175,19 @@ export { expect }
 // some terminal state first, since callers vary in how much they've already
 // waited for the archives fetch to resolve.
 export async function expandAllArchiveGroups(page: Page): Promise<void> {
-  // The loading spinner shares the .state-msg-sm class with the genuine
+  // The loading spinner shares the .state-msg--inline class with the genuine
   // terminal empty/error states, so waiting for "any of archive-group /
-  // archive-row-detailed / state-msg-sm" can resolve on the transient
+  // archive-row-detailed / state-msg--inline" can resolve on the transient
   // spinner before the archive groups actually render, leaving them
   // collapsed for the rest of the test. Wait out the spinner explicitly
   // first.
   await page
-    .locator('.state-msg-sm .spinner-icon')
+    .locator('.state-msg--inline .spinner-icon')
     .waitFor({ state: 'hidden', timeout: 20_000 })
     .catch(() => {})
 
   await page
-    .locator('.archive-group, .archive-row-detailed, .state-msg-sm')
+    .locator('.archive-group, .archive-row-detailed, .state-msg--inline')
     .first()
     .waitFor({ state: 'visible', timeout: 20_000 })
     .catch(() => {})

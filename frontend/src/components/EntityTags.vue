@@ -111,76 +111,73 @@ defineExpose({ reload: load })
 </script>
 
 <template>
-  <div class="info-card">
-    <h3 class="info-title">Tags</h3>
-    <div class="tags-section">
-      <div
-        v-if="assigned.length > 0"
-        class="tag-list"
-      >
-        <span
-          v-for="tag in assigned"
-          :key="tag.id"
-          class="tag-pill"
-          :style="{
-            background: tag.color + '22',
-            color: tag.color,
-            borderColor: tag.color + '44',
-          }"
-        >
-          {{ tag.name }}
-          <button
-            class="tag-remove"
-            :aria-label="`Remove tag ${tag.name}`"
-            @click="removeTag(tag.id)"
-          >
-            <X :size="12" />
-          </button>
-        </span>
-      </div>
+  <div class="tags-section">
+    <div
+      v-if="assigned.length > 0"
+      class="tag-list"
+    >
       <span
-        v-else
-        class="muted"
-        >No tags assigned.</span
+        v-for="tag in assigned"
+        :key="tag.id"
+        class="tag-pill"
+        :style="{
+          background: tag.color + '22',
+          color: tag.color,
+          borderColor: tag.color + '44',
+        }"
       >
-
-      <div class="tag-add-row">
-        <select
-          v-if="available.length > 0"
-          class="input input-sm"
-          aria-label="Add existing tag"
-          @change="onSelectExisting"
+        {{ tag.name }}
+        <button
+          class="tag-remove"
+          :aria-label="`Remove tag ${tag.name}`"
+          @click="removeTag(tag.id)"
         >
-          <option value="">Add existing tag...</option>
-          <option
-            v-for="t in available"
-            :key="t.id"
-            :value="t.id"
-          >
-            {{ t.name }}
-          </option>
-        </select>
-        <div class="tag-create-inline">
-          <input
-            v-model="newTagName"
-            class="input input-sm"
-            placeholder="New tag name"
-            aria-label="New tag name"
-          />
-          <input
-            v-model="newTagColor"
-            class="input color-input"
-            type="color"
-            aria-label="New tag colour"
-          />
-          <button
-            class="btn btn-sm btn-ghost"
-            :disabled="!newTagName.trim() || createTagLoading"
-            @click="createAndAddTag"
-          >
-            {{ createTagLoading ? '...' : '+ Create' }}
-          </button>
-        </div>
+          <X :size="12" />
+        </button>
+      </span>
+    </div>
+    <span
+      v-else
+      class="muted"
+      >No tags assigned.</span
+    >
+
+    <div class="tag-add-row">
+      <select
+        v-if="available.length > 0"
+        class="input input-sm"
+        aria-label="Add existing tag"
+        @change="onSelectExisting"
+      >
+        <option value="">Add existing tag...</option>
+        <option
+          v-for="t in available"
+          :key="t.id"
+          :value="t.id"
+        >
+          {{ t.name }}
+        </option>
+      </select>
+      <div class="tag-create-inline">
+        <input
+          v-model="newTagName"
+          class="input input-sm"
+          placeholder="New tag name"
+          aria-label="New tag name"
+        />
+        <input
+          v-model="newTagColor"
+          class="input color-input"
+          type="color"
+          aria-label="New tag colour"
+        />
+        <button
+          class="btn btn-sm btn-ghost"
+          :disabled="!newTagName.trim() || createTagLoading"
+          @click="createAndAddTag"
+        >
+          {{ createTagLoading ? '...' : '+ Create' }}
+        </button>
       </div>
     </div>
   </div>
@@ -189,7 +186,7 @@ defineExpose({ reload: load })
 <style scoped>
 .color-input {
   width: 2.5rem;
-  padding: 0.1rem;
+  padding: var(--space-1);
   cursor: pointer;
 }
 </style>

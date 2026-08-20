@@ -490,7 +490,7 @@ describe('ReposView', () => {
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
     await clickGroupByHost(wrapper)
-    await clickButton(wrapper, (t) => t.startsWith('Last Backup'))
+    await clickButton(wrapper, (t) => t.startsWith('Last backup'))
 
     expect(wrapper.findAll('.entity-card .card-name').map((n) => n.text())).toEqual([
       'never',
@@ -571,7 +571,7 @@ describe('ReposView', () => {
     setupApiSuccess([])
     const wrapper = await mountAsAdmin()
 
-    await clickButton(wrapper, (t) => t.includes('Add Repository'))
+    await clickButton(wrapper, (t) => t.includes('New repository'))
 
     const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
     expect(dialog.props('open')).toBe(true)

@@ -267,7 +267,7 @@ describe('NotificationsView', () => {
     const newBtn = wrapper.findAll('button').find((b) => b.text().includes('New'))
     await newBtn!.trigger('click')
     await flushPromises()
-    expect(document.body.textContent).toContain('New Channel')
+    expect(document.body.textContent).toContain('New channel')
   })
 
   it('switches to webhook config in add wizard', async () => {
@@ -306,9 +306,9 @@ describe('NotificationsView', () => {
     /** Fills step 1 with a valid email channel and advances to step 2. */
     async function fillStepOne(): Promise<void> {
       await setByLabel('Name', 'Ops Alerts')
-      await setByLabel('SMTP Host', 'smtp.example.com')
-      await setByLabel('From Address', 'noreply@example.com')
-      await setByLabel('To Addresses', 'admin@example.com')
+      await setByLabel('SMTP host', 'smtp.example.com')
+      await setByLabel('From address', 'noreply@example.com')
+      await setByLabel('To addresses', 'admin@example.com')
     }
 
     /**
@@ -480,7 +480,7 @@ describe('NotificationsView', () => {
 
       expect(
         [...document.body.querySelectorAll('.field-label')].some((l) =>
-          l.textContent?.includes('SMTP Host'),
+          l.textContent?.includes('SMTP host'),
         ),
       ).toBe(false)
 
@@ -539,13 +539,13 @@ describe('NotificationsView', () => {
     it('prefills the dialog from the channel being edited', async () => {
       await openEdit(1)
       expect((fieldByLabel('Name') as HTMLInputElement).value).toBe('Ops Email')
-      expect((fieldByLabel('SMTP Host') as HTMLInputElement).value).toBe('smtp.example.com')
+      expect((fieldByLabel('SMTP host') as HTMLInputElement).value).toBe('smtp.example.com')
     })
 
     // The wire type is a list; the field is one comma-separated string.
     it('joins the recipient list into the single address field', async () => {
       await openEdit(1)
-      expect((fieldByLabel('To Addresses') as HTMLInputElement).value).toBe('admin@example.com')
+      expect((fieldByLabel('To addresses') as HTMLInputElement).value).toBe('admin@example.com')
     })
 
     it('shows the webhook URL instead for a webhook channel', async () => {
@@ -553,7 +553,7 @@ describe('NotificationsView', () => {
       expect((fieldByLabel('URL') as HTMLInputElement).value).toBe(
         'https://hooks.example.com/notify',
       )
-      expect(() => fieldByLabel('SMTP Host')).toThrow()
+      expect(() => fieldByLabel('SMTP host')).toThrow()
     })
 
     it('saves the edited channel and splits the recipients back into a list', async () => {
@@ -563,7 +563,7 @@ describe('NotificationsView', () => {
 
       await openEdit(1)
       await setByLabel('Name', 'Renamed')
-      await setByLabel('To Addresses', 'a@example.com, b@example.com ,')
+      await setByLabel('To addresses', 'a@example.com, b@example.com ,')
       dialogButton('Save').click()
       await flushPromises()
 
@@ -674,9 +674,9 @@ describe('NotificationsView', () => {
         await flushPromises()
       }
       await set('Name', 'Scoped')
-      await set('SMTP Host', 'smtp.example.com')
-      await set('From Address', 'noreply@example.com')
-      await set('To Addresses', 'admin@example.com')
+      await set('SMTP host', 'smtp.example.com')
+      await set('From address', 'noreply@example.com')
+      await set('To addresses', 'admin@example.com')
 
       dialogButton('Next').click()
       await flushPromises()
@@ -775,9 +775,9 @@ describe('NotificationsView', () => {
 
     async function fillStepOne(): Promise<void> {
       await setByLabel('Name', 'Scoped')
-      await setByLabel('SMTP Host', 'smtp.example.com')
-      await setByLabel('From Address', 'noreply@example.com')
-      await setByLabel('To Addresses', 'admin@example.com')
+      await setByLabel('SMTP host', 'smtp.example.com')
+      await setByLabel('From address', 'noreply@example.com')
+      await setByLabel('To addresses', 'admin@example.com')
     }
 
     async function openWizard(wrapper: ReturnType<typeof renderWithPlugins>) {
@@ -893,7 +893,7 @@ describe('NotificationsView', () => {
 
       // MOCK_RULES already has backup_failed enabled for this channel.
       const item = [...document.body.querySelectorAll('.event-item')].find((el) =>
-        el.textContent?.includes('Failed'),
+        el.textContent?.includes('failed'),
       )
       expect(item).toBeDefined()
       ;(item!.querySelector('input, button') as HTMLElement | null)?.click()

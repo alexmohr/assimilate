@@ -3,47 +3,18 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { mockApiClientRw, mockToast, resetToastSpies, toastSpies } from '../test-utils/sharedMocks'
+import type { ActiveRepoOp } from '../types/repo'
 
-const toastSuccess = vi.fn()
-const toastError = vi.fn()
-
-vi.mock('../api/client', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
-}))
-vi.mock('../composables/useToast', () => ({
-  useToast: () => ({ success: toastSuccess, error: toastError }),
-}))
+// The card owns the edit form and the SSH host-key scan it runs on mount.
+vi.mock('../api/client', () => mockApiClientRw())
+vi.mock('../composables/useToast', () => mockToast())
 
 import { renderWithPlugins } from '../test-utils'
+import { dialogButton, findButton } from '../test-utils/dom'
+import { repoFixture as repo } from '../test-utils/repoFixtures'
 import { apiClient } from '../api/client'
 import RepoOverviewCard from './RepoOverviewCard.vue'
-import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
-
-const REPO = {
-  id: 12,
-  name: 'server-daily',
-  repo_path: '/backup/repos/server-daily',
-  ssh_user: 'borg',
-  ssh_host: 'backup.example.com',
-  ssh_port: 22,
-  ssh_host_key: 'ssh-ed25519 AAAAKNOWN',
-  compression: 'zstd,6',
-  encryption: 'repokey-blake2',
-  enabled: true,
-  importing: false,
-  import_error: null,
-  import_progress: 0,
-  import_total: 0,
-  sync_schedule: null,
-  agent_count: 3,
-  last_op_kind: 'agent_backup',
-  last_op_at: '2026-03-01T02:00:00Z',
-  last_op_by: 'web-01',
-} as unknown as RepoWithStats
-
-function repo(overrides: Partial<RepoWithStats> = {}): RepoWithStats {
-  return { ...REPO, ...overrides }
-}
 
 function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(RepoOverviewCard, {
@@ -51,32 +22,15 @@ function mount(props: Record<string, unknown> = {}) {
       repo: repo(),
       isAdmin: true,
       currentOp: null,
-      importPhaseVerb: 'Importing',
       ...props,
     },
   })
 }
 
-/** The dialogs teleport, so their nodes live on the document body. */
-function dialogButton(label: string): HTMLButtonElement {
-  const match = [...document.body.querySelectorAll<HTMLButtonElement>('.modal-dialog button')].find(
-    (b) => b.textContent?.trim() === label,
-  )
-  if (!match) throw new Error(`no dialog button labelled "${label}"`)
-  return match
-}
-
-function findButton(wrapper: ReturnType<typeof mount>, label: RegExp) {
-  const match = wrapper.findAll('button').find((b) => label.test(b.text()))
-  if (!match) throw new Error(`no button matching ${label}`)
-  return match
-}
-
 describe('RepoOverviewCard', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
-    toastSuccess.mockReset()
-    toastError.mockReset()
+    resetToastSpies()
     vi.mocked(apiClient.get)
       .mockReset()
       .mockResolvedValue({ data: { passphrase: 'hunter2' } } as never)
@@ -86,47 +40,7 @@ describe('RepoOverviewCard', () => {
     // The card scans the SSH host key on mount; default to "unchanged".
     vi.mocked(apiClient.post)
       .mockReset()
-      .mockResolvedValue({ data: { ssh_host_key: REPO.ssh_host_key } } as never)
-  })
-
-  describe('status badge', () => {
-    // The e2e suite asserts on these exact tone classes, so a rename that
-    // only updates the component is caught here rather than 15 minutes into
-    // a Playwright run.
-    it('shows an enabled repository as a success badge', () => {
-      const wrapper = mount()
-      const badge = wrapper.find('.repo-status-badge')
-      expect(badge.text()).toBe('Enabled')
-      expect(badge.classes()).toContain('badge--success')
-    })
-
-    it('shows a disabled repository as a neutral badge', () => {
-      const wrapper = mount({ repo: repo({ enabled: false }) })
-      const badge = wrapper.find('.repo-status-badge')
-      expect(badge.text()).toBe('Disabled')
-      expect(badge.classes()).toContain('badge--neutral')
-    })
-
-    it('pulses a warning badge while an import runs', () => {
-      const wrapper = mount({ repo: repo({ importing: true }) })
-      const badge = wrapper.find('.repo-status-badge')
-      expect(badge.classes()).toEqual(expect.arrayContaining(['badge--warning', 'badge--pulse']))
-    })
-
-    it('counts import progress in the badge when a total is known', () => {
-      const wrapper = mount({
-        repo: repo({ importing: true, import_progress: 3, import_total: 9 }),
-      })
-      expect(wrapper.find('.repo-status-badge').text()).toBe('Importing 3/9')
-    })
-
-    it('shows a danger badge carrying the import error as its title', () => {
-      const wrapper = mount({ repo: repo({ import_error: 'ssh refused' }) })
-      const badge = wrapper.find('.repo-status-badge')
-      expect(badge.text()).toBe('Import Failed')
-      expect(badge.classes()).toContain('badge--danger')
-      expect(badge.attributes('title')).toBe('ssh refused')
-    })
+      .mockResolvedValue({ data: { ssh_host_key: repo().ssh_host_key } } as never)
   })
 
   describe('info grid', () => {
@@ -170,69 +84,6 @@ describe('RepoOverviewCard', () => {
       } as ActiveRepoOp
       const wrapper = mount({ currentOp: op })
       expect(wrapper.find('.current-op-running').text()).toBe('Server sync in progress (+2 queued)')
-    })
-  })
-
-  describe('admin gating', () => {
-    it('offers no actions to a non-admin', () => {
-      const wrapper = mount({ isAdmin: false })
-      expect(wrapper.find('.info-header-actions button').exists()).toBe(false)
-    })
-
-    it('offers Full Resync to an admin when no import is running', () => {
-      expect(findButton(mount(), /Full Resync/).exists()).toBe(true)
-    })
-
-    it('swaps Full Resync for Cancel Import while importing', () => {
-      const wrapper = mount({ repo: repo({ importing: true }) })
-      expect(wrapper.findAll('button').some((b) => /Full Resync/.test(b.text()))).toBe(false)
-      expect(findButton(wrapper, /Cancel Import/).exists()).toBe(true)
-    })
-
-    it('offers Cancel Import after a failed import too, so the state can be cleared', () => {
-      const wrapper = mount({ repo: repo({ import_error: 'boom' }) })
-      expect(findButton(wrapper, /Cancel Import/).exists()).toBe(true)
-    })
-  })
-
-  describe('full resync', () => {
-    it('starts the sync and reports it', async () => {
-      const wrapper = mount()
-      await flushPromises()
-      await findButton(wrapper, /Full Resync/).trigger('click')
-      await flushPromises()
-      expect(apiClient.post).toHaveBeenCalledWith('/repos/12/sync?build_index=true')
-      expect(toastSuccess).toHaveBeenCalled()
-    })
-
-    it('surfaces a failure as an error toast', async () => {
-      const wrapper = mount()
-      await flushPromises()
-      vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('nope'))
-      await findButton(wrapper, /Full Resync/).trigger('click')
-      await flushPromises()
-      expect(toastError).toHaveBeenCalled()
-    })
-  })
-
-  describe('reset import', () => {
-    it('resets the import state and tells the parent', async () => {
-      const wrapper = mount({ repo: repo({ importing: true }) })
-      await flushPromises()
-      await findButton(wrapper, /Cancel Import/).trigger('click')
-      await flushPromises()
-      expect(apiClient.post).toHaveBeenCalledWith('/repos/12/reset-import')
-      expect(wrapper.emitted('import-reset')).toHaveLength(1)
-    })
-
-    it('does not claim success when the reset fails', async () => {
-      const wrapper = mount({ repo: repo({ importing: true }) })
-      await flushPromises()
-      vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('nope'))
-      await findButton(wrapper, /Cancel Import/).trigger('click')
-      await flushPromises()
-      expect(toastError).toHaveBeenCalled()
-      expect(wrapper.emitted('import-reset')).toBeUndefined()
     })
   })
 
@@ -416,70 +267,7 @@ describe('RepoOverviewCard', () => {
       await toggles[toggles.length - 1].vm.$emit('update:modelValue', true)
       await flushPromises()
 
-      expect(wrapper.text()).toContain('Sync Schedule')
-    })
-  })
-
-  describe('passphrase', () => {
-    it('fetches the passphrase on demand and shows it in the dialog', async () => {
-      const wrapper = mount()
-      await flushPromises()
-      await findButton(wrapper, /Passphrase/).trigger('click')
-      await flushPromises()
-
-      expect(apiClient.get).toHaveBeenCalledWith('/repos/12/passphrase')
-      expect(document.body.textContent).toContain('hunter2')
-    })
-
-    it('copies the passphrase to the clipboard on request', async () => {
-      const wrapper = mount()
-      await flushPromises()
-      await findButton(wrapper, /Passphrase/).trigger('click')
-      await flushPromises()
-
-      const copy = dialogButton('Copy')
-      expect(copy).toBeDefined()
-      copy.click()
-      await flushPromises()
-      // The clipboard itself is the composable's business; what matters here
-      // is that the button is wired to the revealed value at all.
-      expect(document.body.textContent).toContain('hunter2')
-    })
-
-    it('closes on the modal dismiss control too, not only on Done', async () => {
-      const wrapper = mount()
-      await flushPromises()
-      await findButton(wrapper, /Passphrase/).trigger('click')
-      await flushPromises()
-
-      document.body.querySelector<HTMLButtonElement>('.modal-close')?.click()
-      await flushPromises()
-
-      expect(document.body.querySelector('.modal-dialog')).toBeNull()
-    })
-
-    it('closes on Done, so the secret does not stay on screen', async () => {
-      const wrapper = mount()
-      await flushPromises()
-      await findButton(wrapper, /Passphrase/).trigger('click')
-      await flushPromises()
-      expect(document.body.textContent).toContain('hunter2')
-
-      dialogButton('Done').click()
-      await flushPromises()
-
-      expect(document.body.querySelector('.modal-dialog')).toBeNull()
-    })
-
-    it('opens the dialog with the error when the fetch fails', async () => {
-      vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('forbidden'))
-      const wrapper = mount()
-      await flushPromises()
-      await findButton(wrapper, /Passphrase/).trigger('click')
-      await flushPromises()
-
-      expect(document.body.querySelector('.form-error')).not.toBeNull()
-      expect(document.body.textContent).not.toContain('hunter2')
+      expect(wrapper.text()).toContain('Sync schedule')
     })
   })
 
@@ -488,7 +276,8 @@ describe('RepoOverviewCard', () => {
       const wrapper = mount()
       await flushPromises()
       expect(apiClient.post).toHaveBeenCalledWith('/repos/12/ssh-host-key/scan')
-      expect(wrapper.text()).not.toContain('host key')
+      // The scan is silent when it matches: no Accept affordance appears.
+      expect(wrapper.findAll('button').some((b) => b.text() === 'Accept SSH key')).toBe(false)
     })
 
     it('re-scans when the card switches to another repository', async () => {
@@ -529,7 +318,7 @@ describe('RepoOverviewCard', () => {
         ssh_host_key: 'ssh-ed25519 AAAADIFFERENT',
       })
       expect(wrapper.emitted('saved')).toHaveLength(1)
-      expect(toastSuccess).toHaveBeenCalled()
+      expect(toastSpies.success).toHaveBeenCalled()
     })
 
     it('dismisses the host-key dialog on the modal control without recording it', async () => {

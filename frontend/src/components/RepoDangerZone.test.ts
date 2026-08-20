@@ -94,22 +94,22 @@ describe('RepoDangerZone', () => {
       .findAll('.danger-heading')
       .map((h) => h.text())
     expect(headings).toEqual([
-      'Confirm Repository Relocation',
-      'Break Repository Lock',
-      'Remove Repository',
-      'Delete Repository',
-      'Reset & Re-import',
+      'Confirm repository relocation',
+      'Break repository lock',
+      'Remove repository',
+      'Delete repository',
+      'Reset and re-import',
     ])
   })
 
   // Every one of these destroys something. None may fire straight from the
   // row button - the confirmation dialog is the only path to the API.
   it.each([
-    ['Confirm Relocation'],
-    ['Break Lock'],
-    ['Remove Repository'],
-    ['Delete Repository'],
-    ['Reset & Re-import'],
+    ['Confirm relocation'],
+    ['Break lock'],
+    ['Remove repository'],
+    ['Delete repository'],
+    ['Reset and re-import'],
   ])('does not call the API when %s is merely clicked', async (label) => {
     const wrapper = mount()
     await action(wrapper, label).trigger('click')
@@ -121,11 +121,11 @@ describe('RepoDangerZone', () => {
   // Backing out of a destructive dialog must be a genuine no-op, not just a
   // visual dismissal that still fired the request.
   it.each([
-    ['Confirm Relocation'],
-    ['Break Lock'],
-    ['Remove Repository'],
-    ['Delete Repository'],
-    ['Reset & Re-import'],
+    ['Confirm relocation'],
+    ['Break lock'],
+    ['Remove repository'],
+    ['Delete repository'],
+    ['Reset and re-import'],
   ])('does nothing when the %s dialog is cancelled', async (label) => {
     const wrapper = mount()
     await action(wrapper, label).trigger('click')
@@ -142,7 +142,7 @@ describe('RepoDangerZone', () => {
   describe('escape key', () => {
     it('dismisses the break-lock dialog', async () => {
       const wrapper = mount()
-      await action(wrapper, 'Break Lock').trigger('click')
+      await action(wrapper, 'Break lock').trigger('click')
       await flushPromises()
       expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
 
@@ -159,7 +159,7 @@ describe('RepoDangerZone', () => {
     // down before the event ever reached it.
     it('closes via its own handler when that is the one that sees the key', async () => {
       const wrapper = mount()
-      await action(wrapper, 'Break Lock').trigger('click')
+      await action(wrapper, 'Break lock').trigger('click')
       await flushPromises()
 
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
@@ -185,9 +185,9 @@ describe('RepoDangerZone', () => {
         }) as never,
       )
       const wrapper = mount()
-      await action(wrapper, 'Break Lock').trigger('click')
+      await action(wrapper, 'Break lock').trigger('click')
       await flushPromises()
-      dialogButton('Yes, Break Lock').click()
+      dialogButton('Yes, break lock').click()
       await flushPromises()
 
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
@@ -203,7 +203,7 @@ describe('RepoDangerZone', () => {
   describe('confirm relocation', () => {
     it('confirms and asks the parent to refresh the repo row', async () => {
       const wrapper = mount()
-      await confirmVia(wrapper, 'Confirm Relocation', 'Yes, Confirm Relocation')
+      await confirmVia(wrapper, 'Confirm relocation', 'Yes, confirm relocation')
 
       expect(apiClient.post).toHaveBeenCalledWith('/repos/12/confirm-relocation')
       // relocation_pending lives on the parent's row, so the component asks
@@ -216,14 +216,14 @@ describe('RepoDangerZone', () => {
         data: { message: 'Relocation will apply on the next run' },
       } as never)
       const wrapper = mount()
-      await confirmVia(wrapper, 'Confirm Relocation', 'Yes, Confirm Relocation')
+      await confirmVia(wrapper, 'Confirm relocation', 'Yes, confirm relocation')
       expect(document.body.textContent).toContain('Relocation will apply on the next run')
     })
 
     it('reports a failure without claiming the flag was set', async () => {
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('nope'))
       const wrapper = mount()
-      await confirmVia(wrapper, 'Confirm Relocation', 'Yes, Confirm Relocation')
+      await confirmVia(wrapper, 'Confirm relocation', 'Yes, confirm relocation')
 
       expect(document.body.querySelector('.form-error')).not.toBeNull()
       expect(wrapper.emitted('changed')).toBeUndefined()
@@ -240,19 +240,19 @@ describe('RepoDangerZone', () => {
     // operation has to disable the button outright, not just warn.
     it('is disabled while an operation is running, and says which', () => {
       const wrapper = mount({ currentOp: RUNNING_OP })
-      const button = action(wrapper, 'Break Lock')
+      const button = action(wrapper, 'Break lock')
       expect(button.attributes('disabled')).toBeDefined()
       expect(button.attributes('title')).toBe('Agent backup in progress by web-01')
       expect(wrapper.find('.danger-hint').text()).toBe('Agent backup in progress by web-01')
     })
 
     it('is enabled when the repository is idle', () => {
-      expect(action(mount(), 'Break Lock').attributes('disabled')).toBeUndefined()
+      expect(action(mount(), 'Break lock').attributes('disabled')).toBeUndefined()
     })
 
     it('breaks the lock on confirmation', async () => {
       const wrapper = mount()
-      await confirmVia(wrapper, 'Break Lock', 'Yes, Break Lock')
+      await confirmVia(wrapper, 'Break lock', 'Yes, break lock')
       expect(apiClient.post).toHaveBeenCalledWith('/repos/12/break-lock')
     })
 
@@ -263,7 +263,7 @@ describe('RepoDangerZone', () => {
         data: { message: 'Lock broken', borg_output: 'Removed stale cache lock' },
       } as never)
       const wrapper = mount()
-      await confirmVia(wrapper, 'Break Lock', 'Yes, Break Lock')
+      await confirmVia(wrapper, 'Break lock', 'Yes, break lock')
 
       expect(document.body.textContent).toContain('Lock broken')
       expect(document.body.textContent).toContain('Removed stale cache lock')
@@ -274,14 +274,14 @@ describe('RepoDangerZone', () => {
         data: { message: 'Lock broken', borg_output: '' },
       } as never)
       const wrapper = mount()
-      await confirmVia(wrapper, 'Break Lock', 'Yes, Break Lock')
+      await confirmVia(wrapper, 'Break lock', 'Yes, break lock')
       expect(document.body.textContent).toContain('Lock broken')
     })
 
     it('reports a failure in the dialog', async () => {
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('locked'))
       const wrapper = mount()
-      await confirmVia(wrapper, 'Break Lock', 'Yes, Break Lock')
+      await confirmVia(wrapper, 'Break lock', 'Yes, break lock')
       expect(document.body.querySelector('.form-error')).not.toBeNull()
     })
   })
@@ -289,7 +289,7 @@ describe('RepoDangerZone', () => {
   describe('remove repository', () => {
     it('removes it and leaves the detail page', async () => {
       const wrapper = mount()
-      await confirmVia(wrapper, 'Remove Repository', 'Remove')
+      await confirmVia(wrapper, 'Remove repository', 'Remove')
 
       expect(apiClient.delete).toHaveBeenCalledWith('/repos/12')
       expect(routerPush).toHaveBeenCalledWith('/repos')
@@ -298,7 +298,7 @@ describe('RepoDangerZone', () => {
     it('stays put and reports the error when removal fails', async () => {
       vi.mocked(apiClient.delete).mockRejectedValueOnce(new Error('in use'))
       const wrapper = mount()
-      await confirmVia(wrapper, 'Remove Repository', 'Remove')
+      await confirmVia(wrapper, 'Remove repository', 'Remove')
 
       expect(routerPush).not.toHaveBeenCalled()
       expect(wrapper.emitted('error')).toHaveLength(1)
@@ -308,7 +308,7 @@ describe('RepoDangerZone', () => {
   describe('delete repository', () => {
     it('names the path and host it is about to rm -rf', async () => {
       const wrapper = mount()
-      await action(wrapper, 'Delete Repository').trigger('click')
+      await action(wrapper, 'Delete repository').trigger('click')
       await flushPromises()
 
       const text = document.body.textContent ?? ''
@@ -319,7 +319,7 @@ describe('RepoDangerZone', () => {
 
     it('destroys the repository on confirmation and leaves the page', async () => {
       const wrapper = mount()
-      await confirmVia(wrapper, 'Delete Repository', 'Destroy Forever')
+      await confirmVia(wrapper, 'Delete repository', 'Destroy Forever')
 
       expect(apiClient.post).toHaveBeenCalledWith('/repos/12/destroy')
       expect(routerPush).toHaveBeenCalledWith('/repos')
@@ -328,7 +328,7 @@ describe('RepoDangerZone', () => {
     it('stays put and reports the error when the destroy fails', async () => {
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('ssh down'))
       const wrapper = mount()
-      await confirmVia(wrapper, 'Delete Repository', 'Destroy Forever')
+      await confirmVia(wrapper, 'Delete repository', 'Destroy Forever')
 
       expect(routerPush).not.toHaveBeenCalled()
       expect(wrapper.emitted('error')).toHaveLength(1)
@@ -338,7 +338,7 @@ describe('RepoDangerZone', () => {
   describe('reset and re-import', () => {
     it('resets on confirmation and reports it', async () => {
       const wrapper = mount()
-      await confirmVia(wrapper, 'Reset & Re-import', 'Confirm Reset')
+      await confirmVia(wrapper, 'Reset and re-import', 'Confirm Reset')
 
       expect(apiClient.post).toHaveBeenCalledWith('/repos/12/reset-and-sync?build_index=true')
       expect(toastSuccess).toHaveBeenCalled()
@@ -347,7 +347,7 @@ describe('RepoDangerZone', () => {
     it('surfaces a failure as an error toast', async () => {
       vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('boom'))
       const wrapper = mount()
-      await confirmVia(wrapper, 'Reset & Re-import', 'Confirm Reset')
+      await confirmVia(wrapper, 'Reset and re-import', 'Confirm Reset')
 
       expect(toastError).toHaveBeenCalled()
       expect(toastSuccess).not.toHaveBeenCalled()

@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { AlertCircle, AlertTriangle } from '@lucide/vue'
+import { AlertCircle, AlertTriangle, ChevronDown } from '@lucide/vue'
 
 const props = withDefaults(
   defineProps<{
@@ -27,6 +27,8 @@ const expanded = ref(false)
   >
     <button
       class="error-toggle"
+      type="button"
+      :aria-expanded="expanded"
       @click="expanded = !expanded"
     >
       <AlertTriangle
@@ -38,7 +40,11 @@ const expanded = ref(false)
         :size="12"
       />
       {{ label }}
-      <span class="toggle-arrow">{{ expanded ? '▴' : '▾' }}</span>
+      <ChevronDown
+        :size="12"
+        class="disclosure-chevron"
+        :class="{ 'disclosure-chevron--open': expanded }"
+      />
     </button>
     <pre
       v-if="expanded"
@@ -52,20 +58,20 @@ const expanded = ref(false)
 .card-error {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .error-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-2);
   background: none;
   border: none;
   color: var(--danger);
   font-size: var(--fs-xs);
   font-weight: 500;
   cursor: pointer;
-  padding: 0.2rem 0;
+  padding: var(--space-2) 0;
 }
 
 .error-toggle:hover {
@@ -74,7 +80,7 @@ const expanded = ref(false)
 
 .toggle-arrow {
   font-size: var(--fs-2xs);
-  margin-left: 0.1rem;
+  margin-left: var(--space-1);
 }
 
 .card-error.tone-warning .error-toggle {

@@ -76,7 +76,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title panel-title--truncate">Storage Trend</h2>
+      <h2 class="panel-title panel-title--truncate">Storage trend</h2>
       <ChartRangeControls
         v-model:repo-id="selectedRepoId"
         v-model:days="selectedDays"
@@ -123,6 +123,6 @@ const hasData = computed((): boolean => entries.value.length >= 2)
 .charts-col {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-7);
 }
 </style>

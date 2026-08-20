@@ -29,7 +29,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
     case 'backup':
       return 'Backup'
     case 'check':
-      return 'Integrity Check'
+      return 'Integrity check'
     case 'verify':
       return 'Verify (extract dry-run)'
   }
@@ -77,7 +77,7 @@ defineExpose({ reload: load })
   />
   <div
     v-else-if="error"
-    class="state-msg state-error"
+    class="error-banner"
   >
     {{ error }}
   </div>

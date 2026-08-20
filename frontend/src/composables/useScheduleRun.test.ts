@@ -22,7 +22,7 @@ function label(type: ScheduleType): string {
     case 'backup':
       return 'Backup'
     case 'check':
-      return 'Integrity Check'
+      return 'Integrity check'
     case 'verify':
       return 'Verify'
   }
@@ -47,7 +47,7 @@ describe('useScheduleRun', () => {
   it('names the kind of run in the toast, not just "started"', async () => {
     const { runNow } = useScheduleRun(label)
     await runNow(schedule({ schedule_type: 'check' }))
-    expect(toastSuccess).toHaveBeenCalledWith('Integrity Check started.')
+    expect(toastSuccess).toHaveBeenCalledWith('Integrity check started.')
   })
 
   it('stays silent for a caller that does not announce starts', async () => {

@@ -87,6 +87,45 @@ describe('design tokens', () => {
     expect(literals).toEqual([])
   })
 
+  it('declares the full spacing scale', () => {
+    for (let step = 1; step <= 10; step += 1) {
+      expect(DEFINED.has(`--space-${step}`)).toBe(true)
+    }
+  })
+
+  it('uses the spacing scale for every padding, margin and gap', () => {
+    // A raw rem here is what turned one gap into 32 near-identical gaps. Other
+    // units stay legal: a hairline is px, a centred block is auto, and a value
+    // sized to its own text is em.
+    const spacing =
+      /(?<![-\w])((?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?):\s*([^;]+);/g
+    const literals: string[] = []
+    for (const file of FILES) {
+      for (const m of styleBlocks(file).matchAll(spacing)) {
+        if (!/\d*\.?\d+rem/.test(m[2])) continue
+        literals.push(`${relative(SRC, file)}: ${m[1]}: ${m[2].trim()}`)
+      }
+    }
+    expect(literals).toEqual([])
+  })
+
+  it('uses the spacing scale in inline style attributes too', () => {
+    // A `<style>` block is not the only place a spacing value can hide: an
+    // inline `style=` on the element escapes the rule above entirely, which
+    // is how a lone `margin-top: 0.75rem` survived the migration.
+    const attrs = /:?style="([^"]*)"/g
+    const spacing =
+      /(?<![-\w])(?:padding|margin|gap|row-gap|column-gap)(?:-[a-z-]+)?:\s*[^;"]*?\d*\.?\d+rem/
+    const literals: string[] = []
+    for (const file of FILES) {
+      const text = readFileSync(file, 'utf-8')
+      for (const m of text.matchAll(attrs)) {
+        if (spacing.test(m[1])) literals.push(`${relative(SRC, file)}: ${m[1].trim()}`)
+      }
+    }
+    expect(literals).toEqual([])
+  })
+
   it('uses radius tokens for every rounded corner', () => {
     const literals: string[] = []
     for (const file of FILES) {

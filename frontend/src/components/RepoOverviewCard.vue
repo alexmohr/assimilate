@@ -10,7 +10,6 @@ import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { useToast } from '../composables/useToast'
-import { useClipboard } from '../composables/useClipboard'
 import { cronToHuman } from '../utils/cron'
 import { repoOpLabel } from '../utils/repoOp'
 import BaseModal from './BaseModal.vue'
@@ -88,14 +87,11 @@ const props = defineProps<{
   repo: RepoWithStats
   isAdmin: boolean
   currentOp: ActiveRepoOp | null
-  /** Label for the running import phase; the parent tracks it over the socket. */
-  importPhaseVerb: string
 }>()
 
-const emit = defineEmits<{ saved: []; 'import-reset': [] }>()
+const emit = defineEmits<{ saved: [] }>()
 
-const { success: toastSuccess, error: toastError } = useToast()
-const { copied: passphraseCopied, copy: copyToClipboard } = useClipboard()
+const { success: toastSuccess } = useToast()
 
 const isEditing = ref(false)
 const editLoading = ref(false)
@@ -112,18 +108,9 @@ const editForm = reactive<EditForm>({
   sync_schedule: null,
 })
 
-const showPassphraseDialog = ref(false)
-const passphrase = ref<string | null>(null)
-const passphraseLoading = ref(false)
-const passphraseError = ref<string | null>(null)
-
-const syncLoading = ref(false)
-const resetImportLoading = ref(false)
-
 const repo = computed(() => props.repo)
 const isAdmin = computed(() => props.isAdmin)
 const currentOp = computed(() => props.currentOp)
-const importPhaseVerb = computed(() => props.importPhaseVerb)
 
 function startEdit(): void {
   if (!repo.value) return
@@ -182,23 +169,6 @@ async function saveEdit(): Promise<void> {
   }
 }
 
-async function revealPassphrase(): Promise<void> {
-  passphraseLoading.value = true
-  passphraseError.value = null
-  passphrase.value = null
-  passphraseCopied.value = false
-  try {
-    const res = await apiClient.get<{ passphrase: string }>(`/repos/${props.repo.id}/passphrase`)
-    passphrase.value = res.data.passphrase
-    showPassphraseDialog.value = true
-  } catch (e: unknown) {
-    passphraseError.value = extractError(e)
-    showPassphraseDialog.value = true
-  } finally {
-    passphraseLoading.value = false
-  }
-}
-
 const showAcceptHostKeyDialog = ref(false)
 const hostKeyCheckLoading = ref(false)
 const hostKeyMismatch = ref(false)
@@ -251,77 +221,30 @@ async function acceptHostKey(): Promise<void> {
 
 watch(() => props.repo.id, checkHostKeyMismatch)
 onMounted(checkHostKeyMismatch)
-
-async function syncRepo(): Promise<void> {
-  syncLoading.value = true
-  try {
-    await apiClient.post(`/repos/${props.repo.id}/sync?build_index=true`)
-    toastSuccess('Full resync started. Archive contents are being indexed in the background.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    syncLoading.value = false
-  }
-}
-
-async function resetImport(): Promise<void> {
-  resetImportLoading.value = true
-  try {
-    await apiClient.post(`/repos/${props.repo.id}/reset-import`)
-    toastSuccess('Import state reset.')
-    emit('import-reset')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    resetImportLoading.value = false
-  }
-}
 </script>
 
 <template>
-  <div class="info-card">
-    <div class="info-card-header">
-      <h3 class="info-title">Repository Information</h3>
-      <div class="info-header-actions">
-        <template v-if="isAdmin && !isEditing">
-          <button
-            v-if="!repo.importing"
-            class="btn btn-sm btn-ghost"
-            :disabled="syncLoading"
-            @click="syncRepo"
-          >
-            {{ syncLoading ? 'Syncing...' : 'Full Resync' }}
-          </button>
-          <button
-            v-if="repo.importing || repo.import_error"
-            class="btn btn-sm btn-ghost btn-danger-text"
-            :disabled="resetImportLoading"
-            @click="resetImport"
-          >
-            {{ resetImportLoading ? 'Resetting...' : 'Cancel Import' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :disabled="passphraseLoading"
-            @click="revealPassphrase"
-          >
-            {{ passphraseLoading ? 'Loading...' : 'Show Passphrase' }}
-          </button>
-          <button
-            v-if="hostKeyMismatch"
-            class="btn btn-sm btn-ghost btn-warning-text"
-            :disabled="hostKeyCheckLoading"
-            @click="showAcceptHostKeyDialog = true"
-          >
-            {{ hostKeyCheckLoading ? 'Checking...' : 'Accept SSH Key' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            @click="startEdit"
-          >
-            Edit
-          </button>
-        </template>
+  <div>
+    <div class="pane-head">
+      <p class="pane-lede">Where this repository lives and how borg writes to it.</p>
+      <div
+        v-if="isAdmin && !isEditing"
+        class="panel-actions"
+      >
+        <button
+          v-if="hostKeyMismatch"
+          class="btn btn-sm btn-ghost btn-warning-text"
+          :disabled="hostKeyCheckLoading"
+          @click="showAcceptHostKeyDialog = true"
+        >
+          {{ hostKeyCheckLoading ? 'Checking...' : 'Accept SSH key' }}
+        </button>
+        <button
+          class="btn btn-sm btn-ghost"
+          @click="startEdit"
+        >
+          Edit
+        </button>
       </div>
     </div>
 
@@ -329,88 +252,38 @@ async function resetImport(): Promise<void> {
       <dl class="info-grid">
         <dt>Name</dt>
         <dd class="mono">{{ repo.name }}</dd>
-        <dt>SSH Target</dt>
+        <dt>SSH target</dt>
         <dd class="mono">{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</dd>
-        <dt>SSH Host Key</dt>
+        <dt>SSH host key</dt>
         <dd class="mono ssh-host-key">
           {{ repo.ssh_host_key ?? 'Not set' }}
         </dd>
-        <dt>Repo Path</dt>
+        <dt>Repo path</dt>
         <dd class="mono">{{ repo.repo_path }}</dd>
         <dt>Compression</dt>
         <dd>{{ repo.compression }}</dd>
         <dt>Encryption</dt>
         <dd>{{ repo.encryption }}</dd>
-        <dt>Status</dt>
-        <dd>
-          <span
-            class="badge repo-status-badge"
-            :class="
-              repo.import_error
-                ? 'badge--danger'
-                : repo.importing
-                  ? 'badge--warning badge--pulse'
-                  : repo.enabled
-                    ? 'badge--success'
-                    : 'badge--neutral'
-            "
-            :title="repo.import_error ?? undefined"
-          >
-            {{
-              repo.import_error
-                ? 'Import Failed'
-                : repo.importing
-                  ? repo.import_total > 0
-                    ? `${importPhaseVerb} ${repo.import_progress}/${repo.import_total}`
-                    : `${importPhaseVerb}\u2026`
-                  : repo.enabled
-                    ? 'Enabled'
-                    : 'Disabled'
-            }}
-          </span>
-          <div
-            v-if="repo.importing && repo.import_total > 0"
-            class="progress-row"
-          >
-            <div class="progress-track">
-              <div
-                class="progress-bar"
-                :style="{
-                  width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%`,
-                }"
-              ></div>
-            </div>
-            <span class="progress-label">
-              {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
-            </span>
-          </div>
-          <p
-            v-if="repo.importing && repo.import_status_message"
-            class="import-status-msg"
-          >
-            {{ repo.import_status_message }}
-          </p>
-        </dd>
         <dt>Archives</dt>
         <dd>{{ repo.archive_count }}</dd>
-        <dt>Original Size</dt>
+        <dt>Original size</dt>
         <dd>{{ formatBytes(repo.total_original_size) }}</dd>
         <dt>Compressed</dt>
         <dd>{{ formatBytes(repo.total_compressed_size) }}</dd>
         <dt>Deduplicated</dt>
         <dd>{{ formatBytes(repo.total_deduplicated_size) }}</dd>
-        <dt>Last Backup</dt>
+        <dt>Last backup</dt>
         <dd>{{ relativeTime(repo.last_backup_at ?? '') }}</dd>
-        <dt>Disk Sync</dt>
+        <dt>Disk sync</dt>
         <dd>
           <template v-if="repo.sync_schedule">
             {{ cronToHuman(repo.sync_schedule) ?? repo.sync_schedule }}
           </template>
           <template v-else>Disabled</template>
         </dd>
-        <dt>Last Synced</dt>
+        <dt>Last synced</dt>
         <dd>{{ repo.last_synced_at ? formatDate(repo.last_synced_at) : 'Never' }}</dd>
-        <dt>Last Operation</dt>
+        <dt>Last operation</dt>
         <dd>
           <template v-if="repo.last_op_kind">
             {{ lastOpLabel(repo.last_op_kind) }}
@@ -424,7 +297,7 @@ async function resetImport(): Promise<void> {
           <template v-else>Never</template>
         </dd>
         <template v-if="currentOp">
-          <dt>Current Operation</dt>
+          <dt>Current operation</dt>
           <dd class="current-op-running">{{ repoOpLabel(currentOp) }}</dd>
         </template>
         <dt>Agents</dt>
@@ -444,21 +317,21 @@ async function resetImport(): Promise<void> {
             />
           </div>
           <div class="field">
-            <label class="field-label">SSH User</label>
+            <label class="field-label">SSH user</label>
             <input
               v-model="editForm.ssh_user"
               class="input mono"
             />
           </div>
           <div class="field">
-            <label class="field-label">SSH Host</label>
+            <label class="field-label">SSH host</label>
             <input
               v-model="editForm.ssh_host"
               class="input mono"
             />
           </div>
           <div class="field field-narrow">
-            <label class="field-label">SSH Port</label>
+            <label class="field-label">SSH port</label>
             <input
               v-model.number="editForm.ssh_port"
               class="input"
@@ -468,7 +341,7 @@ async function resetImport(): Promise<void> {
             />
           </div>
           <div class="field field-full">
-            <label class="field-label">Repo Path</label>
+            <label class="field-label">Repo path</label>
             <input
               v-model="editForm.repo_path"
               class="input mono"
@@ -516,7 +389,7 @@ async function resetImport(): Promise<void> {
             v-if="editForm.sync_schedule !== null"
             class="field field-full"
           >
-            <label class="field-label">Sync Schedule (cron)</label>
+            <label class="field-label">Sync schedule (cron)</label>
             <input
               v-model="editForm.sync_schedule"
               class="input mono"
@@ -528,7 +401,7 @@ async function resetImport(): Promise<void> {
         <EditFormActions
           :saving="editLoading"
           :error="editError"
-          save-label="Save Changes"
+          save-label="Save changes"
           @cancel="cancelEdit"
           @save="saveEdit"
         />
@@ -537,44 +410,10 @@ async function resetImport(): Promise<void> {
   </div>
 
   <!-- Passphrase Dialog -->
-  <BaseModal
-    :open="showPassphraseDialog"
-    :title="passphrase ? 'Repository Passphrase' : 'Error'"
-    @close="showPassphraseDialog = false"
-  >
-    <template v-if="passphrase">
-      <p class="passphrase-warning">Keep this passphrase secure. Do not share it.</p>
-      <div class="passphrase-box">
-        <code class="passphrase-text">{{ passphrase }}</code>
-        <button
-          class="btn btn-sm btn-ghost"
-          @click="passphrase && copyToClipboard(passphrase)"
-        >
-          {{ passphraseCopied ? 'Copied!' : 'Copy' }}
-        </button>
-      </div>
-    </template>
-    <div
-      v-else-if="passphraseError"
-      class="form-error"
-    >
-      {{ passphraseError }}
-    </div>
-
-    <template #footer>
-      <button
-        class="btn btn-primary"
-        @click="showPassphraseDialog = false"
-      >
-        Done
-      </button>
-    </template>
-  </BaseModal>
-
   <!-- SSH Host Key Dialog -->
   <BaseModal
     :open="showAcceptHostKeyDialog"
-    title="Accept SSH Host Key"
+    title="Accept SSH host key"
     @close="showAcceptHostKeyDialog = false"
   >
     <p class="break-lock-warning">
@@ -614,13 +453,6 @@ async function resetImport(): Promise<void> {
 </template>
 
 <style scoped>
-.import-status-msg {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  margin: 0.4rem 0 0;
-  word-break: break-word;
-}
-
 .current-op-running {
   color: var(--warning);
   font-weight: 500;
@@ -631,8 +463,8 @@ async function resetImport(): Promise<void> {
 }
 
 .ssh-key-box {
-  margin-top: 0.75rem;
-  padding: 0.85rem;
+  margin-top: var(--space-5);
+  padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-card);

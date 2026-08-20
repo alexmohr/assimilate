@@ -86,7 +86,7 @@ const statusLabel = computed(() => STATUS_LABELS[health.value])
 .coverage-meter {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-3);
 }
 
 .coverage-track {
@@ -128,7 +128,7 @@ const statusLabel = computed(() => STATUS_LABELS[health.value])
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-4);
   font-size: var(--fs-2xs);
 }
 

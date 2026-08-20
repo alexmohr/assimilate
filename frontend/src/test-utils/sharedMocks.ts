@@ -57,6 +57,46 @@ export function mockErrorUtils(): {
 }
 
 /**
+ * The same two extractors, passing the thrown message through. For a spec
+ * that asserts the failure a component *shows*, rather than that it showed
+ * one at all.
+ */
+export function mockErrorUtilsPassthrough(): {
+  extractError: (e: unknown) => string
+  extractBlobError: (e: unknown) => Promise<string>
+} {
+  const message = (e: unknown): string => (e instanceof Error ? e.message : 'Unknown error')
+  return {
+    extractError: message,
+    extractBlobError: async (e: unknown): Promise<string> => message(e),
+  }
+}
+
+/**
+ * The toast composable, with the two spies a spec asserts on. Shared because
+ * `vi.mock` hoists: every spec that wanted to check a toast declared the same
+ * two `vi.fn()`s and the same factory above its imports. Reset them in
+ * `beforeEach` - the object outlives a single test, though not the file.
+ */
+export const toastSpies = { success: vi.fn(), error: vi.fn() }
+
+export function mockToast(): { useToast: () => typeof toastSpies } {
+  return { useToast: () => toastSpies }
+}
+
+export function resetToastSpies(): void {
+  toastSpies.success.mockReset()
+  toastSpies.error.mockReset()
+}
+
+/** The read/write client, without the delete verb some specs never use. */
+export function mockApiClientRead(): {
+  apiClient: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn> }
+} {
+  return { apiClient: { get: vi.fn(), post: vi.fn() } }
+}
+
+/**
  * `DataTable` / `Column` stubs that render each column's `#body` slot once per
  * row, so cell renderers (badge classes, formatters, links) are exercised.
  *

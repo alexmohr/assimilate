@@ -100,7 +100,7 @@ describe('service worker (sw.js) push handler behavior', () => {
     await sw.push({
       data: {
         json: () => ({
-          title: 'Backup Failed',
+          title: 'Backup failed',
           body: 'host1 - failed: disk full',
           tag: 'backup_failed',
           url: '/agents/host1?tab=backups',
@@ -109,7 +109,7 @@ describe('service worker (sw.js) push handler behavior', () => {
       waitUntil: () => undefined,
     })
 
-    expect(sw.showNotification).toHaveBeenCalledExactlyOnceWith('Backup Failed', {
+    expect(sw.showNotification).toHaveBeenCalledExactlyOnceWith('Backup failed', {
       body: 'host1 - failed: disk full',
       icon: '/icon.png',
       badge: '/icon.png',

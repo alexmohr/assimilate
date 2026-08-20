@@ -5,10 +5,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ArrowDown, ArrowUp, ChevronDown } from '@lucide/vue'
 import CronBuilder from './CronBuilder.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
+import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import type { ScheduleType } from '../types/schedule'
 import type { AgentRow } from '../types/agent'
@@ -48,34 +50,17 @@ const onFailure = defineModel<'stop' | 'continue'>('onFailure', { required: true
 const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true })
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
-interface SectionOption {
-  id: ScheduleSettingsSection
-  label: string
-}
-
 /** Retention and Advanced only apply to backup-type schedules. */
-const sections = computed<SectionOption[]>(() => {
-  const list: SectionOption[] = [
-    { id: 'general', label: 'General' },
-    { id: 'targets', label: 'Targets' },
-  ]
-  if (props.isBackup) {
-    list.push({ id: 'retention', label: 'Retention' })
-    list.push({ id: 'advanced', label: 'Advanced' })
-  }
-  return list
-})
-
-/**
- * What the pane renders, derived from `sections` rather than the `section`
- * prop directly: switching Schedule Type away from Backup mid-create can
- * strand the prop on a section (Retention, Advanced) this schedule no longer
- * has, and this falls back to General rather than rendering behind the
- * sub-nav's back. Same shape as AgentSettingsTab's `currentSection`.
- */
-const currentSection = computed<ScheduleSettingsSection>(() =>
-  sections.value.some((s) => s.id === props.section) ? props.section : 'general',
-)
+const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
+  { id: 'general', label: 'General' },
+  { id: 'targets', label: 'Targets' },
+  ...(props.isBackup
+    ? [
+        { id: 'retention', label: 'Retention' } as const,
+        { id: 'advanced', label: 'Advanced' } as const,
+      ]
+    : []),
+])
 
 function multiSelectLabel(): string {
   const ids = selectedAgentIds.value
@@ -129,315 +114,307 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="settings-tab">
-    <nav
-      class="settings-nav"
-      aria-label="Schedule settings sections"
-    >
-      <button
-        v-for="s in sections"
-        :key="s.id"
-        type="button"
-        class="settings-nav-item"
-        :aria-current="s.id === currentSection"
-        @click="emit('update:section', s.id)"
-      >
-        {{ s.label }}
-      </button>
-    </nav>
-
-    <div class="settings-pane">
-      <div
-        v-if="currentSection === 'general'"
-        class="info-card"
-      >
-        <h3 class="info-title">General</h3>
-        <div class="field">
-          <label class="field-label">Name</label>
-          <input
-            v-model="form.name"
-            type="text"
-            class="input"
-            placeholder="e.g. Daily web server backup"
-          />
-          <span class="field-hint">Optional display name for this schedule</span>
-        </div>
-        <div class="field">
-          <label class="field-label">Schedule</label>
-          <CronBuilder v-model="form.cron_expression" />
-        </div>
-        <div class="field field-inline">
-          <label class="field-label">Enabled</label>
-          <ToggleSwitch v-model="form.enabled" />
-        </div>
-        <div
-          v-if="isCreate"
-          class="field"
-        >
-          <label class="field-label">Schedule Type</label>
-          <select
-            v-model="selectedType"
-            class="input"
-          >
-            <option value="backup">Backup</option>
-            <option value="check">Integrity Check</option>
-            <option value="verify">Verify (extract dry-run)</option>
-          </select>
-          <span class="field-hint">
-            Backup creates archives; Check validates repo integrity; Verify tests extractability.
-          </span>
-        </div>
+  <SettingsRail
+    v-slot="{ section: currentSection }"
+    :sections="sections"
+    :section="section"
+    even
+    label="Schedule settings sections"
+    @update:section="emit('update:section', $event)"
+  >
+    <template v-if="currentSection === 'general'">
+      <p class="pane-lede">What this schedule is called, and when it runs.</p>
+      <div class="field">
+        <label class="field-label">Name</label>
+        <input
+          v-model="form.name"
+          type="text"
+          class="input"
+          placeholder="e.g. Daily web server backup"
+        />
+        <span class="field-hint">Optional display name for this schedule</span>
       </div>
-
+      <div class="field">
+        <label class="field-label">Schedule</label>
+        <CronBuilder v-model="form.cron_expression" />
+      </div>
+      <div class="field field-inline">
+        <label class="field-label">Enabled</label>
+        <ToggleSwitch v-model="form.enabled" />
+      </div>
       <div
-        v-else-if="currentSection === 'targets'"
-        class="info-card"
+        v-if="isCreate"
+        class="field"
       >
-        <h3 class="info-title">Targets</h3>
-        <div class="field">
-          <label class="field-label"
-            >Hosts
-            <span
-              v-if="isCreate"
-              class="required"
-              >*</span
-            ></label
-          >
-          <div
-            ref="agentDropdownRef"
-            class="multi-select-wrapper"
-          >
-            <button
-              type="button"
-              class="multi-select-trigger"
-              :class="{ open: showAgentDropdown }"
-              @click.stop="showAgentDropdown = !showAgentDropdown"
-            >
-              <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-              <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
-            </button>
-            <div
-              v-if="showAgentDropdown"
-              class="multi-select-dropdown"
-            >
-              <label
-                v-for="a in agents"
-                :key="a.id"
-                class="multi-select-item"
-              >
-                <input
-                  type="checkbox"
-                  :checked="selectedAgentIds.includes(a.id)"
-                  @change="toggleAgentSelection(a.id)"
-                />
-                <span class="multi-select-name">{{ a.display_name ?? a.hostname }}</span>
-              </label>
-            </div>
-          </div>
-          <span class="field-hint">The agents that will execute this schedule</span>
-        </div>
+        <label class="field-label">Schedule type</label>
+        <select
+          v-model="selectedType"
+          class="input"
+        >
+          <option value="backup">Backup</option>
+          <option value="check">Integrity check</option>
+          <option value="verify">Verify (extract dry-run)</option>
+        </select>
+        <span class="field-hint">
+          Backup creates archives; Check validates repo integrity; Verify tests extractability.
+        </span>
+      </div>
+    </template>
 
-        <div class="field">
-          <label class="field-label"
-            >Repository
-            <span
-              v-if="isCreate"
-              class="required"
-              >*</span
-            ></label
-          >
-          <select
-            v-model.number="selectedRepoId"
-            class="input"
-          >
-            <option
-              v-if="isCreate"
-              :value="null"
-              disabled
-            >
-              Select a repository...
-            </option>
-            <option
-              v-for="r in repos"
-              :key="r.id"
-              :value="r.id"
-            >
-              {{ r.name }}
-            </option>
-          </select>
+    <template v-else-if="currentSection === 'targets'">
+      <p class="pane-lede">
+        Which hosts this schedule runs on, which repository they write to, and what happens when one
+        of them fails.
+      </p>
+      <div class="field">
+        <label class="field-label"
+          >Hosts
           <span
             v-if="isCreate"
-            class="field-hint"
-            >The borg repository to back up to</span
+            class="required"
+            >*</span
+          ></label
+        >
+        <div
+          ref="agentDropdownRef"
+          class="multi-select-wrapper"
+        >
+          <button
+            type="button"
+            class="multi-select-trigger"
+            :class="{ open: showAgentDropdown }"
+            @click.stop="showAgentDropdown = !showAgentDropdown"
           >
+            <span class="multi-select-label">{{ multiSelectLabel() }}</span>
+            <ChevronDown
+              :size="14"
+              class="disclosure-chevron"
+              :class="{ 'disclosure-chevron--open': showAgentDropdown }"
+            />
+          </button>
+          <div
+            v-if="showAgentDropdown"
+            class="multi-select-dropdown"
+          >
+            <label
+              v-for="a in agents"
+              :key="a.id"
+              class="multi-select-item"
+            >
+              <input
+                type="checkbox"
+                :checked="selectedAgentIds.includes(a.id)"
+                @change="toggleAgentSelection(a.id)"
+              />
+              <span class="multi-select-name">{{ a.display_name ?? a.hostname }}</span>
+            </label>
+          </div>
+        </div>
+        <span class="field-hint">The agents that will execute this schedule</span>
+      </div>
+
+      <div class="field">
+        <label class="field-label"
+          >Repository
+          <span
+            v-if="isCreate"
+            class="required"
+            >*</span
+          ></label
+        >
+        <select
+          v-model.number="selectedRepoId"
+          class="input"
+        >
+          <option
+            v-if="isCreate"
+            :value="null"
+            disabled
+          >
+            Select a repository...
+          </option>
+          <option
+            v-for="r in repos"
+            :key="r.id"
+            :value="r.id"
+          >
+            {{ r.name }}
+          </option>
+        </select>
+        <span
+          v-if="isCreate"
+          class="field-hint"
+          >The borg repository to back up to</span
+        >
+      </div>
+
+      <div class="field">
+        <label class="field-label">On failure</label>
+        <select
+          v-model="onFailure"
+          class="input"
+        >
+          <option value="stop">Stop</option>
+          <option value="continue">Continue</option>
+        </select>
+        <span class="field-hint">
+          Whether to stop or continue to the next agent when one fails.
+        </span>
+      </div>
+
+      <div
+        v-if="selectedAgentIds.length > 1"
+        class="field"
+      >
+        <label class="field-label">Execution order</label>
+        <div class="order-list">
+          <div
+            v-for="(agentId, idx) in selectedAgentIds"
+            :key="agentId"
+            class="order-item"
+          >
+            <span class="order-index">{{ idx + 1 }}</span>
+            <span class="order-name">{{ agentLabel(agentId) }}</span>
+            <div class="order-actions">
+              <button
+                type="button"
+                class="order-btn"
+                :disabled="idx === 0"
+                title="Move up"
+                aria-label="Move up"
+                @click="moveAgentUp(idx)"
+              >
+                <ArrowUp :size="12" />
+              </button>
+              <button
+                type="button"
+                class="order-btn"
+                :disabled="idx === selectedAgentIds.length - 1"
+                title="Move down"
+                aria-label="Move down"
+                @click="moveAgentDown(idx)"
+              >
+                <ArrowDown :size="12" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template v-if="isBackup">
+        <div
+          v-if="selectedAgentIds.length > 1"
+          class="field field-inline"
+        >
+          <label class="field-label">Configure paths per agent</label>
+          <ToggleSwitch v-model="usePerHostPaths" />
         </div>
 
-        <div class="field">
-          <label class="field-label">On Failure</label>
-          <select
-            v-model="onFailure"
-            class="input"
-          >
-            <option value="stop">Stop</option>
-            <option value="continue">Continue</option>
-          </select>
+        <div
+          v-if="!usePerHostPaths"
+          class="field"
+        >
+          <label class="field-label">Backup paths</label>
+          <textarea
+            v-model="form.backup_sources"
+            class="input area-input"
+            placeholder="Directories to back up, one per line"
+            spellcheck="false"
+          />
           <span class="field-hint">
-            Whether to stop or continue to the next agent when one fails.
+            Leave empty to use the default paths configured for this agent.
           </span>
         </div>
 
         <div
-          v-if="selectedAgentIds.length > 1"
+          v-else
           class="field"
         >
-          <label class="field-label">Execution Order</label>
-          <div class="order-list">
-            <div
-              v-for="(agentId, idx) in selectedAgentIds"
-              :key="agentId"
-              class="order-item"
-            >
-              <span class="order-index">{{ idx + 1 }}</span>
-              <span class="order-name">{{ agentLabel(agentId) }}</span>
-              <div class="order-actions">
-                <button
-                  type="button"
-                  class="order-btn"
-                  :disabled="idx === 0"
-                  title="Move up"
-                  @click="moveAgentUp(idx)"
-                >
-                  ▲
-                </button>
-                <button
-                  type="button"
-                  class="order-btn"
-                  :disabled="idx === selectedAgentIds.length - 1"
-                  title="Move down"
-                  @click="moveAgentDown(idx)"
-                >
-                  ▼
-                </button>
-              </div>
-            </div>
-          </div>
+          <label class="field-label">Backup paths</label>
+          <PerAgentFields
+            :agent-ids="selectedAgentIds"
+            :agent-label="agentLabel"
+          >
+            <template #default="{ agentId }">
+              <textarea
+                :value="perHostSources[agentId] ?? ''"
+                class="input area-input area-input-sm"
+                placeholder="Directories to back up, one per line"
+                spellcheck="false"
+                @input="
+                  ($event) =>
+                    (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
+                "
+              />
+            </template>
+            <template #hint> Leave an agent empty to use its default backup paths. </template>
+          </PerAgentFields>
         </div>
+      </template>
+    </template>
 
-        <template v-if="isBackup">
-          <div
-            v-if="selectedAgentIds.length > 1"
-            class="field field-inline"
-          >
-            <label class="field-label">Configure paths per agent</label>
-            <ToggleSwitch v-model="usePerHostPaths" />
-          </div>
-
-          <div
-            v-if="!usePerHostPaths"
-            class="field"
-          >
-            <label class="field-label">Backup Paths</label>
-            <textarea
-              v-model="form.backup_sources"
-              class="input area-input"
-              placeholder="Directories to back up, one per line"
-              spellcheck="false"
-            />
-            <span class="field-hint">
-              Leave empty to use the default paths configured for this agent.
-            </span>
-          </div>
-
-          <div
-            v-else
-            class="field"
-          >
-            <label class="field-label">Backup Paths</label>
-            <PerAgentFields
-              :agent-ids="selectedAgentIds"
-              :agent-label="agentLabel"
-            >
-              <template #default="{ agentId }">
-                <textarea
-                  :value="perHostSources[agentId] ?? ''"
-                  class="input area-input area-input-sm"
-                  placeholder="Directories to back up, one per line"
-                  spellcheck="false"
-                  @input="
-                    ($event) =>
-                      (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
-                  "
-                />
-              </template>
-              <template #hint> Leave an agent empty to use its default backup paths. </template>
-            </PerAgentFields>
-          </div>
-        </template>
-      </div>
-
-      <div
-        v-else-if="currentSection === 'retention'"
-        class="info-card"
-      >
-        <h3 class="info-title">Retention</h3>
-        <div class="retention-grid">
-          <div class="field">
-            <label class="field-label">Hourly</label>
-            <input
-              v-model.number="form.keep_hourly"
-              type="number"
-              min="0"
-              class="input"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">Daily</label>
-            <input
-              v-model.number="form.keep_daily"
-              type="number"
-              min="0"
-              class="input"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">Weekly</label>
-            <input
-              v-model.number="form.keep_weekly"
-              type="number"
-              min="0"
-              class="input"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">Monthly</label>
-            <input
-              v-model.number="form.keep_monthly"
-              type="number"
-              min="0"
-              class="input"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">Yearly</label>
-            <input
-              v-model.number="form.keep_yearly"
-              type="number"
-              min="0"
-              class="input"
-            />
-          </div>
+    <template v-else-if="currentSection === 'retention'">
+      <p class="pane-lede">
+        How many archives borg keeps when this schedule prunes. Blank or zero keeps none of that
+        interval.
+      </p>
+      <div class="retention-grid">
+        <div class="field">
+          <label class="field-label">Hourly</label>
+          <input
+            v-model.number="form.keep_hourly"
+            type="number"
+            min="0"
+            class="input"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label">Daily</label>
+          <input
+            v-model.number="form.keep_daily"
+            type="number"
+            min="0"
+            class="input"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label">Weekly</label>
+          <input
+            v-model.number="form.keep_weekly"
+            type="number"
+            min="0"
+            class="input"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label">Monthly</label>
+          <input
+            v-model.number="form.keep_monthly"
+            type="number"
+            min="0"
+            class="input"
+          />
+        </div>
+        <div class="field">
+          <label class="field-label">Yearly</label>
+          <input
+            v-model.number="form.keep_yearly"
+            type="number"
+            min="0"
+            class="input"
+          />
         </div>
       </div>
+    </template>
 
-      <ScheduleAdvancedTab
-        v-else-if="currentSection === 'advanced'"
-        v-model:form="form"
-        v-model:overrides="overrides"
-        :agent-ids="selectedAgentIds"
-        :agent-label="agentLabel"
-      />
-    </div>
-  </div>
+    <ScheduleAdvancedTab
+      v-else-if="currentSection === 'advanced'"
+      v-model:form="form"
+      v-model:overrides="overrides"
+      :agent-ids="selectedAgentIds"
+      :agent-label="agentLabel"
+    />
+  </SettingsRail>
 </template>
 
 <style scoped>
@@ -450,7 +427,7 @@ onBeforeUnmount(() => {
 .retention-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(90px, 100%), 1fr));
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 /* Multi-select */
@@ -460,7 +437,7 @@ onBeforeUnmount(() => {
 
 .multi-select-trigger {
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -471,7 +448,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-4);
   transition: border-color var(--duration-base);
   box-sizing: border-box;
   text-align: left;
@@ -489,12 +466,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.multi-select-arrow {
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
 .multi-select-dropdown {
   position: absolute;
   top: calc(100% + 4px);
@@ -504,20 +475,20 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-lg);
-  padding: 0.4rem;
+  padding: var(--space-3);
   z-index: 100;
   max-height: 220px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: var(--space-1);
 }
 
 .multi-select-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.5rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--fs-base);
@@ -547,14 +518,14 @@ onBeforeUnmount(() => {
 .order-list {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-3);
 }
 
 .order-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.6rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -579,12 +550,12 @@ onBeforeUnmount(() => {
 
 .order-actions {
   display: flex;
-  gap: 0.2rem;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .order-btn {
-  padding: 0.4rem 0.6rem;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -607,34 +578,21 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
-/* Four sections fit one row at any width, so the sub-nav never wraps to a
-   second row the way an unbounded list would. */
-@media (max-width: 720px) {
-  .settings-tab {
-    flex-direction: column;
-  }
-
+/* At most four sections, and they fit one row at any width - so this rail
+   spreads them into equal cells rather than wrapping the way the shared
+   collapse in style.css does for an unbounded list. */
+@media (max-width: 768px) {
   .settings-nav {
-    width: 100%;
-    flex-direction: row;
     flex-wrap: nowrap;
-    border-bottom: 1px solid var(--border);
   }
 
   .settings-nav-item {
     flex: 1 1 0;
     min-width: 0;
     text-align: center;
-    border-left: none;
-    border-bottom: 2px solid transparent;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .settings-nav-item[aria-current='true'] {
-    border-left-color: transparent;
-    border-bottom-color: var(--accent);
   }
 }
 </style>

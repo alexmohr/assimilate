@@ -64,9 +64,8 @@ function exitClass(code: number): string {
 </script>
 
 <template>
-  <div class="info-card">
-    <h3 class="info-title">Borg Console</h3>
-    <p class="console-desc">
+  <div>
+    <p class="pane-lede console-lede">
       Execute borg commands directly against this repository. The repository URL and passphrase are
       injected automatically. Use <code class="console-code">::archive</code> notation to reference
       a specific archive.
@@ -133,11 +132,10 @@ function exitClass(code: number): string {
 </template>
 
 <style scoped>
-.console-desc {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  margin-bottom: 0.75rem;
-  line-height: 1.5;
+/* The lede doubles as this pane's instructions, so it needs the gap a
+   `.pane-head` would have put under it. */
+.console-lede {
+  margin-bottom: var(--space-5);
 }
 
 .console-code {
@@ -146,13 +144,13 @@ function exitClass(code: number): string {
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.05rem 0.3rem;
+  padding: var(--space-1) var(--space-2);
 }
 
 .console-input-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .console-prefix {
@@ -172,8 +170,8 @@ function exitClass(code: number): string {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.5rem;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
 .console-hint-label {
@@ -184,7 +182,7 @@ function exitClass(code: number): string {
 .console-hint-cmd {
   font-family: var(--mono);
   font-size: var(--fs-xs);
-  padding: 0.1rem 0.4rem;
+  padding: var(--space-1) var(--space-3);
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -198,8 +196,8 @@ function exitClass(code: number): string {
 }
 
 .console-error {
-  margin-top: 0.75rem;
-  padding: 0.6rem 0.75rem;
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-5);
   background: var(--danger-subtle);
   border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
@@ -208,7 +206,7 @@ function exitClass(code: number): string {
 }
 
 .console-output {
-  margin-top: 0.75rem;
+  margin-top: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -218,7 +216,7 @@ function exitClass(code: number): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.4rem 0.75rem;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-input);
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-xs);
@@ -234,7 +232,7 @@ function exitClass(code: number): string {
 
 .console-pre {
   margin: 0;
-  padding: 0.75rem;
+  padding: var(--space-5);
   font-family: var(--mono);
   font-size: var(--fs-xs);
   white-space: pre-wrap;
@@ -252,7 +250,7 @@ function exitClass(code: number): string {
 
 .console-empty {
   display: block;
-  padding: 0.75rem;
+  padding: var(--space-5);
   font-size: var(--fs-sm);
   color: var(--text-muted);
   font-style: italic;

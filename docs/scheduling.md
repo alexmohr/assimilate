@@ -27,7 +27,7 @@ The Schedules list page shows all configured backup schedules with:
 - **Status filter** — show All, Enabled only, or Disabled only
 - **Type filter** — filter by Backup, Check, or Verify
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
-- **Sort buttons** — sort by Agent, Next Run, Last Run, or Type
+- **Sort buttons** — sort by Agent, Next run, Last run, or Type
 
 Schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
 
@@ -94,7 +94,7 @@ Pruning runs immediately after the backup completes. Only archives created by th
 
 Each schedule can carry its own list of exclude patterns. These are passed directly to `borg create --exclude` and follow [borg's pattern syntax](https://borgbackup.readthedocs.io/en/stable/usage/help.html#borg-patterns).
 
-Patterns are configured per schedule in the **Exclude Patterns** field. If **Ignore global excludes** is unchecked, any repository-level exclude patterns (see [Repositories](repositories.md)) are merged with the schedule's own patterns. Check **Ignore global excludes** to use only the schedule's patterns.
+Patterns are configured per schedule in the **Exclude patterns** field. If **Ignore global excludes** is unchecked, any repository-level exclude patterns (see [Repositories](repositories.md)) are merged with the schedule's own patterns. Check **Ignore global excludes** to use only the schedule's patterns.
 
 ## Backup Paths
 
@@ -108,7 +108,7 @@ Backup paths determine which directories borg includes when creating an archive.
 
 ### Schedule-Level Paths
 
-When all agents in a schedule back up the same directories, enter the paths in the **Backup Paths** textarea. These apply to every target agent unless overridden by per-agent paths.
+When all agents in a schedule back up the same directories, enter the paths in the **Backup paths** textarea. These apply to every target agent unless overridden by per-agent paths.
 
 ### Per-Agent Paths
 

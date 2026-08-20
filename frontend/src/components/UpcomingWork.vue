@@ -19,7 +19,7 @@ defineProps<{
     id="upcoming-work"
     class="panel"
   >
-    <h2 class="panel-title">Upcoming Work</h2>
+    <h2 class="panel-title">Upcoming work</h2>
     <div
       v-if="operations.length === 0 && schedules.length === 0"
       class="empty-state"
@@ -69,9 +69,9 @@ defineProps<{
 .work-row {
   display: grid;
   grid-template-columns: 10px minmax(140px, 0.8fr) 1fr auto;
-  gap: 0.75rem;
+  gap: var(--space-5);
   align-items: center;
-  padding: 0.75rem 0;
+  padding: var(--space-5) 0;
   border-top: 1px solid var(--border);
   color: inherit;
   text-decoration: none;

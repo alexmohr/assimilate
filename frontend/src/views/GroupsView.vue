@@ -255,7 +255,7 @@ onMounted(async () => {
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -264,7 +264,7 @@ onMounted(async () => {
       :icon="Users"
       title="No groups yet"
       description="Groups let you grant a set of roles to several users at once."
-      action="Create Group"
+      action="New group"
       @action="openCreate"
     />
     <div
@@ -274,55 +274,57 @@ onMounted(async () => {
       No groups match the filter.
     </div>
 
-    <table
+    <div
       v-else
-      class="data-table"
+      class="table-wrap table-wrap--framed"
     >
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Description</th>
-          <th>Members</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="group in filteredGroups"
-          :key="group.id"
-        >
-          <td class="name-cell">{{ group.name }}</td>
-          <td class="desc-cell">{{ group.description ?? '\u2014' }}</td>
-          <td class="count-cell">{{ memberCounts[group.id] ?? 0 }}</td>
-          <td class="actions-cell">
-            <button
-              class="btn btn-sm btn-ghost"
-              @click="openMembers(group)"
-            >
-              Members
-            </button>
-            <button
-              class="btn btn-sm btn-ghost"
-              @click="openEdit(group)"
-            >
-              Edit
-            </button>
-            <button
-              class="btn btn-sm btn-ghost btn-danger-text"
-              title="Delete"
-              @click="openDelete(group)"
-            >
-              <Trash2 :size="14" />
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Members</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="group in filteredGroups"
+            :key="group.id"
+          >
+            <td class="name-cell">{{ group.name }}</td>
+            <td class="desc-cell">{{ group.description ?? '\u2014' }}</td>
+            <td class="count-cell">{{ memberCounts[group.id] ?? 0 }}</td>
+            <td class="actions-cell">
+              <button
+                class="btn btn-sm btn-ghost"
+                @click="openMembers(group)"
+              >
+                Members
+              </button>
+              <button
+                class="btn btn-sm btn-ghost"
+                @click="openEdit(group)"
+              >
+                Edit
+              </button>
+              <button
+                class="btn btn-sm btn-ghost btn-danger-text"
+                title="Delete"
+                @click="openDelete(group)"
+              >
+                <Trash2 :size="14" />
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <!-- Create Group Modal -->
     <BaseModal
       :open="showCreateModal"
-      title="Create Group"
+      title="New group"
       form
       @close="showCreateModal = false"
       @submit="submitCreate"
@@ -371,7 +373,7 @@ onMounted(async () => {
     <!-- Edit Group Modal -->
     <BaseModal
       :open="showEditModal"
-      title="Edit Group"
+      title="Edit group"
       form
       @close="showEditModal = false"
       @submit="submitEdit"
@@ -420,7 +422,7 @@ onMounted(async () => {
     <!-- Delete Group Modal -->
     <ConfirmDeleteDialog
       :show="showDeleteModal"
-      title="Delete Group"
+      title="Delete group"
       :submitting="deleteSubmitting"
       :error="deleteError"
       @cancel="showDeleteModal = false"
@@ -434,7 +436,7 @@ onMounted(async () => {
     <BaseModal
       :open="showMembersModal"
       size="lg"
-      title="Group Members"
+      title="Group members"
       @close="showMembersModal = false"
     >
       <p class="modal-subtitle">
@@ -507,7 +509,7 @@ onMounted(async () => {
 .modal-subtitle {
   font-size: var(--fs-sm);
   color: var(--text-secondary);
-  margin: -0.25rem 0 1rem;
+  margin: calc(var(--space-2) * -1) 0 var(--space-6);
 }
 
 .members-list {
@@ -515,18 +517,18 @@ onMounted(async () => {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 1rem;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.5rem;
+  padding: var(--space-4);
 }
 
 .member-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.5rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--duration-fast);

@@ -70,7 +70,7 @@ function navigateToActivity(status?: string): void {
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title">Backup Stats</h2>
+      <h2 class="panel-title">Backup stats</h2>
       <ChartRangeControls
         v-model:repo-id="selectedRepoId"
         v-model:days="selectedDays"
@@ -126,7 +126,7 @@ function navigateToActivity(status?: string): void {
       </div>
       <div class="mini-stat">
         <span class="stat-value stat-value--lg">{{ formatDuration(avgDurationSecs) }}</span>
-        <span class="stat-label">Avg Duration</span>
+        <span class="stat-label">Avg duration</span>
       </div>
     </div>
   </section>
@@ -136,15 +136,15 @@ function navigateToActivity(status?: string): void {
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .mini-stat {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.15rem;
-  padding: 0.5rem;
+  gap: var(--space-1);
+  padding: var(--space-4);
   background: var(--bg-base);
   border-radius: var(--radius-sm);
 }

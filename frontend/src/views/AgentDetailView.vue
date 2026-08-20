@@ -566,7 +566,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -594,7 +594,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         label="Agent sections"
       />
 
-      <div class="tab-content">
+      <div class="tab-content fade-in">
         <AgentOverviewTab
           v-if="activeTab === 'overview'"
           :agent="agent"
@@ -763,7 +763,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     <!-- Hostname Alias Confirmation Dialog -->
     <BaseModal
       :open="showAliasConfirm"
-      title="Add Hostname Pattern?"
+      title="Add hostname pattern?"
       @close="declineAlias"
     >
       <p>
@@ -787,7 +787,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           class="btn btn-primary"
           @click="confirmAddAlias"
         >
-          Add Pattern
+          Add pattern
         </button>
       </template>
     </BaseModal>
@@ -826,19 +826,5 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 .state-error {
   color: var(--danger);
-}
-
-.tab-content {
-  animation: fadeIn var(--duration-base) ease;
-  margin-top: 1rem;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 </style>

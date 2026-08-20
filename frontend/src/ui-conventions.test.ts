@@ -80,7 +80,8 @@ describe('icon conventions', () => {
   it('renders icons from the icon library, not as font glyphs', () => {
     // Entity glyphs take their weight from the system font, so they never
     // match the 2px stroke around them and they shift between platforms.
-    const glyphs = /&(times|larr|rarr|hellip|#8635|#9881|#9788|#9789|#9888|#10003|#9656);/
+    const glyphs =
+      /&(times|larr|rarr|hellip|#8635|#9881|#9788|#9789|#9888|#10003|#9656);|[\u2190-\u21FF\u25A0-\u25FF\u2713\u2717\u2718\u26A0\u2715\u2716\u00D7]/
     const offenders: string[] = []
     for (const f of VUE) {
       const text = readFileSync(f, 'utf-8')
@@ -142,6 +143,133 @@ describe('view size', () => {
     for (const f of VUE) {
       const lines = readFileSync(f, 'utf-8').split('\n').length
       if (lines > LIMIT) offenders.push(`${relative(SRC, f)}: ${lines} lines`)
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('component conventions', () => {
+  it('keeps the badge dot inside its badge', () => {
+    // `.badge-dot` is the 0.4rem circle a badge leads with. On the badge
+    // itself it wins on source order, collapsing the badge to 6.4px and
+    // spilling its label over whatever follows - which is exactly what the
+    // Online, Enabled and Running badges did.
+    const offenders: string[] = []
+    for (const f of VUE) {
+      const text = readFileSync(f, 'utf-8')
+      for (const m of text.matchAll(/class="([^"]*\bbadge\b[^"]*)"/g)) {
+        const classes = m[1].split(/\s+/)
+        if (classes.includes('badge') && classes.includes('badge-dot')) {
+          offenders.push(`${relative(SRC, f)}: ${m[1]}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('gives every table a scroll container', () => {
+    // Without one a wide table pushes the whole page sideways on a phone
+    // instead of scrolling inside its own box.
+    const offenders: string[] = []
+    for (const f of VUE) {
+      const text = readFileSync(f, 'utf-8')
+      for (const m of text.matchAll(/<table\b/g)) {
+        const before = text.slice(Math.max(0, m.index - 400), m.index)
+        if (!before.includes('table-wrap')) offenders.push(relative(SRC, f))
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  const PROPER = new Set([
+    'SSH',
+    'SMTP',
+    'IMAP',
+    'API',
+    'TOTP',
+    'URL',
+    'URI',
+    'ID',
+    'UI',
+    'CPU',
+    'RAM',
+    'TLS',
+    'HTTP',
+    'HTTPS',
+    'JSON',
+    'YAML',
+    'CSV',
+    'DNS',
+    'IP',
+    'UTC',
+    'GiB',
+    'TiB',
+    'MiB',
+    'MB',
+    'GB',
+    'Borg',
+    'Gotify',
+    'Telegram',
+    'Slack',
+    'Discord',
+    'Matrix',
+    'Ntfy',
+    'Pushover',
+    'Assimilate',
+    'GitHub',
+    'Linux',
+    'Prometheus',
+    'Docker',
+    'Webhook',
+    'OTP',
+    'SFTP',
+  ])
+  /** Capitalised words after the first, minus the names of real things. */
+  function shoutedWords(label: string): string[] {
+    return label
+      .split(/\s+/)
+      .slice(1)
+      .filter((w) => {
+        const bare = w.replace(/[^A-Za-z0-9/-]/g, '')
+        return /^[A-Z]/.test(bare) && !PROPER.has(bare) && bare.toUpperCase() !== bare
+      })
+  }
+
+  it('writes labels, headings and buttons in sentence case', () => {
+    // Title Case and sentence case were both in use, twice inside one file:
+    // `Display Name` against `Display name`, `Exclude Patterns` against
+    // `Exclude patterns`. Page titles keep their Title Case - they are the
+    // names of pages, not labels.
+    const LABEL =
+      /<(?:label|span|h2|h3|dt|th)[^>]*class="[^"]*(?:field-label|panel-title|group-label|section-title|stat-label)[^"]*"[^>]*>\s*([A-Za-z][^<>{}]*?)\s*</g
+    const offenders: string[] = []
+    for (const f of VUE) {
+      const text = readFileSync(f, 'utf-8')
+      for (const m of text.matchAll(LABEL)) {
+        if (shoutedWords(m[1]).length > 0) offenders.push(`${relative(SRC, f)}: ${m[1]}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('writes sort buttons and rail sections the same way', () => {
+    // These two carry their labels in a `label:` property rather than in
+    // markup, which is how `Last Seen` and `Next Run` outlived the sweep that
+    // fixed every label the check above can see.
+    //
+    // Only these two lists, not every `label:` in a script: a nav entry naming
+    // a page, a permission, and a chart series are names of things rather than
+    // labels on controls, and they keep their capitals for the same reason a
+    // page title does.
+    const LISTS = /(?:SORT_OPTIONS[^=]*=|SettingsSections<[^>]*>>\(\(\) =>)\s*\[([\s\S]*?)\n\s*\]/g
+    const offenders: string[] = []
+    for (const f of VUE) {
+      const script = readFileSync(f, 'utf-8').split('<template>')[0]
+      for (const list of script.matchAll(LISTS)) {
+        for (const m of list[1].matchAll(/\blabel: '([A-Za-z][^']*)'/g)) {
+          if (shoutedWords(m[1]).length > 0) offenders.push(`${relative(SRC, f)}: ${m[1]}`)
+        }
+      }
     }
     expect(offenders).toEqual([])
   })

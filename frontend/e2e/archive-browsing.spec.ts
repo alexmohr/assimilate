@@ -245,7 +245,12 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
-    await page.getByRole('button', { name: 'Delete Archive', exact: true }).click()
+    // The row buttons carry the same "Delete archive" title, so the confirm
+    // button is reached through the dialog rather than by name alone.
+    await page
+      .locator('.modal-footer')
+      .getByRole('button', { name: 'Delete archive', exact: true })
+      .click()
 
     // RepoDetailView marks the row as deleting synchronously, before the
     // DELETE request even goes out. Two earlier real races have since been
@@ -286,7 +291,7 @@ test.describe('Archive browsing & diff journey', () => {
     }).toPass({ timeout: 5_000, intervals: [20] })
 
     // While the delete (and the compact that automatically follows it) is
-    // still running, the Overview tab's "Current Operation" field should
+    // still running, the Overview tab's "Current operation" field should
     // reflect one of the two phases. Best-effort: on a fast demo repo this
     // window can be too short to reliably observe, so don't fail the test
     // over it - the definitive proof the whole pipeline ran is the archive

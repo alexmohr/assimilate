@@ -102,6 +102,23 @@
   --fs-2xl: 2rem;
   --fs-3xl: 4rem;
 
+  /* Spacing scale. Every padding, margin and gap comes from this ladder -
+     `design-tokens.test.ts` rejects a raw rem in those properties. Before it
+     existed the app used 32 distinct values for the same handful of jobs,
+     including 0.35 / 0.375 / 0.4 / 0.45 and 0.6 / 0.625 / 0.65 - differences
+     nobody can see and nobody can reproduce. Ten rungs, tight at the bottom
+     because chips and badges genuinely need sub-4px insets. */
+  --space-1: 0.125rem;
+  --space-2: 0.25rem;
+  --space-3: 0.375rem;
+  --space-4: 0.5rem;
+  --space-5: 0.75rem;
+  --space-6: 1rem;
+  --space-7: 1.25rem;
+  --space-8: 1.5rem;
+  --space-9: 2rem;
+  --space-10: 3rem;
+
   --duration-fast: 0.1s;
   --duration-base: 0.15s;
   --duration-slow: 0.3s;
@@ -148,8 +165,8 @@
   .btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.5rem 1rem;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
     border-radius: var(--radius-sm);
     border: none;
     cursor: pointer;
@@ -204,26 +221,45 @@
     background: var(--danger-subtle);
   }
 
+  /* Same shape in the warning tone, for an action that is not destructive but
+     needs looking at - accepting a changed SSH host key. */
+  .btn-warning-text {
+    color: var(--warning);
+    border-color: var(--warning);
+  }
+
+  .btn-warning-text:hover:not(:disabled) {
+    background: var(--warning-subtle);
+  }
+
   .btn-sm {
-    padding: 0.3rem 0.65rem;
+    padding: var(--space-2) var(--space-5);
     font-size: var(--fs-sm);
     min-height: 2rem;
   }
 
   .btn-xs {
-    padding: 0.2rem 0.5rem;
+    padding: var(--space-2) var(--space-4);
     font-size: var(--fs-xs);
   }
 
   /* --- Panel -------------------------------------------------------------
-     The app's one card surface. `.panel` is padded; `.panel--sectioned`
-     gives it a ruled header with a flush body, which is what the detail
-     views and list panels want. */
+     The app's one card surface, for a list container and a settings block
+     alike. `.panel` is padded; `.panel--sectioned` gives it a ruled header
+     with a flush body.
+
+     There used to be a second surface, `.info-card`, with its own padding and
+     an uppercase-muted `.info-title`. Which one a view reached for turned out
+     to be a matter of which view it was rather than what the box held, so the
+     same bordered card shouted its heading on one screen and spoke it on the
+     next. Uppercase survives as `.group-label`, which captions a group of
+     values *inside* a panel - a smaller, different job, so the two no longer
+     compete. */
   .panel {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 1.25rem;
+    padding: var(--space-7);
   }
 
   .panel--sectioned {
@@ -236,23 +272,23 @@
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
   }
 
   .panel--sectioned > .panel-header {
-    padding: 0.875rem 1.25rem;
+    padding: var(--space-5) var(--space-7);
     border-bottom: 1px solid var(--border);
     margin-bottom: 0;
   }
 
   .panel--sectioned > .panel-body {
-    padding: 1.25rem;
+    padding: var(--space-7);
   }
 
   /* Sentence case in primary ink: a panel heading, not a form label.
-     Uppercase-muted is reserved for `.field-label`, so the two roles stay
-     distinguishable when they sit in the same card. */
+     Uppercase-muted is reserved for `.field-label` and `.group-label`, so the
+     roles stay distinguishable when they sit in the same card. */
   .panel-title {
     font-size: var(--fs-base);
     font-weight: 600;
@@ -260,32 +296,22 @@
     margin: 0;
   }
 
-  /* --- Info card ---------------------------------------------------------
-     The detail views' settings surface: a titled block of key/value rows or
-     an inline edit form, stacked vertically down a column. Distinct from
-     `.panel`, which is a list container with a ruled header.
-
-     `.info-title` is uppercase-muted rather than `.panel-title`'s sentence
-     case because these headings label a settings *group*, the same role
-     `.field-label` plays for a single field. */
-  .info-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.5rem;
+  /* The buttons on the right of a `.panel-header`, when there is more than
+     one of them and they need to travel together. */
+  .panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-4);
   }
 
-  .info-card + .info-card {
-    margin-top: 0.75rem;
-  }
-
-  .info-title {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 1.25rem;
+  /* A column of panels stacked down a page or a settings pane. The gap lives
+     on the container rather than on an adjacent-sibling margin, so a panel
+     can be moved between stacks without carrying spacing with it. */
+  .panel-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
   }
 
   /* Key/value rows: a muted label column sized to its content, values
@@ -293,7 +319,7 @@
   .info-grid {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 0.6rem 1.5rem;
+    gap: var(--space-4) var(--space-8);
     margin: 0;
   }
 
@@ -309,15 +335,15 @@
     font-size: var(--fs-base);
   }
 
-  /* Ruled footer holding the card's buttons. */
+  /* Ruled footer holding a panel's buttons. */
   .info-actions {
-    margin-top: 1.5rem;
-    padding-top: 1rem;
+    margin-top: var(--space-8);
+    padding-top: var(--space-6);
     border-top: 1px solid var(--border);
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: var(--space-5);
   }
 
   /* --- Badge -------------------------------------------------------------
@@ -327,9 +353,9 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: var(--space-2);
     flex-shrink: 0;
-    padding: 0.2rem 0.55rem;
+    padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-pill);
     font-size: var(--fs-2xs);
     font-weight: 600;
@@ -401,7 +427,7 @@
     border-color: var(--danger);
   }
 
-  .danger-zone .info-title {
+  .danger-zone .panel-title {
     color: var(--danger);
   }
 
@@ -409,19 +435,19 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1.5rem;
+    gap: var(--space-8);
   }
 
   .danger-body + .danger-body {
-    margin-top: 1.25rem;
-    padding-top: 1.25rem;
+    margin-top: var(--space-7);
+    padding-top: var(--space-7);
     border-top: 1px solid var(--border);
   }
 
   .danger-info {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: var(--space-2);
   }
 
   .danger-heading {
@@ -439,7 +465,7 @@
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 0.35rem;
+    gap: var(--space-3);
     flex-shrink: 0;
   }
 
@@ -462,7 +488,7 @@
   .tag-pill {
     display: inline-flex;
     align-items: center;
-    padding: 0.1rem 0.45rem;
+    padding: var(--space-1) var(--space-4);
     border-radius: var(--radius-pill);
     font-size: var(--fs-2xs);
     font-weight: 500;
@@ -477,24 +503,24 @@
     position: absolute;
     top: 100%;
     left: 0;
-    margin-top: 0.35rem;
+    margin-top: var(--space-3);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-lg);
-    padding: 0.5rem;
+    padding: var(--space-4);
     min-width: 160px;
     z-index: 50;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: var(--space-2);
   }
 
   .tag-dropdown-item {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.4rem;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: var(--fs-sm);
@@ -516,13 +542,13 @@
   .tags-section {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--space-5);
   }
 
   .tag-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
+    gap: var(--space-3);
   }
 
   .tag-remove {
@@ -539,14 +565,14 @@
 
   .tag-add-row {
     display: flex;
-    gap: 0.75rem;
+    gap: var(--space-5);
     flex-wrap: wrap;
     align-items: center;
   }
 
   .tag-create-inline {
     display: flex;
-    gap: 0.4rem;
+    gap: var(--space-3);
     align-items: center;
   }
 
@@ -567,7 +593,7 @@
   }
 
   .segmented-option {
-    padding: 0.35rem 0.75rem;
+    padding: var(--space-3) var(--space-5);
     border: none;
     background: var(--bg-input);
     color: var(--text-secondary);
@@ -603,7 +629,7 @@
   }
 
   .tab {
-    padding: 0.75rem 1.25rem;
+    padding: var(--space-5) var(--space-7);
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
@@ -628,16 +654,242 @@
     font-weight: 600;
   }
 
+  /* --- Disclosure ----------------------------------------------------------
+     A labelled section that opens and closes, rendered by `BaseDisclosure`.
+     Lives here rather than in that component because a caller styling its own
+     body needs the same shapes to line up against. */
+  .disclosure-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-4) var(--space-5);
+    cursor: pointer;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--fs-base);
+    font-weight: 500;
+    text-align: left;
+    transition: background var(--duration-base);
+  }
+
+  .disclosure-head:hover {
+    background: var(--bg-hover);
+  }
+
+  .disclosure-title {
+    flex: 1;
+  }
+
+  .disclosure-chevron {
+    color: var(--text-muted);
+    flex: none;
+    transition: transform var(--duration-base);
+  }
+
+  .disclosure-chevron--open {
+    transform: rotate(-180deg);
+  }
+
+  .disclosure-body {
+    margin-top: var(--space-4);
+  }
+
+  /* --- Icon list -----------------------------------------------------------
+     "Here is what this will do", one line per consequence, each led by the
+     icon for what it touches. Introduced by the upgrade dialog; the merge,
+     adopt, restore and delete flows want the same shape. */
+  .icon-list {
+    margin: 0 0 var(--space-7);
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .icon-list li {
+    display: flex;
+    gap: var(--space-4);
+    align-items: flex-start;
+    font-size: var(--fs-base);
+    color: var(--text-secondary);
+  }
+
+  .icon-list svg {
+    flex: none;
+    margin-top: var(--space-1);
+    color: var(--text-muted);
+  }
+
+  /* --- Detail header -------------------------------------------------------
+     The identity block at the top of a detail page: what this thing is called,
+     what state it is in, what is known about it, and the one action that is
+     worth doing right now with everything else behind an overflow menu.
+
+     Agents and schedules each carried a private copy of this, identical rule
+     for rule under an `.agent-` and a `.schedule-` prefix - which is also what
+     let the duplication past the shared-rule check. Repositories had no header
+     at all, so their name only ever appeared as the last breadcrumb. */
+  .detail-header {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-6);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-6);
+  }
+
+  .detail-identity {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .detail-title-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+
+  .detail-name {
+    font-size: var(--fs-xl);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+
+  /* A hostname or repository name is a machine identifier. Not `.mono`: that
+     class carries its own font-size and is declared later in this layer, so it
+     would shrink the page's `h1` to the size of a table cell. */
+  .detail-name--mono {
+    font-family: var(--mono);
+  }
+
+  .detail-subtitle {
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  /* The machine facts under the name: version, revision, timestamps. */
+  .detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+  }
+
+  /* Opt-in, the same way `.detail-name--mono` is: a meta line of versions and
+     revisions wants the monospace face, one of counts and sizes does not. */
+  .detail-meta--mono {
+    font-family: var(--mono);
+  }
+
+  .detail-meta b {
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .detail-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    position: relative;
+  }
+
+  .detail-header-error {
+    flex-basis: 100%;
+  }
+
+  /* --- Overflow menu -------------------------------------------------------
+     Everything the header does not promote to its accented slot. */
+  .overflow-toggle {
+    padding-inline: var(--space-4);
+  }
+
+  .overflow-menu {
+    position: absolute;
+    top: calc(100% + var(--space-3));
+    right: 0;
+    z-index: 20;
+    min-width: 200px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-2);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .overflow-menu-item {
+    font: inherit;
+    font-size: var(--fs-sm);
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .overflow-menu-item:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .overflow-menu-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* The destructive entry is ruled off from the navigation above it. */
+  .overflow-menu-item--danger {
+    color: var(--danger);
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    margin-top: var(--space-2);
+    padding-top: var(--space-4);
+  }
+
+  /* Why an entry is absent, where absence alone would read as a bug. */
+  .overflow-menu-note {
+    font-size: var(--fs-2xs);
+    color: var(--text-muted);
+    padding: var(--space-3) var(--space-4);
+    font-style: italic;
+  }
+
+  /* The body of a tab, below the strip. Three views declared this separately
+     and had drifted into three meanings - a top margin, a top margin plus a
+     private copy of the shared fade animation, and a flex column. */
+  .tab-content {
+    margin-top: var(--space-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
   /* --- Settings sub-nav ----------------------------------------------------
-     A tab whose content is itself sectioned - AgentSettingsTab, ScheduleSettingsTab
-     - gets a narrow side rail rather than a second tab strip. Each caller adds
-     its own `@media (max-width: 720px)` override for how the rail collapses,
-     since that can genuinely differ (wrap into rows vs. stay one row of
-     equal-width cells), but the desktop shape and the danger-section tone are
-     shared so the two rails read as one control. */
+     A tab whose content is itself sectioned - AgentSettingsTab,
+     ScheduleSettingsTab, RepoSettingsTab - gets a narrow side rail rather than
+     a second tab strip. Everything about the rail lives here, including how it
+     collapses below the md breakpoint: the three tabs each carried their own
+     copy of that media query and all three wanted the same thing. Where a rail
+     genuinely differs - a small, fixed set of sections that should spread into
+     equal cells rather than wrap - it says so with `--even` instead of
+     redeclaring the breakpoint. */
   .settings-tab {
     display: flex;
-    gap: 1.25rem;
+    gap: var(--space-7);
     align-items: flex-start;
   }
 
@@ -652,7 +904,7 @@
     font: inherit;
     text-align: left;
     font-size: var(--fs-sm);
-    padding: 0.35rem 0.6rem;
+    padding: var(--space-3) var(--space-4);
     border: none;
     border-left: 2px solid transparent;
     background: none;
@@ -682,14 +934,103 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: var(--space-6);
+  }
+
+  /* Below the md breakpoint the rail becomes a row above the pane. Declared
+     here rather than by each settings tab: all three wanted the same collapse
+     and each carried its own copy of it. */
+  @media (max-width: 768px) {
+    .settings-tab {
+      flex-direction: column;
+    }
+
+    .settings-nav {
+      width: 100%;
+      flex-direction: row;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .settings-nav-item {
+      border-left: none;
+      border-bottom: 2px solid transparent;
+    }
+
+    .settings-nav-item[aria-current='true'] {
+      border-left-color: transparent;
+      border-bottom-color: var(--accent);
+    }
+
+    .settings-nav-item--danger[aria-current='true'] {
+      border-bottom-color: var(--danger);
+    }
+
+    /* A rail with a small, fixed set of sections spreads them into equal
+       cells instead, so it never wraps to a second row. */
+    .settings-nav--even {
+      flex-wrap: nowrap;
+    }
+
+    .settings-nav--even .settings-nav-item {
+      flex: 1 1 0;
+      min-width: 0;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  /* What a pane opens with. The rail already names the section, so a pane
+     carries no heading of its own: it states what the section is for, and
+     right-aligns the action that applies to the whole of it. Every pane used
+     to repeat its rail item as an uppercase card title one line below the
+     rail itself. */
+  .pane-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-5) var(--space-6);
+  }
+
+  .pane-lede {
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 62ch;
+  }
+
+  /* A second group inside a pane, ruled off from the one above. A pane with
+     only one group needs none of this - it renders its fields straight into
+     `.settings-pane`. */
+  .pane-section {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-6);
+  }
+
+  /* A section whose head is nothing but its label still needs the gap the
+     `.pane-section-head` row would have given it. */
+  .pane-section > .group-label {
+    margin-bottom: var(--space-5);
+  }
+
+  .pane-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-6);
+    margin-bottom: var(--space-5);
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    margin-bottom: 1rem;
+    gap: var(--space-3);
+    margin-bottom: var(--space-6);
   }
 
   .field:last-child {
@@ -715,7 +1056,7 @@
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: var(--space-6);
   }
 
   /* A label sharing its row with a secondary control, e.g. a "show
@@ -724,7 +1065,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: var(--space-4);
   }
 
   .required {
@@ -736,7 +1077,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
-    padding: 0.55rem 0.75rem;
+    padding: var(--space-4) var(--space-5);
     font-size: var(--fs-base);
     width: 100%;
     box-sizing: border-box;
@@ -750,8 +1091,8 @@
   }
 
   .form-error {
-    margin-top: 0.75rem;
-    padding: 0.6rem 0.875rem;
+    margin-top: var(--space-5);
+    padding: var(--space-4) var(--space-5);
     background: var(--danger-subtle);
     border: 1px solid var(--danger);
     border-radius: var(--radius-sm);
@@ -780,8 +1121,8 @@
 
   /* Counterpart to .form-error, for the same slot in a form. */
   .form-success {
-    margin-top: 0.75rem;
-    padding: 0.6rem 0.875rem;
+    margin-top: var(--space-5);
+    padding: var(--space-4) var(--space-5);
     background: var(--success-subtle);
     border: 1px solid var(--success);
     border-radius: var(--radius-sm);
@@ -799,15 +1140,15 @@
     color: var(--text-secondary);
     line-height: 1.6;
     font-size: var(--fs-base);
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-4);
   }
 
   .page-header {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 1rem 1.5rem;
-    margin-bottom: 1.5rem;
+    gap: var(--space-6) var(--space-8);
+    margin-bottom: var(--space-8);
   }
 
   .page-title {
@@ -817,22 +1158,29 @@
 
   .header-actions {
     display: flex;
-    gap: 0.5rem;
+    gap: var(--space-4);
     margin-left: auto;
+  }
+
+  /* A sentence under the page title. It belongs to the title, so the header
+     above it gives up most of its own bottom margin rather than leaving the
+     description floating equidistant between the title and the content. */
+  .page-header:has(+ .page-description) {
+    margin-bottom: var(--space-4);
   }
 
   .page-description {
     font-size: var(--fs-base);
     line-height: 1.5;
     color: var(--text-secondary);
-    margin-bottom: 1rem;
+    margin-bottom: var(--space-8);
   }
 
   .toolbar {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
+    gap: var(--space-5);
+    margin-bottom: var(--space-8);
   }
 
   .search-input {
@@ -842,7 +1190,7 @@
   /* Block-level "nothing here" message, centred in the space it occupies. */
   .state-msg {
     text-align: center;
-    padding: 3rem;
+    padding: var(--space-10);
     color: var(--text-muted);
   }
 
@@ -850,10 +1198,14 @@
      push the panel out of its grid row. */
   .state-msg--inline {
     text-align: left;
-    padding: 0.5rem 0;
+    padding: var(--space-4) 0;
     font-size: var(--fs-base);
   }
 
+  /* An inline failure inside a widget, where a full banner would be heavier
+     than the thing it is reporting on. A failure that invalidates the content
+     below it is `.error-banner`; a failure under one control is
+     `.form-error`. */
   .state-error {
     color: var(--danger);
   }
@@ -873,14 +1225,14 @@
 
   .data-table th {
     text-align: left;
-    padding: 0.625rem 0.75rem;
+    padding: var(--space-4) var(--space-5);
     font-weight: 600;
     color: var(--text-secondary);
     border-bottom: 1px solid var(--border);
   }
 
   .data-table td {
-    padding: 0.625rem 0.75rem;
+    padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--border-subtle);
     color: var(--text-primary);
   }
@@ -892,7 +1244,7 @@
 
   .data-table--compact th,
   .data-table--compact td {
-    padding: 0.5rem;
+    padding: var(--space-4);
   }
 
   .name-cell {
@@ -901,7 +1253,7 @@
 
   .actions-cell {
     display: flex;
-    gap: 0.375rem;
+    gap: var(--space-3);
   }
 
   /* --- Entity card -----------------------------------------------------
@@ -913,14 +1265,14 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 1.25rem;
+    padding: var(--space-7);
     cursor: pointer;
     transition:
       box-shadow var(--duration-base),
       border-color var(--duration-base);
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--space-5);
   }
 
   .entity-card:hover {
@@ -957,8 +1309,8 @@
   .detail-breadcrumb {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
+    gap: var(--space-4);
+    margin-bottom: var(--space-8);
     font-size: var(--fs-base);
   }
 
@@ -993,18 +1345,18 @@
   }
 
   .passphrase-warning {
-    margin-bottom: 0.75rem;
+    margin-bottom: var(--space-5);
   }
 
   .token-box,
   .passphrase-box {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--space-5);
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 0.75rem 1rem;
+    padding: var(--space-5) var(--space-6);
   }
 
   .token-text,
@@ -1014,6 +1366,18 @@
     word-break: break-all;
     background: transparent;
     padding: 0;
+  }
+
+  /* A key or fingerprint that wraps over several lines and is not a secret,
+     so it takes primary ink rather than the one-time-reveal green. */
+  .token-box--block {
+    align-items: flex-start;
+  }
+
+  .token-text--plain {
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    line-height: 1.5;
   }
 
   /* Green marks "this is the only time you will see it". */
@@ -1082,7 +1446,7 @@
   .stat-value--xl {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
 
@@ -1113,23 +1477,23 @@
   .overview-tab {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: var(--space-6);
   }
 
   .attention {
     border: 1px solid var(--warning);
     background: var(--warning-subtle);
     border-radius: var(--radius);
-    padding: 0.6rem 0.8rem;
+    padding: var(--space-4) var(--space-5);
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: var(--space-3);
   }
 
   .attention-row {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: var(--space-4);
     font-size: var(--fs-sm);
     flex-wrap: wrap;
   }
@@ -1141,26 +1505,131 @@
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-    gap: 0.6rem;
+    gap: var(--space-4);
   }
 
   .tile {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 0.7rem 0.8rem;
+    padding: var(--space-5) var(--space-5);
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: var(--space-2);
     min-width: 0;
+  }
+
+  /* The dashboard's headline row sits at a larger step than an overview
+     tab's, and its tiles are navigational. */
+  .tile--lg {
+    padding: var(--space-6) var(--space-7);
+    gap: var(--space-3);
+  }
+
+  .tile--link {
+    cursor: pointer;
+    transition:
+      border-color var(--duration-base),
+      background var(--duration-base);
+  }
+
+  .tile--link:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+  }
+
+  /* --- Chart legend --------------------------------------------------------
+     One legend for every chart. The dashboard carried two vocabularies in one
+     file - `.legend-*` for the success ring and `.storage-legend-*` for the
+     storage bar - which had already drifted into two swatch shapes and two
+     type sizes. `--stack` is the vertical form beside a bar; the default runs
+     along the bottom of a ring. */
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-7);
+  }
+
+  .chart-legend--stack {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: var(--space-3);
+  }
+
+  .chart-legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+  }
+
+  /* Clickable when the legend also toggles its series. */
+  .chart-legend-item--toggle {
+    cursor: pointer;
+    user-select: none;
+    transition: opacity var(--duration-base);
+  }
+
+  .chart-legend-item--toggle:hover {
+    opacity: 0.7;
+  }
+
+  /* A legend item that navigates somewhere rather than toggling its series.
+     Folding both kinds into `--toggle` gave a link and a switch the same
+     hover, so the only thing telling them apart was clicking one. */
+  .chart-legend-item--link {
+    cursor: pointer;
+    user-select: none;
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-3);
+    transition: background var(--duration-base);
+  }
+
+  .chart-legend-item--link:hover {
+    background: var(--bg-hover);
+    text-decoration: underline;
+  }
+
+  .chart-legend-item--off {
+    opacity: 0.4;
+  }
+
+  .chart-legend-item--off .chart-legend-name {
+    text-decoration: line-through;
+  }
+
+  .chart-legend-swatch {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+  }
+
+  /* A series that is one slice of a whole reads as a square; a status that is
+     a state reads as a dot. */
+  .chart-legend-swatch--dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .chart-legend-name {
+    color: var(--text-primary);
+  }
+
+  .chart-legend-detail {
+    color: var(--text-muted);
+    margin-left: auto;
   }
 
   .section-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
+    gap: var(--space-5);
+    margin-bottom: var(--space-4);
   }
 
   .section-title {
@@ -1204,8 +1673,8 @@
   .agent-row {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
-    padding: 0.55rem 0.8rem;
+    gap: var(--space-5);
+    padding: var(--space-4) var(--space-5);
     border-top: 1px solid var(--border-subtle);
     font-size: var(--fs-sm);
     flex-wrap: wrap;
@@ -1268,7 +1737,7 @@
   .agent-row-stats {
     margin-left: auto;
     display: flex;
-    gap: 0.85rem;
+    gap: var(--space-5);
     font-size: var(--fs-2xs);
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
@@ -1276,11 +1745,11 @@
 
   .agent-row-actions {
     display: flex;
-    gap: 0.3rem;
+    gap: var(--space-2);
   }
 
   .agent-row-detail {
-    padding: 0 0.8rem 0.7rem 1.5rem;
+    padding: 0 var(--space-5) var(--space-5) var(--space-8);
   }
 
   /* A row's name is a link into the thing the row is about, so it renders as
@@ -1317,7 +1786,7 @@
   /* `.input` sized for a toolbar or a table header rather than a form row. */
   .input-sm {
     width: auto;
-    padding: 0.35rem 0.55rem;
+    padding: var(--space-3) var(--space-4);
     font-size: var(--fs-sm);
   }
 
@@ -1341,10 +1810,13 @@
     min-width: 280px;
   }
 
-  /* Search box with a leading icon, positioned by `.search-input-wrap`. */
+  /* Search box with a leading icon, positioned by `.search-input-wrap`. The
+     padding clears the icon rather than sitting on the spacing scale: the
+     icon's own inset, its 14px box, and a gap after it. A scale step here
+     lands the text 2px from the glyph. */
   .search-input--icon {
     width: 100%;
-    padding-left: 1.75rem;
+    padding-left: calc(var(--space-4) + 14px + var(--space-3));
   }
 
   /* Column-level typography. Six files each had their own `.cell-*` set, and
@@ -1390,7 +1862,7 @@
   .loading-row {
     display: flex;
     justify-content: center;
-    padding: 2rem 0;
+    padding: var(--space-9) 0;
   }
 
   /* The shared table owns its own bottom edge: without this the last row
@@ -1430,8 +1902,8 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.1rem;
-    padding: 0.6rem 1rem;
+    gap: var(--space-1);
+    padding: var(--space-4) var(--space-6);
     border-bottom: 1px solid var(--border);
     background: var(--bg-base);
   }
@@ -1443,7 +1915,7 @@
     cursor: pointer;
     font-size: var(--fs-sm);
     font-family: var(--mono);
-    padding: 0.15rem 0.3rem;
+    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
     transition:
       background var(--duration-fast),
@@ -1465,7 +1937,7 @@
   .crumb:not(.crumb-last)::after {
     content: ' /';
     color: var(--text-muted);
-    margin-left: 0.2rem;
+    margin-left: var(--space-2);
   }
 
   /* A filesystem root crumb is already spelled "/", so the trail's own
@@ -1480,7 +1952,7 @@
   .td-name {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-4);
     min-width: 0;
     font-family: var(--mono);
     font-size: var(--fs-sm);
@@ -1511,13 +1983,13 @@
   .td-action {
     text-align: right;
     display: inline-flex;
-    gap: 0.25rem;
+    gap: var(--space-2);
   }
 
   /* A PrimeVue column filter input: `.input` sized down to fit a header row. */
   .filter-input {
     width: 100%;
-    padding: 0.35rem 0.5rem;
+    padding: var(--space-3) var(--space-4);
     font-size: var(--fs-xs);
   }
 
@@ -1529,13 +2001,13 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: var(--space-5);
   }
 
   .card-info {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -1554,17 +2026,17 @@
   .card-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
+    gap: var(--space-3);
   }
 
   .card-stats {
     display: flex;
-    gap: 1.25rem;
+    gap: var(--space-7);
   }
 
   .card-actions {
     display: flex;
-    gap: 0.25rem;
+    gap: var(--space-2);
     justify-content: flex-end;
     margin-top: auto;
   }
@@ -1573,7 +2045,7 @@
   .card-actions--spread {
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: var(--space-4);
   }
 
   /* A labelled figure. `.stat-value` stays at body size on purpose - the
@@ -1581,7 +2053,7 @@
   .stat {
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
+    gap: var(--space-1);
   }
 
   /* --- List toolbar -------------------------------------------------------
@@ -1589,8 +2061,8 @@
   .filter-toggle {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.4rem 0.6rem;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
     background: var(--bg-input);
@@ -1627,7 +2099,7 @@
   .sort-controls {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: var(--space-3);
     margin-left: auto;
     overflow-x: auto;
     flex-shrink: 0;
@@ -1638,7 +2110,7 @@
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin-right: 0.25rem;
+    margin-right: var(--space-2);
   }
 
   .sort-controls .btn.active {
@@ -1653,23 +2125,23 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 1rem 1.25rem;
+    padding: var(--space-6) var(--space-7);
     display: flex;
     flex-direction: column;
-    gap: 0.875rem;
+    gap: var(--space-5);
   }
 
   .filter-row {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
-    gap: 1rem;
+    gap: var(--space-6);
   }
 
   .filter-group {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: var(--space-3);
   }
 
   .filter-label {
@@ -1690,7 +2162,7 @@
   .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0 1rem;
+    gap: 0 var(--space-6);
   }
 
   /* A field spanning both columns of `.form-grid`. */
@@ -1703,14 +2175,14 @@
   .form-stack {
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
+    gap: var(--space-7);
   }
 
   /* Fields sitting side by side outside a grid, e.g. host + port. */
   .field-row {
     display: flex;
-    gap: 1rem;
-    margin-bottom: 1rem;
+    gap: var(--space-6);
+    margin-bottom: var(--space-6);
   }
 
   .field-row .field {
@@ -1733,9 +2205,9 @@
   .toggle-row {
     display: flex;
     flex-direction: row;
-    gap: 1.5rem;
+    gap: var(--space-8);
     align-items: center;
-    margin-top: 0.5rem;
+    margin-top: var(--space-4);
   }
 
   .toggle-row--spread {
@@ -1755,40 +2227,22 @@
   .token-notice {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--space-5);
   }
 
-  /* --- Info card header ---------------------------------------------------
-     A title row with its own actions, inside an `.info-card`. */
-  .info-card-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem 1rem;
-    margin-bottom: 1.25rem;
-  }
-
-  .info-header-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  /* The inline edit form an `EditableInfoCard` swaps in, and its ruled
+  /* The inline edit form an `EditableSection` swaps in, and its ruled
      footer. */
   .edit-form {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: var(--space-6);
   }
 
   .edit-actions {
     display: flex;
     justify-content: flex-end;
-    gap: 0.75rem;
-    padding-top: 0.5rem;
+    gap: var(--space-5);
+    padding-top: var(--space-4);
     border-top: 1px solid var(--border);
   }
 
@@ -1799,14 +2253,14 @@
   .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-    gap: 1rem;
+    gap: var(--space-6);
   }
 
   /* A count or classification alongside a card's name. Lowercase because the
      values come from the backend verbatim (`repokey-blake2`, `zstd`). */
   .meta-pill {
     display: inline-block;
-    padding: 0.1rem 0.45rem;
+    padding: var(--space-1) var(--space-4);
     border-radius: var(--radius-pill);
     font-size: var(--fs-2xs);
     font-weight: 600;
@@ -1819,7 +2273,7 @@
   /* The disclosure caret on a dropdown trigger. */
   .dropdown-arrow {
     font-size: var(--fs-2xs);
-    margin-left: 0.15rem;
+    margin-left: var(--space-1);
   }
 
   .input:disabled {
@@ -1904,10 +2358,15 @@
     transition: width var(--duration-value) ease;
   }
 
+  /* The bar is showing a share of a total rather than work in flight. */
+  .progress-bar--muted {
+    background: var(--text-muted);
+  }
+
   .progress-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-4);
   }
 
   .progress-label {
@@ -1922,7 +2381,7 @@
   .chart-desc {
     color: var(--text-muted);
     font-size: var(--fs-2xs);
-    margin: 0 0 0.75rem;
+    margin: 0 0 var(--space-5);
     line-height: 1.4;
   }
 
@@ -1943,13 +2402,13 @@
   .paths-list {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    margin-bottom: 0.5rem;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
   }
 
   .path-item {
     font-size: var(--fs-sm);
-    padding: 0.2rem 0.5rem;
+    padding: var(--space-2) var(--space-4);
     background: var(--bg-input);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
@@ -1959,13 +2418,13 @@
   .per-host-paths {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: var(--space-5);
   }
 
   .per-host-entry {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: var(--space-2);
   }
 
   /* The outcome line of a connection or deploy test. */
@@ -1988,7 +2447,7 @@
   .error-pre,
   .warning-pre {
     margin: 0;
-    padding: 0.75rem 1rem;
+    padding: var(--space-5) var(--space-6);
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -2021,7 +2480,7 @@
     justify-content: center;
     min-height: 100vh;
     background: var(--bg-base);
-    padding: 1rem;
+    padding: var(--space-6);
   }
 
   .error-card {
@@ -2030,7 +2489,7 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 3rem 2rem;
+    padding: var(--space-10) var(--space-9);
     box-shadow: var(--shadow-lg);
   }
 
@@ -2038,7 +2497,7 @@
     font-size: var(--fs-3xl);
     font-weight: 800;
     line-height: 1;
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-4);
   }
 
   .error-code--danger {
@@ -2053,7 +2512,7 @@
     font-size: var(--fs-lg);
     font-weight: 700;
     color: var(--text-primary);
-    margin: 0 0 0.5rem;
+    margin: 0 0 var(--space-4);
   }
 
   .error-source {
@@ -2062,19 +2521,19 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-secondary);
-    margin: 0 0 0.5rem;
+    margin: 0 0 var(--space-4);
   }
 
   .error-message {
     font-size: var(--fs-base);
     color: var(--text-secondary);
-    margin: 0 0 1.5rem;
+    margin: 0 0 var(--space-8);
     line-height: 1.5;
   }
 
   .error-details {
     text-align: left;
-    margin: 0 0 1.5rem;
+    margin: 0 0 var(--space-8);
   }
 
   /* --- Banners ------------------------------------------------------------
@@ -2084,9 +2543,9 @@
     background: var(--danger-subtle);
     border: 1px solid var(--danger);
     color: var(--danger);
-    padding: 0.75rem 1rem;
+    padding: var(--space-5) var(--space-6);
     border-radius: var(--radius-sm);
-    margin-bottom: 1rem;
+    margin-bottom: var(--space-6);
     font-size: var(--fs-base);
   }
 
@@ -2195,7 +2654,7 @@
   code {
     font-family: var(--mono);
     font-size: var(--fs-sm);
-    padding: 0.15rem 0.4rem;
+    padding: var(--space-1) var(--space-3);
     background: var(--bg-hover);
     border-radius: var(--radius-sm);
     color: var(--text-primary);

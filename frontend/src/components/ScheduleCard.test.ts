@@ -43,7 +43,7 @@ describe('ScheduleCard', () => {
       mount({ schedule: { ...SCHEDULE, schedule_type: 'check' } })
         .find('.badge--neutral')
         .text(),
-    ).toBe('Integrity Check')
+    ).toBe('Integrity check')
     expect(
       mount({ schedule: { ...SCHEDULE, schedule_type: 'verify' } })
         .find('.badge--neutral')

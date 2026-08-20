@@ -192,7 +192,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
     case 'backup':
       return 'Backup'
     case 'check':
-      return 'Integrity Check'
+      return 'Integrity check'
     case 'verify':
       return 'Verify (extract dry-run)'
   }
@@ -662,7 +662,7 @@ watch(activeTab, (tab) => {
         label="Schedule sections"
       />
 
-      <div class="tab-content">
+      <div class="tab-content fade-in">
         <ScheduleOverviewTab
           v-if="activeTab === 'overview' && schedule"
           :schedule="schedule"
@@ -735,7 +735,7 @@ watch(activeTab, (tab) => {
           :disabled="saving"
           @click="save"
         >
-          {{ saving ? 'Saving...' : isCreate ? 'Create Schedule' : 'Save Changes' }}
+          {{ saving ? 'Saving...' : isCreate ? 'Create schedule' : 'Save changes' }}
         </button>
       </div>
     </template>
@@ -743,7 +743,7 @@ watch(activeTab, (tab) => {
     <!-- Delete Confirmation Dialog -->
     <BaseModal
       :open="showDeleteDialog"
-      title="Delete Schedule"
+      title="Delete schedule"
       @close="showDeleteDialog = false"
     >
       <p>
@@ -765,7 +765,7 @@ watch(activeTab, (tab) => {
           :disabled="deleteLoading"
           @click="confirmDeleteSchedule"
         >
-          {{ deleteLoading ? 'Deleting...' : 'Delete Schedule' }}
+          {{ deleteLoading ? 'Deleting...' : 'Delete schedule' }}
         </button>
       </template>
     </BaseModal>
@@ -778,17 +778,13 @@ watch(activeTab, (tab) => {
   max-width: 1100px;
 }
 
-.tab-content {
-  margin-top: 1rem;
-}
-
 .save-bar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
-  padding-top: 1rem;
+  gap: var(--space-5);
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
   border-top: 1px solid var(--border);
 }
 

@@ -329,10 +329,13 @@ describe('ActivityLogView', () => {
 
       const cardWithRun = wrapper
         .findAll('.run-card:not(.run-card-system)')
-        .find((c) => c.find('.btn-run-filter').exists())
+        .find((c) => c.findAll('button').some((b) => b.text() === 'View run'))
       expect(cardWithRun).toBeTruthy()
 
-      await cardWithRun!.find('.btn-run-filter').trigger('click')
+      await cardWithRun!
+        .findAll('button')
+        .find((b) => b.text() === 'View run')!
+        .trigger('click')
       await flushPromises()
 
       expect(mockGet).toHaveBeenCalledWith(
@@ -534,7 +537,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const clearBtn = wrapper.find('.btn-clear')
+      const clearBtn = wrapper.findAll('button').find((b) => b.text() === 'Clear')
       expect(clearBtn.exists()).toBe(true)
       expect(clearBtn.text()).toBe('Clear')
     })
@@ -566,7 +569,10 @@ describe('ActivityLogView', () => {
       await statusSelect?.setValue('failed')
       await flushPromises()
 
-      await wrapper.find('.btn-clear').trigger('click')
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Clear')!
+        .trigger('click')
       await flushPromises()
 
       expect((statusSelect?.element as HTMLSelectElement).value).toBe('all')
@@ -574,7 +580,7 @@ describe('ActivityLogView', () => {
   })
 
   describe('load more', () => {
-    it('shows Load More button when hasMore is true', async () => {
+    it('shows Load more button when hasMore is true', async () => {
       mockGet.mockImplementation((url: string) => {
         if (url === '/agents') return Promise.resolve({ data: AGENTS })
         if (url === '/stats/activity')
@@ -588,16 +594,16 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      expect(wrapper.find('.btn-load-more').exists()).toBe(true)
-      expect(wrapper.find('.btn-load-more').text()).toBe('Load More')
+      const loadMore = wrapper.findAll('button').find((b) => b.text() === 'Load more')
+      expect(loadMore).toBeDefined()
     })
 
-    it('does not show Load More when data is fewer than page size', async () => {
+    it('does not show Load more when data is fewer than page size', async () => {
       setupDefaultMocks()
       const wrapper = mountView()
       await flushPromises()
 
-      expect(wrapper.find('.btn-load-more').exists()).toBe(false)
+      expect(wrapper.findAll('button').some((b) => b.text() === 'Load more')).toBe(false)
     })
   })
 

@@ -6,7 +6,7 @@ import { expect, loginAsAdmin, test } from './fixtures'
 test('storage trend widget renders on dashboard', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/')
-  await expect(page.locator('h2', { hasText: 'Storage Trend' }).first()).toBeVisible({
+  await expect(page.locator('h2', { hasText: 'Storage trend' }).first()).toBeVisible({
     timeout: 10_000,
   })
 })
@@ -14,7 +14,7 @@ test('storage trend widget renders on dashboard', async ({ page }) => {
 test('storage trend widget shows deduplicated chart section', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/')
-  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage Trend' })
+  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage trend' })
   await expect(trendPanel).toBeVisible({ timeout: 10_000 })
   // The deduplicated metric label is only rendered when hasData (≥2 trend entries)
   await expect(trendPanel.locator('.metric-label', { hasText: 'Deduplicated' })).toBeVisible({
@@ -25,7 +25,7 @@ test('storage trend widget shows deduplicated chart section', async ({ page }) =
 test('storage trend widget shows original and compressed chart section', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/')
-  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage Trend' })
+  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage trend' })
   await expect(trendPanel).toBeVisible({ timeout: 10_000 })
   await expect(trendPanel.locator('.metric-label', { hasText: 'Original' })).toBeVisible({
     timeout: 10_000,
@@ -35,7 +35,7 @@ test('storage trend widget shows original and compressed chart section', async (
 test('storage trend widget time range controls are functional', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/')
-  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage Trend' })
+  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage trend' })
   await expect(trendPanel).toBeVisible({ timeout: 10_000 })
 
   await expect(trendPanel.getByText('30d')).toBeVisible()
@@ -51,9 +51,9 @@ test('storage trend widget time range controls are functional', async ({ page })
 test('storage trend widget repo filter dropdown is present', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/')
-  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage Trend' })
+  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage trend' })
   await expect(trendPanel).toBeVisible({ timeout: 10_000 })
-  // The select element itself should be visible; it always has the "All Repos" option selected
+  // The select element itself should be visible; it always has the "All repos" option selected
   await expect(trendPanel.locator('select.chart-range-select')).toBeVisible()
 })
 
@@ -63,7 +63,7 @@ test('storage trend charts render with demo data', async ({ page }) => {
   await page.waitForTimeout(3_000)
   await expect(page).not.toHaveURL(/\/error/)
 
-  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage Trend' })
+  const trendPanel = page.locator('.panel').filter({ hasText: 'Storage trend' })
   await expect(trendPanel.getByText('Not enough data.')).not.toBeVisible()
   await expect(trendPanel.locator('.chart-container').first()).toBeVisible()
 })

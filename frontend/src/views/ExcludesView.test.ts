@@ -68,7 +68,7 @@ describe('ExcludesView', () => {
     mockGet.mockRejectedValue(new Error('Network error'))
     const wrapper = renderWithPlugins(ExcludesView)
     await flushPromises()
-    expect(wrapper.find('.state-error').exists()).toBe(true)
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
   })
 
   it('renders empty textarea when no excludes returned', async () => {

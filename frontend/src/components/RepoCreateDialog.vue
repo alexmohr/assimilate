@@ -453,7 +453,7 @@ defineExpose({ reset })
       </div>
 
       <div class="field">
-        <label class="field-label">SSH User</label>
+        <label class="field-label">SSH user</label>
         <input
           v-model="form.ssh_user"
           class="input mono"
@@ -461,7 +461,7 @@ defineExpose({ reset })
         />
       </div>
       <div class="field">
-        <label class="field-label">SSH Host <span class="required">*</span></label>
+        <label class="field-label">SSH host <span class="required">*</span></label>
         <input
           v-model="form.ssh_host"
           class="input mono"
@@ -469,7 +469,7 @@ defineExpose({ reset })
         />
       </div>
       <div class="field field-narrow">
-        <label class="field-label">SSH Port</label>
+        <label class="field-label">SSH port</label>
         <input
           v-model.number="form.ssh_port"
           class="input"
@@ -521,7 +521,7 @@ defineExpose({ reset })
     <!-- Folder Browser / Repo Path -->
     <div class="browser-section">
       <div class="browser-header">
-        <label class="field-label">Repo Path <span class="required">*</span></label>
+        <label class="field-label">Repo path <span class="required">*</span></label>
         <div class="browser-path-row">
           <div class="path-autocomplete-wrapper">
             <input
@@ -579,7 +579,7 @@ defineExpose({ reset })
             @click="createFolder"
           >
             <FolderPlus :size="14" />
-            New Folder
+            New folder
           </button>
         </div>
 
@@ -689,7 +689,7 @@ defineExpose({ reset })
 
   <BaseModal
     :open="folderModal.open"
-    title="New Folder"
+    title="New folder"
     size="sm"
     @close="folderModal.open = false"
   >
@@ -705,7 +705,7 @@ defineExpose({ reset })
       <input
         id="folder-name-input"
         v-model="folderModal.name"
-        class="input form-control"
+        class="input"
         type="text"
         placeholder="my-backups"
         autofocus
@@ -738,15 +738,15 @@ defineExpose({ reset })
 
 <style scoped>
 .form-grid-below {
-  margin-top: 1.25rem;
+  margin-top: var(--space-7);
   border-top: 1px solid var(--border);
-  padding-top: 1rem;
+  padding-top: var(--space-6);
 }
 
 .ssh-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -755,19 +755,19 @@ defineExpose({ reset })
 }
 
 .browser-section {
-  margin-top: 1.25rem;
+  margin-top: var(--space-7);
   border-top: 1px solid var(--border);
-  padding-top: 1rem;
+  padding-top: var(--space-6);
 }
 
 .browser-header {
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
 }
 
 .browser-path-row {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.4rem;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .browser-path-row .path-autocomplete-wrapper {
@@ -801,8 +801,8 @@ defineExpose({ reset })
 .autocomplete-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   font-size: var(--fs-sm);
   font-family: var(--mono);
   color: var(--text-secondary);
@@ -824,12 +824,12 @@ defineExpose({ reset })
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-2);
   font-size: var(--fs-xs);
 }
 
 .browser-error {
-  padding: 0.75rem;
+  padding: var(--space-5);
   color: var(--danger);
   font-size: var(--fs-sm);
 }
@@ -842,8 +842,8 @@ defineExpose({ reset })
 .browser-entry {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   font-size: var(--fs-sm);
   color: var(--text-muted);
   border-bottom: 1px solid var(--border-subtle);
@@ -874,7 +874,7 @@ defineExpose({ reset })
 .folder-modal-form {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .folder-modal-error {

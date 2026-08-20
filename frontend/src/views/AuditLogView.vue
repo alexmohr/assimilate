@@ -162,7 +162,7 @@ onMounted(fetchAuditLog)
 
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -301,13 +301,13 @@ function actionBadgeClass(action: string): string {
 .audit-log {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: var(--space-7);
   color: var(--text-primary);
 }
 
 .access-denied {
   text-align: center;
-  padding: 3rem;
+  padding: var(--space-10);
   color: var(--text-muted);
 }
 
@@ -317,7 +317,7 @@ function actionBadgeClass(action: string): string {
 
 .filter-actions {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-4);
   align-self: flex-end;
 }
 
@@ -341,14 +341,14 @@ function actionBadgeClass(action: string): string {
 }
 
 .detail-expansion {
-  padding: 1rem 1.5rem;
+  padding: var(--space-6) var(--space-8);
   background: var(--bg-base);
 }
 
 .per-page-selector {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   align-self: flex-end;
 }
 </style>

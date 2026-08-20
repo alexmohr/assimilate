@@ -40,7 +40,7 @@ type SortField = 'name' | 'size' | 'last_backup' | 'quota'
 const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'name', label: 'Name' },
   { field: 'size', label: 'Size' },
-  { field: 'last_backup', label: 'Last Backup' },
+  { field: 'last_backup', label: 'Last backup' },
   { field: 'quota', label: 'Quota' },
 ]
 type QuotaFilter = 'all' | 'at_risk' | 'no_quota'
@@ -587,7 +587,7 @@ onMounted(loadRepos)
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="error-banner"
     >
       {{ error }}
     </div>
@@ -596,7 +596,7 @@ onMounted(loadRepos)
       :icon="Database"
       title="No repositories configured"
       description="Add a repository to start managing backups."
-      action="Add Repository"
+      action="New repository"
       @action="showRepoDialog = true"
     />
     <div
@@ -968,7 +968,7 @@ onMounted(loadRepos)
 
 .card-badges {
   display: flex;
-  gap: 0.35rem;
+  gap: var(--space-3);
   align-items: center;
   flex-shrink: 0;
 }
@@ -990,14 +990,14 @@ onMounted(loadRepos)
 .repo-grouped {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .tag-group-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .tag-group-dot {
@@ -1017,24 +1017,24 @@ onMounted(loadRepos)
   font-size: var(--fs-xs);
   color: var(--text-muted);
   background: var(--bg-hover);
-  padding: 0.1rem 0.4rem;
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-pill);
 }
 
 /* Quota filter chips */
 .quota-filter-row {
   display: flex;
-  gap: 0.4rem;
+  gap: var(--space-3);
   flex-wrap: wrap;
-  margin-top: 0.5rem;
+  margin-top: var(--space-4);
 }
 
 .quota-fchip {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
   font-size: var(--fs-xs);
-  padding: 0.25rem 0.65rem;
+  padding: var(--space-2) var(--space-5);
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--bg-card);
@@ -1067,14 +1067,14 @@ onMounted(loadRepos)
 .repo-hostgrouped {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--space-8);
 }
 
 .host-group {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.75rem;
+  gap: var(--space-5);
+  padding: var(--space-5);
   border-radius: var(--radius);
   background: var(--bg-hover);
 }
@@ -1083,10 +1083,10 @@ onMounted(loadRepos)
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.85rem 1rem;
+  padding: var(--space-5) var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .pool-header-empty {
@@ -1097,7 +1097,7 @@ onMounted(loadRepos)
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .pool-host {

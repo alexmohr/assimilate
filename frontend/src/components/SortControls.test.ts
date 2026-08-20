@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ArrowDown, ArrowUp } from '@lucide/vue'
 import SortControls from './SortControls.vue'
 
 const OPTIONS = [
@@ -32,11 +33,11 @@ describe('SortControls', () => {
 
   it('shows the direction arrow on the active field only', () => {
     const ascending = mountControls('name', 'asc')
-    expect(ascending.findAll('button')[0].text()).toContain('↑')
-    expect(ascending.findAll('button')[1].text()).not.toContain('↑')
+    expect(ascending.findAll('button')[0].findComponent(ArrowUp).exists()).toBe(true)
+    expect(ascending.findAll('button')[1].findComponent(ArrowUp).exists()).toBe(false)
 
     const descending = mountControls('name', 'desc')
-    expect(descending.findAll('button')[0].text()).toContain('↓')
+    expect(descending.findAll('button')[0].findComponent(ArrowDown).exists()).toBe(true)
   })
 
   it('emits toggle with the clicked field', async () => {

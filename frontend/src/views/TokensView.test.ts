@@ -68,6 +68,19 @@ describe('TokensView', () => {
     expect(wrapper.text()).toContain('deploy-bot')
   })
 
+  // F-47, the same gap UsersView had: before this the view rendered an empty
+  // table on a failed load, which reads as "no tokens exist" rather than "we
+  // could not ask".
+  it('explains a failed load instead of showing an empty table', async () => {
+    mockApiGet.mockRejectedValue(new Error('tokens unavailable'))
+
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').text()).toContain('tokens unavailable')
+    expect(wrapper.find('table').exists()).toBe(false)
+  })
+
   it('renders New button for creating tokens', async () => {
     const wrapper = renderWithPlugins(TokensView)
 
@@ -87,7 +100,7 @@ describe('TokensView', () => {
     const newButton = buttons.find((b) => b.text().includes('New'))
     await newButton!.trigger('click')
 
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
   })
 
   it('renders token table with correct headers', async () => {
@@ -99,7 +112,7 @@ describe('TokensView', () => {
     const headerText = headers.map((h) => h.text())
     expect(headerText).toContain('Name')
     expect(headerText).toContain('Created')
-    expect(headerText).toContain('Last Used')
+    expect(headerText).toContain('Last used')
   })
 
   it('does not display token secret in the list (masked)', async () => {
@@ -128,7 +141,7 @@ describe('TokensView', () => {
 
     await wrapper.find('.empty-action').trigger('click')
 
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
   })
 
   it('closes the create modal via the close button and clicking the overlay', async () => {
@@ -139,7 +152,7 @@ describe('TokensView', () => {
       .findAll('button')
       .find((b) => b.text().includes('New'))!
       .trigger('click')
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
 
     await wrapper.find('button.modal-close').trigger('click')
     expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
@@ -148,7 +161,7 @@ describe('TokensView', () => {
       .findAll('button')
       .find((b) => b.text().includes('New'))!
       .trigger('click')
-    expect(wrapper.text()).toContain('Create API Token')
+    expect(wrapper.text()).toContain('New API token')
 
     await wrapper.find('.modal-backdrop').trigger('mousedown')
     expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
@@ -171,7 +184,7 @@ describe('TokensView', () => {
 
     expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'deploy-key' })
     expect(wrapper.text()).toContain('secret-token-value')
-    expect(wrapper.text()).toContain('Token Created')
+    expect(wrapper.text()).toContain('Token created')
 
     await wrapper.find('.token-box button').trigger('click')
     expect(mockCopyToClipboard).toHaveBeenCalledWith('secret-token-value')

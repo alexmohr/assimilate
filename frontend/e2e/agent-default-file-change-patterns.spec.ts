@@ -80,11 +80,11 @@ test('admin can view and edit default file change patterns on a host', async ({ 
   const agent = baseAgent('*/tmp/session-*.lock* ignore')
   await interceptHostApis(page, agent)
 
-  // The four `Default ...` cards became one Backup defaults card with five
+  // The four `Default ...` cards became one Backup defaults pane with five
   // sections, under the Settings tab.
   await page.goto(`/agents/${HOSTNAME}?tab=settings&section=defaults`)
 
-  const card = page.locator('.info-card').filter({ hasText: 'Backup defaults' })
+  const card = page.locator('.settings-pane')
   await expect(card).toBeVisible({ timeout: 10_000 })
   await expect(card).toContainText('*/tmp/session-*.lock*')
   await expect(card).toContainText('ignore')

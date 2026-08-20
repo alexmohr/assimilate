@@ -69,7 +69,7 @@ async function handleSubmit(): Promise<void> {
         @submit.prevent="handleSubmit"
       >
         <div class="field">
-          <label for="new-password">New Password</label>
+          <label for="new-password">New password</label>
           <input
             id="new-password"
             v-model="newPassword"
@@ -82,7 +82,7 @@ async function handleSubmit(): Promise<void> {
         </div>
 
         <div class="field">
-          <label for="confirm-password">Confirm Password</label>
+          <label for="confirm-password">Confirm password</label>
           <input
             id="confirm-password"
             v-model="confirmPassword"

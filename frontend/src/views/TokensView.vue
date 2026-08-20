@@ -8,7 +8,7 @@ import { onMounted } from 'vue'
 import { useApiTokens } from '../composables/useApiTokens'
 import { Plus, Key } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
-import BaseSpinner from '../components/BaseSpinner.vue'
+import AsyncSection from '../components/AsyncSection.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
@@ -17,6 +17,7 @@ import BaseModal from '../components/BaseModal.vue'
 const {
   tokens,
   loading,
+  loadError,
   showCreateModal,
   createName,
   createError,
@@ -54,30 +55,30 @@ onMounted(fetchTokens)
       </div>
     </div>
 
-    <BaseSpinner
-      v-if="loading"
-      size="lg"
-    />
-
-    <ApiTokenTable
-      v-else-if="tokens.length"
-      :tokens="tokens"
-      @delete="openDelete"
-    />
-
-    <EmptyState
-      v-else
-      :icon="Key"
-      title="No API tokens"
-      description="Create one to get started."
-      action="Create Token"
-      @action="showCreateModal = true"
-    />
+    <AsyncSection
+      :loading="loading"
+      :error="loadError"
+      :empty="tokens.length === 0"
+    >
+      <ApiTokenTable
+        :tokens="tokens"
+        @delete="openDelete"
+      />
+      <template #empty>
+        <EmptyState
+          :icon="Key"
+          title="No API tokens"
+          description="Create one to get started."
+          action="New token"
+          @action="showCreateModal = true"
+        />
+      </template>
+    </AsyncSection>
 
     <!-- One dialog, two states: collect a name, then reveal the token once. -->
     <BaseModal
       :open="showCreateModal"
-      :title="newTokenPlaintext ? 'Token Created' : 'Create API Token'"
+      :title="newTokenPlaintext ? 'Token created' : 'New API token'"
       :form="!newTokenPlaintext"
       @close="closeCreateModal"
       @submit="submitCreate"
@@ -87,7 +88,7 @@ onMounted(fetchTokens)
           <label
             class="field-label"
             for="token-name"
-            >Token Name</label
+            >Token name</label
           >
           <input
             id="token-name"
@@ -144,7 +145,7 @@ onMounted(fetchTokens)
 
     <ConfirmDeleteDialog
       :show="showDeleteModal"
-      title="Delete Token"
+      title="Delete token"
       :submitting="deleteSubmitting"
       :error="deleteError"
       @cancel="showDeleteModal = false"

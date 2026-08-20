@@ -45,7 +45,7 @@ defineEmits<{
 .toggle-switch {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   cursor: pointer;
 }
 

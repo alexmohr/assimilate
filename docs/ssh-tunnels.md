@@ -30,7 +30,7 @@ Tunnel management requires admin privileges. Navigate to the **Tunnels** page in
 
 ![Tunnels](assets/screenshots/tunnels.png)
 
-1. Click **Add Tunnel**.
+1. Click **New tunnel**.
 2. Select the **Host** (agent machine) this tunnel is for.
 3. Fill in the connection fields:
 

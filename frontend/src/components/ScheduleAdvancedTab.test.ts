@@ -57,11 +57,11 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('ScheduleAdvancedTab', () => {
-  it('groups the settings into the four option cards', () => {
+  it('groups the settings into the four labelled sections', () => {
     const titles = mount()
-      .findAll('.info-title')
+      .findAll('.pane-section > .group-label')
       .map((t) => t.text())
-    expect(titles).toEqual(['Options', 'Exclude Patterns', 'File Change Patterns', 'Commands'])
+    expect(titles).toEqual(['Options', 'Exclude patterns', 'File change patterns', 'Commands'])
   })
 
   it('renders the schedule-level values it was given', () => {

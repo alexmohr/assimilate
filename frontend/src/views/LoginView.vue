@@ -162,7 +162,7 @@ function toggleRecoveryCode(): void {
           v-if="!useRecoveryCode"
           class="field"
         >
-          <label for="totp-code">Authenticator Code</label>
+          <label for="totp-code">Authenticator code</label>
           <input
             id="totp-code"
             v-model="totpCode"
@@ -180,7 +180,7 @@ function toggleRecoveryCode(): void {
           v-else
           class="field"
         >
-          <label for="totp-recovery-code">Recovery Code</label>
+          <label for="totp-recovery-code">Recovery code</label>
           <input
             id="totp-recovery-code"
             v-model="totpCode"
@@ -244,7 +244,7 @@ function toggleRecoveryCode(): void {
 .remember-me {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .remember-me input[type='checkbox'] {
@@ -273,14 +273,14 @@ function toggleRecoveryCode(): void {
 
 .totp-info {
   text-align: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 
 .totp-info-text {
   font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 0.25rem;
+  margin: 0 0 var(--space-2);
 }
 
 .totp-info-subtext {

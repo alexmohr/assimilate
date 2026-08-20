@@ -290,7 +290,7 @@ onMounted(() => {
             href="/api/docs"
             target="_blank"
             class="signout-btn docs-btn"
-            title="API Reference"
+            title="API reference"
           >
             <Braces
               class="nav-icon"
@@ -347,7 +347,7 @@ onMounted(() => {
 
 .sidebar {
   width: 210px;
-  padding: 1.25rem;
+  padding: var(--space-7);
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   display: flex;
@@ -363,16 +363,16 @@ onMounted(() => {
 
 .collapsed .sidebar {
   width: 72px;
-  padding: 1.25rem 0.5rem;
+  padding: var(--space-7) var(--space-4);
 }
 
 .brand {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.75rem;
-  padding: 0 0.5rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
+  padding: 0 var(--space-4);
 }
 
 .brand-icon {
@@ -439,7 +439,7 @@ onMounted(() => {
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
+  gap: var(--space-1);
   flex: 1;
   overflow-y: auto;
   min-height: 0;
@@ -464,8 +464,8 @@ onMounted(() => {
 .nav-link {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
-  padding: 0.55rem 0.75rem;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   text-decoration: none;
@@ -479,7 +479,7 @@ onMounted(() => {
 
 .collapsed .nav-link {
   justify-content: center;
-  padding: 0.55rem;
+  padding: var(--space-4);
   gap: 0;
 }
 
@@ -495,24 +495,24 @@ onMounted(() => {
 }
 
 .nav-link-nested {
-  padding-left: 2.25rem;
+  padding-left: var(--space-9);
   font-size: var(--fs-sm);
 }
 
 .collapsed .nav-link-nested {
-  padding-left: 0.55rem;
+  padding-left: var(--space-4);
 }
 
 .nav-group {
-  margin-top: 0.5rem;
+  margin-top: var(--space-4);
 }
 
 .nav-group-toggle {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
+  gap: var(--space-4);
   width: 100%;
-  padding: 0.55rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-sm);
   border: none;
   background: transparent;
@@ -528,7 +528,7 @@ onMounted(() => {
 
 .collapsed .nav-group-toggle {
   justify-content: center;
-  padding: 0.55rem;
+  padding: var(--space-4);
   gap: 0;
 }
 
@@ -561,8 +561,8 @@ onMounted(() => {
 .nav-group-items {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
-  margin-top: 0.125rem;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
 }
 
 .nav-subgroup-label {
@@ -571,26 +571,26 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  padding: 0.5rem 0.75rem 0.15rem 2.25rem;
+  padding: var(--space-4) var(--space-5) var(--space-1) var(--space-9);
   white-space: nowrap;
   overflow: hidden;
 }
 
 .sidebar-footer {
   margin-top: auto;
-  padding-top: 1rem;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  padding-top: var(--space-6);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-4));
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .user-info {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0 0.25rem;
+  gap: var(--space-4);
+  padding: 0 var(--space-2);
   overflow: hidden;
 }
 
@@ -609,7 +609,7 @@ onMounted(() => {
   font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
-  padding: 0.125rem 0.375rem;
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-sm);
 }
 
@@ -626,21 +626,21 @@ onMounted(() => {
 .sidebar-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
 .signout-btn {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
   font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-muted);
   background: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.375rem 0.625rem;
+  padding: var(--space-3) var(--space-4);
   cursor: pointer;
   transition:
     color var(--duration-base),
@@ -651,7 +651,7 @@ onMounted(() => {
 
 .collapsed .signout-btn {
   border: none;
-  padding: 0.375rem;
+  padding: var(--space-3);
   justify-content: center;
 }
 
@@ -675,7 +675,7 @@ onMounted(() => {
 
 .content {
   flex: 1;
-  padding: 2rem;
+  padding: var(--space-9);
   min-width: 0;
   overflow-x: hidden;
 }
@@ -695,8 +695,8 @@ onMounted(() => {
   .mobile-header {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
+    gap: var(--space-5);
+    padding: var(--space-5) var(--space-6);
     background: var(--bg-sidebar);
     border-bottom: 1px solid var(--border);
     position: sticky;
@@ -755,7 +755,7 @@ onMounted(() => {
   /* Override desktop collapsed behavior on mobile */
   .collapsed .sidebar {
     width: 250px;
-    padding: 1.25rem;
+    padding: var(--space-7);
   }
 
   .collapsed .brand-text,
@@ -774,16 +774,16 @@ onMounted(() => {
   .collapsed .nav-link,
   .collapsed .nav-group-toggle {
     justify-content: flex-start;
-    padding: 0.55rem 0.75rem;
+    padding: var(--space-4) var(--space-5);
   }
 
   .collapsed .nav-link-nested {
-    padding-left: 2.25rem;
+    padding-left: var(--space-9);
   }
 
   .collapsed .signout-btn {
     border: 1px solid var(--border);
-    padding: 0.375rem 0.625rem;
+    padding: var(--space-3) var(--space-4);
     justify-content: flex-start;
   }
 
@@ -808,7 +808,7 @@ onMounted(() => {
   }
 
   .content {
-    padding: 1.25rem;
+    padding: var(--space-7);
   }
 }
 

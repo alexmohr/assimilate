@@ -31,7 +31,7 @@ test.describe('Settings journey', () => {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
 
-    await page.getByRole('tab', { name: 'API Tokens' }).click()
+    await page.getByRole('tab', { name: 'API tokens' }).click()
 
     const empty = page.locator('.empty-state')
     await expect(empty.locator('.empty-title')).toHaveText('No API tokens yet')
@@ -40,7 +40,7 @@ test.describe('Settings journey', () => {
     )
 
     await empty.locator('.empty-action').click()
-    await expect(page.locator('.modal-title')).toHaveText('Create API Token')
+    await expect(page.locator('.modal-title')).toHaveText('New API token')
   })
 
   test('notifications page shows configured channels', async ({ page }) => {

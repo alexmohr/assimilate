@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import SystemView from './SystemView.vue'
+import TimezoneSelect from '../components/TimezoneSelect.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -113,7 +114,7 @@ describe('SystemView', () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    expect(wrapper.text()).toContain('SSH Public Key')
+    expect(wrapper.text()).toContain('SSH public key')
   })
 
   it('displays the SSH public key after loading', async () => {
@@ -269,11 +270,66 @@ describe('SystemView', () => {
     await flushPromises()
     const input = wrapper.find<HTMLInputElement>('#settings-idle-timeout')
     await input.setValue('120')
-    await wrapper.find('form.settings-form').trigger('submit')
+    await wrapper.find('form.form-stack').trigger('submit')
     await flushPromises()
     expect(mockPut).toHaveBeenCalledWith(
       '/system/settings',
       expect.objectContaining({ session_idle_timeout_minutes: 120 }),
+    )
+  })
+
+  // Every retention field was read back from the API in a test, but nothing
+  // typed into one, so the v-model write path each field owns went unexercised
+  // - a field wired to the wrong form key would still have passed.
+  it('sends every edited retention field on save', async () => {
+    setupSuccessMocks()
+    mockPut.mockResolvedValue({
+      data: {
+        timezone: 'Europe/Berlin',
+        retention_days: 14,
+        report_retention_days: 180,
+        failed_report_retention_days: 200,
+        system_event_retention_days: 45,
+        notification_delivery_retention_days: 15,
+        borg_query_timeout_secs: 900,
+        session_idle_timeout_minutes: 60,
+      },
+    })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    const edits: [string, string, string, number][] = [
+      ['#settings-retention', '14', 'retention_days', 14],
+      ['#settings-report-retention', '180', 'report_retention_days', 180],
+      ['#settings-failed-retention', '200', 'failed_report_retention_days', 200],
+      ['#settings-event-retention', '45', 'system_event_retention_days', 45],
+      [
+        '#settings-notification-delivery-retention',
+        '15',
+        'notification_delivery_retention_days',
+        15,
+      ],
+      ['#settings-borg-timeout', '900', 'borg_query_timeout_secs', 900],
+    ]
+
+    for (const [selector, typed] of edits) {
+      await wrapper.find<HTMLInputElement>(selector).setValue(typed)
+    }
+
+    // The timezone is a component rather than an input, so it writes back
+    // through its model event.
+    await wrapper.findComponent(TimezoneSelect).vm.$emit('update:modelValue', 'Europe/Berlin')
+    await flushPromises()
+
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({
+        ...Object.fromEntries(edits.map(([, , key, value]) => [key, value])),
+        timezone: 'Europe/Berlin',
+      }),
     )
   })
 
@@ -291,7 +347,7 @@ describe('SystemView', () => {
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Database Storage')
+    expect(wrapper.text()).toContain('Database storage')
     expect(wrapper.text()).toContain('1.0 GB')
     expect(wrapper.text()).toContain('archive_files')
     expect(wrapper.text()).toContain('640.0 MB')
@@ -344,7 +400,7 @@ describe('SystemView', () => {
     expect(regenBtn).toBeDefined()
     await regenBtn!.trigger('click')
     await flushPromises()
-    expect(document.body.textContent).toContain('Regenerate SSH Key')
+    expect(document.body.textContent).toContain('Regenerate SSH key')
   })
 
   it('saves new retention values to API', async () => {
@@ -363,7 +419,7 @@ describe('SystemView', () => {
     })
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    await wrapper.find('form.settings-form').trigger('submit')
+    await wrapper.find('form.form-stack').trigger('submit')
     await flushPromises()
     expect(mockPut).toHaveBeenCalledWith('/system/settings', {
       retention_days: 30,
@@ -392,7 +448,7 @@ describe('SystemView', () => {
     })
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    await wrapper.find('form.settings-form').trigger('submit')
+    await wrapper.find('form.form-stack').trigger('submit')
     await flushPromises()
     const retentionInput = wrapper.find<HTMLInputElement>('#settings-retention')
     expect(retentionInput.element.value).toBe('14')
@@ -499,8 +555,8 @@ describe('SystemView', () => {
     // Both actions are irreversible from the UI's point of view, so the row
     // button only opens a dialog - it must never fire the request itself.
     it.each([
-      ['Regenerate', 'Regenerate SSH Key'],
-      ['Reset', 'Reset System State'],
+      ['Regenerate', 'Regenerate SSH key'],
+      ['Reset', 'Reset system state'],
     ])('opens a confirmation for %s rather than acting immediately', async (trigger, title) => {
       const wrapper = await render()
       mockPost.mockClear()

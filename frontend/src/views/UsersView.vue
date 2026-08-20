@@ -9,8 +9,10 @@ import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
-import { Plus, Pencil, Trash2 } from '@lucide/vue'
+import { Plus, Pencil, Trash2, Users } from '@lucide/vue'
+import AsyncSection from '../components/AsyncSection.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import EmptyState from '../components/EmptyState.vue'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -46,6 +48,7 @@ interface GroupRow {
 const authStore = useAuthStore()
 const users = ref<User[]>([])
 const loading = ref(true)
+const loadError = ref('')
 
 const showCreateModal = ref(false)
 const createForm = ref({ username: '', password: '', role: 'user' as 'admin' | 'user' })
@@ -91,9 +94,12 @@ const permissionsData = ref<RepoPermission[]>([])
 
 async function fetchUsers(): Promise<void> {
   loading.value = true
+  loadError.value = ''
   try {
     const res = await apiClient.get<User[]>('/users')
     users.value = res.data
+  } catch (e: unknown) {
+    loadError.value = extractError(e, 'Failed to load users')
   } finally {
     loading.value = false
   }
@@ -308,80 +314,89 @@ onMounted(fetchUsers)
       </div>
     </div>
 
-    <BaseSpinner
-      v-if="loading"
-      size="lg"
-    />
-
-    <table
-      v-else
-      class="data-table"
+    <AsyncSection
+      :loading="loading"
+      :error="loadError"
+      :empty="users.length === 0"
     >
-      <thead>
-        <tr>
-          <th>Username</th>
-          <th>Role</th>
-          <th class="col-date">Created</th>
-          <th class="col-date">Last Login</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="user in users"
-          :key="user.id"
-        >
-          <td>
-            <span class="user-cell">
-              {{ user.username }}
-              <span
-                v-if="isSelf(user)"
-                class="badge badge--accent"
-                >you</span
-              >
-            </span>
-          </td>
-          <td>
-            <span
-              class="badge badge--neutral"
-              :class="user.role"
-              >{{ user.role }}</span
+      <template #empty>
+        <EmptyState
+          :icon="Users"
+          title="No users yet"
+          description="Every person who signs in has an account here."
+          action="New user"
+          @action="openCreate"
+        />
+      </template>
+      <div class="table-wrap table-wrap--framed">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th class="col-date">Created</th>
+              <th class="col-date">Last login</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="user in users"
+              :key="user.id"
             >
-          </td>
-          <td class="date-cell col-date">
-            {{ formatDate(user.created_at) }}
-          </td>
-          <td class="date-cell col-date">
-            {{ formatDate(user.last_login_at, 'Never') }}
-          </td>
-          <td>
-            <div
-              v-if="!isSelf(user)"
-              class="actions-cell"
-            >
-              <button
-                class="btn btn-sm btn-ghost"
-                @click="openEdit(user)"
-              >
-                <Pencil :size="14" />
-                Edit
-              </button>
-              <button
-                class="btn btn-sm btn-ghost btn-danger-text"
-                @click="openDelete(user)"
-              >
-                <Trash2 :size="14" />
-              </button>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+              <td>
+                <span class="user-cell">
+                  {{ user.username }}
+                  <span
+                    v-if="isSelf(user)"
+                    class="badge badge--accent"
+                    >you</span
+                  >
+                </span>
+              </td>
+              <td>
+                <span
+                  class="badge badge--neutral"
+                  :class="user.role"
+                  >{{ user.role }}</span
+                >
+              </td>
+              <td class="date-cell col-date">
+                {{ formatDate(user.created_at) }}
+              </td>
+              <td class="date-cell col-date">
+                {{ formatDate(user.last_login_at, 'Never') }}
+              </td>
+              <td>
+                <div
+                  v-if="!isSelf(user)"
+                  class="actions-cell"
+                >
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    @click="openEdit(user)"
+                  >
+                    <Pencil :size="14" />
+                    Edit
+                  </button>
+                  <button
+                    class="btn btn-sm btn-ghost btn-danger-text"
+                    @click="openDelete(user)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </AsyncSection>
 
     <!-- Create User Modal -->
     <BaseModal
       :open="showCreateModal"
-      title="Add User"
+      title="New user"
       form
       @close="showCreateModal = false"
       @submit="submitCreate"
@@ -465,7 +480,7 @@ onMounted(fetchUsers)
         <!-- General Tab -->
         <div
           v-if="editTab === 'general'"
-          class="tab-content"
+          class="tab-content fade-in"
         >
           <div class="field">
             <label for="edit-role">Role</label>
@@ -498,10 +513,10 @@ onMounted(fetchUsers)
         <!-- Password Tab -->
         <div
           v-if="editTab === 'password'"
-          class="tab-content"
+          class="tab-content fade-in"
         >
           <div class="field">
-            <label for="edit-password">New Password</label>
+            <label for="edit-password">New password</label>
             <input
               id="edit-password"
               v-model="editPassword"
@@ -537,7 +552,7 @@ onMounted(fetchUsers)
         <!-- Roles & Groups Tab -->
         <div
           v-if="editTab === 'roles'"
-          class="tab-content"
+          class="tab-content fade-in"
         >
           <BaseSpinner
             v-if="editRolesLoading"
@@ -611,7 +626,7 @@ onMounted(fetchUsers)
         <!-- Permissions Tab -->
         <div
           v-if="editTab === 'permissions'"
-          class="tab-content"
+          class="tab-content fade-in"
         >
           <BaseSpinner
             v-if="editPermsLoading"
@@ -625,7 +640,7 @@ onMounted(fetchUsers)
           </div>
           <div
             v-else
-            class="permissions-scroll"
+            class="table-wrap permissions-scroll"
           >
             <table class="data-table data-table--compact">
               <thead>
@@ -690,7 +705,7 @@ onMounted(fetchUsers)
     <!-- Delete User Modal -->
     <BaseModal
       :open="showDeleteModal"
-      title="Delete User"
+      title="Delete user"
       @close="showDeleteModal = false"
     >
       <p class="confirm-text">
@@ -723,13 +738,13 @@ onMounted(fetchUsers)
 
 .loading {
   color: var(--text-muted);
-  padding: 2rem 0;
+  padding: var(--space-9) 0;
 }
 
 .user-cell {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .date-cell {
@@ -744,16 +759,10 @@ onMounted(fetchUsers)
 }
 
 .tab-scroll {
-  padding: 0.25rem 0 0;
+  padding: var(--space-2) 0 0;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
-}
-
-.tab-content {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
 }
 
 .field label {
@@ -764,7 +773,7 @@ onMounted(fetchUsers)
 
 .field input,
 .field select {
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
@@ -781,12 +790,12 @@ onMounted(fetchUsers)
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
 }
 
 .rg-section {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
 }
 
 .rg-heading {
@@ -795,22 +804,22 @@ onMounted(fetchUsers)
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-4);
 }
 
 .rg-empty {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-  padding: 0.5rem 0;
+  padding: var(--space-4) 0;
 }
 
 .rg-list {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.5rem;
+  padding: var(--space-4);
   max-height: 200px;
   overflow-y: auto;
 }
@@ -818,8 +827,8 @@ onMounted(fetchUsers)
 .rg-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.4rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--duration-fast);

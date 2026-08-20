@@ -55,7 +55,7 @@ test.describe('blob download error extraction', () => {
     await page.getByRole('button', { name: 'Next' }).click()
 
     // --- Step 4: Confirm ---
-    await expect(page.getByText('Confirm Restore')).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText('Confirm restore')).toBeVisible({ timeout: 5_000 })
 
     // Mock the download endpoint to return a blob error
     const errorPayload = JSON.stringify({
@@ -72,7 +72,7 @@ test.describe('blob download error extraction', () => {
 
     // Click the Restore button inside the wizard modal
     await page
-      .getByRole('dialog', { name: 'Restore Files' })
+      .getByRole('dialog', { name: 'Restore files' })
       .getByRole('button', { name: 'Restore' })
       .click()
 

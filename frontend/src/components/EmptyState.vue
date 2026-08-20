@@ -56,15 +56,15 @@ defineEmits<{
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 3rem 1.5rem;
+  padding: var(--space-10) var(--space-8);
   text-align: center;
-  gap: 0.75rem;
+  gap: var(--space-5);
 }
 
 .empty-icon {
   color: var(--text-muted);
   opacity: 0.5;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 
 .empty-title {
@@ -81,6 +81,6 @@ defineEmits<{
 }
 
 .empty-action {
-  margin-top: 0.5rem;
+  margin-top: var(--space-4);
 }
 </style>

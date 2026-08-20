@@ -82,6 +82,38 @@ describe('UsersView', () => {
     expect(wrapper.text()).toContain('viewer1')
   })
 
+  // F-47: a failed load used to leave an empty table with nothing to explain
+  // it, which reads as "no users" rather than "we could not ask".
+  it('explains a failed load instead of showing an empty table', async () => {
+    mockApiGet.mockRejectedValue(new Error('network down'))
+
+    const wrapper = renderWithPlugins(UsersView, {
+      storeState: { auth: { user: { id: 99, username: 'admin', role: 'admin' } } },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').text()).toContain('network down')
+    expect(wrapper.find('table').exists()).toBe(false)
+  })
+
+  it('offers the create dialog from the empty state', async () => {
+    mockApiGet.mockResolvedValue({ data: [] })
+
+    const wrapper = renderWithPlugins(UsersView, {
+      storeState: { auth: { user: { id: 99, username: 'admin', role: 'admin' } } },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No users yet')
+
+    await wrapper.find('.empty-state button').trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+  })
+
   it('renders a New button for creating users', async () => {
     const wrapper = renderWithPlugins(UsersView, {
       storeState: { auth: { user: { id: 99, username: 'admin', role: 'admin' } } },
@@ -137,7 +169,7 @@ describe('UsersView', () => {
     await newButton!.trigger('click')
     await flushPromises()
 
-    expect(document.body.textContent).toContain('Add User')
+    expect(document.body.textContent).toContain('New user')
   })
 
   it('shows repository names in the permissions tab', async () => {

@@ -83,15 +83,15 @@ defineProps<{
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-6);
   overflow: hidden;
 }
 
 .live-log-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
   background: var(--bg-base);
 }
@@ -112,19 +112,19 @@ defineProps<{
 }
 
 .live-log-empty {
-  padding: 0.75rem 1rem;
+  padding: var(--space-5) var(--space-6);
   color: var(--text-muted);
   font-style: italic;
 }
 
 .progress-body {
-  padding: 0.5rem 0;
+  padding: var(--space-4) 0;
 }
 
 .live-stat-row {
   display: flex;
-  gap: 1rem;
-  padding: 0.2rem 1rem;
+  gap: var(--space-6);
+  padding: var(--space-2) var(--space-6);
   font-size: var(--fs-base);
 }
 

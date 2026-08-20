@@ -31,9 +31,9 @@ Three tests enforce this and fail CI:
 
 | Test | Fails when |
 | --- | --- |
-| `design-tokens.test.ts` | a literal `font-size`, `border-radius` or `transition` duration, or a `var()` naming a token that does not exist |
-| `shared-components.test.ts` | a scoped rule re-declares a property a shared class already sets, two scoped stylesheets declare the same rule verbatim, or a shared `@keyframes` is redefined locally |
-| `ui-conventions.test.ts` | a text control without `.input`, an icon outside the size set, a glyph entity instead of an icon, an ellipsis character in a busy label, a `.state-msg` used as a block-level empty state, or a view over 1,800 lines |
+| `design-tokens.test.ts` | a literal `font-size`, `border-radius`, `transition` duration or spacing value, or a `var()` naming a token that does not exist |
+| `shared-components.test.ts` | a scoped rule re-declares a property a shared class already sets, two scoped stylesheets declare the same rule verbatim, a shared `@keyframes` is redefined locally, or a class used in a template resolves to no rule anywhere |
+| `ui-conventions.test.ts` | a text control without `.input`, an icon outside the size set, a glyph (entity or literal character) instead of an icon, an ellipsis character in a busy label, a `.state-msg` used as a block-level empty state, a `<table>` outside `.table-wrap`, a `.badge` carrying `.badge-dot` itself, a Title Case label, or a view over 1,800 lines |
 
 `styles/contrast.test.ts` checks every foreground/background token pair against
 WCAG AA (4.5:1). Three pairs are known failures marked `it.fails` — light
@@ -44,6 +44,12 @@ token means flipping its case from `it.fails` to a passing assertion.
 
 All visual constants live in `frontend/src/style.css`.
 
+* **Spacing** — `--space-1` … `--space-10`
+  (2, 4, 6, 8, 12, 16, 20, 24, 32, 48px). Every `padding`, `margin` and `gap`
+  comes from this ladder; a raw `rem` in one of those properties fails CI. The
+  scale is tight at the bottom because chips and badges genuinely need sub-4px
+  insets. Other units stay legal where they are not spacing on the grid: a
+  hairline is `px`, a centred block is `auto`.
 * **Type scale** — `--fs-2xs` `--fs-xs` `--fs-sm` `--fs-base` `--fs-md`
   `--fs-lg` `--fs-xl`, plus `--fs-2xl` / `--fs-3xl` for decorative numerals
   only (error codes, score rings). Never a literal `rem`. The `--fs-*` name is
@@ -81,11 +87,25 @@ All visual constants live in `frontend/src/style.css`.
   narrow viewports.
 * **Two-pane archive screens** — `ArchiveBrowserLayout`, with `narrow-list`
   when the list pane is a fixed narrow column.
-* **Surfaces** — `.panel` is a list container (`.panel--sectioned` for the
-  ruled-header/flush-body variant, `.panel-header` + `.panel-title`, plus
-  `.panel-title--truncate` when the heading shares its row with controls).
-  `.info-card` is the detail views' settings surface, with `.info-title`,
-  `.info-grid` (`dt`/`dd` rows) and `.info-actions`.
+* **Surfaces** — `.panel` is the one card surface, for a list container and a
+  settings block alike: `.panel--sectioned` for the ruled-header/flush-body
+  variant, `.panel-header` + `.panel-title` (sentence case, primary ink),
+  `.panel-title--truncate` when the heading shares its row with controls,
+  `.panel-actions` for more than one button in that row, and `.panel-stack`
+  for a column of panels. Inside one, `.info-grid` (`dt`/`dd` rows) is the
+  key/value block and `.info-actions` the ruled footer. There is no second
+  surface: `.info-card` and its uppercase `.info-title` are retired and
+  rejected by CI. Uppercase survives only as `.group-label`.
+* **Detail pages** — `DetailHeader` is the identity block above the tab strip
+  (`name`, `mono`, `subtitle`, plus `badges` / `meta` / `actions` / `footer`
+  slots), with `OverflowMenu` for everything the header does not promote to
+  its one accented action. Agents, schedules and repositories all use it.
+* **Settings tabs** — a tab whose content is itself sectioned gets a
+  `.settings-tab` rail. The rail names the section, so the pane does not
+  repeat it: a pane opens with `.pane-head` holding a `.pane-lede` and the
+  action that applies to the whole of it, renders its fields straight into
+  `.settings-pane`, and reaches for `.pane-section` (+ `.pane-section-head` or
+  a bare `.group-label`) only when it genuinely holds more than one group.
 
 ## Components
 
@@ -101,8 +121,12 @@ Reach for these rather than rebuilding them.
     `submitting`, `error`, `confirmLabel`, `submittingLabel`)
   * a form → `ModalFormActions` in the `#footer` slot
 * **Tabs** — `BaseTabs` (`tabs`, `v-model`, `label`). Carries the ARIA roles
-  and keyboard behaviour; a hand-rolled row of buttons does not. Tab panels get
-  `.fade-in` for the panel-swap transition.
+  and keyboard behaviour; a hand-rolled row of buttons does not. Every tab
+  panel is `.tab-content fade-in`.
+* **Disclosures** — `BaseDisclosure` (`title`, optional `badge` / `badgeTone`)
+  for a labelled section that opens and closes. It announces its state and
+  rotates its chevron on the shared duration; the badge says what is inside
+  without opening it.
 * **Segmented controls** — `BaseSegmented`, same reasoning.
 * **Breadcrumbs** — `.detail-breadcrumb` with `.crumb-link` / `.crumb-sep` /
   `.crumb-current` for a detail view's trail. A *path* trail is `.path-crumbs`
@@ -119,6 +143,8 @@ Reach for these rather than rebuilding them.
   `.stat-label`) / `.card-actions` (`--spread` when a control leads the row).
   `.meta-pill` for a count or classification beside the name. A schedule
   renders through `ScheduleCard`, which fills that shape from a `ScheduleRow`.
+* **Tiles** — `.tiles` is the grid, `.tile` the box; `--lg` is the dashboard's
+  headline step and `--link` marks one that navigates.
 * **Stats** — a labelled number is `.stat-label` + `.stat-value`, with
   `.stat-sub` for the line under it saying what the number is of. The two
   larger roles are modifiers: `.stat-value--lg` for a panel tile, `--xl` for a
@@ -133,7 +159,9 @@ Reach for these rather than rebuilding them.
   of values, `--lg` where it heads an editable form group, `--warning` /
   `--danger` where it takes the tone of the block it names.
 * **Tables** — `.data-table` inside `.table-wrap` (`--framed` when the table is
-  itself the card). `.data-table--compact` only for wide numeric grids.
+  itself the card). The wrapper is not optional: without it a wide table
+  pushes the whole page sideways on a phone instead of scrolling in its own
+  box, and CI rejects a `<table>` that has none. `.data-table--compact` only for wide numeric grids.
   Cell typography is `.cell-ts` / `.cell-date` / `.cell-host` / `.cell-size` /
   `.cell-mono` / `.cell-muted`, plus `.cell-truncate` for a message of
   unbounded length. PrimeVue `DataTable`s render through the global passthrough
@@ -143,13 +171,18 @@ Reach for these rather than rebuilding them.
   selector picks up the view's scope id, which PrimeVue's internals never
   carry, and the rule silently does nothing.
 * **Badges** — `.badge` with one of `.badge--success|warning|danger|info|`
-  `accent|neutral`, chosen through `src/utils/badge.ts`. Add `.badge-dot` for
-  live state (Online, Running); omit it for classification (Manual, Admin).
+  `accent|neutral`, chosen through `src/utils/badge.ts`. For live state
+  (Online, Running) the badge *contains* a `<span class="badge-dot" />`; the
+  class is the dot, not a modifier, and on the badge itself it collapses it to
+  a 6.4px circle. Omit the dot for classification (Manual, Admin).
   `.badge--pulse` marks work in flight. `EntityStatusBadges` renders the
   running/notable/issue row on a card.
 * **Tags** — `EntityTags` for the editor; `.tag-pill`, `.tag-dropdown` and
   friends for the filter dropdown.
-* **Charts** — `MetricLineChart` for a labelled line chart,
+* **Charts** — one `.chart-legend` for every chart (`--stack` beside a bar,
+  `.chart-legend-item--toggle` where the legend switches a series off,
+  `.chart-legend-swatch--dot` for a status rather than a slice).
+  `MetricLineChart` for a labelled line chart,
   `ChartRangeControls` for the repo/range picker in a panel header,
   `.chart-desc` for the caption under the heading. Options come from
   `useChartTheme` and `useBytesLineChartOptions`; data from
@@ -202,8 +235,11 @@ Reach for these rather than rebuilding them.
 * **Empty** — `EmptyState`, with an action wherever one would resolve the
   emptiness. `.state-msg` is for errors and for `.state-msg--inline` inside a
   dashboard widget — not for "nothing here yet", which CI rejects.
-* **Error** — `.state-msg state-error` inline, `.error-banner` above the
-  content it invalidates, `.form-error` under the control that failed.
+* **Error** — `.error-banner` above the content it invalidates - which is what
+  a failed page or panel load is - `.state-msg--inline state-error` for a
+  failure inside a widget, and `.form-error` under the control that failed. A
+  view that can load must render all three of spinner, error and empty; two of
+  them used to leave a failed fetch showing an empty table.
   `ErrorPage` for a full-screen failure (`code`, `tone`, slots for a source
   line and detail).
 * **Danger zone** — `.danger-zone` / `.danger-body` / `.danger-info` /
@@ -215,6 +251,14 @@ Reach for these rather than rebuilding them.
 
 ## Wording and icons
 
+* **Case** — sentence case for every label, heading, button, dialog title and
+  column head; only product and protocol nouns keep their capitals (Borg, SSH,
+  SMTP, TOTP, API). Page titles are the exception: they are the names of pages
+  and keep their Title Case. CI checks the labels.
+* **Verbs** — one action, one verb. Creating something is *New* everywhere:
+  the header button, the empty state's action and the dialog it opens. *Import*
+  and *Adopt* are for taking something that already exists. A form's own submit
+  button still says what it does (*Create schedule*, *Save changes*).
 * **Icons** — `@lucide/vue` only, never an HTML entity or a literal glyph.
   Sizes are 12 (inline with small text), 14 (inline and in controls), 16
   (headings), 20 (section headers), 40 (empty states). CI rejects any other

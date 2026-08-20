@@ -48,6 +48,7 @@ const OWNED = [
   'btn-ghost',
   'btn-danger',
   'btn-danger-text',
+  'btn-warning-text',
   'btn-sm',
   'btn-xs',
   'panel',
@@ -75,8 +76,8 @@ const OWNED = [
   'danger-desc',
   'tag-pill',
   'tag-dropdown',
-  'info-card',
-  'info-title',
+  'panel-actions',
+  'panel-stack',
   'info-grid',
   'info-actions',
   'field-inline',
@@ -132,11 +133,11 @@ const OWNED = [
   'token-warning',
   'token-box',
   'token-text',
+  'token-box--block',
+  'token-text--plain',
   'passphrase-warning',
   'passphrase-box',
   'passphrase-text',
-  'info-card-header',
-  'info-header-actions',
   'edit-form',
   'edit-actions',
   'error-banner',
@@ -177,6 +178,7 @@ const OWNED = [
   'match-warn',
   'dropdown-arrow',
   'progress-track',
+  'progress-bar--muted',
   'progress-bar',
   'progress-row',
   'progress-label',
@@ -184,18 +186,49 @@ const OWNED = [
   'pulse-dot',
   'spinning',
   'fade-in',
+  'tab-content',
   'detail-pre',
   'error-pre',
   'warning-pre',
+  'disclosure-head',
+  'disclosure-title',
+  'disclosure-chevron',
+  'disclosure-body',
+  'icon-list',
+  'detail-header',
+  'detail-identity',
+  'detail-title-row',
+  'detail-name',
+  'detail-name--mono',
+  'detail-subtitle',
+  'detail-meta',
+  'detail-actions',
+  'detail-header-error',
+  'overflow-toggle',
+  'overflow-menu',
+  'overflow-menu-item',
+  'overflow-menu-note',
   'settings-tab',
   'settings-nav',
   'settings-nav-item',
+  'settings-nav--even',
   'settings-pane',
+  'pane-head',
+  'pane-lede',
+  'pane-section',
+  'pane-section-head',
   'overview-tab',
   'attention',
   'attention-message',
   'tiles',
   'tile',
+  'tile--lg',
+  'tile--link',
+  'chart-legend',
+  'chart-legend-item',
+  'chart-legend-swatch',
+  'chart-legend-name',
+  'chart-legend-detail',
   'section-head',
   'section-title',
   'section-link',
@@ -350,5 +383,114 @@ describe('shared components', () => {
     expect(segmented).toContain('role="radiogroup"')
     expect(segmented).toContain('role="radio"')
     expect(segmented).toContain(':aria-checked')
+  })
+})
+
+/**
+ * Class names used in a template that no rule anywhere defines. Five of these
+ * were shipping at once: `.info-title-row` (so an Edit button fell onto its
+ * own line), `.state-msg-sm` (six in-panel messages rendered as full-page
+ * blocks), `.page-subtitle`, `.btn-warning-text` and `.layout-with-ref`. They
+ * look like styling and do nothing, and nothing was checking.
+ */
+const HOOKS = new Set([
+  // Carried for a test to select on rather than for styling: a marker for what
+  // a row or a control *is*, where the alternative is a brittle nth-child.
+  'repo-status-badge',
+  'run-card-system',
+  'action-filter',
+  'date-input',
+  'tag-group',
+  'archives-panel',
+  'import-status-msg',
+])
+
+/**
+ * Comments are stripped first, or a class name would count as "defined" just
+ * for being *discussed* in prose. The `.panel` section header below explains
+ * why `.info-card` and `.info-title` were retired, and naming them there would
+ * otherwise re-admit both to this set - defeating the one guard whose job is to
+ * notice a retired class coming back.
+ */
+function classSelectors(css: string): Set<string> {
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  return new Set([...code.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]))
+}
+
+/**
+ * The class names a `:class` binding can apply, in any of the three shapes
+ * Vue accepts: an object whose keys are the names, an array of either, and a
+ * bare expression choosing between string literals.
+ *
+ * The first cut of this only read *quoted* object keys, which meant it skipped
+ * every `{ active: ... }` in the codebase - the majority shape - and every
+ * array binding, while its own comment claimed to resolve every class in a
+ * template. A key is whatever precedes the first colon of an entry, so a
+ * ternary in the *value* cannot be mistaken for one.
+ *
+ * Names assembled from an interpolation stay out of reach: `badge--${tone}`
+ * has no spelling until it runs. That is the one shape this guard cannot
+ * cover, and the rules those names reach are held open by `OWNED` instead.
+ */
+function boundClasses(binding: string): Set<string> {
+  const names = new Set<string>()
+  const isName = /^[a-zA-Z][\w-]*$/
+  const expr = binding.replace(/`[^`]*`/g, '')
+
+  // Object entries: `{ 'a-b': x, active: y }`, including objects nested in an
+  // array binding.
+  for (const obj of expr.matchAll(/\{([^{}]*)\}/g)) {
+    for (const entry of obj[1].split(',')) {
+      const key = entry.split(':')[0].trim().replace(/^'|'$/g, '')
+      if (isName.test(key)) names.add(key)
+    }
+  }
+
+  // String literals outside those objects: array members and the arms of a
+  // ternary. A literal being compared against rather than applied (`x === 'y'`)
+  // is not a class, and reads as a value, not a name, often enough that the
+  // shape alone cannot tell - so only literals in binding position count.
+  const literals = expr.replace(/\{[^{}]*\}/g, '').replace(/[!=]==?\s*'[^']*'/g, '')
+  for (const lit of literals.matchAll(/'([^']*)'/g)) {
+    for (const name of lit[1].split(/\s+/).filter(Boolean)) {
+      if (isName.test(name)) names.add(name)
+    }
+  }
+  return names
+}
+
+describe('class names', () => {
+  it('resolves every class used in a template to a rule somewhere', () => {
+    const defined = classSelectors(STYLE_CSS)
+    for (const m of classSelectors(readFileSync(join(SRC, 'assets/auth.css'), 'utf-8'))) {
+      defined.add(m)
+    }
+    for (const file of FILES) {
+      const text = readFileSync(file, 'utf-8')
+      for (const block of text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) {
+        for (const name of classSelectors(block[1])) defined.add(name)
+      }
+    }
+
+    const offenders: string[] = []
+    for (const file of FILES) {
+      const text = readFileSync(file, 'utf-8')
+      const template = text.includes('<template>')
+        ? text.split('<template>')[1].split('</template>')[0]
+        : ''
+      const used = new Set<string>()
+      for (const m of template.matchAll(/(?<![:\w-])class="([^"{}]*)"/g)) {
+        for (const name of m[1].split(/\s+/).filter(Boolean)) used.add(name)
+      }
+      for (const m of template.matchAll(/:class="([^"]*)"/g)) {
+        for (const name of boundClasses(m[1])) used.add(name)
+      }
+      for (const name of used) {
+        if (!defined.has(name) && !HOOKS.has(name)) {
+          offenders.push(`${relative(SRC, file)}: .${name}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
   })
 })

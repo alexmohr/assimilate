@@ -218,12 +218,12 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title panel-title--truncate">Backup Calendar</h2>
+      <h2 class="panel-title panel-title--truncate">Backup calendar</h2>
       <select
         v-model="selectedRepoId"
         class="input cal-select"
       >
-        <option :value="undefined">All Repos</option>
+        <option :value="undefined">All repos</option>
         <option
           v-for="repo in props.repos"
           :key="repo.id"
@@ -359,7 +359,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
         @click.stop
       >
         <div class="cal-error-header">
-          <span class="cal-error-title">Backup Failed</span>
+          <span class="cal-error-title">Backup failed</span>
           <button
             class="cal-error-close"
             aria-label="Close"
@@ -408,7 +408,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-select {
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-2) var(--space-4);
   font-size: var(--fs-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -420,8 +420,8 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-6);
+  margin-bottom: var(--space-5);
 }
 
 .cal-nav-btn {
@@ -430,7 +430,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   cursor: pointer;
-  padding: 0.2rem 0.5rem;
+  padding: var(--space-2) var(--space-4);
   font-size: var(--fs-base);
 }
 
@@ -456,7 +456,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   text-transform: uppercase;
   color: var(--text-muted);
   text-align: center;
-  padding: 0.3rem 0;
+  padding: var(--space-2) 0;
 }
 
 .cal-cell {
@@ -464,9 +464,9 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.1rem;
+  gap: var(--space-1);
   border-radius: var(--radius-sm);
-  padding: 0.15rem;
+  padding: var(--space-1);
   height: 2.25rem;
 }
 
@@ -510,23 +510,23 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-detail {
-  margin-top: 1rem;
+  margin-top: var(--space-6);
   border-top: 1px solid var(--border);
-  padding-top: 0.75rem;
+  padding-top: var(--space-5);
 }
 
 .cal-detail-title {
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-4);
 }
 
 .cal-event {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
   font-size: var(--fs-xs);
 }
 
@@ -573,7 +573,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   font-size: var(--fs-2xs);
   font-weight: 700;
   text-transform: uppercase;
-  padding: 0.1rem 0.35rem;
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-sm);
 }
 
@@ -600,8 +600,8 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 .cal-event-clickable {
   cursor: pointer;
   border-radius: var(--radius-sm);
-  padding-left: 0.3rem;
-  padding-right: 0.3rem;
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
 }
 
 .cal-event-clickable:hover {
@@ -622,7 +622,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem;
+  padding: var(--space-7);
   max-width: 32rem;
   width: 90%;
   max-height: 60vh;
@@ -633,7 +633,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-4);
 }
 
 .cal-error-title {
@@ -654,7 +654,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 .cal-error-meta {
   font-size: var(--fs-xs);
   color: var(--text-muted);
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-5);
 }
 
 .cal-error-msg {
@@ -664,7 +664,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.75rem;
+  padding: var(--space-5);
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;

@@ -71,66 +71,61 @@ defineExpose({ reload: load })
 </script>
 
 <template>
-  <div class="info-card">
-    <h3 class="info-title">Hostname Aliases</h3>
-    <p class="field-hint">
-      Glob patterns that match archive hostnames to this agent during repository import. Only
-      affects future discoveries — existing imported agents are not retroactively reassigned. Use
-      "Merge into" on an imported agent to move its historical archives.
-    </p>
+  <p class="pane-lede">
+    Glob patterns that match archive hostnames to this agent during repository import. Only affects
+    future discoveries — existing imported agents are not retroactively reassigned, so use "Merge
+    into" on one to move its historical archives. <code>*</code> matches any characters,
+    <code>?</code> a single one.
+  </p>
+  <div
+    v-if="patterns.length > 0"
+    class="paths-list"
+  >
     <div
-      v-if="patterns.length > 0"
-      class="paths-list"
+      v-for="p in patterns"
+      :key="p.id"
+      class="pattern-row"
     >
-      <div
-        v-for="p in patterns"
-        :key="p.id"
-        class="pattern-row"
-      >
-        <code class="path-item mono">{{ p.pattern }}</code>
-        <button
-          v-if="canEdit"
-          class="tag-remove pattern-delete"
-          title="Delete pattern"
-          aria-label="Delete hostname pattern"
-          @click="deletePattern(p.id)"
-        >
-          <X :size="12" />
-        </button>
-      </div>
-    </div>
-    <span
-      v-else
-      class="muted"
-      >No alias patterns configured.</span
-    >
-    <p class="field-hint">
-      <code>*</code> matches any characters, <code>?</code> matches a single character.
-    </p>
-    <div
-      v-if="error"
-      class="form-error"
-    >
-      {{ error }}
-    </div>
-    <div
-      v-if="canEdit"
-      class="pattern-add-row"
-    >
-      <input
-        v-model="newPattern"
-        class="input input-sm"
-        placeholder="e.g. myhost* or host-??"
-        @keyup.enter="addPattern"
-      />
+      <code class="path-item mono">{{ p.pattern }}</code>
       <button
-        class="btn btn-sm btn-primary"
-        :disabled="addLoading || !newPattern.trim()"
-        @click="addPattern"
+        v-if="canEdit"
+        class="tag-remove pattern-delete"
+        title="Delete pattern"
+        aria-label="Delete hostname pattern"
+        @click="deletePattern(p.id)"
       >
-        {{ addLoading ? 'Adding...' : 'Add Pattern' }}
+        <X :size="12" />
       </button>
     </div>
+  </div>
+  <span
+    v-else
+    class="muted"
+    >No alias patterns configured.</span
+  >
+  <div
+    v-if="error"
+    class="form-error"
+  >
+    {{ error }}
+  </div>
+  <div
+    v-if="canEdit"
+    class="pattern-add-row"
+  >
+    <input
+      v-model="newPattern"
+      class="input input-sm"
+      placeholder="e.g. myhost* or host-??"
+      @keyup.enter="addPattern"
+    />
+    <button
+      class="btn btn-sm btn-primary"
+      :disabled="addLoading || !newPattern.trim()"
+      @click="addPattern"
+    >
+      {{ addLoading ? 'Adding...' : 'Add pattern' }}
+    </button>
   </div>
 </template>
 
@@ -138,7 +133,7 @@ defineExpose({ reload: load })
 .pattern-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-3);
 }
 
 .pattern-delete {
@@ -148,9 +143,8 @@ defineExpose({ reload: load })
 
 .pattern-add-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-4);
   align-items: center;
-  margin-top: 0.75rem;
   flex-wrap: wrap;
 }
 

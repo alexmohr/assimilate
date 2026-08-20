@@ -55,7 +55,7 @@ const chipLabel = computed(() =>
 .slice {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--space-2);
 }
 
 .slice-track {
@@ -85,7 +85,7 @@ const chipLabel = computed(() =>
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-4);
 }
 
 .slice-label,

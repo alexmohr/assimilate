@@ -890,14 +890,12 @@ async fn run_sequential_target(
             // if it fired first here, the DB write below would race the caller reading
             // the schedule's updated failure count right after tick() returns.
             //
-            // Guarded only by recorded_failure, not marked_triggered: an earlier
-            // target in this same tick succeeding must not suppress recording a
-            // later target's failure - each is a distinct target that can fail
+            // recorded_failure is not guarded on marked_triggered: an earlier target
+            // in this same tick succeeding must not suppress recording a later
+            // target's failure - each is a distinct target that can fail
             // independently, and a schedule with `on_failure: Continue` processes
             // every target regardless of earlier outcomes.
-            if !*recorded_failure {
-                record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
-            }
+            record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
             signal_first_target_attempted(triggered_tx);
             return match ctx.on_failure {
                 OnFailure::Stop => TargetControl::Stop,
@@ -909,9 +907,7 @@ async fn run_sequential_target(
             // passphrase) is just as capable of retrying forever on every tick as
             // an unreachable agent - route it through the same backoff/auto-disable
             // path rather than leaving next_run_at untouched.
-            if !*recorded_failure {
-                record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
-            }
+            record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
             signal_first_target_attempted(triggered_tx);
             return match ctx.on_failure {
                 OnFailure::Stop => TargetControl::Stop,
@@ -963,12 +959,9 @@ async fn run_sequential_target(
                 error = %e,
                 "sequential: agent not connected, skipping target"
             );
-            // Record the failure before signalling tick() to return, and guarded only
-            // by recorded_failure - see the comments on the equivalent ordering and
-            // guard in the AgentUnreachable arm above.
-            if !*recorded_failure {
-                record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
-            }
+            // Record the failure before signalling tick() to return - see the
+            // comments on the equivalent ordering in the AgentUnreachable arm above.
+            record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
             // Signal tick() that we've attempted the first target
             signal_first_target_attempted(triggered_tx);
             return match ctx.on_failure {
@@ -1065,15 +1058,28 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 /// to the next scheduled occurrence (instead of the every-30s tick cadence) and
 /// auto-disabling the schedule once [`MAX_CONSECUTIVE_FAILURES`] is reached. Only the
 /// first target failure of a tick counts, mirroring [`mark_schedule_triggered_once`],
-/// since a schedule with multiple targets shouldn't be double-counted for one tick.
+/// since a schedule with multiple targets shouldn't be double-counted for one tick -
+/// callers don't need to guard this themselves, it early-returns if `recorded_failure`
+/// is already `true`.
 /// `agent_id` is recorded as the schedule's `auto_disabled_by_agent_id`, so a
 /// reconnect only re-enables the schedule when this specific target comes back - see
 /// [`db::reenable_system_disabled_schedules_for_agent`].
+///
+/// `recorded_failure` is set to `true` as soon as a failure is being processed for
+/// this tick, regardless of whether the DB write or cron calculation below actually
+/// succeeds: "a failure occurred but couldn't be recorded" must still suppress the
+/// post-loop [`db::reset_schedule_consecutive_failures`] call the same way a
+/// successfully-recorded failure does, or a transient DB error would wipe a real,
+/// already-persisted failure count.
 async fn record_schedule_failure_once(
     ctx: &SequentialTargetCtx<'_>,
     agent_id: i64,
     recorded_failure: &mut bool,
 ) {
+    if *recorded_failure {
+        return;
+    }
+    *recorded_failure = true;
     let Some(next) = calculate_next_run_or_log(ctx) else {
         return;
     };
@@ -1088,7 +1094,6 @@ async fn record_schedule_failure_once(
     .await
     {
         Ok(outcome) => {
-            *recorded_failure = true;
             if outcome.auto_disabled {
                 tracing::error!(
                     schedule_id,

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
+  "query": "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, exclude_patterns_raw = $6, file_change_patterns_raw = $7, ignore_global_excludes = $8, keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END, failure_streak_pure_connectivity = CASE WHEN enabled IS DISTINCT FROM $4 THEN true ELSE failure_streak_pure_connectivity END WHERE id = $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
   "describe": {
     "columns": [
       {
@@ -130,13 +130,40 @@
       },
       {
         "ordinal": 25,
+        "name": "consecutive_failures",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 26,
+        "name": "auto_disabled_agent_unreachable",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 27,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Text",
+        "Text",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Int4",
+        "Jsonb",
+        "Jsonb",
+        "Text"
       ]
     },
     "nullable": [
@@ -165,8 +192,10 @@
       false,
       true,
       false,
+      false,
+      false,
       null
     ]
   },
-  "hash": "b02210eb1accd8c82ea7b9a14702cdc944aac338a1b4b1b88fff704f7fc28699"
+  "hash": "6a4f46cadce4ad7dc7e432681a39ab76f0e194bd4c59ed12d0dd4115abeb8103"
 }

@@ -764,6 +764,7 @@ struct SequentialTargetCtx<'a> {
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
     schedule_id: i64,
+    schedule_name: &'a str,
     cron: &'a str,
     on_failure: OnFailure,
     now: DateTime<Utc>,
@@ -800,6 +801,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     let mut recorded_failure = false;
     let mut triggered_tx = Some(triggered_tx);
 
+    let schedule_name = targets.first().map_or("", |t| t.schedule_name.as_str());
     let target_ctx = SequentialTargetCtx {
         pool: &pool,
         registry: &registry,
@@ -810,6 +812,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         repo_op_tracker: &repo_op_tracker,
         ui_broadcast: &ui_broadcast,
         schedule_id,
+        schedule_name,
         cron: &cron,
         on_failure,
         now,
@@ -862,11 +865,13 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
 async fn fail_target(
     ctx: &SequentialTargetCtx<'_>,
     agent_id: i64,
+    hostname: &str,
     agent_unreachable: bool,
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> TargetControl {
-    record_schedule_failure_once(ctx, agent_id, agent_unreachable, recorded_failure).await;
+    record_schedule_failure_once(ctx, agent_id, hostname, agent_unreachable, recorded_failure)
+        .await;
     signal_first_target_attempted(triggered_tx);
     match ctx.on_failure {
         OnFailure::Stop => TargetControl::Stop,
@@ -912,7 +917,15 @@ async fn run_sequential_target(
             // target's failure - each is a distinct target that can fail
             // independently, and a schedule with `on_failure: Continue` processes
             // every target regardless of earlier outcomes.
-            return fail_target(ctx, target.agent_id, true, recorded_failure, triggered_tx).await;
+            return fail_target(
+                ctx,
+                target.agent_id,
+                &target.hostname,
+                true,
+                recorded_failure,
+                triggered_tx,
+            )
+            .await;
         }
         PreRunConfigOutcome::ConfigError => {
             // A persistent config-assembly error (e.g. a corrupted encrypted
@@ -922,7 +935,15 @@ async fn run_sequential_target(
             // failure (not agent_unreachable), so the disable it may cause won't be
             // silently cleared by an unrelated agent reconnect - see the doc comment
             // on db::record_schedule_failure.
-            return fail_target(ctx, target.agent_id, false, recorded_failure, triggered_tx).await;
+            return fail_target(
+                ctx,
+                target.agent_id,
+                &target.hostname,
+                false,
+                recorded_failure,
+                triggered_tx,
+            )
+            .await;
         }
     }
 
@@ -969,7 +990,15 @@ async fn run_sequential_target(
                 error = %e,
                 "sequential: agent not connected, skipping target"
             );
-            return fail_target(ctx, target.agent_id, true, recorded_failure, triggered_tx).await;
+            return fail_target(
+                ctx,
+                target.agent_id,
+                &target.hostname,
+                true,
+                recorded_failure,
+                triggered_tx,
+            )
+            .await;
         }
     }
 
@@ -1079,6 +1108,7 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 async fn record_schedule_failure_once(
     ctx: &SequentialTargetCtx<'_>,
     agent_id: i64,
+    hostname: &str,
     agent_unreachable: bool,
     recorded_failure: &mut bool,
 ) {
@@ -1108,6 +1138,29 @@ async fn record_schedule_failure_once(
                     agent_unreachable,
                     "sequential: schedule auto-disabled after repeated failures"
                 );
+                let reason = if agent_unreachable {
+                    format!("agent '{hostname}' stayed unreachable")
+                } else {
+                    "a local or configuration problem".to_owned()
+                };
+                let msg = format!(
+                    "Schedule '{}' auto-disabled after {} consecutive failures: {reason}",
+                    ctx.schedule_name, outcome.consecutive_failures
+                );
+                if let Err(e) = db::insert_system_event(
+                    ctx.pool,
+                    SystemEventType::ScheduleAutoDisabled,
+                    Some(hostname),
+                    &msg,
+                )
+                .await
+                {
+                    tracing::error!(
+                        schedule_id,
+                        error = %e,
+                        "sequential: failed to record schedule-auto-disabled system event"
+                    );
+                }
             } else {
                 tracing::warn!(
                     schedule_id,
@@ -1876,6 +1929,15 @@ esac
         assert!(
             !due.iter().any(|s| s.schedule_id == schedule_id),
             "a disabled schedule must never be selected as due again"
+        );
+
+        // The auto-disable must not be invisible outside server logs.
+        let events = db::get_system_events(&pool, 10).await.unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.event_type, SystemEventType::ScheduleAutoDisabled)),
+            "auto-disabling a schedule must record a ScheduleAutoDisabled system event"
         );
     }
 

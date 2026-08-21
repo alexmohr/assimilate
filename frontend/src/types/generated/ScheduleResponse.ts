@@ -108,4 +108,15 @@ export type ScheduleResponse = {
    * Hostnames targeted by this schedule.
    */
   target_hostnames: Array<string>;
+  /**
+   * How many consecutive attempts have failed to reach the schedule's target
+   * agent(s) since the last success or reconnect.
+   */
+  consecutive_failures: number;
+  /**
+   * Whether the scheduler auto-disabled this schedule because its target agent
+   * stayed unreachable, as opposed to a local/data failure, a human, or quota
+   * enforcement. Only ever true while `enabled` is false.
+   */
+  auto_disabled_agent_unreachable: boolean;
 };

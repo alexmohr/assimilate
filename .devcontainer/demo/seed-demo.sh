@@ -50,9 +50,10 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
 DELETE FROM backup_reports WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod'));
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN agents c ON c.id = st.agent_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM schedules WHERE name = 'Stale nightly report';
+DELETE FROM schedules WHERE name = 'Auto-disabled demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01');
+DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
@@ -87,6 +88,7 @@ api POST "/api/agents" '{"hostname":"unassigned-01","display_name":"Unassigned D
 api POST "/api/agents" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null
 api POST "/api/agents" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Agent"}' > /dev/null
 api POST "/api/agents" '{"hostname":"stale-report-01","display_name":"Stale Report Demo"}' > /dev/null
+api POST "/api/agents" '{"hostname":"auto-disabled-01","display_name":"Auto-Disabled Demo"}' > /dev/null
 
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
@@ -267,6 +269,7 @@ MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id
 OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='offline-due-01'")
 DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='disabled-only-01'")
 STALE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='stale-report-01'")
+AUTO_DISABLED_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='auto-disabled-01'")
 
 echo "==> Creating schedules..."
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
@@ -307,6 +310,39 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/srv\"]
 }" > /dev/null
+
+api POST "/api/schedules" "{
+    \"name\": \"Auto-disabled demo\",
+    \"agent_ids\": [$AUTO_DISABLED_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 6 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/srv/auto-disabled-demo\"]
+}" > /dev/null
+
+# Demonstrates the "Auto-disabled" status pill and its System Events entry
+# (see docs/agents.md) by directly reproducing the bookkeeping the scheduler
+# itself would write after 3 consecutive failures to reach this agent, rather
+# than actually waiting out real backoff ticks against an agent that never
+# connects.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE schedules
+SET enabled = false,
+    auto_disabled_agent_unreachable = true,
+    auto_disabled_by_agent_id = $AUTO_DISABLED_ID,
+    consecutive_failures = 3,
+    failure_streak_pure_connectivity = true
+WHERE name = 'Auto-disabled demo';
+
+INSERT INTO system_events (event_type, hostname, message)
+SELECT 'schedule_auto_disabled', 'auto-disabled-01',
+       'Schedule ''Auto-disabled demo'' auto-disabled after 3 consecutive failures: agent ''auto-disabled-01'' stayed unreachable'
+WHERE EXISTS (SELECT 1 FROM schedules WHERE name = 'Auto-disabled demo');
+SQL
 
 # next_run_at must stay within the dashboard's 2-hour "due soon" window (now..now+2h) at
 # whatever wall-clock time Playwright actually visits the dashboard, not just at seed time -

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
   "describe": {
     "columns": [
       {
@@ -130,15 +130,23 @@
       },
       {
         "ordinal": 25,
+        "name": "consecutive_failures",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 26,
+        "name": "auto_disabled_agent_unreachable",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 27,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Int8",
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
@@ -167,8 +175,10 @@
       false,
       true,
       false,
+      false,
+      false,
       null
     ]
   },
-  "hash": "a12b73b1dc483045e049c336390646321f07e63a006ac519c7884b9c70c7e9a4"
+  "hash": "d6334931e14a1dd6263a93c9419f9aaf1f43ac130cd12b628f7e4124874eabbf"
 }

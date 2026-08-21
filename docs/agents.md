@@ -163,6 +163,8 @@ The failure count is tracked per schedule, not per target agent. For a schedule 
 
 A schedule can also back off and auto-disable for a local/data problem unrelated to connectivity — for example a corrupted encrypted repo passphrase that fails to decrypt on every attempt. That case is *not* cleared by the agent reconnecting, since reconnecting says nothing about whether the underlying problem was fixed: it stays disabled until you fix the cause and re-enable it yourself.
 
+A schedule the scheduler disabled itself is never just labeled "Disabled" — its status pill on the schedules list and its detail page reads "Auto-disabled · agent unreachable" or "Auto-disabled · error", so it's distinguishable at a glance from a schedule you (or [quota enforcement](quotas.md)) turned off. Both the auto-disable and the later reconnect re-enable are also recorded on the [Activity page](activity.md)'s System Events tab.
+
 While a backup is running for an agent, its card on the Agents list shows a **Running** pill naming the target repository. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
 
 ## Agent Detail View

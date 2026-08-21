@@ -377,4 +377,49 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/schedules\/\d+$/)
     await expect(page.locator('.error-inline')).not.toBeVisible()
   })
+
+  test('a schedule the scheduler auto-disabled for an unreachable agent shows why, not just that it is off', async ({
+    page,
+  }) => {
+    // The scheduler itself flips these fields after repeated failures to reach
+    // the schedule's target agent (see docs/agents.md) - simulated here via a
+    // mocked list response rather than waiting out real backoff ticks.
+    const autoDisable = {
+      enabled: false,
+      auto_disabled_agent_unreachable: true,
+      consecutive_failures: 3,
+    }
+    await loginAsAdmin(page)
+    await page.route(
+      (url) => url.pathname === '/api/schedules' || /^\/api\/schedules\/\d+$/.test(url.pathname),
+      async (route) => {
+        const response = await route.fetch()
+        const body = (await response.json()) as
+          | Array<Record<string, unknown>>
+          | Record<string, unknown>
+        const patched = Array.isArray(body)
+          ? body.map((s) => (s.name === 'server-daily' ? { ...s, ...autoDisable } : s))
+          : body.name === 'server-daily'
+            ? { ...body, ...autoDisable }
+            : body
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify(patched),
+        })
+      },
+    )
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
+    const statusPill = card.locator('.entity-status-pill')
+    await expect(statusPill).toBeVisible()
+    await expect(statusPill).toHaveText('Auto-disabled · agent unreachable')
+
+    await card.click()
+    await expect(page).toHaveURL(/\/schedules\/\d+$/)
+    await expect(page.getByText('Auto-disabled · agent unreachable')).toBeVisible()
+  })
 })

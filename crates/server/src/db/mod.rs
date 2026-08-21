@@ -378,6 +378,17 @@ pub struct ScheduleRow {
     #[serde(default)]
     #[sqlx(default)]
     pub target_hostnames: Vec<String>,
+    /// How many consecutive attempts have failed to reach the schedule's target
+    /// agent(s) since the last success (or reconnect). Reset to 0 on success, on
+    /// reconnect from the causing agent, or on any direct edit of `enabled`.
+    pub consecutive_failures: i32,
+    /// Whether the scheduler itself disabled this schedule after
+    /// `consecutive_failures` reached the threshold, specifically because its
+    /// target agent stayed unreachable - as opposed to a local/data failure (e.g. a
+    /// corrupted passphrase), a human, or quota enforcement. Only ever true while
+    /// `enabled` is false; the schedule re-enables automatically once the causing
+    /// agent reconnects.
+    pub auto_disabled_agent_unreachable: bool,
 }
 
 /// A row from the `schedule_targets` join table.
@@ -1972,10 +1983,10 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM \
-         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
-         ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER \
-         BY s.id",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY(SELECT a.hostname FROM schedule_targets st JOIN \
+         agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
+         a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -2049,8 +2060,8 @@ pub async fn insert_schedule(
          keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\"",
+         execution_mode, on_failure, owner_id, visibility, consecutive_failures, \
+         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -2115,8 +2126,8 @@ pub async fn update_schedule(
          keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\"",
+         execution_mode, on_failure, owner_id, visibility, consecutive_failures, \
+         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         id,
         params.name,
         params.cron_expression,
@@ -2829,7 +2840,8 @@ pub async fn get_schedule_for_repo(
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -2860,10 +2872,11 @@ pub async fn get_schedule_for_hostname_repo(
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
-         JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
-         s.schedule_type = $3 LIMIT 1",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON \
+         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 \
+         LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -2888,10 +2901,11 @@ pub async fn list_schedules_for_repo(
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, COALESCE(ARRAY(SELECT \
-         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
-         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \
-         \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT a.hostname FROM \
+         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
+         ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM \
+         schedules s WHERE s.repo_id = $1 ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -2931,9 +2945,10 @@ pub async fn list_schedules_for_agent(
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
-         WHERE st.agent_id = $1 ORDER by s.id",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 \
+         ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -2946,6 +2961,8 @@ pub async fn list_schedules_for_agent(
 pub struct DueScheduleRow {
     /// Schedule ID.
     pub schedule_id: i64,
+    /// Schedule display name.
+    pub schedule_name: String,
     /// Repository ID.
     pub repo_id: i64,
     /// Target agent ID.
@@ -2971,12 +2988,12 @@ pub async fn list_due_schedules(
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as!(
         DueScheduleRow,
-        "SELECT s.id AS schedule_id, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, \
-         s.schedule_type, s.cron_expression, s.on_failure, st.execution_order FROM schedules s \
-         JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
-         agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND \
-         a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, \
-         st.execution_order",
+        "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", \
+         st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, \
+         st.execution_order FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN \
+         schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE \
+         s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT \
+         NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
         now,
     )
     .fetch_all(pool)
@@ -3250,7 +3267,8 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -7473,7 +7491,8 @@ pub async fn get_enabled_schedules_for_calendar(
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE enabled = true",
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

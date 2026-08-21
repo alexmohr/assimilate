@@ -24,7 +24,8 @@ import { apiClient } from '../api/client'
 interface User {
   id: number
   username: string
-  role: 'admin' | 'user'
+  role: string
+  must_change_password: boolean
   created_at: string
   last_login_at: string | null
 }
@@ -34,6 +35,7 @@ const mockUsers: User[] = [
     id: 1,
     username: 'admin',
     role: 'admin',
+    must_change_password: false,
     created_at: '2026-01-01T00:00:00Z',
     last_login_at: null,
   },
@@ -41,6 +43,7 @@ const mockUsers: User[] = [
     id: 2,
     username: 'operator1',
     role: 'user',
+    must_change_password: false,
     created_at: '2026-01-02T00:00:00Z',
     last_login_at: null,
   },
@@ -48,6 +51,7 @@ const mockUsers: User[] = [
     id: 3,
     username: 'viewer1',
     role: 'user',
+    must_change_password: false,
     created_at: '2026-01-03T00:00:00Z',
     last_login_at: null,
   },

@@ -8,7 +8,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { getRepoQuota, updateRepoQuota } from '../api/repos'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
-import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
+import { actionLabel, bytesToGbOrZero, gbToBytes, quotaCeiling, quotaHealth } from '../utils/quota'
 import type { QuotaAction } from '../types/generated'
 import type { QuotaData } from '../api/repos'
 import ToggleSwitch from './ToggleSwitch.vue'
@@ -34,17 +34,14 @@ const editForm = reactive({
 })
 
 const quotaStatus = computed((): QuotaStatus => {
-  if (!quota.value || !quota.value.enabled) return 'ok'
-  const usage = props.currentUsageBytes
-  if (quota.value.critical_bytes > 0 && usage >= quota.value.critical_bytes) return 'critical'
-  if (quota.value.warn_bytes > 0 && usage >= quota.value.warn_bytes) return 'warning'
-  return 'ok'
+  const health = quotaHealth(quota.value, props.currentUsageBytes)
+  return health === 'unconfigured' ? 'ok' : health
 })
 
 const usagePercent = computed((): number => {
   if (!quota.value || !quota.value.enabled) return 0
-  const limit = quota.value.critical_bytes || quota.value.warn_bytes
-  if (limit <= 0) return 0
+  const limit = quotaCeiling(quota.value)
+  if (limit === null || limit <= 0) return 0
   return Math.min(100, (props.currentUsageBytes / limit) * 100)
 })
 
@@ -88,8 +85,8 @@ async function loadQuota(): Promise<void> {
 
 function startEdit(): void {
   if (!quota.value) return
-  editForm.warn_gb = bytesToGb(quota.value.warn_bytes)
-  editForm.critical_gb = bytesToGb(quota.value.critical_bytes)
+  editForm.warn_gb = bytesToGbOrZero(quota.value.warn_bytes)
+  editForm.critical_gb = bytesToGbOrZero(quota.value.critical_bytes)
   editForm.warn_action = quota.value.warn_action
   editForm.critical_action = quota.value.critical_action
   editForm.enabled = quota.value.enabled
@@ -196,7 +193,7 @@ onMounted(loadQuota)
           <div class="usage-labels">
             <span class="usage-current">{{ formatBytes(props.currentUsageBytes) }} used</span>
             <span class="usage-limit">
-              {{ formatBytes(quota.critical_bytes || quota.warn_bytes) }} limit
+              {{ formatBytes(quota.critical_bytes ?? quota.warn_bytes) }} limit
             </span>
           </div>
           <div class="progress-bar-track">

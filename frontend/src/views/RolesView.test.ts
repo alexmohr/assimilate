@@ -204,7 +204,7 @@ describe('RolesView', () => {
 
     expect(mockApiPut).toHaveBeenCalledWith(
       '/roles/2',
-      expect.objectContaining({ can_create_agent: true }),
+      expect.objectContaining({ name: 'operator', can_create_agent: true }),
     )
   })
 

@@ -34,10 +34,6 @@ interface Group {
   created_at: string
 }
 
-interface GroupMember {
-  user_id: number
-}
-
 const mockGroups: Group[] = [
   {
     id: 1,
@@ -48,9 +44,9 @@ const mockGroups: Group[] = [
   { id: 2, name: 'data-team', description: 'Data scientists', created_at: '2026-01-02T00:00:00Z' },
 ]
 
-const mockMembers: Record<number, GroupMember[]> = {
-  1: [{ user_id: 1 }, { user_id: 2 }],
-  2: [{ user_id: 3 }],
+const mockMembers: Record<number, number[]> = {
+  1: [1, 2],
+  2: [3],
 }
 
 const mockUsers = [
@@ -65,8 +61,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockApiGet.mockImplementation((url: string) => {
     if (url === '/groups') return Promise.resolve({ data: mockGroups })
-    if (url === '/groups/1/members') return Promise.resolve({ data: mockMembers[1] })
-    if (url === '/groups/2/members') return Promise.resolve({ data: mockMembers[2] })
+    if (url === '/groups/1/members') return Promise.resolve({ data: { user_ids: mockMembers[1] } })
+    if (url === '/groups/2/members') return Promise.resolve({ data: { user_ids: mockMembers[2] } })
     if (url === '/users') return Promise.resolve({ data: mockUsers })
     return Promise.resolve({ data: [] })
   })

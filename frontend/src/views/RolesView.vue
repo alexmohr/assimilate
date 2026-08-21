@@ -168,7 +168,7 @@ async function submitEdit(): Promise<void> {
   const target = editTarget.value
   if (!target) return
   await runEdit(async () => {
-    await updateRole(target.id, editForm.value)
+    await updateRole(target.id, { ...editForm.value, name: target.name })
     showEditModal.value = false
     await fetchRoles()
   })

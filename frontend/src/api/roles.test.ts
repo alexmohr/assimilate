@@ -7,7 +7,7 @@ import { apiClient } from './client'
 vi.mock('./client')
 
 import { createRole, deleteRole, listRoles, updateRole } from './roles'
-import type { CreateRoleRequest, RolePermissions } from './roles'
+import type { CreateRoleRequest, RolePermissions, UpdateRoleRequest } from './roles'
 
 const permissions: RolePermissions = {
   can_create_agent: true,
@@ -52,10 +52,11 @@ describe('roles api', () => {
 
   it('updates a role', async () => {
     vi.mocked(apiClient.put).mockResolvedValue({})
+    const data: UpdateRoleRequest = { name: 'Operator', ...permissions }
 
-    await updateRole(4, permissions)
+    await updateRole(4, data)
 
-    expect(apiClient.put).toHaveBeenCalledWith('/roles/4', permissions)
+    expect(apiClient.put).toHaveBeenCalledWith('/roles/4', data)
   })
 
   it('deletes a role', async () => {

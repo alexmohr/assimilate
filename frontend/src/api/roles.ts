@@ -30,7 +30,9 @@ export interface CreateRoleRequest extends RolePermissions {
   name: string
 }
 
-export type UpdateRoleRequest = RolePermissions
+export interface UpdateRoleRequest extends RolePermissions {
+  name: string
+}
 
 export async function listRoles(): Promise<Role[]> {
   const response = await apiClient.get<Role[]>('/roles')

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE schedules SET last_run_at = $2, next_run_at = $3, consecutive_failures = 0 WHERE id = $1",
+  "query": "UPDATE schedules SET last_run_at = $2, next_run_at = $3 WHERE id = $1",
   "describe": {
     "columns": [],
     "parameters": {
@@ -12,5 +12,5 @@
     },
     "nullable": []
   },
-  "hash": "05eceb8b21dd173281cae3c764de27b576f7bcf322af66654b2ff479630feef4"
+  "hash": "d05832fe3d2cdda7852ac6a6373979c8b17bd0dfce8caa970926aa653d2bfec5"
 }

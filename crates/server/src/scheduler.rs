@@ -831,6 +831,25 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
             TargetControl::Stop => break,
         }
     }
+
+    // Only a tick where every attempted target reached its agent counts as fully
+    // healthy. A single schedule-wide counter can't track per-target failure state,
+    // so if this tick recorded a failure for one target, a different target
+    // succeeding in the same tick must not wipe out that count - otherwise a
+    // permanently unreachable target in an `on_failure: Continue` schedule would
+    // never reach MAX_CONSECUTIVE_FAILURES as long as some other target keeps
+    // succeeding. mark_schedule_triggered_once (called from the per-target success
+    // arm above) only ever advances next_run_at/last_run_at now; this is the sole
+    // place consecutive_failures resets to 0.
+    if !recorded_failure
+        && let Err(e) = db::reset_schedule_consecutive_failures(&pool, schedule_id).await
+    {
+        tracing::error!(
+            schedule_id,
+            error = %e,
+            "sequential: failed to reset schedule failure count"
+        );
+    }
 }
 
 async fn run_sequential_target(
@@ -870,7 +889,13 @@ async fn run_sequential_target(
             // tick() stop waiting as soon as the first target has been attempted, and
             // if it fired first here, the DB write below would race the caller reading
             // the schedule's updated failure count right after tick() returns.
-            if !*marked_triggered && !*recorded_failure {
+            //
+            // Guarded only by recorded_failure, not marked_triggered: an earlier
+            // target in this same tick succeeding must not suppress recording a
+            // later target's failure - each is a distinct target that can fail
+            // independently, and a schedule with `on_failure: Continue` processes
+            // every target regardless of earlier outcomes.
+            if !*recorded_failure {
                 record_schedule_failure_once(ctx, recorded_failure).await;
             }
             signal_first_target_attempted(triggered_tx);
@@ -880,6 +905,13 @@ async fn run_sequential_target(
             };
         }
         PreRunConfigOutcome::ConfigError => {
+            // A persistent config-assembly error (e.g. a corrupted encrypted
+            // passphrase) is just as capable of retrying forever on every tick as
+            // an unreachable agent - route it through the same backoff/auto-disable
+            // path rather than leaving next_run_at untouched.
+            if !*recorded_failure {
+                record_schedule_failure_once(ctx, recorded_failure).await;
+            }
             signal_first_target_attempted(triggered_tx);
             return match ctx.on_failure {
                 OnFailure::Stop => TargetControl::Stop,
@@ -931,9 +963,10 @@ async fn run_sequential_target(
                 error = %e,
                 "sequential: agent not connected, skipping target"
             );
-            // Record the failure before signalling tick() to return - see the comment
-            // on the equivalent ordering in the AgentUnreachable arm above.
-            if !*marked_triggered && !*recorded_failure {
+            // Record the failure before signalling tick() to return, and guarded only
+            // by recorded_failure - see the comments on the equivalent ordering and
+            // guard in the AgentUnreachable arm above.
+            if !*recorded_failure {
                 record_schedule_failure_once(ctx, recorded_failure).await;
             }
             // Signal tick() that we've attempted the first target
@@ -1966,6 +1999,130 @@ esac
             !still_enabled,
             "schedule must stay disabled after reconnect"
         );
+    }
+
+    /// A schedule can have one target that's permanently unreachable and another
+    /// that's always reachable. With `on_failure: Continue`, every tick processes
+    /// both: the failing target's failure must keep counting toward auto-disable
+    /// even though the other target succeeds in the very same tick and every tick
+    /// after it - a schedule-wide reset triggered by the succeeding target must not
+    /// erase the other target's failure count, or the unreachable target would
+    /// retry forever exactly like the bug this feature fixes, just masked by its
+    /// sibling target's success.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_disables_for_unreachable_target_despite_sibling_target_succeeding(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", &key).unwrap();
+        let unreachable_agent =
+            db::insert_agent(&pool, "continue-test-unreachable", None, "hash", None)
+                .await
+                .unwrap();
+        let reachable_agent =
+            db::insert_agent(&pool, "continue-test-reachable", None, "hash", None)
+                .await
+                .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "continue-test-repo",
+                repo_path: "/backup/continue-test",
+                ssh_user: "borg",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_enc,
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::update_repo_ssh_host_key(&pool, repo.id, "ssh-ed25519 AAAACONTINUETEST")
+            .await
+            .unwrap();
+        let schedule = db::insert_schedule(
+            &pool,
+            repo.id,
+            &ScheduleParams {
+                name: "continue-test-sched",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 0,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                on_failure: "continue",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let schedule_id = schedule.id;
+        db::insert_schedule_targets(
+            &pool,
+            schedule_id,
+            &[(unreachable_agent.id, 0), (reachable_agent.id, 1)],
+        )
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new();
+        let (tx, _rx) = mpsc::channel(32);
+        registry
+            .register("continue-test-reachable".to_owned(), tx, false, None)
+            .await;
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+
+        for attempt in 1..=MAX_CONSECUTIVE_FAILURES {
+            let past = Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap();
+            db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+
+            tick(&TickDeps {
+                pool: &pool,
+                registry: &registry,
+                encryption_key: &key,
+                tunnel_manager: &tunnel,
+                completion_bus: &bus,
+                repo_lock: &RepoLock::default(),
+                repo_op_tracker: &RepoOpTracker::default(),
+                ui_broadcast: &UiBroadcast::new(),
+                background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            })
+            .await
+            .unwrap();
+
+            let (consecutive_failures, enabled, auto_disabled) =
+                schedule_failure_state(&pool, schedule_id).await;
+            assert_eq!(
+                consecutive_failures, attempt,
+                "the reachable target succeeding must not reset the unreachable target's failure \
+                 count"
+            );
+            if attempt < MAX_CONSECUTIVE_FAILURES {
+                assert!(enabled);
+                assert!(!auto_disabled);
+            } else {
+                assert!(!enabled, "must auto-disable once the threshold is reached");
+                assert!(auto_disabled);
+            }
+        }
     }
 
     /// Like `setup_due_schedule`, but with two targets so `tick()` dispatches

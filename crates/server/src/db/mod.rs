@@ -2975,11 +2975,34 @@ pub async fn mark_schedule_triggered(
     next_run_at: DateTime<Utc>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE schedules SET last_run_at = $2, next_run_at = $3, consecutive_failures = 0 WHERE \
-         id = $1",
+        "UPDATE schedules SET last_run_at = $2, next_run_at = $3 WHERE id = $1",
         schedule_id,
         now,
         next_run_at,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Resets a schedule's consecutive-failure count once a tick completes having
+/// recorded no failure for any of its targets - the only place `consecutive_failures`
+/// goes back to 0 (deliberately *not* folded into [`mark_schedule_triggered`], which
+/// runs on each individual target's success: a multi-target schedule can have one
+/// target succeed while another fails in the same tick, and that success must not
+/// erase the other target's failure count - see the call site in `scheduler.rs`).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn reset_schedule_consecutive_failures(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedules SET consecutive_failures = 0 WHERE id = $1",
+        schedule_id,
     )
     .execute(pool)
     .await

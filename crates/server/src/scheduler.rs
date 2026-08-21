@@ -30,6 +30,11 @@ const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
 const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
+/// After this many consecutive failures to reach a schedule's agent (offline or
+/// unreachable at trigger time), the schedule is disabled rather than retried again -
+/// see [`db::record_schedule_failure`]. It's re-enabled automatically once the agent
+/// reconnects (see [`db::reenable_system_disabled_schedules_for_agent`]).
+const MAX_CONSECUTIVE_FAILURES: i32 = 3;
 
 /// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 /// Every inner loop races its interval tick against `state.shutdown_token`, so the whole
@@ -792,6 +797,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         task_guard: _task_guard,
     } = ctx;
     let mut marked_triggered = false;
+    let mut recorded_failure = false;
     let mut triggered_tx = Some(triggered_tx);
 
     let target_ctx = SequentialTargetCtx {
@@ -816,6 +822,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
             &target_ctx,
             target,
             &mut marked_triggered,
+            &mut recorded_failure,
             &mut triggered_tx,
         )
         .await
@@ -830,6 +837,7 @@ async fn run_sequential_target(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
     marked_triggered: &mut bool,
+    recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> TargetControl {
     let schedule_id = ctx.schedule_id;
@@ -855,12 +863,29 @@ async fn run_sequential_target(
         .ensure_agent_tunnel_connected(target.agent_id)
         .await;
 
-    if !push_pre_run_config(ctx, target).await {
-        signal_first_target_attempted(triggered_tx);
-        return match ctx.on_failure {
-            OnFailure::Stop => TargetControl::Stop,
-            OnFailure::Continue => TargetControl::Continue,
-        };
+    match push_pre_run_config(ctx, target).await {
+        PreRunConfigOutcome::Sent => {}
+        PreRunConfigOutcome::AgentUnreachable => {
+            // Record the failure before signalling tick() to return - the signal lets
+            // tick() stop waiting as soon as the first target has been attempted, and
+            // if it fired first here, the DB write below would race the caller reading
+            // the schedule's updated failure count right after tick() returns.
+            if !*marked_triggered && !*recorded_failure {
+                record_schedule_failure_once(ctx, recorded_failure).await;
+            }
+            signal_first_target_attempted(triggered_tx);
+            return match ctx.on_failure {
+                OnFailure::Stop => TargetControl::Stop,
+                OnFailure::Continue => TargetControl::Continue,
+            };
+        }
+        PreRunConfigOutcome::ConfigError => {
+            signal_first_target_attempted(triggered_tx);
+            return match ctx.on_failure {
+                OnFailure::Stop => TargetControl::Stop,
+                OnFailure::Continue => TargetControl::Continue,
+            };
+        }
     }
 
     let repo_id = RepoId(target.repo_id);
@@ -906,6 +931,11 @@ async fn run_sequential_target(
                 error = %e,
                 "sequential: agent not connected, skipping target"
             );
+            // Record the failure before signalling tick() to return - see the comment
+            // on the equivalent ordering in the AgentUnreachable arm above.
+            if !*marked_triggered && !*recorded_failure {
+                record_schedule_failure_once(ctx, recorded_failure).await;
+            }
             // Signal tick() that we've attempted the first target
             signal_first_target_attempted(triggered_tx);
             return match ctx.on_failure {
@@ -924,11 +954,20 @@ fn signal_first_target_attempted(triggered_tx: &mut Option<tokio::sync::oneshot:
     }
 }
 
+/// Outcome of [`push_pre_run_config`], distinguishing an unreachable agent (which
+/// counts toward the schedule's consecutive-failure backoff) from a config assembly
+/// error (a local/db problem, not a sign the agent is offline).
+enum PreRunConfigOutcome {
+    Sent,
+    AgentUnreachable,
+    ConfigError,
+}
+
 /// Pushes a fresh config to the target agent before triggering the run.
-/// Returns `false` (after logging) if the config could not be assembled or
-/// the agent is unreachable, so the caller can apply the schedule's
-/// `on_failure` policy.
-async fn push_pre_run_config(ctx: &SequentialTargetCtx<'_>, target: &DueScheduleRow) -> bool {
+async fn push_pre_run_config(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+) -> PreRunConfigOutcome {
     let schedule_id = ctx.schedule_id;
     match config_assembler::assemble_config(ctx.pool, ctx.encryption_key, &target.hostname).await {
         Ok(config) => {
@@ -940,9 +979,9 @@ async fn push_pre_run_config(ctx: &SequentialTargetCtx<'_>, target: &DueSchedule
                     error = %e,
                     "sequential: agent not connected for pre-run config push, skipping target"
                 );
-                return false;
+                return PreRunConfigOutcome::AgentUnreachable;
             }
-            true
+            PreRunConfigOutcome::Sent
         }
         Err(e) => {
             tracing::warn!(
@@ -951,7 +990,7 @@ async fn push_pre_run_config(ctx: &SequentialTargetCtx<'_>, target: &DueSchedule
                 error = %e,
                 "sequential: failed to assemble config, skipping target"
             );
-            false
+            PreRunConfigOutcome::ConfigError
         }
     }
 }
@@ -969,6 +1008,56 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
                 );
             } else {
                 *marked_triggered = true;
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                schedule_id,
+                cron = %ctx.cron,
+                error = %e,
+                "sequential: invalid cron expression"
+            );
+        }
+    }
+}
+
+/// Records that this schedule failed to reach its agent, backing off `next_run_at`
+/// to the next scheduled occurrence (instead of the every-30s tick cadence) and
+/// auto-disabling the schedule once [`MAX_CONSECUTIVE_FAILURES`] is reached. Only
+/// the first target failure of a tick counts, mirroring [`mark_schedule_triggered_once`]
+/// - a schedule with multiple targets shouldn't be double-counted for one tick.
+async fn record_schedule_failure_once(ctx: &SequentialTargetCtx<'_>, recorded_failure: &mut bool) {
+    let schedule_id = ctx.schedule_id;
+    match calculate_next_run(ctx.cron, ctx.now, ctx.tz) {
+        Ok(next) => {
+            match db::record_schedule_failure(ctx.pool, schedule_id, next, MAX_CONSECUTIVE_FAILURES)
+                .await
+            {
+                Ok(outcome) => {
+                    *recorded_failure = true;
+                    if outcome.auto_disabled {
+                        tracing::error!(
+                            schedule_id,
+                            consecutive_failures = outcome.consecutive_failures,
+                            "sequential: schedule auto-disabled after repeated agent-unreachable \
+                             failures; will re-enable automatically once the agent reconnects"
+                        );
+                    } else {
+                        tracing::warn!(
+                            schedule_id,
+                            consecutive_failures = outcome.consecutive_failures,
+                            max = MAX_CONSECUTIVE_FAILURES,
+                            "sequential: agent unreachable, backing off to next scheduled run"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        schedule_id,
+                        error = %e,
+                        "sequential: failed to record schedule failure"
+                    );
+                }
             }
         }
         Err(e) => {
@@ -1622,11 +1711,31 @@ esac
         }
     }
 
-    /// When the target agent is not connected, `tick()` must not error and must
-    /// leave the schedule in due state (not mark it as triggered).
+    /// Fetches the failure-tracking columns added for the agent-offline backoff, for
+    /// assertions in the tests below.
+    async fn schedule_failure_state(pool: &sqlx::PgPool, schedule_id: i64) -> (i32, bool, bool) {
+        let row = sqlx::query!(
+            "SELECT consecutive_failures, enabled, auto_disabled_agent_unreachable FROM schedules \
+             WHERE id = $1",
+            schedule_id,
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (
+            row.consecutive_failures,
+            row.enabled,
+            row.auto_disabled_agent_unreachable,
+        )
+    }
+
+    /// When the target agent is not connected, `tick()` must not error, must back off
+    /// `next_run_at` to the next scheduled occurrence (instead of retrying on every 30s
+    /// tick forever), and must record the failure so repeated misses can eventually
+    /// auto-disable the schedule.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
-    async fn tick_skips_trigger_gracefully_when_agent_disconnected(pool: sqlx::PgPool) {
+    async fn tick_backs_off_and_records_failure_when_agent_disconnected(pool: sqlx::PgPool) {
         let key = tick_test_key();
         let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
 
@@ -1650,8 +1759,153 @@ esac
 
         let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
         assert!(
-            due.iter().any(|s| s.schedule_id == schedule_id),
-            "schedule must remain due when the agent was not connected"
+            !due.iter().any(|s| s.schedule_id == schedule_id),
+            "schedule must back off to the next scheduled run, not stay due for the next tick"
+        );
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(consecutive_failures, 1, "one failure must be recorded");
+        assert!(enabled, "a single failure must not disable the schedule");
+        assert!(!auto_disabled);
+    }
+
+    /// After `MAX_CONSECUTIVE_FAILURES` consecutive misses, the scheduler must give up
+    /// and disable the schedule rather than retrying forever.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_auto_disables_schedule_after_max_consecutive_failures(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+
+        for attempt in 1..=MAX_CONSECUTIVE_FAILURES {
+            // Simulate the missed run's cron occurrence having arrived again.
+            let past = Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap();
+            db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+
+            tick(&TickDeps {
+                pool: &pool,
+                registry: &registry,
+                encryption_key: &key,
+                tunnel_manager: &tunnel,
+                completion_bus: &bus,
+                repo_lock: &RepoLock::default(),
+                repo_op_tracker: &RepoOpTracker::default(),
+                ui_broadcast: &UiBroadcast::new(),
+                background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            })
+            .await
+            .unwrap();
+
+            let (consecutive_failures, enabled, auto_disabled) =
+                schedule_failure_state(&pool, schedule_id).await;
+            assert_eq!(consecutive_failures, attempt);
+            if attempt < MAX_CONSECUTIVE_FAILURES {
+                assert!(enabled, "must stay enabled before the threshold is reached");
+                assert!(!auto_disabled);
+            } else {
+                assert!(!enabled, "must auto-disable once the threshold is reached");
+                assert!(auto_disabled);
+            }
+        }
+
+        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        assert!(
+            !due.iter().any(|s| s.schedule_id == schedule_id),
+            "a disabled schedule must never be selected as due again"
+        );
+    }
+
+    /// A schedule the scheduler auto-disabled after repeated unreachable-agent
+    /// failures must come back on its own once the agent reconnects - never stay off
+    /// until a human notices, and never touch a schedule disabled for another reason.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reconnect_reenables_only_auto_disabled_schedules(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, auto_disabled_schedule_id) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            let next = Utc::now()
+                .checked_add_signed(chrono::Duration::days(1))
+                .unwrap();
+            db::record_schedule_failure(
+                &pool,
+                auto_disabled_schedule_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+            )
+            .await
+            .unwrap();
+        }
+        let (_, enabled, auto_disabled) =
+            schedule_failure_state(&pool, auto_disabled_schedule_id).await;
+        assert!(!enabled && auto_disabled, "setup must have disabled it");
+
+        // A schedule disabled for an unrelated reason (e.g. a human, or quota
+        // enforcement) targeting the same agent must be left untouched.
+        let human_disabled_schedule_id = db::insert_schedule(
+            &pool,
+            db::get_schedule_by_id(&pool, auto_disabled_schedule_id)
+                .await
+                .unwrap()
+                .repo_id
+                .unwrap(),
+            &ScheduleParams {
+                name: "human-disabled-sched",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: false,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 0,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        db::insert_schedule_targets(&pool, human_disabled_schedule_id, &[(agent_id, 0)])
+            .await
+            .unwrap();
+
+        let reenabled =
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+                .await
+                .unwrap();
+
+        assert_eq!(reenabled, vec![auto_disabled_schedule_id]);
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, auto_disabled_schedule_id).await;
+        assert_eq!(consecutive_failures, 0);
+        assert!(enabled);
+        assert!(!auto_disabled);
+        let (_, human_still_disabled, _) =
+            schedule_failure_state(&pool, human_disabled_schedule_id).await;
+        assert!(
+            !human_still_disabled,
+            "a schedule disabled for another reason must not be re-enabled"
         );
     }
 

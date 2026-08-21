@@ -233,6 +233,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     tracing::info!(hostname = %hostname, "agent connected");
 
+    reenable_system_disabled_schedules_on_reconnect(&state, agent_id, &hostname).await;
+
     if replaced_connection {
         abandon_stale_operations_on_reconnect(&state, agent_id, &hostname).await;
     }
@@ -327,6 +329,43 @@ async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, 
                 hostname = %hostname,
                 error = %e,
                 "failed to abandon stale in-flight backups on agent reconnect"
+            );
+        }
+    }
+}
+
+/// Called on every successful agent connection. If the scheduler had auto-disabled
+/// any of this agent's schedules after repeated unreachable-agent failures (see
+/// `scheduler::record_schedule_failure_once`), re-enables them and makes them due
+/// again immediately, so backups resume on their own instead of staying off until a
+/// human notices and flips the switch back on. Never touches a schedule a human or
+/// quota enforcement disabled for an unrelated reason.
+async fn reenable_system_disabled_schedules_on_reconnect(
+    state: &AppState,
+    agent_id: i64,
+    hostname: &str,
+) {
+    match db::reenable_system_disabled_schedules_for_agent(
+        &state.pool,
+        agent_id,
+        chrono::Utc::now(),
+    )
+    .await
+    {
+        Ok(schedule_ids) if !schedule_ids.is_empty() => {
+            tracing::info!(
+                hostname = %hostname,
+                ?schedule_ids,
+                "agent reconnected; re-enabling schedules that were auto-disabled while it was \
+                 unreachable"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to re-enable auto-disabled schedules on agent reconnect"
             );
         }
     }

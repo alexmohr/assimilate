@@ -2970,7 +2970,8 @@ pub async fn mark_schedule_triggered(
     next_run_at: DateTime<Utc>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE schedules SET last_run_at = $2, next_run_at = $3 WHERE id = $1",
+        "UPDATE schedules SET last_run_at = $2, next_run_at = $3, consecutive_failures = 0 WHERE \
+         id = $1",
         schedule_id,
         now,
         next_run_at,
@@ -2979,6 +2980,75 @@ pub async fn mark_schedule_triggered(
     .await
     .map_err(ApiError::Database)?;
     Ok(())
+}
+
+/// Outcome of [`record_schedule_failure`]: the schedule's updated consecutive-failure
+/// count, and whether this call was the one that crossed the auto-disable threshold.
+pub struct ScheduleFailureOutcome {
+    /// The schedule's consecutive-failure count after this call.
+    pub consecutive_failures: i32,
+    /// Whether this call disabled the schedule (crossed `max_consecutive_failures`).
+    pub auto_disabled: bool,
+}
+
+/// Records one failed attempt to reach a schedule's agent (config push or trigger
+/// send). Advances `next_run_at` to the next scheduled occurrence - same as a
+/// successful trigger - so the scheduler backs off to the normal cron cadence
+/// instead of retrying every tick, and disables the schedule once
+/// `consecutive_failures` reaches `max_consecutive_failures`, so an agent that stays
+/// offline indefinitely doesn't generate failures forever.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn record_schedule_failure(
+    pool: &PgPool,
+    schedule_id: i64,
+    next_run_at: DateTime<Utc>,
+    max_consecutive_failures: i32,
+) -> Result<ScheduleFailureOutcome, ApiError> {
+    let row = sqlx::query!(
+        "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, next_run_at = $2, \
+         enabled = enabled AND consecutive_failures + 1 < $3, auto_disabled_agent_unreachable = \
+         auto_disabled_agent_unreachable OR consecutive_failures + 1 >= $3 WHERE id = $1 \
+         RETURNING consecutive_failures, auto_disabled_agent_unreachable",
+        schedule_id,
+        next_run_at,
+        max_consecutive_failures,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(ScheduleFailureOutcome {
+        consecutive_failures: row.consecutive_failures,
+        auto_disabled: row.auto_disabled_agent_unreachable,
+    })
+}
+
+/// Re-enables every schedule targeting `agent_id` that the scheduler had auto-disabled
+/// after repeated agent-unreachable failures (never a schedule a human or quota
+/// enforcement disabled), resetting its failure count and making it due again
+/// immediately - called when the agent reconnects, so a schedule that gave up while
+/// the agent was offline resumes on its own once it's back.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn reenable_system_disabled_schedules_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+    now: DateTime<Utc>,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
+         consecutive_failures = 0, next_run_at = $2 WHERE auto_disabled_agent_unreachable = true \
+         AND id IN (SELECT schedule_id FROM schedule_targets WHERE agent_id = $1) RETURNING id",
+        agent_id,
+        now,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
 }
 
 /// # Errors

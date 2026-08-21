@@ -194,21 +194,20 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
           class="archive-group"
         >
           <!--
-            The toggle is a button stretched behind the header rather than one
-            wrapping it: the host name is a link to the agent, and an anchor
-            cannot be nested inside a button. Clicking anywhere else on the
-            header still collapses the group.
+            The header handles the click and the button beside the host name
+            carries the state for a screen reader: the host name is a link to
+            the agent, and an anchor cannot be nested inside a button.
           -->
           <div
             class="group-header"
             :class="{ collapsed: isGroupCollapsed(group.hostname) }"
+            @click="toggleGroup(group.hostname)"
           >
             <button
               class="group-toggle"
               type="button"
               :aria-expanded="!isGroupCollapsed(group.hostname)"
               :aria-label="`Toggle ${group.hostname}`"
-              @click="toggleGroup(group.hostname)"
             >
               <ChevronRight
                 class="group-chevron"
@@ -220,6 +219,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
                 :hostname="group.hostname"
                 class="group-hostname"
                 :class="{ 'group-unmatched': !group.matched }"
+                @click.stop
               />
             </span>
             <AlertTriangle
@@ -354,14 +354,6 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
   font: inherit;
 }
 
-/* Extends the toggle's hit area over the whole header. Anything that has to
-   stay clickable through it - the host link - is raised above. */
-.group-toggle::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-}
-
 .group-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -378,16 +370,14 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
   transform: rotate(0deg);
 }
 
-/* Static, so the dead space beside a short host name still toggles the group
-   - only the link itself is lifted above the toggle's stretched hit area. */
+/* Holds the flex width, so the dead space beside a short host name toggles
+   the group rather than following the link. */
 .group-host {
   flex: 1;
   min-width: 0;
 }
 
 .group-hostname {
-  position: relative;
-  z-index: 1;
   display: inline-block;
   max-width: 100%;
   overflow: hidden;

@@ -462,8 +462,10 @@ test('clicking an archive opens the file browser', async ({ page }) => {
   await navigateToRepo(page, 'server-daily', 'Archives')
   await expandAllArchiveGroups(page)
 
-  // Wait for archive rows to load, then click the first one
-  const firstArchiveRow = page.locator('.archive-row-select').first()
+  // Wait for archive rows to load, then click the first one. The row is the
+  // click surface; the button inside it is there for focus and takes no
+  // pointer events, so clicking it directly would never resolve.
+  const firstArchiveRow = page.locator('.archive-row').first()
   await expect(firstArchiveRow).toBeVisible({ timeout: 15_000 })
   await firstArchiveRow.click()
 

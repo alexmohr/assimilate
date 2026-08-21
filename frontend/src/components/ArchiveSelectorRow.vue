@@ -23,10 +23,12 @@ import type { ArchiveEntry } from '../composables/useArchiveBrowser'
  * be revealed by `opacity` on row hover, which made it invisible until the
  * pointer happened to land on the right row and unreachable by keyboard.
  *
- * Selecting is a button stretched across the whole row rather than a button
- * wrapping its content, so the host name can stay a link to the agent without
- * nesting an anchor inside a button. The link and the delete control are
- * lifted above that overlay; everything else under it selects the row.
+ * The row itself handles the pointer and carries a stretched button that never
+ * takes pointer events. That is what lets the host name stay a link to the
+ * agent: an anchor cannot be nested inside a button, but a button laid over the
+ * row would sit between every click and the text, link or delete control
+ * beneath it. Here the button only makes the row focusable and gives it an
+ * accessible name; its own Enter and Space still bubble up as a click.
  */
 const props = defineProps<{
   archive: ArchiveEntry
@@ -55,13 +57,13 @@ const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.h
       'archive-row--unmatched': isUnmatched,
       'archive-row--deleting': deleting,
     }"
+    @click="emit('select')"
   >
     <button
       class="archive-row-select"
       type="button"
       :aria-current="selected"
       :aria-label="`Select archive ${archive.name}`"
-      @click="emit('select')"
     ></button>
 
     <span class="archive-row-body">
@@ -73,6 +75,7 @@ const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.h
         <BaseHostLink
           :hostname="hostLabel"
           class="archive-host"
+          @click.stop
         />
         <span
           class="archive-sep"
@@ -104,7 +107,7 @@ const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.h
         :disabled="deleting"
         :title="deleting ? 'Deletion in progress' : 'Delete archive'"
         :aria-label="deleting ? 'Deletion in progress' : `Delete archive ${archive.name}`"
-        @click="emit('delete')"
+        @click.stop="emit('delete')"
       >
         <BaseSpinner
           v-if="deleting"
@@ -123,6 +126,7 @@ const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.h
 .archive-row {
   position: relative;
   display: flex;
+  cursor: pointer;
   align-items: stretch;
   gap: var(--space-2);
   padding-right: var(--space-4);
@@ -155,17 +159,17 @@ const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.h
   opacity: 0.55;
 }
 
-/* Stretched across the row rather than wrapping it: an anchor cannot live
-   inside a button, and the host name is one. */
+/* Focus and the accessible name only - the row handles the pointer. Taking
+   pointer events here would put this button in front of the archive name, the
+   host link and the delete control, which is both wrong for a real click and
+   an interception error for anything driving the page. */
 .archive-row-select {
   position: absolute;
   inset: 0;
   padding: 0;
   background: none;
   border: none;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
+  pointer-events: none;
 }
 
 .archive-row-select:focus-visible {
@@ -221,10 +225,7 @@ const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.h
   color: var(--text-muted);
 }
 
-/* Above the select overlay, so the agent link is still clickable. */
 .archive-host {
-  position: relative;
-  z-index: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -250,8 +251,6 @@ const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.h
 }
 
 .archive-row-actions {
-  position: relative;
-  z-index: 1;
   display: flex;
   align-items: center;
   gap: var(--space-3);

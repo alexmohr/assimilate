@@ -83,6 +83,32 @@ describe('ArchiveSelectorRow', () => {
     expect(wrapper.emitted('select')).toHaveLength(1)
   })
 
+  it('selects when the archive name itself is clicked, not only the button', async () => {
+    // The button is stretched over the row for focus, and if it took pointer
+    // events it would sit between every click and the text under it - which is
+    // how a click on the name reached the button instead of the row and the
+    // e2e suite reported "archive-row-select intercepts pointer events".
+    const wrapper = row()
+    await wrapper.find('.archive-name').trigger('click')
+    expect(wrapper.emitted('select')).toHaveLength(1)
+
+    await wrapper.find('.archive-date').trigger('click')
+    expect(wrapper.emitted('select')).toHaveLength(2)
+  })
+
+  it('follows the host link without also selecting the row', async () => {
+    const wrapper = row()
+    await wrapper.find('.archive-host').trigger('click')
+    expect(wrapper.emitted('select')).toBeUndefined()
+  })
+
+  it('deletes without also selecting the row', async () => {
+    const wrapper = row()
+    await wrapper.find('.archive-row-delete').trigger('click')
+    expect(wrapper.emitted('delete')).toHaveLength(1)
+    expect(wrapper.emitted('select')).toBeUndefined()
+  })
+
   it('always renders the delete control for a user who may delete', async () => {
     // It used to be `opacity: 0` until the pointer landed on the row, which
     // made it invisible and unreachable without a mouse.

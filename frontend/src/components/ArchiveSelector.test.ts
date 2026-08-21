@@ -71,10 +71,19 @@ describe('ArchiveSelector', () => {
     expect(link.text()).toBe('db-01')
 
     // The link lives inside the header, so the header can no longer be the
-    // button; the toggle beside it still collapses the group.
+    // button; the header takes the click and the toggle beside the link
+    // carries the state for a screen reader.
     expect(group.find('.group-header').classes()).not.toContain('collapsed')
     await group.find('.group-toggle').trigger('click')
     expect(group.find('.group-header').classes()).toContain('collapsed')
+
+    // Clicking the header anywhere else toggles it back...
+    await group.find('.group-count').trigger('click')
+    expect(group.find('.group-header').classes()).not.toContain('collapsed')
+
+    // ...but following the host link must not collapse the group under it.
+    await link.trigger('click')
+    expect(group.find('.group-header').classes()).not.toContain('collapsed')
   })
 
   it('switches to a flat list through the segmented control', async () => {

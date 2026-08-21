@@ -14,7 +14,8 @@ async function gotoBackupsTab(page: Awaited<ReturnType<typeof test.info>['page']
 async function clickFirstArchiveRow(
   page: Awaited<ReturnType<typeof test.info>['page']>,
 ): Promise<boolean> {
-  const archiveRow = page.locator('.archive-row-select').first()
+  // The row, not the focus-only button inside it, is what takes the pointer.
+  const archiveRow = page.locator('.archive-row').first()
   const rowVisible = await archiveRow.isVisible({ timeout: 5_000 }).catch(() => false)
   if (!rowVisible) return false
   await archiveRow.click()

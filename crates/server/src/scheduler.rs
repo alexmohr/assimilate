@@ -1909,6 +1909,65 @@ esac
         );
     }
 
+    /// A schedule the scheduler auto-disabled must not be silently re-enabled on
+    /// reconnect once something else has since taken over its `enabled` state -
+    /// `set_schedule_enabled` must clear `auto_disabled_agent_unreachable`, or a
+    /// later disable-for-another-reason (e.g. a human re-enables it, then quota
+    /// enforcement disables it again) would look indistinguishable from the
+    /// original auto-disable to the reconnect handler.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn set_schedule_enabled_clears_stale_auto_disabled_flag(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            let next = Utc::now()
+                .checked_add_signed(chrono::Duration::days(1))
+                .unwrap();
+            db::record_schedule_failure(&pool, schedule_id, next, MAX_CONSECUTIVE_FAILURES)
+                .await
+                .unwrap();
+        }
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(
+            !enabled && auto_disabled,
+            "setup must have auto-disabled it"
+        );
+
+        // A human re-enables it, then something else (e.g. quota enforcement)
+        // disables it again for an unrelated reason.
+        db::set_schedule_enabled(&pool, schedule_id, true)
+            .await
+            .unwrap();
+        db::set_schedule_enabled(&pool, schedule_id, false)
+            .await
+            .unwrap();
+
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(!enabled);
+        assert!(
+            !auto_disabled,
+            "a direct enabled write must clear the stale auto-disabled flag"
+        );
+
+        // Reconnect must not silently lift this unrelated disable.
+        let reenabled =
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+                .await
+                .unwrap();
+        assert_eq!(reenabled, Vec::<i64>::new());
+        let (_, still_enabled, _) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(
+            !still_enabled,
+            "schedule must stay disabled after reconnect"
+        );
+    }
+
     /// Like `setup_due_schedule`, but with two targets so `tick()` dispatches
     /// through `run_sequential_schedule` for more than a single agent.
     async fn setup_due_sequential_schedule(

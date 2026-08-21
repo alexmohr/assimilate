@@ -2079,14 +2079,19 @@ pub async fn update_schedule(
     id: i64,
     params: &ScheduleParams<'_>,
 ) -> Result<ScheduleRow, ApiError> {
+    // See the comment on set_schedule_enabled: any direct write to `enabled` from
+    // outside the failure-tracking path clears auto_disabled_agent_unreachable and
+    // consecutive_failures so the auto-disable bookkeeping can't outlive the reason it
+    // was set for.
     sqlx::query_as!(
         ScheduleRow,
         "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, \
          exclude_patterns_raw = $6, file_change_patterns_raw = $7, ignore_global_excludes = $8, \
          keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = \
          $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, \
-         post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18 WHERE id = \
-         $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
+         post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, \
+         auto_disabled_agent_unreachable = false, consecutive_failures = 0 WHERE id = $1 \
+         RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
@@ -3078,8 +3083,15 @@ pub async fn set_schedule_enabled(
     schedule_id: i64,
     enabled: bool,
 ) -> Result<(), ApiError> {
+    // Clears the agent-unreachable failure-tracking columns whenever something other
+    // than record_schedule_failure/reenable_system_disabled_schedules_for_agent writes
+    // `enabled` directly - otherwise auto_disabled_agent_unreachable can outlive the
+    // auto-disable it was set for (e.g. a human re-enables the schedule, then quota
+    // enforcement disables it again for an unrelated reason: without this, the stale
+    // `true` flag would make a later agent reconnect silently lift the quota block).
     sqlx::query!(
-        "UPDATE schedules SET enabled = $2 WHERE id = $1",
+        "UPDATE schedules SET enabled = $2, auto_disabled_agent_unreachable = false, \
+         consecutive_failures = 0 WHERE id = $1",
         schedule_id,
         enabled,
     )

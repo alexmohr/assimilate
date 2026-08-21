@@ -20,7 +20,6 @@ import {
   listScheduleReports,
   getScheduleHealth,
   type CreateScheduleRequest,
-  type UpdateScheduleRequest,
 } from '../api/schedules'
 import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
@@ -386,7 +385,10 @@ async function save(): Promise<void> {
   saveError.value = null
   saveSuccess.value = false
   try {
-    const payload: Record<string, unknown> = {
+    const payload: Omit<
+      CreateScheduleRequest,
+      'agent_ids' | 'repo_id' | 'schedule_type' | 'on_failure'
+    > = {
       name: form.value.name,
       cron_expression: form.value.cron_expression,
       enabled: form.value.enabled,
@@ -467,7 +469,7 @@ async function save(): Promise<void> {
         repo_id: selectedRepoId.value,
         schedule_type: selectedType.value,
         on_failure: onFailure.value,
-      } as CreateScheduleRequest)
+      })
       router.push(`/schedules/${created.id}`)
     } else {
       const scheduleId = schedule.value?.id
@@ -478,9 +480,9 @@ async function save(): Promise<void> {
       const updated = await updateSchedule(scheduleId, {
         ...payload,
         agent_ids: selectedAgentIds.value,
-        repo_id: selectedRepoId.value,
+        repo_id: selectedRepoId.value ?? undefined,
         on_failure: onFailure.value,
-      } as UpdateScheduleRequest)
+      })
       schedule.value = updated
       populateForm(updated)
       saveSuccess.value = true

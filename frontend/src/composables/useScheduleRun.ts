@@ -19,7 +19,7 @@ export interface ScheduleRunOptions {
    * whose page it is, since a schedule can target several and pressing "Run
    * now" on one must not fire a backup on the others.
    */
-  body?: (schedule: ScheduleRow) => Record<string, unknown>
+  body?: (schedule: ScheduleRow) => RunScheduleRequest
   /**
    * Where a failure goes. Defaults to a toast; the agent page renders it
    * inline instead, above the rows it applies to. Called with `null` when a
@@ -57,7 +57,7 @@ export function useScheduleRun(
     runNowLoading.value = schedule.id
     reportError(null)
     try {
-      await runSchedule(schedule.id, (options.body?.(schedule) ?? {}) as RunScheduleRequest)
+      await runSchedule(schedule.id, options.body?.(schedule) ?? {})
       if (labelFor) toastSuccess(`${labelFor(schedule.schedule_type)} started.`)
     } catch (e: unknown) {
       reportError(extractError(e))

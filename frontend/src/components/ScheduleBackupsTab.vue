@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useTemplateRef } from 'vue'
 import ArchiveExplorer from './ArchiveExplorer.vue'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
@@ -83,10 +83,31 @@ const selectedArchive = computed<ArchiveEntry | null>({
 })
 
 const reload = (): Promise<unknown> => props.reload?.() ?? Promise.resolve()
+
+const explorer = useTemplateRef<InstanceType<typeof ArchiveExplorer>>('explorer')
+
+/**
+ * The view owns the WebSocket subscription, so the three events that clear a
+ * "deleting..." marker are forwarded through here to the explorer. Without the
+ * repo-idle one in particular, a delete that borg subsequently failed would
+ * leave its row disabled with no way back short of a page reload.
+ */
+defineExpose({
+  onArchiveDeleted(name: string): void {
+    explorer.value?.onArchiveDeleted(name)
+  },
+  onDataChanged(): void {
+    explorer.value?.onDataChanged()
+  },
+  onRepoIdle(): void {
+    explorer.value?.onRepoIdle()
+  },
+})
 </script>
 
 <template>
   <ArchiveExplorer
+    ref="explorer"
     v-model:selected="selectedArchive"
     :repo-id="repoId"
     :repo-name="repoName"

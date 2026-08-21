@@ -122,7 +122,9 @@ test.describe('Schedule backups tab - archive browser', () => {
     await expect(page.locator('.archive-controls input')).toBeVisible()
     await expect(page.locator('.archive-sort-select')).toBeVisible()
     await expect(page.locator('.archive-group-toggle')).toBeVisible()
-    await expect(page.locator('.archive-group .group-hostname').first()).toBeVisible()
+    const groupHost = page.locator('.archive-group .group-hostname').first()
+    await expect(groupHost).toBeVisible()
+    await expect(groupHost).toHaveAttribute('href', /^\/agents\/.+/)
   })
 
   test('an admin can reach archive deletion from the backups tab', async ({ page }) => {

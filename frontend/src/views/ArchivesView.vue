@@ -4,13 +4,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, useTemplateRef } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RefreshCw } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
+import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 import { extractError } from '../utils/error'
 import ArchiveExplorer from '../components/ArchiveExplorer.vue'
 import RestoreWizard from '../components/RestoreWizard.vue'
@@ -31,6 +32,8 @@ const archivesError = ref<string | null>(null)
 const selectedArchive = ref<ArchiveEntry | null>(null)
 
 const showPassphraseDialog = ref(false)
+
+const explorer = useTemplateRef<InstanceType<typeof ArchiveExplorer>>('explorer')
 
 const sortedArchives = computed(() =>
   [...archives.value].sort((a, b) => b.start.localeCompare(a.start)),
@@ -114,6 +117,16 @@ async function revealPassphrase(): Promise<void> {
   }
 }
 
+// Deleting is available here too, so this page needs the same three events
+// that release a row's "deleting..." marker - including the repo-idle one,
+// which is the only one that fires when borg's delete failed and left the
+// archive in place.
+useArchiveDeletionEvents({
+  target: () => explorer.value,
+  repoId: () => selectedRepoId.value,
+  reload: () => loadArchives(true),
+})
+
 onMounted(loadRepos)
 </script>
 
@@ -174,6 +187,7 @@ onMounted(loadRepos)
 
       <ArchiveExplorer
         v-if="selectedRepoId !== null"
+        ref="explorer"
         v-model:selected="selectedArchive"
         :repo-id="selectedRepoId"
         :repo-name="selectedRepoName"

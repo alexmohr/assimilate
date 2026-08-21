@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ArchiveSelector from './ArchiveSelector.vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
@@ -33,6 +33,7 @@ const DB = archive({
 
 function selector(props: Record<string, unknown> = {}) {
   return mount(ArchiveSelector, {
+    global: { stubs: { RouterLink: RouterLinkStub } },
     props: {
       archives: [WEB, DB],
       selected: null,
@@ -59,6 +60,21 @@ describe('ArchiveSelector', () => {
     expect(groups[0].find('.group-hostname').text()).toBe('db-01')
     expect(groups[0].find('.group-count').text()).toBe('1')
     expect(groups[0].find('.group-size').text()).toBe('2.9 KB')
+  })
+
+  it('links a group host to its agent without swallowing the collapse toggle', async () => {
+    const wrapper = selector()
+    const group = wrapper.findAll('.archive-group')[0]
+
+    const link = group.findComponent(RouterLinkStub)
+    expect(link.props('to')).toBe('/agents/db-01')
+    expect(link.text()).toBe('db-01')
+
+    // The link lives inside the header, so the header can no longer be the
+    // button; the toggle beside it still collapses the group.
+    expect(group.find('.group-header').classes()).not.toContain('collapsed')
+    await group.find('.group-toggle').trigger('click')
+    expect(group.find('.group-header').classes()).toContain('collapsed')
   })
 
   it('switches to a flat list through the segmented control', async () => {
@@ -153,6 +169,7 @@ describe('ArchiveSelector', () => {
 
   it('renders the actions slot in the panel header', () => {
     const wrapper = mount(ArchiveSelector, {
+      global: { stubs: { RouterLink: RouterLinkStub } },
       props: { archives: [WEB], selected: null },
       slots: { actions: '<button class="stub-action">Diff</button>' },
     })

@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useWebSocket } from '../composables/useWebSocket'
+import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
@@ -71,22 +72,8 @@ const currentOp = ref<ActiveRepoOp | null>(null)
 
 const { onMessage } = useWebSocket()
 
-onMessage('ArchiveDeleted', (payload) => {
-  if (payload.repo_id === repoId.value) {
-    archivesTab.value?.onArchiveDeleted(payload.archive_name)
-  }
-})
-
 onMessage('DataChanged', () => {
   refreshRepo().catch(logger.error)
-  // Silent: this refresh runs in the background on every DataChanged event,
-  // not just ones the user triggered - blanking the whole list to a loading
-  // placeholder while it's in flight would hide unrelated UI state (like an
-  // in-progress delete's row) for no reason.
-  archivesTab.value
-    ?.loadArchives(true)
-    .then(() => archivesTab.value?.onDataChanged())
-    .catch(logger.error)
 })
 
 onMessage('ImportProgress', (payload) => {
@@ -107,36 +94,6 @@ onMessage('ImportProgress', (payload) => {
 onMessage('RepoOpChanged', (payload) => {
   if (repo.value && payload.repo_id === repo.value.id) {
     currentOp.value = payload.op
-    // Once this repo's active operation is no longer a delete or the
-    // compact that automatically follows it, every archive delete queued
-    // for it has finished - success or failure - since repo operations run
-    // strictly one at a time. Any name still marked "deleting" at that
-    // point is stale (a failed delete that the DataChanged-driven prune
-    // above never saw disappear from the list), so it needs sweeping
-    // rather than leaving its row disabled forever - but clearing
-    // immediately, against whatever `sortedArchives` happens to hold right
-    // now, raced that same DataChanged-driven refresh for a delete that in
-    // fact just succeeded: this event and DataChanged can arrive in either
-    // order, so "not yet in the refreshed list" and "genuinely still there"
-    // were indistinguishable without a fetch of our own. Refetching first
-    // (silently, so the whole panel doesn't flash a loading placeholder)
-    // resolves that: by the time it returns, the delete has already
-    // concluded (the op queue was already idle), so the list is
-    // authoritative either way - present means genuinely stale/failed,
-    // absent means already gone - and it's always correct to clear. Still
-    // clears even if the reload fails, so a marker can never get stuck
-    // forever.
-    //
-    // Only the names marked deleting *at the moment this event arrived* are
-    // swept, not whatever the set happens to hold once the refetch above
-    // resolves: a delete for a different, unrelated archive can be started
-    // by the user while that refetch is still in flight, and clearing
-    // unconditionally would wipe its just-set marker too, even though it
-    // has nothing to do with the op queue draining that triggered this
-    // event.
-    if (payload.op?.kind !== 'delete_archive' && payload.op?.kind !== 'compact_repo') {
-      archivesTab.value?.onRepoIdle()
-    }
   }
 })
 
@@ -162,8 +119,14 @@ const isIndexingPhase = computed(() =>
 const importPhaseVerb = computed(() => (isIndexingPhase.value ? 'Indexing' : 'Importing'))
 
 // The archives tab owns the archive list, its filtering and its deletion
-// state; the view only forwards the WebSocket events that touch them.
+// state; the view only points the shared subscription at it.
 const archivesTab = ref<InstanceType<typeof RepoArchivesTab> | null>(null)
+
+useArchiveDeletionEvents({
+  target: () => archivesTab.value,
+  repoId: () => repoId.value,
+  reload: () => archivesTab.value?.loadArchives(true) ?? Promise.resolve(),
+})
 
 const isAdmin = computed(() => authStore.isAdmin)
 

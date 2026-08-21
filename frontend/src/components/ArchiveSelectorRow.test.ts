@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import ArchiveSelectorRow from './ArchiveSelectorRow.vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 
@@ -22,6 +22,7 @@ function archive(overrides: Partial<ArchiveEntry> = {}): ArchiveEntry {
 
 function row(props: Record<string, unknown> = {}) {
   return mount(ArchiveSelectorRow, {
+    global: { stubs: { RouterLink: RouterLinkStub } },
     props: {
       archive: archive(),
       selected: false,
@@ -56,6 +57,22 @@ describe('ArchiveSelectorRow', () => {
     })
     expect(wrapper.classes()).toContain('archive-row--unmatched')
     expect(wrapper.find('.archive-host').text()).toBe('legacy-nas')
+  })
+
+  it('links the host to its agent, from the row itself', () => {
+    // The host used to be a link everywhere it appeared; when the row became a
+    // single button it silently became plain text, and getting to the agent
+    // meant selecting the archive first.
+    const link = row().findComponent(RouterLinkStub)
+    expect(link.props('to')).toBe('/agents/web-01')
+    expect(link.text()).toBe('web-01')
+  })
+
+  it('links a host no agent claims too, so the name is still followable', () => {
+    const wrapper = row({
+      archive: archive({ matched: false, agent_hostname: null, hostname: 'legacy nas' }),
+    })
+    expect(wrapper.findComponent(RouterLinkStub).props('to')).toBe('/agents/legacy%20nas')
   })
 
   it('selects through a real button, so the row is reachable by keyboard', async () => {

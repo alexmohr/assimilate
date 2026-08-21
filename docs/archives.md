@@ -18,9 +18,9 @@ Above the list are three controls:
 | Sort | Orders by **date**, **original size**, or **deduplicated size**, ascending or descending |
 | By host / Flat | Groups the archives under one header per host, or lists them flat |
 
-In **By host** mode each group header carries the hostname, the number of archives it holds and their **total original size**, so a collapsed group still tells you something. Groups start open; on a repository holding archives from more than three hosts they start collapsed instead, and you click a header to expand one.
+In **By host** mode each group header carries the hostname, the number of archives it holds and their **total original size**, so a collapsed group still tells you something. The hostname itself is a link to that host's [agent page](agents.md); clicking anywhere else on the header collapses or expands the group. Groups start open; on a repository holding archives from more than three hosts they start collapsed instead, and you click a header to expand one.
 
-Each row shows the archive name and its original size on the first line, then the host, the backup's start time and the deduplicated size underneath. A host that borg recorded but no agent claims is marked with an amber stripe — see [Re-scanning Unmatched Archives](repositories.md#re-scanning-unmatched-archives).
+Each row shows the archive name and its original size on the first line, then the host, the backup's start time and the deduplicated size underneath. The host is a link to that host's [agent page](agents.md), so you can jump to it without selecting the archive first. A host that borg recorded but no agent claims is marked with an amber stripe — see [Re-scanning Unmatched Archives](repositories.md#re-scanning-unmatched-archives).
 
 Click a row to open the archive in the file browser on the right. Administrators also get a **delete** button on every row; it is always visible, not revealed on hover.
 

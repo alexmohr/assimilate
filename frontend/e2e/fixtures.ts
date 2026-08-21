@@ -191,9 +191,10 @@ export async function expandAllArchiveGroups(page: Page): Promise<void> {
     .waitFor({ state: 'visible', timeout: 20_000 })
     .catch(() => {})
   // A repository with more hosts than the grouping threshold starts collapsed;
-  // click the chevrons that are.
-  const collapsedChevrons = page.locator('.group-header.collapsed .group-chevron')
-  while ((await collapsedChevrons.count()) > 0) {
-    await collapsedChevrons.first().click()
+  // click the toggles of the ones that are. The toggle is a control of its own
+  // beside the host link, and its hit area covers the whole header.
+  const collapsedToggles = page.locator('.group-header.collapsed .group-toggle')
+  while ((await collapsedToggles.count()) > 0) {
+    await collapsedToggles.first().click()
   }
 }

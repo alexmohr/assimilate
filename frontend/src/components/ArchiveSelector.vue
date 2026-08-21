@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, toRef } from 'vue'
 import { AlertTriangle, ChevronRight, Search } from '@lucide/vue'
 import ArchiveSelectorRow from './ArchiveSelectorRow.vue'
+import BaseHostLink from './BaseHostLink.vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSkeleton from './BaseSkeleton.vue'
 import EmptyState from './EmptyState.vue'
@@ -192,22 +193,35 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
           :key="group.hostname"
           class="archive-group"
         >
-          <button
+          <!--
+            The toggle is a button stretched behind the header rather than one
+            wrapping it: the host name is a link to the agent, and an anchor
+            cannot be nested inside a button. Clicking anywhere else on the
+            header still collapses the group.
+          -->
+          <div
             class="group-header"
-            type="button"
             :class="{ collapsed: isGroupCollapsed(group.hostname) }"
-            :aria-expanded="!isGroupCollapsed(group.hostname)"
-            @click="toggleGroup(group.hostname)"
           >
-            <ChevronRight
-              class="group-chevron"
-              :size="14"
-            />
-            <span
-              class="group-hostname"
-              :class="{ 'group-unmatched': !group.matched }"
-              >{{ group.hostname }}</span
+            <button
+              class="group-toggle"
+              type="button"
+              :aria-expanded="!isGroupCollapsed(group.hostname)"
+              :aria-label="`Toggle ${group.hostname}`"
+              @click="toggleGroup(group.hostname)"
             >
+              <ChevronRight
+                class="group-chevron"
+                :size="14"
+              />
+            </button>
+            <span class="group-host">
+              <BaseHostLink
+                :hostname="group.hostname"
+                class="group-hostname"
+                :class="{ 'group-unmatched': !group.matched }"
+              />
+            </span>
             <AlertTriangle
               v-if="!group.matched"
               class="match-icon match-warn"
@@ -215,7 +229,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
             />
             <span class="group-count">{{ group.archives.length }}</span>
             <span class="group-size">{{ groupSize(group.archives) }}</span>
-          </button>
+          </div>
           <div
             v-show="!isGroupCollapsed(group.hostname)"
             class="group-archives"
@@ -308,16 +322,15 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
 }
 
 .group-header {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-4);
   width: 100%;
   padding: var(--space-4) var(--space-6);
   background: var(--bg-hover);
-  border: none;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-  font: inherit;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-primary);
@@ -328,6 +341,30 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
    than the ground - there is no step left between the two backgrounds. */
 .group-header:hover .group-hostname:not(.group-unmatched) {
   color: var(--accent);
+}
+
+.group-toggle {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+/* Extends the toggle's hit area over the whole header. Anything that has to
+   stay clickable through it - the host link - is raised above. */
+.group-toggle::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .group-chevron {
@@ -341,12 +378,23 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
   transform: rotate(0deg);
 }
 
-.group-hostname {
+/* Static, so the dead space beside a short host name still toggles the group
+   - only the link itself is lifted above the toggle's stretched hit area. */
+.group-host {
   flex: 1;
   min-width: 0;
+}
+
+.group-hostname {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: bottom;
+  color: inherit;
 }
 
 .group-unmatched {

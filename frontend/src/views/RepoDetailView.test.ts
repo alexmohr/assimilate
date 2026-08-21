@@ -50,8 +50,17 @@ const wsHandlers: Record<string, (payload: unknown) => void> = {}
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: () => ({
     status: ref('connected'),
+    // Chained, not overwritten: the view subscribes to some types more than
+    // once (its own state, plus the shared archive-deletion subscription), and
+    // the real `useWebSocket` keeps a set of listeners per type.
     onMessage: (type: string, cb: (p: unknown) => void) => {
-      wsHandlers[type] = cb
+      const previous = wsHandlers[type]
+      wsHandlers[type] = previous
+        ? (payload: unknown): void => {
+            previous(payload)
+            cb(payload)
+          }
+        : cb
     },
   }),
 }))
@@ -272,6 +281,8 @@ function setupArchivesAB(): void {
 describe('RepoDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Handlers chain, so a previous test's unmounted view would keep firing.
+    for (const type of Object.keys(wsHandlers)) delete wsHandlers[type]
     mockBrowserArchives.value = []
     mockSortedArchives.value = []
     mockRequestArchiveDelete.mockResolvedValue(undefined)
@@ -610,13 +621,15 @@ describe('RepoDetailView', () => {
     expect(groupHeader.classes()).toContain('collapsed')
     expect(wrapper.find('.group-archives').attributes('style')).toContain('display: none')
 
-    await groupHeader.trigger('click')
+    // The header itself is no longer the button - it holds a link to the agent,
+    // so the toggle is a separate control stretched across it.
+    await wrapper.find('.group-toggle').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.group-header').classes()).not.toContain('collapsed')
     expect(wrapper.find('.group-archives').attributes('style') ?? '').not.toContain('display: none')
 
-    await wrapper.find('.group-header').trigger('click')
+    await wrapper.find('.group-toggle').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.group-header').classes()).toContain('collapsed')

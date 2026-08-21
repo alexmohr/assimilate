@@ -18,6 +18,9 @@ test('repo archives grouped by host name each group, not just the count', async 
   const hostname = group.locator('.group-hostname')
   await expect(hostname).toBeVisible()
   await expect(hostname).not.toBeEmpty()
+  // The hostname is a link to the agent, so the list is a way into the host
+  // and not only a label above it.
+  await expect(hostname).toHaveAttribute('href', /^\/agents\/.+/)
   await expect(group.locator('.group-count')).toBeVisible()
   // The summed size is what makes a collapsed group worth reading.
   await expect(group.locator('.group-size')).not.toBeEmpty()

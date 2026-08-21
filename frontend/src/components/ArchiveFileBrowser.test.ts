@@ -18,6 +18,16 @@ vi.mock('./BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
 }))
 
+// The meta bar links the archive's host into the agent page. These tests mount
+// the browser bare, without the router, so stub the link rather than pull a
+// router plugin into every mount below.
+vi.mock('./BaseHostLink.vue', () => ({
+  default: {
+    props: ['hostname'],
+    template: '<a class="host-link">{{ hostname }}</a>',
+  },
+}))
+
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
 vi.mock('../composables/useToast', () => ({
@@ -188,6 +198,52 @@ describe('ArchiveFileBrowser', () => {
     expect(subdirRow).toBeTruthy()
   })
 
+  it('downloads one file from its own row, not the whole archive', async () => {
+    // The header now carries the whole-archive Download, so `.btn-ghost`
+    // resolves there first: the per-row action needs selecting explicitly or
+    // it goes untested.
+    const wrapper = await mountWithEntries()
+
+    const createElementSpy = vi.spyOn(document, 'createElement')
+    const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+    expect(fileRow).toBeDefined()
+
+    await fileRow!.find('.td-action button[title="Download"]').trigger('click')
+    await flushPromises()
+
+    const anchor = createElementSpy.mock.results
+      .filter((_, i) => createElementSpy.mock.calls[i][0] === 'a')
+      .map((r) => r.value as HTMLAnchorElement)
+      .at(-1)
+    expect(anchor?.getAttribute('href')).toContain('/extract?path=readme.txt')
+    expect(anchor?.download).toBe('readme.txt')
+
+    // `resetAllMocks` clears calls but leaves the spy installed, and the next
+    // test spies on document.createElement too - restore it so its own anchor
+    // count is its own.
+    createElementSpy.mockRestore()
+  })
+
+  it('restores one entry from its own row', async () => {
+    window.confirm = vi.fn().mockReturnValue(true)
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+    await fileRow!.find('.td-action button[title="Restore to host"]').trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      expect.stringContaining('/restore'),
+      expect.objectContaining({ paths: ['readme.txt'] }),
+    )
+  })
+
   it('download button renders in action column and triggers download', async () => {
     const wrapper = await mountWithEntries()
 
@@ -248,6 +304,75 @@ describe('ArchiveFileBrowser', () => {
 
     expect(toastError).toHaveBeenCalledWith('Restore failed: disk full')
     expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('puts the whole-archive actions in the header, not on a hidden table row', async () => {
+    // Download, restore and delete used to be reachable only through the file
+    // table's "." row, with delete transparent until the pointer hovered it.
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    const header = wrapper.find('.browser-actions')
+    expect(header.exists()).toBe(true)
+    expect(header.find('button[title="Download whole archive"]').text()).toContain('Download')
+    expect(header.find('button[title="Restore whole archive to host"]').text()).toContain('Restore')
+    expect(header.find('button[title="Delete whole archive"]').text()).toContain('Delete')
+
+    // The table's action column keeps per-entry download and restore only.
+    const rowActions = wrapper.findAll('.td-action')
+    for (const cell of rowActions) {
+      expect(cell.find('button[title*="Delete"]').exists()).toBe(false)
+    }
+  })
+
+  it('names the archive and its host beside the file list', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+    })
+
+    expect(wrapper.find('.browser-title-name').text()).toBe('test-archive')
+    expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('web-server-01')
+  })
+
+  it('names the host borg recorded when no agent claims the archive', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive', {
+        matched: false,
+        hostname: 'legacy-nas',
+        agent_hostname: 'web-server-01',
+      }),
+    })
+
+    // The agent hostname is meaningless on an unmatched archive - it is
+    // whichever agent the name happened to resemble, not its origin.
+    expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('legacy-nas')
+  })
+
+  it('offers a way back up that is disabled at the archive root', async () => {
+    const wrapper = await mountWithEntries()
+
+    const up = wrapper.find('.browser-up')
+    expect(up.attributes('disabled')).toBeDefined()
+
+    const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
+    await subdirRow!.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.browser-up').attributes('disabled')).toBeUndefined()
+
+    const callsBefore = vi.mocked(apiClient.get).mock.calls.length
+    await wrapper.find('.browser-up').trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callsBefore + 1)
+    expect(wrapper.findAll('.crumb')).toHaveLength(1)
   })
 
   it('clicking the whole-archive delete button emits delete-archive with the archive', async () => {

@@ -50,16 +50,29 @@ const wsHandlers: Record<string, (payload: unknown) => void> = {}
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: () => ({
     status: ref('connected'),
+    // Chained, not overwritten: the view subscribes to some types more than
+    // once (its own state, plus the shared archive-deletion subscription), and
+    // the real `useWebSocket` keeps a set of listeners per type.
     onMessage: (type: string, cb: (p: unknown) => void) => {
-      wsHandlers[type] = cb
+      const previous = wsHandlers[type]
+      wsHandlers[type] = previous
+        ? (payload: unknown): void => {
+            previous(payload)
+            cb(payload)
+          }
+        : cb
     },
   }),
 }))
 
 const mockDeleteArchiveByName = vi.fn()
 const mockLoadArchives = vi.fn()
+// ArchiveExplorer deletes through the standalone helper rather than through a
+// browser instance it would otherwise have to spin up just for one request.
+const mockRequestArchiveDelete = vi.fn()
 
 vi.mock('../composables/useArchiveBrowser', () => ({
+  requestArchiveDelete: (repoId: number, name: string) => mockRequestArchiveDelete(repoId, name),
   useArchiveBrowser: () => ({
     archives: mockBrowserArchives,
     sortedArchives: mockSortedArchives,
@@ -268,9 +281,11 @@ function setupArchivesAB(): void {
 describe('RepoDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Handlers chain, so a previous test's unmounted view would keep firing.
+    for (const type of Object.keys(wsHandlers)) delete wsHandlers[type]
     mockBrowserArchives.value = []
     mockSortedArchives.value = []
-    mockDeleteArchiveByName.mockResolvedValue(true)
+    mockRequestArchiveDelete.mockResolvedValue(undefined)
     mockLoadArchives.mockResolvedValue(undefined)
   })
 
@@ -424,7 +439,7 @@ describe('RepoDetailView', () => {
     await archivesTab!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('No archives found')
+    expect(wrapper.find('.empty-state').text()).toContain('No archives')
   })
 
   it('runs a schedule now from the Schedules tab', async () => {
@@ -527,6 +542,19 @@ describe('RepoDetailView', () => {
     })
   })
 
+  /** Picks one option of the selector's grouped/flat segmented control. */
+  async function selectGroupMode(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    label: string,
+  ): Promise<void> {
+    const option = wrapper
+      .findAll('.archive-group-toggle .segmented-option')
+      .find((b) => b.text() === label)
+    expect(option).toBeDefined()
+    await option!.trigger('click')
+    await flushPromises()
+  }
+
   it('shows archive list mode options when archives exist', async () => {
     mockBrowserArchives.value = [
       {
@@ -558,22 +586,23 @@ describe('RepoDetailView', () => {
 
     const groupToggle = wrapper.find('.archive-group-toggle')
     expect(groupToggle.exists()).toBe(true)
-    expect(groupToggle.text()).toContain('Grouped by host')
+    expect(groupToggle.text()).toContain('By host')
+    expect(groupToggle.text()).toContain('Flat')
   })
 
   it('collapses host groups by default and expands on click', async () => {
-    mockBrowserArchives.value = [
-      {
-        name: 'web-server-01-2026-06-08T01:00:00',
-        start: '2026-06-08T01:00:00',
-        hostname: 'web-server-01',
-        comment: '',
-        original_size: 1_000,
-        deduplicated_size: 500,
-        matched: true,
-        agent_hostname: 'web-server-01',
-      },
-    ]
+    // Past four hosts the list is something to navigate rather than read, so
+    // the groups start closed; below that they start open.
+    mockBrowserArchives.value = Array.from({ length: 4 }, (_, i) => ({
+      name: `host-${i}-2026-06-08T01:00:00`,
+      start: '2026-06-08T01:00:00',
+      hostname: `host-${i}`,
+      comment: '',
+      original_size: 1_000,
+      deduplicated_size: 500,
+      matched: true,
+      agent_hostname: `host-${i}`,
+    }))
     mockSortedArchives.value = [...mockBrowserArchives.value]
     setupApiSuccess()
 
@@ -592,13 +621,15 @@ describe('RepoDetailView', () => {
     expect(groupHeader.classes()).toContain('collapsed')
     expect(wrapper.find('.group-archives').attributes('style')).toContain('display: none')
 
-    await groupHeader.trigger('click')
+    // The header itself is no longer the button - it holds a link to the agent,
+    // so the toggle is a separate control stretched across it.
+    await wrapper.find('.group-toggle').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.group-header').classes()).not.toContain('collapsed')
     expect(wrapper.find('.group-archives').attributes('style') ?? '').not.toContain('display: none')
 
-    await wrapper.find('.group-header').trigger('click')
+    await wrapper.find('.group-toggle').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.group-header').classes()).toContain('collapsed')
@@ -623,22 +654,18 @@ describe('RepoDetailView', () => {
       expect(wrapper.find('.archive-groups').exists()).toBe(true)
       expect(wrapper.find('.archive-flat-list').exists()).toBe(false)
 
-      const toggle = wrapper.find('.archive-group-toggle')
-      await toggle.trigger('click')
-      await flushPromises()
+      await selectGroupMode(wrapper, 'Flat')
 
       expect(wrapper.find('.archive-flat-list').exists()).toBe(true)
       expect(wrapper.find('.archive-groups').exists()).toBe(false)
-      expect(wrapper.find('.archive-group-toggle').text()).toContain('Flat list')
     })
 
     it('filters the archive list by typing in the filter input', async () => {
       const wrapper = await renderRepoDetail()
       await goToArchivesTab(wrapper)
-      await wrapper.find('.archive-group-toggle').trigger('click')
-      await flushPromises()
+      await selectGroupMode(wrapper, 'Flat')
 
-      const filterInput = wrapper.find('.filter-input')
+      const filterInput = wrapper.find('.archive-controls input')
       await filterInput.setValue('db-server')
       await flushPromises()
 
@@ -650,8 +677,7 @@ describe('RepoDetailView', () => {
     it('sorts the archive list using the sort select', async () => {
       const wrapper = await renderRepoDetail()
       await goToArchivesTab(wrapper)
-      await wrapper.find('.archive-group-toggle').trigger('click')
-      await flushPromises()
+      await selectGroupMode(wrapper, 'Flat')
 
       const select = wrapper.find('.archive-sort-select')
       await select.setValue('size-asc')
@@ -666,15 +692,10 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await goToArchivesTab(wrapper)
 
-      const chevrons = wrapper.findAll('.group-chevron')
-      for (const chevron of chevrons) {
-        await chevron.trigger('click')
-      }
-      await flushPromises()
-
+      // Two hosts is under the collapse threshold, so both groups render open.
       const row = wrapper.findAll('.archive-row').find((r) => r.text().includes(archiveA.name))
       expect(row).toBeDefined()
-      await row!.trigger('click')
+      await row!.find('.archive-row-select').trigger('click')
       await flushPromises()
 
       expect(wrapper.find('.browser-title').text()).toContain(archiveA.name)
@@ -697,14 +718,13 @@ describe('RepoDetailView', () => {
     it('selects and deletes an archive from the flat list, clearing the selection', async () => {
       const wrapper = await renderRepoDetail()
       await goToArchivesTab(wrapper)
-      await wrapper.find('.archive-group-toggle').trigger('click')
-      await flushPromises()
+      await selectGroupMode(wrapper, 'Flat')
 
       expect(wrapper.find('.browser-placeholder').text()).toContain('Select an archive')
 
       const rows = wrapper.findAll('.archive-row-detailed')
       const targetRow = rows.find((r) => r.text().includes(archiveA.name))!
-      await targetRow.trigger('click')
+      await targetRow.find('.archive-row-select').trigger('click')
       await flushPromises()
 
       expect(wrapper.find('.browser-title').text()).toContain(archiveA.name)
@@ -1001,7 +1021,7 @@ describe('RepoDetailView', () => {
 
       await clickModalConfirm()
 
-      expect(mockDeleteArchiveByName).toHaveBeenCalledWith(deletingArchive)
+      expect(mockRequestArchiveDelete).toHaveBeenCalledWith(1, deletingArchive.name)
       // The modal closed and the row's button now reflects the in-flight delete.
       expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(false)
       const pendingBtn = wrapper.find('button[title="Deletion in progress"]')
@@ -1023,7 +1043,7 @@ describe('RepoDetailView', () => {
       // in-progress state must be set synchronously on confirm, not after
       // awaiting deleteArchiveByName, or that race means it's never observed.
       let resolveDelete: (() => void) | undefined
-      mockDeleteArchiveByName.mockImplementation(
+      mockRequestArchiveDelete.mockImplementation(
         () =>
           new Promise((resolve) => {
             resolveDelete = () => resolve(true)
@@ -1044,7 +1064,7 @@ describe('RepoDetailView', () => {
     })
 
     it('rolls back the in-progress marker when the delete request itself fails', async () => {
-      mockDeleteArchiveByName.mockRejectedValue(new Error('Connection refused'))
+      mockRequestArchiveDelete.mockRejectedValue(new Error('Connection refused'))
 
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
@@ -1106,7 +1126,7 @@ describe('RepoDetailView', () => {
       // user re-opening its file browser mid-delete. ArchiveDeleted must
       // clear that too, not just the one confirmArchiveDeletion's own
       // success path already handles when nothing was re-selected since.
-      await row!.trigger('click')
+      await row!.find('.archive-row-select').trigger('click')
       await flushPromises()
       expect(wrapper.find('.browser-title').text()).toContain(deletingArchive.name)
 
@@ -1278,7 +1298,7 @@ describe('RepoDetailView', () => {
 
     it('shows the in-progress state immediately on confirm, before the delete request resolves', async () => {
       let resolveDelete: ((value: boolean) => void) | undefined
-      mockDeleteArchiveByName.mockImplementation(
+      mockRequestArchiveDelete.mockImplementation(
         () =>
           new Promise<boolean>((resolve) => {
             resolveDelete = resolve
@@ -1301,7 +1321,7 @@ describe('RepoDetailView', () => {
     })
 
     it('rolls back the in-progress state when the delete request fails', async () => {
-      mockDeleteArchiveByName.mockRejectedValueOnce(new Error('boom'))
+      mockRequestArchiveDelete.mockRejectedValueOnce(new Error('boom'))
 
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)

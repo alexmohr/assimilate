@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 
 vi.mock('../api/client', () => ({
@@ -41,6 +41,148 @@ describe('useArchiveBrowser', () => {
       'confirm',
       vi.fn(() => true),
     )
+  })
+
+  describe('index-status polling', () => {
+    // An archive that has never been browsed is indexed on demand, and the
+    // browser shows "Indexing archive contents" while it polls. None of that
+    // loop was covered: not the poll that succeeds, not the one the server
+    // fails, not the one whose request dies.
+    const CONTENTS = '/repos/5/archives/web-server-01-backup-2026-06-05T02%3A00%3A00/contents'
+    const STATUS = '/repos/5/archives/web-server-01-backup-2026-06-05T02%3A00%3A00/index-status'
+
+    function pendingThen(...responses: unknown[]): void {
+      let call = 0
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('index-status')) {
+          const res = responses[Math.min(call, responses.length - 1)]
+          call += 1
+          return Promise.resolve(res as never)
+        }
+        // The first contents read reports the archive is still being indexed;
+        // the one the poll triggers on completion returns the entries.
+        return Promise.resolve({
+          data:
+            call === 0
+              ? { index_status: 'pending', entries: [] }
+              : {
+                  index_status: 'done',
+                  entries: [{ type: '-', path: 'readme.txt', size: 4, mtime: '', mode: '644' }],
+                },
+        } as never)
+      })
+    }
+
+    /** Runs the 2s interval once and lets its awaited chain settle. */
+    async function tick(): Promise<void> {
+      await vi.advanceTimersByTimeAsync(2000)
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('polls while the archive is indexing, then loads the contents it was waiting for', async () => {
+      pendingThen({ data: { status: 'indexing' } }, { data: { status: 'done', file_count: 1 } })
+
+      const browser = useArchiveBrowser(ref(5))
+      await browser.selectArchive(ARCHIVE)
+
+      expect(browser.indexing.value).toBe(true)
+      expect(browser.contents.value).toEqual([])
+
+      // First tick: still indexing, so the spinner stays and polling continues.
+      await tick()
+      expect(browser.indexing.value).toBe(true)
+
+      // Second tick: done, so it stops polling and reads the directory.
+      await tick()
+      expect(browser.indexing.value).toBe(false)
+      expect(browser.contents.value).toHaveLength(1)
+      expect(apiClient.get).toHaveBeenCalledWith(STATUS)
+      expect(apiClient.get).toHaveBeenCalledWith(CONTENTS, { params: {} })
+
+      // Polling stopped: further ticks issue no more requests.
+      const calls = vi.mocked(apiClient.get).mock.calls.length
+      await tick()
+      expect(vi.mocked(apiClient.get).mock.calls.length).toBe(calls)
+
+      browser.stopPolling()
+    })
+
+    it('surfaces the server reason when indexing fails, and stops polling', async () => {
+      pendingThen({ data: { status: 'failed', error: 'archive is corrupt' } })
+
+      const browser = useArchiveBrowser(ref(5))
+      await browser.selectArchive(ARCHIVE)
+      await tick()
+
+      expect(browser.indexing.value).toBe(false)
+      expect(browser.contentsError.value).toBe('archive is corrupt')
+
+      const calls = vi.mocked(apiClient.get).mock.calls.length
+      await tick()
+      expect(vi.mocked(apiClient.get).mock.calls.length).toBe(calls)
+    })
+
+    it('falls back to a generic reason when a failed index reports none', async () => {
+      pendingThen({ data: { status: 'failed' } })
+
+      const browser = useArchiveBrowser(ref(5))
+      await browser.selectArchive(ARCHIVE)
+      await tick()
+
+      expect(browser.contentsError.value).toBe('Archive indexing failed')
+    })
+
+    it('stops polling when the status request itself fails', async () => {
+      let call = 0
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('index-status')) {
+          call += 1
+          return Promise.reject(new Error('Connection refused'))
+        }
+        return Promise.resolve({ data: { index_status: 'pending', entries: [] } } as never)
+      })
+
+      const browser = useArchiveBrowser(ref(5))
+      await browser.selectArchive(ARCHIVE)
+      await tick()
+
+      expect(browser.indexing.value).toBe(false)
+      expect(browser.contentsError.value).toBe('Connection refused')
+
+      await tick()
+      expect(call).toBe(1)
+    })
+  })
+
+  it('orders the archive list newest first', () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.archives.value = [
+      { ...ARCHIVE, name: 'older', start: '2026-06-01T02:00:00' },
+      { ...ARCHIVE, name: 'newest', start: '2026-06-09T02:00:00' },
+      { ...ARCHIVE, name: 'middle', start: '2026-06-05T02:00:00' },
+    ]
+
+    expect(browser.sortedArchives.value.map((a) => a.name)).toEqual(['newest', 'middle', 'older'])
+  })
+
+  it('lists sibling directories alphabetically, after the current directory', () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.contents.value = [
+      { type: 'd', path: 'zeta', size: 0, mtime: '', mode: '755' },
+      { type: 'd', path: 'alpha', size: 0, mtime: '', mode: '755' },
+      { type: '-', path: 'readme.txt', size: 4, mtime: '', mode: '644' },
+      // A grandchild: it belongs to alpha's listing, not this one.
+      { type: 'd', path: 'alpha/nested', size: 0, mtime: '', mode: '755' },
+    ]
+
+    expect(browser.dirs.value.map((d) => d.displayName)).toEqual(['.', 'alpha', 'zeta'])
   })
 
   it('downloads the root entry as the whole archive without an empty path query', () => {

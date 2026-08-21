@@ -3,9 +3,7 @@
 
 import { expect, loginAsAdmin, test } from './fixtures'
 
-test('repo archives grouped by host shows the hostname link, not just the count', async ({
-  page,
-}) => {
+test('repo archives grouped by host name each group, not just the count', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/repos')
   await page.getByText('server-daily').click()
@@ -17,8 +15,13 @@ test('repo archives grouped by host shows the hostname link, not just the count'
   const group = page.locator('.archive-group').first()
   await expect(group).toBeVisible()
 
-  const hostLink = group.locator('.group-hostname')
-  await expect(hostLink).toBeVisible()
-  await expect(hostLink).not.toBeEmpty()
+  const hostname = group.locator('.group-hostname')
+  await expect(hostname).toBeVisible()
+  await expect(hostname).not.toBeEmpty()
+  // The hostname is a link to the agent, so the list is a way into the host
+  // and not only a label above it.
+  await expect(hostname).toHaveAttribute('href', /^\/agents\/.+/)
   await expect(group.locator('.group-count')).toBeVisible()
+  // The summed size is what makes a collapsed group worth reading.
+  await expect(group.locator('.group-size')).not.toBeEmpty()
 })

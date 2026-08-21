@@ -7,11 +7,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, watch, onBeforeUnmount } from 'vue'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
+import { resolveArchiveHost } from '../utils/archiveHost'
 import { useToast } from '../composables/useToast'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download, RotateCcw, Trash2 } from '@lucide/vue'
+import { Folder, File, Download, RotateCcw, Trash2, CornerLeftUp } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
+import BaseHostLink from './BaseHostLink.vue'
 import {
   useArchiveBrowser,
   type ArchiveEntry,
@@ -101,6 +103,23 @@ async function handleRestore(entry: ContentEntry): Promise<void> {
 function handleDeleteWholeArchive(): void {
   if (props.archive && !props.deleting) emit('delete-archive', props.archive)
 }
+
+/**
+ * The archive root as a directory entry, so the header's whole-archive
+ * download and restore reuse exactly the paths the table rows use. An empty
+ * path is what both endpoints read as "everything".
+ */
+const ROOT_ENTRY: ContentEntry = { type: 'd', path: '', size: 0, mtime: '', mode: '' }
+
+const archiveHost = computed(() =>
+  props.archive === null ? null : resolveArchiveHost(props.archive),
+)
+
+/** The parent of the directory being shown, or null at the archive root. */
+const parentCrumb = computed(() => {
+  const trail = breadcrumbs.value
+  return trail.length > 1 ? trail[trail.length - 2] : null
+})
 </script>
 
 <template>
@@ -109,44 +128,118 @@ function handleDeleteWholeArchive(): void {
       v-if="!archive"
       class="browser-placeholder"
     >
-      Select an archive to browse its contents.
+      <Folder
+        :size="40"
+        class="browser-placeholder-icon"
+      />
+      <span class="browser-placeholder-title">No archive selected</span>
+      <span class="browser-placeholder-hint">Select an archive to browse its contents.</span>
     </div>
 
     <template v-else>
       <div class="browser-header">
-        <span class="browser-title">Files -- {{ archive.name }}</span>
+        <span class="browser-title">
+          <span class="browser-title-label">Files</span>
+          <span class="browser-title-name">{{ archive.name }}</span>
+        </span>
+        <!--
+          Whole-archive actions live here, spelled out. Download and restore
+          used to be reachable only through the file table's "." row, and
+          delete only through an icon on that row that was transparent until
+          the pointer happened to land on it - so the repository screen had a
+          delete nobody could find and the schedule screen had none at all.
+        -->
+        <span class="browser-actions">
+          <button
+            class="btn btn-sm btn-ghost"
+            type="button"
+            title="Download whole archive"
+            @click="downloadEntry(ROOT_ENTRY)"
+          >
+            <Download :size="14" />
+            Download
+          </button>
+          <button
+            v-if="isAdmin"
+            class="btn btn-sm btn-ghost"
+            type="button"
+            title="Restore whole archive to host"
+            @click="handleRestore(ROOT_ENTRY)"
+          >
+            <RotateCcw :size="14" />
+            Restore
+          </button>
+          <button
+            v-if="isAdmin"
+            class="btn btn-sm btn-danger-text"
+            type="button"
+            :disabled="deleting"
+            :title="deleting ? 'Deletion in progress' : 'Delete whole archive'"
+            @click="handleDeleteWholeArchive"
+          >
+            <BaseSpinner
+              v-if="deleting"
+              size="sm"
+            />
+            <Trash2
+              v-else
+              :size="14"
+            />
+            {{ deleting ? 'Deleting...' : 'Delete' }}
+          </button>
+        </span>
       </div>
 
       <div
         v-if="archive.start"
         class="archive-meta-bar"
       >
+        <span
+          v-if="archiveHost"
+          class="archive-meta-item"
+        >
+          <span class="archive-meta-label">Host</span>
+          <BaseHostLink
+            class="host-link"
+            :hostname="archiveHost"
+          />
+        </span>
         <span class="archive-meta-item">
           <span class="archive-meta-label">Date</span>
           <span class="archive-meta-value">{{ formatDate(archive.start) }}</span>
         </span>
-        <span class="archive-meta-sep" />
         <span class="archive-meta-item">
           <span class="archive-meta-label">Original</span>
           <span class="archive-meta-value">{{ formatBytes(archive.original_size) }}</span>
         </span>
-        <span class="archive-meta-sep" />
         <span class="archive-meta-item">
           <span class="archive-meta-label">Dedup</span>
           <span class="archive-meta-value">{{ formatBytes(archive.deduplicated_size) }}</span>
         </span>
       </div>
 
-      <div class="path-crumbs">
+      <div class="browser-path">
         <button
-          v-for="(seg, i) in breadcrumbs"
-          :key="seg.path"
-          class="crumb"
-          :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
-          @click="navigateTo(seg.path)"
+          class="btn btn-xs btn-ghost browser-up"
+          type="button"
+          :disabled="parentCrumb === null"
+          title="Up one level"
+          aria-label="Up one level"
+          @click="parentCrumb && navigateTo(parentCrumb.path)"
         >
-          {{ seg.label }}
+          <CornerLeftUp :size="14" />
         </button>
+        <div class="path-crumbs">
+          <button
+            v-for="(seg, i) in breadcrumbs"
+            :key="seg.path"
+            class="crumb"
+            :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
+            @click="navigateTo(seg.path)"
+          >
+            {{ seg.label }}
+          </button>
+        </div>
       </div>
 
       <BaseSpinner
@@ -282,22 +375,6 @@ function handleDeleteWholeArchive(): void {
               >
                 <RotateCcw :size="14" />
               </button>
-              <button
-                v-if="isAdmin && data.displayName === '.' && data.path.length === 0"
-                class="btn btn-sm btn-ghost"
-                :disabled="deleting"
-                :title="deleting ? 'Deletion in progress' : 'Delete whole archive'"
-                @click.stop="handleDeleteWholeArchive"
-              >
-                <BaseSpinner
-                  v-if="deleting"
-                  size="sm"
-                />
-                <Trash2
-                  v-else
-                  :size="14"
-                />
-              </button>
             </span>
           </template>
         </Column>
@@ -313,43 +390,94 @@ function handleDeleteWholeArchive(): void {
 
 .browser-placeholder {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 200px;
+  gap: var(--space-5);
+  min-height: 15rem;
+  padding: var(--space-9);
+  text-align: center;
   font-size: var(--fs-base);
   color: var(--text-muted);
 }
 
+.browser-placeholder-icon {
+  opacity: 0.45;
+}
+
+.browser-placeholder-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.browser-placeholder-hint {
+  max-width: 32ch;
+  font-size: var(--fs-sm);
+}
+
 .browser-header {
-  padding: var(--space-5) var(--space-7);
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border);
 }
 
 .browser-title {
-  font-size: var(--fs-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.browser-title-label {
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
 
+.browser-title-name {
+  font-family: var(--mono);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.browser-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 .archive-meta-bar {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
+  flex-wrap: wrap;
+  gap: var(--space-4);
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
   background: var(--bg-base);
 }
 
+/* Each fact reads as its own chip, so the bar stays legible when it wraps on
+   a narrow pane instead of running together across a single line. */
 .archive-meta-item {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
   gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
 }
 
 .archive-meta-label {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -357,14 +485,27 @@ function handleDeleteWholeArchive(): void {
 }
 
 .archive-meta-value {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-2xs);
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
-.archive-meta-sep {
-  width: 1px;
-  height: 1rem;
-  background: var(--border);
+/* The host chip is a link into the agent; size it like its neighbours rather
+   than at `.host-link`'s table-cell size. */
+.archive-meta-item .host-link {
+  font-size: var(--fs-2xs);
+}
+
+.browser-path {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.browser-up {
+  flex: none;
 }
 
 :deep(.browser-table) {

@@ -4,23 +4,19 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { FilterMatchMode } from '@primevue/core/api'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
-import { RefreshCw, Check, AlertTriangle } from '@lucide/vue'
+import { ref, computed, onMounted, useTemplateRef } from 'vue'
+import { storeToRefs } from 'pinia'
+import { RefreshCw } from '@lucide/vue'
 import { apiClient } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
-import { formatBytes, formatDate } from '../utils/format'
+import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 import { extractError } from '../utils/error'
-import BaseSpinner from '../components/BaseSpinner.vue'
-import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
-import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
+import ArchiveExplorer from '../components/ArchiveExplorer.vue'
 import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
-import BaseHostLink from '../components/BaseHostLink.vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
@@ -37,16 +33,17 @@ const selectedArchive = ref<ArchiveEntry | null>(null)
 
 const showPassphraseDialog = ref(false)
 
+const explorer = useTemplateRef<InstanceType<typeof ArchiveExplorer>>('explorer')
+
 const sortedArchives = computed(() =>
   [...archives.value].sort((a, b) => b.start.localeCompare(a.start)),
 )
 
-const archiveFilters = ref({
-  name: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  start: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  hostname: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  original_size: { value: '', matchMode: FilterMatchMode.CONTAINS },
-})
+const { isAdmin } = storeToRefs(useAuthStore())
+
+const selectedRepoName = computed(
+  () => repos.value.find((r) => r.id === selectedRepoId.value)?.name ?? '',
+)
 
 async function loadRepos(): Promise<void> {
   reposLoading.value = true
@@ -71,9 +68,12 @@ async function onRepoChange(): Promise<void> {
   await loadArchives()
 }
 
-async function loadArchives(): Promise<void> {
+// `silent` keeps the list on screen while a background refetch is in flight -
+// the explorer asks for one after a delete, and blanking the panel would hide
+// the row state it is refreshing.
+async function loadArchives(silent = false): Promise<void> {
   if (selectedRepoId.value === null) return
-  archivesLoading.value = true
+  if (!silent) archivesLoading.value = true
   archivesError.value = null
   try {
     const res = await apiClient.get<ArchiveEntry[]>(`/repos/${selectedRepoId.value}/archives`)
@@ -116,6 +116,16 @@ async function revealPassphrase(): Promise<void> {
     passphraseLoading.value = false
   }
 }
+
+// Deleting is available here too, so this page needs the same three events
+// that release a row's "deleting..." marker - including the repo-idle one,
+// which is the only one that fires when borg's delete failed and left the
+// archive in place.
+useArchiveDeletionEvents({
+  target: () => explorer.value,
+  repoId: () => selectedRepoId.value,
+  reload: () => loadArchives(true),
+})
 
 onMounted(loadRepos)
 </script>
@@ -175,198 +185,47 @@ onMounted(loadRepos)
         </button>
       </div>
 
-      <ArchiveBrowserLayout v-if="selectedRepoId !== null">
-        <template #list>
-          <div class="panel panel--sectioned archives-panel">
-            <div class="panel-header">
-              <span class="panel-title">Archives</span>
-              <div class="panel-actions">
-                <button
-                  class="btn btn-sm btn-ghost"
-                  :disabled="archives.length < 1"
-                  @click="showRestoreWizard = true"
-                >
-                  Restore
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  :disabled="archives.length < 2"
-                  @click="showArchiveDiff = true"
-                >
-                  Diff
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  :disabled="archivesLoading"
-                  aria-label="Refresh archives"
-                  @click="loadArchives"
-                >
-                  <RefreshCw
-                    :size="14"
-                    :class="{ spinning: archivesLoading }"
-                  />
-                </button>
-              </div>
-            </div>
-
-            <div
-              v-if="archivesLoading"
-              class="state-msg state-msg--inline"
-            >
-              <BaseSpinner size="sm" />
-              Loading archives...
-            </div>
-            <div
-              v-else-if="archivesError"
-              class="error-banner"
-            >
-              {{ archivesError }}
-            </div>
-            <div
-              v-else-if="archives.length === 0"
-              class="state-msg state-msg--inline"
-            >
-              No archives found.
-            </div>
-            <DataTable
-              v-else
-              v-model:filters="archiveFilters"
-              :value="sortedArchives"
-              :row-class="
-                (data: ArchiveEntry) =>
-                  selectedArchive?.name === data.name ? 'selected clickable' : 'clickable'
-              "
-              filter-display="row"
-              table-class="data-table"
-              @row-click="(e: { data: ArchiveEntry }) => (selectedArchive = e.data)"
-            >
-              <Column
-                field="name"
-                header="Name"
-                :sortable="true"
-                :show-filter-menu="false"
-              >
-                <template #filter="{ filterModel, filterCallback }">
-                  <input
-                    v-model="filterModel.value"
-                    class="input filter-input"
-                    type="text"
-                    placeholder="Filter..."
-                    @input="filterCallback()"
-                  />
-                </template>
-                <template #body="{ data }">
-                  <span class="td-mono">{{ data.name }}</span>
-                </template>
-              </Column>
-              <Column
-                field="start"
-                header="Date"
-                :sortable="true"
-                :show-filter-menu="false"
-              >
-                <template #filter="{ filterModel, filterCallback }">
-                  <input
-                    v-model="filterModel.value"
-                    class="input filter-input"
-                    type="text"
-                    placeholder="Filter..."
-                    @input="filterCallback()"
-                  />
-                </template>
-                <template #body="{ data }">
-                  <span class="td-date">{{ formatDate(data.start) }}</span>
-                </template>
-              </Column>
-              <Column
-                field="hostname"
-                header="Host"
-                :sortable="true"
-                :show-filter-menu="false"
-              >
-                <template #filter="{ filterModel, filterCallback }">
-                  <input
-                    v-model="filterModel.value"
-                    class="input filter-input"
-                    type="text"
-                    placeholder="Filter..."
-                    @input="filterCallback()"
-                  />
-                </template>
-                <template #body="{ data }">
-                  <BaseHostLink
-                    v-if="data.matched === true && data.agent_hostname"
-                    :hostname="data.agent_hostname"
-                    class="host-link"
-                    @click.stop
-                  />
-                  <BaseHostLink
-                    v-else-if="data.matched !== true"
-                    :hostname="data.hostname"
-                    class="unmatched-host-link"
-                    @click.stop
-                  />
-                  <span
-                    v-else
-                    class="td-host"
-                    >{{ data.hostname }}</span
-                  >
-                </template>
-              </Column>
-              <Column
-                field="matched"
-                header=""
-                style="width: 3rem"
-              >
-                <template #body="{ data }">
-                  <span
-                    v-if="data.matched === true"
-                    class="match-icon match-ok"
-                    title="Matched"
-                  >
-                    <Check :size="14" />
-                  </span>
-                  <span
-                    v-else-if="data.matched !== true"
-                    class="match-icon match-warn"
-                    title="Unmatched"
-                  >
-                    <AlertTriangle :size="14" />
-                  </span>
-                </template>
-              </Column>
-              <Column
-                field="original_size"
-                header="Size"
-                :sortable="true"
-                :show-filter-menu="false"
-              >
-                <template #filter="{ filterModel, filterCallback }">
-                  <input
-                    v-model="filterModel.value"
-                    class="input filter-input"
-                    type="text"
-                    placeholder="Filter..."
-                    @input="filterCallback()"
-                  />
-                </template>
-                <template #body="{ data }">
-                  <span class="td-size">{{ formatBytes(data.original_size) }}</span>
-                </template>
-              </Column>
-            </DataTable>
-          </div>
-        </template>
-
-        <template #browser>
-          <div class="panel panel--sectioned browser-panel">
-            <ArchiveFileBrowser
-              :repo-id="selectedRepoId"
-              :archive="selectedArchive"
+      <ArchiveExplorer
+        v-if="selectedRepoId !== null"
+        ref="explorer"
+        v-model:selected="selectedArchive"
+        :repo-id="selectedRepoId"
+        :repo-name="selectedRepoName"
+        :archives="sortedArchives"
+        :loading="archivesLoading"
+        :error="archivesError"
+        :is-admin="isAdmin"
+        :reload="loadArchives"
+        empty-description="This repository has no archives yet. They appear here once a backup has run."
+      >
+        <template #actions>
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="archives.length < 1"
+            @click="showRestoreWizard = true"
+          >
+            Restore
+          </button>
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="archives.length < 2"
+            @click="showArchiveDiff = true"
+          >
+            Diff
+          </button>
+          <button
+            class="btn btn-sm btn-ghost"
+            :disabled="archivesLoading"
+            aria-label="Refresh archives"
+            @click="loadArchives()"
+          >
+            <RefreshCw
+              :size="14"
+              :class="{ spinning: archivesLoading }"
             />
-          </div>
+          </button>
         </template>
-      </ArchiveBrowserLayout>
+      </ArchiveExplorer>
 
       <FileSearch
         :repo-id="selectedRepoId"
@@ -451,34 +310,6 @@ onMounted(loadRepos)
 .muted-hint {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-}
-
-.td-mono {
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.td-host {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
-.unmatched-host-link {
-  font-size: var(--fs-sm);
-  color: var(--warning);
-  text-decoration: none;
-}
-
-.unmatched-host-link:hover {
-  text-decoration: underline;
-}
-
-.match-icon {
-  font-size: var(--fs-md);
 }
 
 /* Buttons */

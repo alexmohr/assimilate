@@ -4,7 +4,6 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { defineComponent, ref, watchEffect } from 'vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
 vi.mock('../api/client', () => ({
@@ -34,6 +33,19 @@ vi.mock('@primevue/core/api', () => ({
   FilterMatchMode: { CONTAINS: 'contains' },
 }))
 
+// Captured WebSocket handlers - the page subscribes the three events that
+// release an archive row's "deleting..." marker.
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    status: { value: 'connected' },
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
+}))
+
 import { apiClient } from '../api/client'
 import ArchivesView from './ArchivesView.vue'
 import { dismissModal, openModals } from '../test-utils'
@@ -51,81 +63,22 @@ const ARCHIVES = [
     start: '2026-05-30T12:00:00',
     hostname: 'web-server-01',
     comment: 'pre-upgrade',
+    original_size: 2048,
+    deduplicated_size: 1024,
+    matched: true,
+    agent_hostname: 'web-server-01',
   },
   {
-    name: 'web-server-01-2026-05-29T12:00:00',
+    name: 'db-primary-2026-05-29T12:00:00',
     start: '2026-05-29T12:00:00',
-    hostname: 'web-server-01',
+    hostname: 'db-primary',
     comment: 'weekly-baseline',
+    original_size: 4096,
+    deduplicated_size: 2048,
+    matched: true,
+    agent_hostname: 'db-primary',
   },
 ]
-
-/**
- * The rows the table is currently showing. `Column` renders its `#body` slot
- * once per row, so the per-cell markup - the archive name, the date, the
- * host link, the matched icon, the size - is exercised rather than skipped
- * with the column itself. The real PrimeVue table is covered by its own
- * component suites; what matters here is that this view's cell templates run.
- */
-const stubRows = ref<unknown[]>([])
-
-// Renders one clickable row per value so tests can drive selection, and
-// applies `row-class` so the selected-row expression runs too.
-const DataTableStub = defineComponent({
-  props: {
-    value: { type: Array, default: (): unknown[] => [] },
-    rowClass: { type: Function, default: null },
-  },
-  emits: ['row-click', 'update:filters'],
-  setup(props) {
-    watchEffect(() => {
-      stubRows.value = props.value
-    })
-  },
-  template: `<div class="stub-datatable">
-    <button
-      v-for="(row, i) in value"
-      :key="i"
-      class="stub-row"
-      :class="rowClass ? rowClass(row) : ''"
-      @click="$emit('row-click', { data: row })"
-    />
-    <button
-      class="stub-filter-change"
-      @click="$emit('update:filters', {})"
-    />
-    <slot />
-  </div>`,
-})
-
-const ColumnStub = defineComponent({
-  setup() {
-    const filterModel = ref<{ value: string | null }>({ value: null })
-    const filterCalls = ref(0)
-    const filterCallback = (): void => {
-      filterCalls.value += 1
-    }
-    return { filterModel, filterCallback, stubRows }
-  },
-  template: `<div class="stub-column">
-    <slot
-      name="filter"
-      :filter-model="filterModel"
-      :filter-callback="filterCallback"
-    />
-    <div
-      v-for="(row, i) in stubRows"
-      :key="i"
-      class="stub-cell"
-    >
-      <slot
-        name="body"
-        :data="row"
-      />
-    </div>
-    <slot />
-  </div>`,
-})
 
 function createTestRouter(): ReturnType<typeof createRouter> {
   return createRouter({
@@ -139,16 +92,18 @@ function mountView(): ReturnType<typeof mount> {
     global: {
       plugins: [createPinia(), createTestRouter()],
       stubs: {
-        DataTable: DataTableStub,
-        Column: ColumnStub,
         BaseSpinner: { template: '<div class="stub-spinner" />' },
         RestoreWizard: {
           props: ['open'],
-          template: '<div class="stub-restore">{{ open ? "open" : "closed" }}</div>',
+          emits: ['close'],
+          template:
+            '<div class="stub-restore">{{ open ? "open" : "closed" }}<button class="stub-restore-close" @click="$emit(\'close\')" /></div>',
         },
         ArchiveDiff: {
           props: ['open'],
-          template: '<div class="stub-diff">{{ open ? "open" : "closed" }}</div>',
+          emits: ['close'],
+          template:
+            '<div class="stub-diff">{{ open ? "open" : "closed" }}<button class="stub-diff-close" @click="$emit(\'close\')" /></div>',
         },
         FileSearch: { template: '<div class="stub-search" />' },
         ArchiveFileBrowser: {
@@ -185,7 +140,62 @@ function mockReposAndArchives(archives: unknown[] = ARCHIVES): void {
 describe('ArchivesView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    for (const type of Object.keys(wsHandlers)) delete wsHandlers[type]
     mockGet.mockResolvedValue({ data: [] })
+  })
+
+  describe('archive deletion events', () => {
+    it('refetches the archive list when the server reports data changed', async () => {
+      mockReposAndArchives()
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+
+      const before = mockGet.mock.calls.filter((c) => String(c[0]).includes('/archives')).length
+      wsHandlers.DataChanged({})
+      await flushPromises()
+
+      const after = mockGet.mock.calls.filter((c) => String(c[0]).includes('/archives')).length
+      expect(after).toBe(before + 1)
+    })
+
+    it('ignores archive events belonging to another repository', async () => {
+      mockReposAndArchives()
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+      await flushPromises()
+
+      // Selected repo is 1; nothing here concerns repo 2.
+      wsHandlers.ArchiveDeleted({ repo_id: 2, archive_name: ARCHIVES[0].name })
+      wsHandlers.RepoOpChanged({ repo_id: 2, op: null })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(ARCHIVES[0].name)
+    })
+
+    it('drops the row the server says finished deleting', async () => {
+      mockReposAndArchives()
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(ARCHIVES[0].name)
+
+      // The archive is gone server-side, so the reload behind DataChanged
+      // returns the shorter list and the row leaves with it.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/repos') return Promise.resolve({ data: REPOS })
+        if (url.includes('/archives')) return Promise.resolve({ data: [ARCHIVES[1]] })
+        return Promise.resolve({ data: [] })
+      })
+      wsHandlers.ArchiveDeleted({ repo_id: 1, archive_name: ARCHIVES[0].name })
+      wsHandlers.DataChanged({})
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain(ARCHIVES[0].name)
+    })
   })
 
   it('renders the page title', async () => {
@@ -224,24 +234,69 @@ describe('ArchivesView', () => {
     expect(wrapper.text()).toContain('No repositories configured yet.')
   })
 
-  it('shows archive list with archive names including demo tags after repo selection', async () => {
+  it('lists the repository archives after repo selection', async () => {
     mockReposAndArchives()
 
     const wrapper = mountView()
     await flushPromises()
     await pickFirstRepo(wrapper)
 
-    expect(wrapper.find('.stub-datatable').exists()).toBe(true)
+    expect(wrapper.findAll('.archive-name').map((n) => n.text())).toEqual([
+      ARCHIVES[1].name,
+      ARCHIVES[0].name,
+    ])
   })
 
-  it('shows "No archives found." empty state when archives list is empty', async () => {
+  it('shows an empty state when the repository holds no archives', async () => {
     mockReposAndArchives([])
 
     const wrapper = mountView()
     await flushPromises()
     await pickFirstRepo(wrapper)
 
-    expect(wrapper.text()).toContain('No archives found.')
+    expect(wrapper.find('.empty-state').text()).toContain('No archives')
+  })
+
+  it('refetches through the refresh action, as a visible load', async () => {
+    // The handler is wrapped (`loadArchives()`) rather than passed by
+    // reference: `loadArchives` takes a `silent` flag, and handing it straight
+    // to @click would pass the MouseEvent as that flag and make every manual
+    // refresh a silent one.
+    mockReposAndArchives()
+    const wrapper = mountView()
+    await flushPromises()
+    await pickFirstRepo(wrapper)
+
+    const archiveCalls = (): number =>
+      mockGet.mock.calls.filter((c) => String(c[0]).includes('/archives')).length
+    const before = archiveCalls()
+
+    const refresh = wrapper.find('button[aria-label="Refresh archives"]')
+    expect(refresh.exists()).toBe(true)
+    await refresh.trigger('click')
+    await flushPromises()
+
+    expect(archiveCalls()).toBe(before + 1)
+    // Still rendering the list rather than having blanked it to an error.
+    expect(wrapper.findAll('.archive-name')).toHaveLength(ARCHIVES.length)
+  })
+
+  it('surfaces a failed archive load instead of an empty list', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/repos') return Promise.resolve({ data: REPOS })
+      // A real Error, not an object shaped like an axios failure: only a
+      // genuine AxiosError carries a server message through extractError, and
+      // a plain literal would resolve to "Unknown error" and assert nothing.
+      if (url.includes('/archives')) return Promise.reject(new Error('Repository is locked'))
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+    await pickFirstRepo(wrapper)
+
+    expect(wrapper.find('.error-banner').text()).toBe('Repository is locked')
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
   })
 
   it('fetches archives when repo is selected', async () => {
@@ -290,30 +345,30 @@ describe('ArchivesView', () => {
 
     await diff.trigger('click')
     expect(wrapper.find('.stub-diff').text()).toBe('open')
+
+    // Both dialogs own their dismissal and report it back up, so the view has
+    // to take the close event or the button silently stops re-opening them.
+    await wrapper.find('.stub-restore-close').trigger('click')
+    await wrapper.find('.stub-diff-close').trigger('click')
+    expect(wrapper.find('.stub-restore').text()).toBe('closed')
+    expect(wrapper.find('.stub-diff').text()).toBe('closed')
   })
 
-  it('filters every column through the shared input control', async () => {
+  it('narrows the list through the shared search control', async () => {
+    // Four per-column filters became one box matching name and host, which is
+    // the control every archive screen now carries.
     mockReposAndArchives()
     const wrapper = mountView()
     await flushPromises()
     await pickFirstRepo(wrapper)
 
-    // Name, date, host and size each get a row filter, and each one is the
-    // shared `.input` control rather than a bare `<input>` - `.filter-input`
-    // only sizes it.
-    const filters = wrapper.findAll('.stub-column input.filter-input')
-    expect(filters).toHaveLength(4)
-    for (const filter of filters) {
-      expect(filter.classes()).toContain('input')
-      expect(filter.attributes('placeholder')).toBe('Filter...')
-      await filter.setValue('web-server')
-      expect((filter.element as HTMLInputElement).value).toBe('web-server')
-    }
+    const search = wrapper.find('.archive-controls input')
+    expect(search.classes()).toContain('input')
 
-    // The filter state belongs to the table, which writes it back through
-    // `v-model:filters`. The rows it is filtering must survive that.
-    await wrapper.find('.stub-filter-change').trigger('click')
-    expect(wrapper.findAll('.stub-row')).toHaveLength(ARCHIVES.length)
+    await search.setValue('db-primary')
+    await flushPromises()
+
+    expect(wrapper.findAll('.archive-name').map((n) => n.text())).toEqual([ARCHIVES[1].name])
   })
 
   it('shows an error message when repo loading fails', async () => {
@@ -355,8 +410,9 @@ describe('ArchivesView', () => {
       await flushPromises()
       await pickFirstRepo(wrapper)
 
-      await wrapper.findAll('.stub-row')[1].trigger('click')
+      await wrapper.findAll('.archive-row-select')[0].trigger('click')
 
+      // Grouped by host and the groups sort by hostname, so db-primary leads.
       expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).toEqual(
         ARCHIVES[1],
       )
@@ -366,7 +422,7 @@ describe('ArchivesView', () => {
       const wrapper = mountView()
       await flushPromises()
       await pickFirstRepo(wrapper)
-      await wrapper.findAll('.stub-row')[0].trigger('click')
+      await wrapper.findAll('.archive-row-select')[0].trigger('click')
       expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).not.toBe(null)
 
       await wrapper.find('select').trigger('change')

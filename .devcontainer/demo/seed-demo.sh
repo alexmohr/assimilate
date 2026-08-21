@@ -350,6 +350,10 @@ api POST "/api/schedules" "{
     \"backup_sources\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]
 }" > /dev/null
 
+# The multi-host schedule. db-server-01 and media-store-01 each write two
+# archives into server-daily (see start-agent.sh), so this schedule's Backups
+# tab has archives from more than one host - which is what makes the archive
+# selector's host grouping, and its per-host totals, visible there.
 api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
     \"repo_id\": $REPO_DAILY_ID,

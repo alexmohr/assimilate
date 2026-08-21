@@ -1200,12 +1200,126 @@ describe('ScheduleDetailView - Backups tab', () => {
 
     await goToBackups(wrapper)
 
-    const archiveRow = wrapper.find('.archive-row')
-    await archiveRow.trigger('click')
+    await wrapper.find('.archive-row-select').trigger('click')
     await flushPromises()
 
-    expect(archiveRow.classes()).toContain('selected')
+    expect(wrapper.find('.archive-row').classes()).toContain('selected')
     expect(wrapper.find('.archive-file-browser-stub').exists()).toBe(true)
+  })
+
+  it('releases a row whose borg delete failed, once the repo queue goes idle', async () => {
+    // Deleting is new on this tab. Without the repo-idle event wired through,
+    // a delete that borg accepted and then failed left the archive in the list
+    // with its row stuck on "Deleting" until a full page reload: the archive is
+    // still present, so neither ArchiveDeleted nor the DataChanged prune ever
+    // covers it.
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        deduplicated_size: 200,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    mockApiClient.delete.mockResolvedValue({
+      data: { success: true, archive_name: 'test-archive-2026-06-01' },
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await goToBackups(wrapper)
+
+    await wrapper.find('button[title="Delete archive"]').trigger('click')
+    await flushPromises()
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '.modal-dialog button.btn-danger',
+    )
+    expect(confirm).not.toBeNull()
+    confirm!.click()
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+    // borg failed, so the archive is still listed - but the repository's
+    // operation queue has drained, which means the delete is over either way.
+    wsHandlers['RepoOpChanged']?.({ repo_id: 20, op: null })
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+  })
+
+  it('refetches the schedule reports when the server reports data changed', async () => {
+    const wrapper = await createBackupsWrapper([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    await goToBackups(wrapper)
+
+    const before = mockApiClient.get.mock.calls.filter((c) =>
+      String(c[0]).includes('/reports'),
+    ).length
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    const after = mockApiClient.get.mock.calls.filter((c) =>
+      String(c[0]).includes('/reports'),
+    ).length
+    expect(after).toBe(before + 1)
+  })
+
+  it('releases the row the server names as finished deleting', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        deduplicated_size: 200,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    mockApiClient.delete.mockResolvedValue({
+      data: { success: true, archive_name: 'test-archive-2026-06-01' },
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await goToBackups(wrapper)
+
+    await wrapper.find('button[title="Delete archive"]').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('.modal-dialog button.btn-danger')!.click()
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+    // The server names exactly which archive finished, so the marker goes
+    // without waiting for a refetch to notice the row is gone.
+    wsHandlers['ArchiveDeleted']?.({ repo_id: 20, archive_name: 'test-archive-2026-06-01' })
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
   })
 
   it('hides save bar on Backups tab', async () => {

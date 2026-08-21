@@ -6,7 +6,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { apiClient } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -21,6 +23,7 @@ import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
 import ScheduleSettingsTab from '../components/ScheduleSettingsTab.vue'
 import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
+import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -54,6 +57,8 @@ const router = useRouter()
 const NEW_SCHEDULE_ROUTE_ID = 'new'
 
 const isCreate = computed(() => props.id === NEW_SCHEDULE_ROUTE_ID)
+
+const { isAdmin } = storeToRefs(useAuthStore())
 
 const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
@@ -121,6 +126,8 @@ const lastSuccessfulReport = computed<ReportRow | null>(
 )
 
 const selectedBackupReport = ref<ReportRow | null>(null)
+
+const backupsTab = ref<InstanceType<typeof ScheduleBackupsTab> | null>(null)
 
 const estimatedRemainingSecs = computed<number | null>(() => {
   const ref = lastSuccessfulReport.value
@@ -583,10 +590,15 @@ onMessage('BackupLog', (payload) => {
   }
 })
 
-onMessage('DataChanged', () => {
-  if (!isCreate.value) {
-    loadReports().catch(() => undefined)
-  }
+// The Backups tab browses this schedule's archives and, for an admin, deletes
+// them, so it needs the same three events the repository's Archives tab does -
+// the repo-idle one above all, since it is what releases a row whose borg
+// delete failed and left the archive in place. The reload here doubles as the
+// tab's own DataChanged refresh, which is why there is no separate one.
+useArchiveDeletionEvents({
+  target: () => backupsTab.value,
+  repoId: () => schedule.value?.repo_id ?? null,
+  reload: () => (isCreate.value ? Promise.resolve() : loadReports()),
 })
 
 watch(
@@ -687,12 +699,16 @@ watch(activeTab, (tab) => {
 
         <ScheduleBackupsTab
           v-else-if="activeTab === 'backups'"
+          ref="backupsTab"
           v-model:selected="selectedBackupReport"
           :reports="reports"
           :loading="reportsLoading"
           :error="reportsError"
           :agents="agentMap"
           :repo-id="schedule?.repo_id ?? null"
+          :repo-name="repoName ?? ''"
+          :is-admin="isAdmin"
+          :reload="loadReports"
         />
 
         <ScheduleSettingsTab

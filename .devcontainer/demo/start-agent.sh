@@ -64,6 +64,25 @@ case "$AGENT_HOST" in
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
+        # A couple of archives into the shared server-daily repo too. Without
+        # archives from more than one host on a single schedule there is
+        # nothing for the Backups tab's host grouping to group.
+        #
+        # Hours rather than days: the multi-host schedule runs daily, so
+        # day-old archives would leave it permanently Overdue and add an
+        # attention item the demo never had. The newest must stay inside one
+        # cadence.
+        for i in 6 30; do
+            ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
+            ARCHIVE_DIR=$(mktemp -d)
+            mkdir -p "$ARCHIVE_DIR/etc/postgresql"
+            echo "shared_buffers = 256MB" > "$ARCHIVE_DIR/etc/postgresql/postgresql.conf"
+            dd if=/dev/urandom of="$ARCHIVE_DIR/etc/postgresql/pg_hba.bin" bs=1024 count=$((40 + i * 10)) 2>/dev/null
+            borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST/backup/repos/server-daily::db-server-01-backup-$ARCHIVE_DATE" \
+                "$ARCHIVE_DIR"
+            rm -rf "$ARCHIVE_DIR"
+        done
         ;;
     media-store-01)
         for i in $(seq 1 6); do
@@ -74,6 +93,19 @@ case "$AGENT_HOST" in
             dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
                 "ssh://borg@$REPO_HOST/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" \
+                "$ARCHIVE_DIR"
+            rm -rf "$ARCHIVE_DIR"
+        done
+        # The second host on the shared server-daily schedule - see the
+        # db-server-01 branch above.
+        for i in 5 29; do
+            ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
+            ARCHIVE_DIR=$(mktemp -d)
+            mkdir -p "$ARCHIVE_DIR/etc/samba"
+            echo "[global] workgroup = DEMO" > "$ARCHIVE_DIR/etc/samba/smb.conf"
+            dd if=/dev/urandom of="$ARCHIVE_DIR/etc/samba/shares.bin" bs=1024 count=$((60 + i * 10)) 2>/dev/null
+            borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST/backup/repos/server-daily::media-store-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done

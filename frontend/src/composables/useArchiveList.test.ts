@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { ref, type Ref } from 'vue'
-import { useArchiveList, ARCHIVE_SORT_OPTIONS } from './useArchiveList'
+import { useArchiveList, ARCHIVE_SORT_OPTIONS, GROUP_COLLAPSE_THRESHOLD } from './useArchiveList'
 import type { ArchiveEntry } from './useArchiveBrowser'
 
 function archive(overrides: Partial<ArchiveEntry>): ArchiveEntry {
@@ -139,15 +139,32 @@ describe('useArchiveList', () => {
     expect(l.unmatchedHostnames.value).toEqual(['db-01'])
   })
 
-  it('starts every group collapsed and toggles them one at a time', () => {
+  it('starts a short host list open and toggles groups one at a time', () => {
+    // Two hosts: collapsing by default here would hide the whole list behind
+    // a click for no benefit.
     const l = list()
 
+    expect(l.isGroupCollapsed('web-01')).toBe(false)
+    l.toggleGroup('web-01')
     expect(l.isGroupCollapsed('web-01')).toBe(true)
+    expect(l.isGroupCollapsed('db-01')).toBe(false)
     l.toggleGroup('web-01')
     expect(l.isGroupCollapsed('web-01')).toBe(false)
-    expect(l.isGroupCollapsed('db-01')).toBe(true)
-    l.toggleGroup('web-01')
-    expect(l.isGroupCollapsed('web-01')).toBe(true)
+  })
+
+  it('starts every group collapsed once there are more hosts than the threshold', () => {
+    const many = ref(
+      Array.from({ length: GROUP_COLLAPSE_THRESHOLD + 1 }, (_, i) =>
+        archive({ name: `host-${i}-jan`, hostname: `host-${i}`, agent_hostname: `host-${i}` }),
+      ),
+    )
+    const l = useArchiveList(many)
+
+    expect(l.grouped.value.length).toBe(GROUP_COLLAPSE_THRESHOLD + 1)
+    expect(l.isGroupCollapsed('host-0')).toBe(true)
+    l.toggleGroup('host-0')
+    expect(l.isGroupCollapsed('host-0')).toBe(false)
+    expect(l.isGroupCollapsed('host-1')).toBe(true)
   })
 
   it('clears the filter and collapse state on reset, keeping the chosen sort', () => {
@@ -155,11 +172,12 @@ describe('useArchiveList', () => {
     l.filter.value = 'delta'
     l.sortMode.value = 'size-asc'
     l.toggleGroup('web-01')
+    expect(l.isGroupCollapsed('web-01')).toBe(true)
 
     l.reset()
 
     expect(l.filter.value).toBe('')
-    expect(l.isGroupCollapsed('web-01')).toBe(true)
+    expect(l.isGroupCollapsed('web-01')).toBe(false)
     // The sort is a user preference, not per-repository state.
     expect(l.sortMode.value).toBe('size-asc')
   })

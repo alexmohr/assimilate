@@ -14,6 +14,7 @@ async function gotoBackupsTab(page: Awaited<ReturnType<typeof test.info>['page']
 async function clickFirstArchiveRow(
   page: Awaited<ReturnType<typeof test.info>['page']>,
 ): Promise<boolean> {
+  // The row, not the focus-only button inside it, is what takes the pointer.
   const archiveRow = page.locator('.archive-row').first()
   const rowVisible = await archiveRow.isVisible({ timeout: 5_000 }).catch(() => false)
   if (!rowVisible) return false
@@ -54,7 +55,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     // Either the archives panel title is visible (with data)
     // or the empty state message is shown (no archives yet)
     const panelTitle = page.locator('.panel-title').filter({ hasText: 'Archives' })
-    const emptyState = page.locator('.state-msg').filter({ hasText: 'No backup archives' })
+    const emptyState = page.locator('.empty-state').filter({ hasText: 'No backup archives' })
     await expect(panelTitle.or(emptyState).first()).toBeVisible({ timeout: 10_000 })
   })
 
@@ -100,6 +101,53 @@ test.describe('Schedule backups tab - archive browser', () => {
     if (buttonVisible) {
       await expect(downloadButton).toBeVisible()
     }
+  })
+
+  // The schedule tab used to render its own four-column table: no grouping, no
+  // search, no delete. It now renders the same ArchiveExplorer as the
+  // repository and Archives screens.
+  test('backups tab renders the shared archive selector controls', async ({ page }) => {
+    await gotoBackupsTab(page)
+
+    if (
+      !(await page
+        .locator('.archive-row')
+        .first()
+        .isVisible()
+        .catch(() => false))
+    ) {
+      test.skip()
+      return
+    }
+
+    await expect(page.locator('.archive-controls input')).toBeVisible()
+    await expect(page.locator('.archive-sort-select')).toBeVisible()
+    await expect(page.locator('.archive-group-toggle')).toBeVisible()
+    const groupHost = page.locator('.archive-group .group-hostname').first()
+    await expect(groupHost).toBeVisible()
+    await expect(groupHost).toHaveAttribute('href', /^\/agents\/.+/)
+  })
+
+  test('an admin can reach archive deletion from the backups tab', async ({ page }) => {
+    await gotoBackupsTab(page)
+
+    if (
+      !(await page
+        .locator('.archive-row')
+        .first()
+        .isVisible()
+        .catch(() => false))
+    ) {
+      test.skip()
+      return
+    }
+
+    // Open the confirmation and cancel it: the point is that the control is
+    // there and wired up, not that this run deletes a seeded archive.
+    await page.locator('.archive-row button[title="Delete archive"]').first().click()
+    await expect(page.locator('.archive-delete-message')).toBeVisible()
+    await page.locator('.modal-footer').getByRole('button', { name: 'Cancel' }).click()
+    await expect(page.locator('.archive-delete-message')).not.toBeVisible()
   })
 
   test('breadcrumb navigation updates when navigating directories', async ({ page }) => {

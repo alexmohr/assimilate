@@ -213,10 +213,12 @@ The dry-run result shows:
 
 ## Browsing Archives from a Schedule
 
-Each backup schedule's detail view includes a **Backups** tab that shows every archive created by that schedule. From this tab you can:
+Each backup schedule's detail view includes a **Backups** tab that shows every archive created by that schedule. It renders the same archive selector and file browser as the repository's **Archives** tab, so from this tab you can:
 
-1. Select an archive from the list to inspect its contents in the file browser panel on the right.
-2. Browse directories and download individual files — see [Archive Browsing & Extraction](archives.md) for the full file browser reference.
+1. Search, sort and group the schedule's archives by host — useful when the schedule targets several machines.
+2. Select an archive to inspect its contents in the file browser panel on the right.
+3. Browse directories and download individual files — see [Archive Browsing & Extraction](archives.md) for the full file browser reference.
+4. Delete an archive, if you are an administrator.
 
 The Backups tab is available only for schedules of type **Backup**.
 

@@ -8,28 +8,27 @@ Navigate to **Repos** in the sidebar, select a repository, then open the **Archi
 
 You can also browse archives per schedule: open a schedule's detail view and switch to the **Backups** tab (see [Scheduling](scheduling.md#browsing-archives-from-a-schedule)). This shows only the archives created by that specific schedule, with the same file browser panel for browsing and extraction.
 
-Use the list mode selector to switch between **Host groups** and flat archive ordering by **date**, **original size**, or **deduplicated size**, each in ascending or descending order.
+All three places — the repository's **Archives** tab, a schedule's **Backups** tab, and the standalone **Archives** page — use the same archive selector and file browser, so the controls, the row layout and the available actions are identical wherever you reach them from.
 
-In **Host groups** mode the groups start **collapsed**, showing one row per host with its archive count. Click a group header to expand it and list that host's archives. This keeps the list readable on repositories that hold archives from many hosts.
+Above the list are three controls:
 
-The table supports **sorting** (click any column header) and **inline filtering** (type in the filter row below headers to narrow results).
+| Control | What it does |
+|---------|--------------|
+| Search | Narrows the list to archives whose **name or host** contains what you type |
+| Sort | Orders by **date**, **original size**, or **deduplicated size**, ascending or descending |
+| By host / Flat | Groups the archives under one header per host, or lists them flat |
 
-Each row displays:
+In **By host** mode each group header carries the hostname, the number of archives it holds and their **total original size**, so a collapsed group still tells you something. The hostname itself is a link to that host's [agent page](agents.md); clicking anywhere else on the header collapses or expands the group. Groups start open; on a repository holding archives from more than three hosts they start collapsed instead, and you click a header to expand one.
 
-| Column | Description |
-|--------|-------------|
-| Name | Archive name (timestamp-based, see [Archive Naming](#archive-naming)) |
-| Date | When the backup started |
-| Host | Agent machine that created the archive |
-| Size | Original (uncompressed) size of the archive |
+Each row shows the archive name and its original size on the first line, then the host, the backup's start time and the deduplicated size underneath. The host is a link to that host's [agent page](agents.md), so you can jump to it without selecting the archive first. A host that borg recorded but no agent claims is marked with an amber stripe — see [Re-scanning Unmatched Archives](repositories.md#re-scanning-unmatched-archives).
 
-Click an archive row to open its detail view.
+Click a row to open the archive in the file browser on the right. Administrators also get a **delete** button on every row; it is always visible, not revealed on hover.
 
 ![Archives](assets/screenshots/archives.png)
 
 ### Viewing a Single Archive
 
-Links that point at one specific archive (for example from a host's backup history) open the **Archives** tab with an `?archive=<name>` query parameter. In this mode the page shows only a **Showing only `<name>`** banner and the file browser for that archive — the archive list, filter box, sort selector, and group toggle are hidden, since none of them apply to a single result.
+Links that point at one specific archive (for example from a host's backup history) open the **Archives** tab with an `?archive=<name>` query parameter. In this mode the page shows only a **Showing only `<name>`** banner and the file browser for that archive — the archive list, search box, sort selector, and group toggle are hidden, since none of them apply to a single result.
 
 Click **Show all archives** in the banner to clear the filter and return to the full list.
 
@@ -50,11 +49,13 @@ The deduplicated size is typically much smaller than the original size because b
 
 ## Browsing Archive Contents
 
-Archives can be browsed from two places in the UI:
+Archives can be browsed from three places in the UI, all of them the same component:
 
 **Repositories page:** From the archive list on a repository detail view, click an archive to open the file tree browser in the right panel.
 
-**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view.
+**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view. Because it is the same selector, a schedule that targets several hosts groups its archives by host here too, and administrators can delete an archive from this tab.
+
+**Archives page:** The standalone **Archives** page adds a repository picker, the restore wizard and the archive diff above the same two panes.
 
 ![Archive Browser](assets/screenshots/archive-browse.png)
 
@@ -68,7 +69,9 @@ The browser starts at the repository root (`/`). Each entry shows:
 
 Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
 
-Each row has **Download** and, for administrators, **Restore to host** actions. Restore writes the selected file or directory back to its original path on the archive's host. The root `.` row downloads, restores, or deletes the whole archive.
+The browser header names the archive and carries the actions that apply to the whole of it: **Download**, and for administrators **Restore** and **Delete**. Under it, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
+
+Each table row has its own **Download** and, for administrators, **Restore to host** action. Restore writes the selected file or directory back to its original path on the archive's host. The `.` row is the directory you are currently looking at, so downloading or restoring it takes that whole subtree.
 
 New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
@@ -85,9 +88,9 @@ To download a file from an archive:
 2. Click the **Download** icon next to the file.
 3. The server streams the file directly from borg and your browser saves it with the original filename.
 
-To download the whole archive as `tar.lz4`, click **Download** on the root `.` row. To restore a file, directory, or the whole archive in place, click **Restore to host** on the corresponding row and confirm the operation.
+To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore a file or directory in place, click **Restore to host** on its row; to restore the whole archive, use **Restore** in the header. Both ask for confirmation first.
 
-Administrators can also click **Delete whole archive** on the root `.` row to permanently remove the archive from the repository. This deletes the borg archive itself, the imported report, and any archive tags.
+Administrators can permanently remove an archive from either **Delete** in the browser header or the delete button on its row in the archive list. Both open the same confirmation and delete the borg archive itself, the imported report, and any archive tags.
 
 The `borg delete` runs in the background on the server so the UI is never blocked while it works. The repository detail page shows a **Deleting archive** indicator while the operation is in progress, and the archive disappears from the list once borg finishes. If the deletion fails, the archive remains in the list and a `archive_delete_failed` system event records the reason.
 

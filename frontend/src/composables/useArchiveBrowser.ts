@@ -87,6 +87,27 @@ interface UseArchiveBrowserReturn {
   browserEntries: ComputedRef<DisplayEntry[]>
 }
 
+/**
+ * Ask the server to delete one archive.
+ *
+ * Standalone rather than a method on the composable: `ArchiveExplorer` owns
+ * deletion for every screen that browses archives, and instantiating a whole
+ * second browser (with its own polling timer and archive list) just to reach
+ * one DELETE would be the wrong trade.
+ *
+ * Deletion runs in the background on the server - borg delete can be slow - so
+ * a resolved promise means "queued", not "gone". The archive leaves the list
+ * when an `ArchiveDeleted` event confirms it.
+ */
+export async function requestArchiveDelete(repoId: number, archiveName: string): Promise<void> {
+  const response = await apiClient.delete<{ success: boolean; archive_name: string }>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}`,
+  )
+  if (!response.data.success) {
+    throw new Error('Archive delete failed')
+  }
+}
+
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
   const archives = ref<ArchiveEntry[]>([])
   const archivesLoading = ref(false)
@@ -393,13 +414,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
   }
 
   async function deleteArchiveByName(archive: ArchiveEntry): Promise<boolean> {
-    const response = await apiClient.delete<{ success: boolean; archive_name: string }>(
-      `/repos/${repoId.value}/archives/${encodeURIComponent(archive.name)}`,
-    )
-
-    if (!response.data.success) {
-      throw new Error('Archive delete failed')
-    }
+    await requestArchiveDelete(repoId.value, archive.name)
 
     // Deletion runs in the background on the server (borg delete can be slow).
     // The archive is removed from the list once a DataChanged event confirms the

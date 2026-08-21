@@ -40,8 +40,8 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('ScheduleBackupsTab', () => {
-  it('shows a spinner while loading', () => {
-    expect(mount({ loading: true }).find('.loading-row').exists()).toBe(true)
+  it('shows placeholder rows while loading', () => {
+    expect(mount({ loading: true }).find('.archive-loading').exists()).toBe(true)
   })
 
   it('shows the error instead of the browser', () => {
@@ -56,7 +56,7 @@ describe('ScheduleBackupsTab', () => {
         report({ id: 3, archive_name: 'failed-run', status: 'failed' }),
       ],
     })
-    const names = wrapper.findAll('.cell-archive-name').map((c) => c.text())
+    const names = wrapper.findAll('.archive-name').map((c) => c.text())
     expect(names).toEqual(['kept'])
   })
 
@@ -64,7 +64,7 @@ describe('ScheduleBackupsTab', () => {
     const wrapper = mount({
       reports: [report({ id: 2, archive_name: 'partial', status: 'warning' })],
     })
-    expect(wrapper.findAll('.cell-archive-name').map((c) => c.text())).toEqual(['partial'])
+    expect(wrapper.findAll('.archive-name').map((c) => c.text())).toEqual(['partial'])
   })
 
   it('orders the archives newest first', () => {
@@ -75,24 +75,44 @@ describe('ScheduleBackupsTab', () => {
         report({ id: 3, archive_name: 'feb', started_at: '2026-02-01T00:00:00Z' }),
       ],
     })
-    expect(wrapper.findAll('.cell-archive-name').map((c) => c.text())).toEqual([
-      'mar',
-      'feb',
-      'jan',
-    ])
+    expect(wrapper.findAll('.archive-name').map((c) => c.text())).toEqual(['mar', 'feb', 'jan'])
   })
 
   it('says so when the schedule has produced no archives', () => {
     const wrapper = mount({ reports: [report({ archive_name: null })] })
-    expect(wrapper.find('.state-msg').text()).toContain('No backup archives found')
+    expect(wrapper.find('.empty-state').text()).toContain('No backup archives found')
   })
 
   it('reports the clicked archive up to the view, which owns the selection', async () => {
     const wrapper = mount()
-    await wrapper.find('.archive-row').trigger('click')
+    await wrapper.find('.archive-row-select').trigger('click')
     const updates = wrapper.emitted('update:selected')
     expect(updates).toHaveLength(1)
     expect((updates![0][0] as ReportRow).archive_name).toBe('web-01-2026-01-01')
+  })
+
+  it('offers deletion to an admin and withholds it from everyone else', () => {
+    // The schedule's own table had no delete at all; it now shares the
+    // repository screen's control, gated the same way.
+    expect(mount({ isAdmin: true }).find('.archive-row-delete').exists()).toBe(true)
+    expect(mount({ isAdmin: false }).find('.archive-row-delete').exists()).toBe(false)
+  })
+
+  it('groups the archives by host, like every other archive screen', () => {
+    const wrapper = mount({
+      reports: [
+        report({ id: 1, archive_name: 'web', agent_id: 10 }),
+        report({ id: 2, archive_name: 'db', agent_id: 11, hostname: 'db-01' }),
+      ],
+    })
+    expect(wrapper.findAll('.group-hostname').map((g) => g.text())).toEqual(['db-01', 'web-01'])
+  })
+
+  it('still renders for a caller that passes no reload', () => {
+    // `reload` is optional; the tab falls back to a resolved promise so the
+    // explorer's post-delete refresh has something to await either way.
+    const wrapper = mount({ reload: undefined })
+    expect(wrapper.find('.archive-row').exists()).toBe(true)
   })
 
   it('marks the selected row', () => {

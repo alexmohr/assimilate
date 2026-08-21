@@ -9,6 +9,7 @@ import { Trash2 } from '@lucide/vue'
 import BaseHostLink from './BaseHostLink.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import { formatBytes, formatDate } from '../utils/format'
+import { resolveArchiveHost } from '../utils/archiveHost'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 
 /**
@@ -44,8 +45,7 @@ const emit = defineEmits<{ select: []; delete: [] }>()
 
 const isUnmatched = computed(() => props.archive.matched !== true)
 
-/** The agent's hostname where borg's own metadata could be attributed to one. */
-const hostLabel = computed(() => props.archive.agent_hostname ?? props.archive.hostname)
+const hostLabel = computed(() => resolveArchiveHost(props.archive))
 </script>
 
 <template>

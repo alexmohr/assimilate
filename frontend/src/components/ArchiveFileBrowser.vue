@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, watch, onBeforeUnmount } from 'vue'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
+import { resolveArchiveHost } from '../utils/archiveHost'
 import { useToast } from '../composables/useToast'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -110,11 +111,9 @@ function handleDeleteWholeArchive(): void {
  */
 const ROOT_ENTRY: ContentEntry = { type: 'd', path: '', size: 0, mtime: '', mode: '' }
 
-const archiveHost = computed(() => {
-  const a = props.archive
-  if (!a) return null
-  return a.matched === true ? (a.agent_hostname ?? a.hostname) : a.hostname
-})
+const archiveHost = computed(() =>
+  props.archive === null ? null : resolveArchiveHost(props.archive),
+)
 
 /** The parent of the directory being shown, or null at the archive root. */
 const parentCrumb = computed(() => {

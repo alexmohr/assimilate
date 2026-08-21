@@ -50,6 +50,18 @@ describe('ArchiveSelectorRow', () => {
     expect(wrapper.find('.archive-host').text()).toBe('web-01.internal')
   })
 
+  it('shows what borg recorded, not the agent an unmatched archive resembles', () => {
+    // An unmatched archive's `agent_hostname` is whichever agent the name
+    // happened to look like. Trusting it would put the warning stripe on the
+    // row and a link to a specific wrong machine beside it, and would disagree
+    // with the group header, which keys unmatched archives by `hostname`.
+    const wrapper = row({
+      archive: archive({ matched: false, agent_hostname: 'web-01', hostname: 'legacy-nas' }),
+    })
+    expect(wrapper.find('.archive-host').text()).toBe('legacy-nas')
+    expect(wrapper.findComponent(RouterLinkStub).props('to')).toBe('/agents/legacy-nas')
+  })
+
   it('marks an archive no agent claims, in the flat list as well as grouped', () => {
     const wrapper = row({
       archive: archive({ matched: false, agent_hostname: null, hostname: 'legacy-nas' }),

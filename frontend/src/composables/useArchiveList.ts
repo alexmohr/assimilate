@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { resolveArchiveHost } from '../utils/archiveHost'
 import type { ArchiveEntry } from './useArchiveBrowser'
 
 export type ArchiveSortMode =
@@ -112,7 +113,7 @@ export function useArchiveList(
       // An unmatched archive is grouped under the hostname borg recorded,
       // since there is no agent to attribute it to yet.
       const isMatched = archive.matched === true
-      const key = isMatched ? (archive.agent_hostname ?? archive.hostname) : archive.hostname
+      const key = resolveArchiveHost(archive)
       if (!groups.has(key)) {
         groups.set(key, {
           hostname: key,

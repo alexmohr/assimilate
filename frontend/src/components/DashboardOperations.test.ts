@@ -4,7 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { renderWithPlugins } from '../test-utils'
-import type { DashboardFinding, DashboardFindingKind } from '../types/dashboard'
+import type { FindingKind } from '../types/generated'
+import type { DashboardFinding } from '../types/dashboard'
 import NeedsAttention from './NeedsAttention.vue'
 import ProtectionCoverage from './ProtectionCoverage.vue'
 import RepositoryCapacity from './RepositoryCapacity.vue'
@@ -22,7 +23,7 @@ vi.mock('../api/client', () => ({
 
 import { apiClient } from '../api/client'
 
-const findingKinds: DashboardFindingKind[] = [
+const findingKinds: FindingKind[] = [
   'backup_failed',
   'backup_warning',
   'schedule_target_overdue',
@@ -35,7 +36,7 @@ const findingKinds: DashboardFindingKind[] = [
   'repository_import_failed',
 ]
 
-function finding(kind: DashboardFindingKind, index: number): DashboardFinding {
+function finding(kind: FindingKind, index: number): DashboardFinding {
   return {
     id: `finding-${index}`,
     kind,

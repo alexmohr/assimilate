@@ -24,6 +24,11 @@ export function gbToBytes(gb: number): number {
   return Math.round(gb * BYTES_PER_GB)
 }
 
+/** `null` thresholds mean no quota is configured yet, so they populate an edit form as 0. */
+export function bytesToGbOrZero(bytes: number | null): number {
+  return bytes === null ? 0 : bytesToGb(bytes)
+}
+
 /** Minimal shape shared by repo- and server-level quota thresholds. */
 export interface QuotaThresholds {
   warn_bytes: number | null

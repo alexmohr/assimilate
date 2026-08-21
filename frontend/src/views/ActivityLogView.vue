@@ -12,6 +12,14 @@ import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { apiClient } from '../api/client'
+import {
+  getActivity,
+  getSystemEvents,
+  type ActivityEntry,
+  type SystemEventEntry,
+} from '../api/stats'
+import { listAgents, listAgentReports } from '../api/agents'
+import { listSchedules } from '../api/schedules'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { formatDuration, formatBytes, formatDateShort, formatEventType } from '../utils/format'
@@ -21,30 +29,9 @@ import type { ReportRow } from '../types/report'
 import { backupStatusBadgeClass, badgeClass, logLevelTone } from '../utils/badge'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 
-interface ActivityRow {
-  id: number
-  hostname: string
-  target_name: string
-  started_at: string
-  finished_at: string
-  status: string
-  duration_secs: number
-  schedule_id: number | null
-  schedule_name: string | null
-  run_id: string | null
-}
-
 interface ScheduleOption {
   id: number
   name: string
-}
-
-interface SystemEvent {
-  id: number
-  created_at: string
-  event_type: string
-  hostname: string | null
-  message: string
 }
 
 interface Agent {
@@ -98,8 +85,8 @@ function classifyEventType(eventType: string): EventTypeClass {
   }
 }
 
-const rows = ref<ActivityRow[]>([])
-const systemEvents = ref<SystemEvent[]>([])
+const rows = ref<ActivityEntry[]>([])
+const systemEvents = ref<SystemEventEntry[]>([])
 const agents = ref<Agent[]>([])
 const schedules = ref<ScheduleOption[]>([])
 const loading = ref(false)
@@ -288,13 +275,11 @@ watch(filterRunId, () => {
 })
 
 async function fetchMachines(): Promise<void> {
-  const res = await apiClient.get<Agent[]>('/agents')
-  agents.value = res.data
+  agents.value = await listAgents()
 }
 
 async function fetchSchedules(): Promise<void> {
-  const res = await apiClient.get<ScheduleOption[]>('/schedules')
-  schedules.value = res.data
+  schedules.value = await listSchedules()
 }
 
 async function fetchLogs(): Promise<void> {
@@ -335,20 +320,15 @@ async function fetchData(reset: boolean, preserveExpanded = false): Promise<void
     const cat = activeCategory.value
 
     if (cat === 'backup' || cat === 'all') {
-      const activityParams: Record<string, string | number> = { limit }
-      if (filterScheduleId.value !== null) activityParams.schedule_id = filterScheduleId.value
-      if (filterRunId.value !== null) activityParams.run_id = filterRunId.value
-      const res = await apiClient.get<ActivityRow[]>('/stats/activity', {
-        params: activityParams,
+      rows.value = await getActivity({
+        limit,
+        schedule_id: filterScheduleId.value ?? undefined,
+        run_id: filterRunId.value ?? undefined,
       })
-      rows.value = res.data
     }
 
     if (cat === 'system' || cat === 'all') {
-      const res = await apiClient.get<SystemEvent[]>('/stats/system-events', {
-        params: { limit },
-      })
-      systemEvents.value = res.data
+      systemEvents.value = await getSystemEvents(limit)
     }
 
     const totalFetched =
@@ -369,11 +349,11 @@ async function loadMore(): Promise<void> {
   await fetchData(false)
 }
 
-function toggleSystemRow(event: SystemEvent): void {
+function toggleSystemRow(event: SystemEventEntry): void {
   expandedSystemId.value = expandedSystemId.value === event.id ? null : event.id
 }
 
-async function toggleRow(row: ActivityRow): Promise<void> {
+async function toggleRow(row: ActivityEntry): Promise<void> {
   if (expandedId.value === row.id) {
     expandedId.value = null
     expandedDetail.value = null
@@ -383,13 +363,11 @@ async function toggleRow(row: ActivityRow): Promise<void> {
   expandedDetail.value = null
   expandedLoading.value = true
   try {
-    const res = await apiClient.get<ReportRow[]>(`/agents/${row.hostname}/reports`, {
-      params: { limit: 100, target: row.target_name },
-    })
-    const match = res.data.find(
+    const res = await listAgentReports(row.hostname, { limit: 100, target: row.target_name })
+    const match = res.find(
       (r) => r.started_at === row.started_at || r.duration_secs === row.duration_secs,
     )
-    expandedDetail.value = match ?? res.data[0] ?? null
+    expandedDetail.value = match ?? res[0] ?? null
   } finally {
     expandedLoading.value = false
   }
@@ -421,8 +399,8 @@ interface UnifiedRow {
   id: number
   timestamp: string
   hostname: string | null
-  backup?: ActivityRow
-  event?: SystemEvent
+  backup?: ActivityEntry
+  event?: SystemEventEntry
 }
 
 const unifiedRows = computed<UnifiedRow[]>(() => {

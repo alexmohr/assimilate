@@ -6,7 +6,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
+import {
+  listAgents,
+  updateAgent,
+  regenerateAgentToken,
+  restartAgent as restartAgentApi,
+  listAgentRepos,
+  listAgentReports,
+  createAgentHostnamePattern,
+} from '../api/agents'
+import { listSchedules, getScheduleHealth } from '../api/schedules'
+import { getSystemVersion } from '../api/system'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -26,7 +36,6 @@ import { normalizeBackupStatus } from '../utils/backupStatus'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
-import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -222,7 +231,7 @@ async function saveIdentity(): Promise<void> {
     const oldHostname = agent.value.hostname
     const newHostname = identityHostname.value.trim()
     const hostnameChanged = newHostname !== oldHostname && newHostname.length > 0
-    const res = await apiClient.put<AgentRow>(`/agents/${oldHostname}`, {
+    const updated = await updateAgent(oldHostname, {
       hostname: hostnameChanged ? newHostname : undefined,
       display_name: identityDisplayName.value.trim() || null,
       default_backup_paths: agent.value.default_backup_paths,
@@ -237,7 +246,7 @@ async function saveIdentity(): Promise<void> {
       showAliasConfirm.value = true
       router.replace(`/agents/${newHostname}`)
     }
-    agent.value = { ...agent.value, ...res.data }
+    agent.value = { ...agent.value, ...updated }
     editingIdentity.value = false
   } catch (e: unknown) {
     identityError.value = extractError(e)
@@ -257,9 +266,7 @@ useEscapeKey(showAliasConfirm, () => {
 })
 
 async function confirmAddAlias(): Promise<void> {
-  await apiClient.post(`/agents/${pendingAliasNewHostname.value}/hostname-patterns`, {
-    pattern: pendingAliasOldHostname.value,
-  })
+  await createAgentHostnamePattern(pendingAliasNewHostname.value, pendingAliasOldHostname.value)
   // Only mounted while the Settings tab is showing its aliases section; when
   // it is not, the list reloads from scratch the next time it is opened.
   await settingsTab.value?.reloadAliases(pendingAliasNewHostname.value)
@@ -275,20 +282,18 @@ async function adoptHost(): Promise<void> {
   try {
     const cleanDisplayName =
       agent.value.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await apiClient.put(`/agents/${agent.value.hostname}`, {
+    await updateAgent(agent.value.hostname, {
       display_name: cleanDisplayName,
     })
-    const res = await apiClient.post<CreateAgentResponse>(
-      `/agents/${agent.value.hostname}/regenerate-token`,
-    )
+    const res = await regenerateAgentToken(agent.value.hostname)
     agent.value = {
       ...agent.value,
-      ...res.data.agent,
-      id: Number(res.data.agent.id),
+      ...res.agent,
+      id: Number(res.agent.id),
       is_imported: false,
       display_name: cleanDisplayName,
     }
-    regenToken.value = res.data.token
+    regenToken.value = res.token
     tokenCopied.value = false
     showTokenDialog.value = true
   } catch (e: unknown) {
@@ -323,9 +328,9 @@ function toggleReport(r: ReportRow): void {
 
 async function loadAgent(): Promise<void> {
   await run(async () => {
-    const res = await apiClient.get<AgentRow[]>('/agents')
-    allAgents.value = res.data
-    agent.value = res.data.find((m) => m.hostname === props.hostname) ?? null
+    const agentRows = await listAgents()
+    allAgents.value = agentRows
+    agent.value = agentRows.find((m) => m.hostname === props.hostname) ?? null
     if (!agent.value) {
       throw new Error(`Agent "${props.hostname}" not found`)
     }
@@ -337,17 +342,17 @@ async function loadTabData(): Promise<void> {
   if (!agent.value) return
   const hostname = agent.value.hostname
   try {
-    const [repoRes, schedRes, reportRes, healthRes] = await Promise.all([
-      apiClient.get<Repo[]>(`/agents/${hostname}/repos`),
-      apiClient.get<ScheduleRow[]>('/schedules'),
-      apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`),
-      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
+    const [repoRows, scheduleRows, reportRows, healthRows] = await Promise.all([
+      listAgentRepos(hostname),
+      listSchedules(),
+      listAgentReports(hostname),
+      getScheduleHealth(),
     ])
-    repos.value = repoRes.data
-    schedules.value = schedRes.data
-    reports.value = reportRes.data
-    scheduleHealth.value = healthRes.data.filter((h) => h.hostname === hostname)
-    const runningReports = reportRes.data.filter((r) => {
+    repos.value = repoRows
+    schedules.value = scheduleRows
+    reports.value = reportRows
+    scheduleHealth.value = healthRows.filter((h) => h.hostname === hostname)
+    const runningReports = reportRows.filter((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'
     })
@@ -439,11 +444,9 @@ async function regenerateToken(): Promise<void> {
   regenToken.value = null
   tokenCopied.value = false
   try {
-    const res = await apiClient.post<{ agent: AgentRow; token: string }>(
-      `/agents/${props.hostname}/regenerate-token`,
-    )
-    regenToken.value = res.data.token
-    agent.value = res.data.agent
+    const res = await regenerateAgentToken(props.hostname)
+    regenToken.value = res.token
+    agent.value = res.agent
     showTokenDialog.value = true
   } catch (e: unknown) {
     regenError.value = extractError(e)
@@ -457,7 +460,7 @@ async function restartAgent(): Promise<void> {
   restartLoading.value = true
   restartError.value = null
   try {
-    await apiClient.post(`/agents/${props.hostname}/restart`)
+    await restartAgentApi(props.hostname)
   } catch (e: unknown) {
     restartError.value = extractError(e)
   } finally {
@@ -473,11 +476,10 @@ watch(
 )
 onMounted(() => {
   loadAgent()
-  apiClient
-    .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
+  getSystemVersion()
     .then((res) => {
-      availableAgentVersion.value = res.data.agent_version
-      serverCommitCount.value = res.data.server_commit_count ?? null
+      availableAgentVersion.value = res.agent_version
+      serverCommitCount.value = res.server_commit_count
     })
     .catch(logger.error)
 })

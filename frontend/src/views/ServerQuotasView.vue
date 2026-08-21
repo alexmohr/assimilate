@@ -9,7 +9,7 @@ import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/s
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
+import { actionLabel, bytesToGbOrZero, gbToBytes } from '../utils/quota'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useMobile } from '../composables/useMobile'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -41,11 +41,6 @@ function statusLabel(quota: ServerQuotaResponse): string {
     case 'critical':
       return 'Critical'
   }
-}
-
-/** `quota.warn_bytes`/`critical_bytes` are `null` only when no quota is configured yet. */
-function bytesToGbOrZero(bytes: number | null): number {
-  return bytes === null ? 0 : bytesToGb(bytes)
 }
 
 const quotas = ref<ServerQuotaResponse[]>([])

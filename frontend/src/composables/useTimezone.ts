@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref } from 'vue'
-import { apiClient } from '../api/client'
+import { getSystemSettings } from '../api/system'
 import { logger } from '../utils/logger'
 import { readStorage, removeStorage, writeStorage } from '../utils/storage'
 
@@ -30,8 +30,8 @@ export function useTimezone(): {
 
   async function loadFromBackend(): Promise<void> {
     try {
-      const res = await apiClient.get<{ timezone: string }>('/system/settings')
-      const tz = res.data?.timezone || undefined
+      const settings = await getSystemSettings()
+      const tz = settings.timezone || undefined
       setTimezone(tz)
     } catch (e: unknown) {
       logger.debug('timezone load failed', e)

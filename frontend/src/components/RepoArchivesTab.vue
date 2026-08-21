@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { AlertTriangle } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import { rescanRepo } from '../api/repos'
 import { extractError } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
@@ -59,11 +59,9 @@ const rescanning = ref(false)
 async function rescan(): Promise<void> {
   rescanning.value = true
   try {
-    const res = await apiClient.post<{ matched: number; remaining_unmatched: number }>(
-      `/repos/${props.repoId}/rescan`,
-    )
+    const data = await rescanRepo(props.repoId)
     toastSuccess(
-      `Matched ${res.data.matched} archives. ${res.data.remaining_unmatched} remaining unmatched.`,
+      `Matched ${data.matched} archives. ${data.remaining_unmatched} remaining unmatched.`,
     )
     await loadArchives()
   } catch (e: unknown) {

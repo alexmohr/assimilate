@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
+import { getRepo } from '../api/repos'
 import { useAuthStore } from '../stores/auth'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
@@ -139,17 +139,17 @@ const syncSummary = computed(() =>
 
 async function loadRepo(): Promise<void> {
   await run(async () => {
-    const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
-    repo.value = res.data
-    currentOp.value = res.data.current_op ?? null
+    const data = await getRepo(repoId.value)
+    repo.value = data
+    currentOp.value = data.current_op ?? null
   })
 }
 
 async function refreshRepo(): Promise<void> {
   try {
-    const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
-    repo.value = res.data
-    currentOp.value = res.data.current_op ?? null
+    const data = await getRepo(repoId.value)
+    repo.value = data
+    currentOp.value = data.current_op ?? null
   } catch (e: unknown) {
     logger.error('background repo refresh failed', e)
   }

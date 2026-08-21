@@ -6,7 +6,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { X } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import { createTag, listEntityTags, listTags, setEntityTags } from '../api/tags'
+import type { TagScope } from '../api/tags'
 import { logger } from '../utils/logger'
 import type { TagRow } from '../types/tag'
 
@@ -17,7 +18,7 @@ import type { TagRow } from '../types/tag'
  */
 const props = defineProps<{
   /** Which tag namespace to list and create in. */
-  scope: 'repo' | 'host'
+  scope: TagScope
   /** Collection path for this entity's tags, e.g. `/repos/12` or `/agents/web-01`. */
   entityPath: string
 }>()
@@ -40,24 +41,24 @@ const available = computed<TagRow[]>(() =>
 
 async function load(): Promise<void> {
   try {
-    const [tagsRes, ownTagsRes] = await Promise.all([
-      apiClient.get<TagRow[]>('/tags', { params: { scope: props.scope } }),
+    const [tags, ownTags] = await Promise.all([
+      listTags(props.scope),
       // A failure here is not fatal: the picker still works, it just starts
       // with nothing assigned rather than blanking the whole panel.
-      apiClient.get<TagRow[]>(`${props.entityPath}/tags`).catch((e: unknown) => {
+      listEntityTags(props.entityPath).catch((e: unknown) => {
         logger.error('load tags failed', e)
-        return { data: [] as TagRow[] }
+        return [] as TagRow[]
       }),
     ])
-    allTags.value = tagsRes.data
-    assignedIds.value = ownTagsRes.data.map((t) => t.id)
+    allTags.value = tags
+    assignedIds.value = ownTags.map((t) => t.id)
   } catch (e: unknown) {
     logger.error('loadTags failed', e)
   }
 }
 
 async function save(updated: number[]): Promise<void> {
-  await apiClient.put(`${props.entityPath}/tags`, { tag_ids: updated })
+  await setEntityTags(props.entityPath, updated)
   assignedIds.value = updated
 }
 
@@ -81,13 +82,9 @@ async function createAndAddTag(): Promise<void> {
   if (!newTagName.value.trim()) return
   createTagLoading.value = true
   try {
-    const res = await apiClient.post<TagRow>('/tags', {
-      name: newTagName.value.trim(),
-      color: newTagColor.value,
-      scope: props.scope,
-    })
-    allTags.value.push(res.data)
-    await addTag(res.data.id)
+    const created = await createTag(newTagName.value.trim(), newTagColor.value, props.scope)
+    allTags.value.push(created)
+    await addTag(created.id)
     newTagName.value = ''
     newTagColor.value = DEFAULT_TAG_COLOR
   } catch (e: unknown) {

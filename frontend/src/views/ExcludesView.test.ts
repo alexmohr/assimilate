@@ -85,4 +85,29 @@ describe('ExcludesView', () => {
     await flushPromises()
     expect(mockGet).toHaveBeenCalledWith('/excludes')
   })
+
+  it('saves patterns and shows a transient confirmation', async () => {
+    vi.useFakeTimers()
+    try {
+      mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
+      const mockPut = vi.mocked(apiClient.put)
+      mockPut.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
+      const wrapper = renderWithPlugins(ExcludesView)
+      await flushPromises()
+
+      const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')
+      await saveBtn!.trigger('click')
+      await flushPromises()
+
+      expect(mockPut).toHaveBeenCalledWith('/excludes', { raw_text: MOCK_RAW_TEXT })
+      expect(wrapper.find('.save-ok').exists()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      expect(wrapper.find('.save-ok').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

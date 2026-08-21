@@ -6,32 +6,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Plus, Trash2, ShieldCheck } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import { createRole, deleteRole, listRoles, updateRole } from '../api/roles'
+import type { Role } from '../api/roles'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
-
-interface Role {
-  id: number
-  name: string
-  is_seeded: boolean
-  can_create_agent: boolean
-  can_delete_agent: boolean
-  can_delete_own_agent: boolean
-  can_create_repo: boolean
-  can_delete_repo: boolean
-  can_delete_own_repo: boolean
-  can_create_schedule: boolean
-  can_delete_schedule: boolean
-  can_delete_own_schedule: boolean
-  can_manage_tags: boolean
-  can_view_all_repos: boolean
-  can_manage_tunnels: boolean
-  can_upgrade_agent: boolean
-}
 
 type PermissionKey =
   | 'can_create_agent'
@@ -134,8 +116,7 @@ function permissionCount(role: Role): number {
 
 async function fetchRoles(): Promise<void> {
   await run(async () => {
-    const res = await apiClient.get<Role[]>('/roles')
-    roles.value = res.data
+    roles.value = await listRoles()
   })
 }
 
@@ -151,7 +132,7 @@ async function submitCreate(): Promise<void> {
     return
   }
   await runCreate(async () => {
-    await apiClient.post('/roles', {
+    await createRole({
       name: createForm.value.name.trim(),
       can_create_agent: createForm.value.can_create_agent,
       can_delete_agent: createForm.value.can_delete_agent,
@@ -187,7 +168,7 @@ async function submitEdit(): Promise<void> {
   const target = editTarget.value
   if (!target) return
   await runEdit(async () => {
-    await apiClient.put(`/roles/${target.id}`, editForm.value)
+    await updateRole(target.id, { ...editForm.value, name: target.name })
     showEditModal.value = false
     await fetchRoles()
   })
@@ -203,7 +184,7 @@ async function confirmDelete(): Promise<void> {
   const target = deleteTarget.value
   if (!target) return
   await runDelete(async () => {
-    await apiClient.delete(`/roles/${target.id}`)
+    await deleteRole(target.id)
     showDeleteModal.value = false
     await fetchRoles()
   })

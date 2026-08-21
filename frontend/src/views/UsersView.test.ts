@@ -24,7 +24,8 @@ import { apiClient } from '../api/client'
 interface User {
   id: number
   username: string
-  role: 'admin' | 'user'
+  role: string
+  must_change_password: boolean
   created_at: string
   last_login_at: string | null
 }
@@ -34,6 +35,7 @@ const mockUsers: User[] = [
     id: 1,
     username: 'admin',
     role: 'admin',
+    must_change_password: false,
     created_at: '2026-01-01T00:00:00Z',
     last_login_at: null,
   },
@@ -41,6 +43,7 @@ const mockUsers: User[] = [
     id: 2,
     username: 'operator1',
     role: 'user',
+    must_change_password: false,
     created_at: '2026-01-02T00:00:00Z',
     last_login_at: null,
   },
@@ -48,6 +51,7 @@ const mockUsers: User[] = [
     id: 3,
     username: 'viewer1',
     role: 'user',
+    must_change_password: false,
     created_at: '2026-01-03T00:00:00Z',
     last_login_at: null,
   },
@@ -369,6 +373,28 @@ describe('UsersView', () => {
       expect((groupBox.element as HTMLInputElement).checked).toBe(false)
       await groupBox.setValue(true)
       expect((groupBox.element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('saves the selected roles and groups', async () => {
+      mockEditData()
+      const put = apiClient.put as ReturnType<typeof vi.fn>
+      put.mockResolvedValue({ data: {} })
+      const wrapper = await render()
+      await openEditFor(wrapper, 1)
+      await selectTab(wrapper, 'Roles & Groups')
+
+      const boxes = wrapper.findAll('.rg-item input[type="checkbox"]')
+      await boxes[1].setValue(true)
+      await boxes[boxes.length - 1].setValue(true)
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Save')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(put).toHaveBeenCalledWith('/users/2/roles', { role_ids: [ROLES[0].id, ROLES[1].id] })
+      expect(put).toHaveBeenCalledWith('/users/2/groups', { group_ids: [GROUPS[0].id] })
     })
 
     // Each column writes the whole permission row back, so a toggle on one

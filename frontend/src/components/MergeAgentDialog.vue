@@ -5,14 +5,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { apiClient } from '../api/client'
+import { mergeAgent } from '../api/agents'
 import { extractError } from '../utils/error'
 import type { AgentRow } from '../types/agent'
 import BaseModal from './BaseModal.vue'
-
-interface MergeResult {
-  merged: boolean
-}
 
 const props = defineProps<{
   source: AgentRow
@@ -39,14 +35,9 @@ async function confirmMerge(): Promise<void> {
   mergeLoading.value = true
   mergeError.value = null
   try {
-    const body: Record<string, string> = {}
-    if (savePattern.value && patternValue.value.trim()) {
-      body.create_pattern = patternValue.value.trim()
-    }
-    await apiClient.post<MergeResult>(
-      `/agents/${targetHostname.value}/merge-from/${props.source.id}`,
-      body,
-    )
+    const createPattern =
+      savePattern.value && patternValue.value.trim() ? patternValue.value.trim() : undefined
+    await mergeAgent(targetHostname.value, props.source.id, createPattern)
     emit('merged')
   } catch (e: unknown) {
     mergeError.value = extractError(e)

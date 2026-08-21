@@ -560,6 +560,13 @@ pub struct ScheduleResponse {
     pub visibility: Visibility,
     /// Hostnames targeted by this schedule.
     pub target_hostnames: Vec<String>,
+    /// How many consecutive attempts have failed to reach the schedule's target
+    /// agent(s) since the last success or reconnect.
+    pub consecutive_failures: i32,
+    /// Whether the scheduler auto-disabled this schedule because its target agent
+    /// stayed unreachable, as opposed to a local/data failure, a human, or quota
+    /// enforcement. Only ever true while `enabled` is false.
+    pub auto_disabled_agent_unreachable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

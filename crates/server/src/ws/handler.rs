@@ -233,6 +233,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     tracing::info!(hostname = %hostname, "agent connected");
 
+    reenable_system_disabled_schedules_on_reconnect(&state, agent_id, &hostname).await;
+
     if replaced_connection {
         abandon_stale_operations_on_reconnect(&state, agent_id, &hostname).await;
     }
@@ -327,6 +329,62 @@ async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, 
                 hostname = %hostname,
                 error = %e,
                 "failed to abandon stale in-flight backups on agent reconnect"
+            );
+        }
+    }
+}
+
+/// Called on every successful agent connection. If the scheduler had auto-disabled
+/// any of this agent's schedules after repeated unreachable-agent failures (see
+/// `scheduler::record_schedule_failure_once`), re-enables them and makes them due
+/// again immediately, so backups resume on their own instead of staying off until a
+/// human notices and flips the switch back on. Never touches a schedule a human or
+/// quota enforcement disabled for an unrelated reason.
+async fn reenable_system_disabled_schedules_on_reconnect(
+    state: &AppState,
+    agent_id: i64,
+    hostname: &str,
+) {
+    match db::reenable_system_disabled_schedules_for_agent(
+        &state.pool,
+        agent_id,
+        chrono::Utc::now(),
+    )
+    .await
+    {
+        Ok(schedule_ids) if !schedule_ids.is_empty() => {
+            tracing::info!(
+                hostname = %hostname,
+                ?schedule_ids,
+                "agent reconnected; re-enabling schedules that were auto-disabled while it was \
+                 unreachable"
+            );
+            let msg = format!(
+                "{} schedule(s) re-enabled now that agent '{hostname}' reconnected: {:?}",
+                schedule_ids.len(),
+                schedule_ids
+            );
+            if let Err(e) = db::insert_system_event(
+                &state.pool,
+                SystemEventType::ScheduleReenabled,
+                Some(hostname),
+                &msg,
+            )
+            .await
+            {
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "failed to record schedule-reenabled system event"
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to re-enable auto-disabled schedules on agent reconnect"
             );
         }
     }
@@ -2843,5 +2901,101 @@ exit 0
             .background_task_tracker
             .assert_idle(Duration::from_secs(5))
             .await;
+    }
+
+    /// The agent reconnecting must both re-enable a schedule the scheduler auto-disabled
+    /// for it, and record a `ScheduleReenabled` system event, so the reconnect isn't
+    /// invisible outside server logs - matching the `ScheduleAutoDisabled` event the
+    /// scheduler already records when it disables the schedule in the first place.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn reconnect_reenables_schedule_and_records_system_event(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "reconnect-event-agent", None, "hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "reconnect-event-repo",
+                repo_path: "/backups/reconnect-event",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "reconnect-event-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+
+        let next = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+        for _ in 0..3 {
+            crate::db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
+                .await
+                .expect("record schedule failure");
+        }
+        let disabled = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .expect("get schedule");
+        assert!(!disabled.enabled && disabled.auto_disabled_agent_unreachable);
+
+        let state = build_test_state(pool.clone());
+        reenable_system_disabled_schedules_on_reconnect(&state, agent.id, &agent.hostname).await;
+
+        let reenabled = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .expect("get schedule");
+        assert!(reenabled.enabled);
+        assert!(!reenabled.auto_disabled_agent_unreachable);
+
+        let events = crate::db::get_system_events(&pool, 10)
+            .await
+            .expect("get system events");
+        let event = events
+            .iter()
+            .find(|e| matches!(e.event_type, SystemEventType::ScheduleReenabled))
+            .expect("a ScheduleReenabled system event was recorded");
+        assert_eq!(event.hostname.as_deref(), Some(agent.hostname.as_str()));
+        assert!(event.message.contains(&schedule.id.to_string()));
     }
 }

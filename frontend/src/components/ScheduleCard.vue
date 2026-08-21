@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { cronToHuman } from '../utils/cron'
+import { scheduleDisabledLabel } from '../utils/scheduleStatus'
 import EntityStatusBadges, { type EntityIssue } from './EntityStatusBadges.vue'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 
@@ -55,7 +56,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
     </span>
     <EntityStatusBadges
       :notable="!schedule.enabled"
-      notable-label="Disabled"
+      :notable-label="scheduleDisabledLabel(schedule)"
       :running="running"
       running-label="Running"
       :issues="issues"

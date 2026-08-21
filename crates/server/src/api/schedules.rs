@@ -560,6 +560,8 @@ async fn apply_schedule_target_overrides(
             })
             .collect();
         db::insert_schedule_targets(pool, schedule_id, &targets).await?;
+        db::clear_auto_disable_if_causing_agent_no_longer_a_target(pool, schedule_id, agent_ids)
+            .await?;
     }
 
     if let Some(sources) = &req.backup_sources {

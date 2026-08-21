@@ -34,6 +34,7 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
 import ScheduleTimelineRail, { type TimelineEntry } from '../components/ScheduleTimelineRail.vue'
 import type { AgentRow } from '../types/agent'
+import { scheduleDisabledLabel } from '../utils/scheduleStatus'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
 
@@ -523,7 +524,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             }}</span>
             <EntityStatusBadges
               :notable="!s.enabled"
-              notable-label="Disabled"
+              :notable-label="scheduleDisabledLabel(s)"
               :running="s.isRunning"
               running-label="Running"
               :issues="scheduleIssues(s)"

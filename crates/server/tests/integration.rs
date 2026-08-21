@@ -210,6 +210,12 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             get(server::api::schedules::list_schedules),
         )
         .route(
+            "/api/schedules/{id}",
+            get(server::api::schedules::get_schedule)
+                .put(server::api::schedules::update_schedule)
+                .delete(server::api::schedules::delete_schedule),
+        )
+        .route(
             "/api/schedules/{id}/sources",
             get(server::api::schedules::list_schedule_backup_sources),
         )
@@ -3515,6 +3521,90 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
     .unwrap();
 
     schedule_id
+}
+
+/// Retargeting an auto-disabled schedule away from the agent that caused the disable,
+/// through the actual `PUT /api/schedules/{id}` handler (not just the DB function it
+/// delegates to), must clear the stale auto-disable bookkeeping so the dropped agent
+/// can never incorrectly re-enable this schedule again on a later reconnect.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_clears_auto_disable_bookkeeping_for_dropped_agent(
+    pool: sqlx::PgPool,
+) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let old_agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('retarget-old-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let new_agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('retarget-new-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo_id = insert_test_repo(&pool, "retarget-repo").await;
+    let schedule_id = insert_test_schedule(&pool, old_agent_id, repo_id).await;
+
+    // Simulate the scheduler having already auto-disabled this schedule after
+    // repeated failures against the old (now permanently broken) agent.
+    sqlx::query(
+        "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = true, \
+         auto_disabled_by_agent_id = $2, consecutive_failures = 3, \
+         failure_streak_pure_connectivity = true WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .bind(old_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The realistic remediation: retarget to a working agent, leaving `enabled`
+    // unchanged (false) in the same request.
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [new_agent_id],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let row: (bool, bool, Option<i64>, i32) = sqlx::query_as(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.0, "retargeting alone must not re-enable the schedule");
+    assert!(
+        !row.1,
+        "the stale auto-disable flag must be cleared once the causing agent is dropped"
+    );
+    assert_eq!(row.2, None);
+    assert_eq!(row.3, 0);
+
+    // The dropped agent is no longer a target, so its reconnect must never touch
+    // this schedule again.
+    let reenabled = server::db::reenable_system_disabled_schedules_for_agent(
+        &pool,
+        old_agent_id,
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(reenabled, Vec::<i64>::new());
 }
 
 #[sqlx::test(migrations = "./migrations")]

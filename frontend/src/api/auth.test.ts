@@ -61,9 +61,16 @@ describe('auth api', () => {
   })
 
   it('logs in with username and password', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    const result = {
+      user: { id: 1, username: 'alice' },
+      session_expires_at: '2026-08-22T00:00:00Z',
+      remember_me: true,
+      totp_required: false,
+      temp_token: null,
+    }
+    vi.mocked(apiClient.post).mockResolvedValue({ data: result })
 
-    await login('alice', 'secret', true)
+    await expect(login('alice', 'secret', true)).resolves.toEqual(result)
 
     expect(apiClient.post).toHaveBeenCalledWith('/auth/login', {
       username: 'alice',
@@ -73,9 +80,14 @@ describe('auth api', () => {
   })
 
   it('verifies a TOTP login code against verify-login', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    const result = {
+      user: { id: 1, username: 'alice' },
+      session_expires_at: '2026-08-22T00:00:00Z',
+      remember_me: false,
+    }
+    vi.mocked(apiClient.post).mockResolvedValue({ data: result })
 
-    await verifyTotpLogin('123456', 'temp-token', false)
+    await expect(verifyTotpLogin('123456', 'temp-token', false)).resolves.toEqual(result)
 
     expect(apiClient.post).toHaveBeenCalledWith('/auth/totp/verify-login', {
       code: '123456',
@@ -84,9 +96,14 @@ describe('auth api', () => {
   })
 
   it('verifies a TOTP login recovery code against recovery', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    const result = {
+      user: { id: 1, username: 'alice' },
+      session_expires_at: '2026-08-22T00:00:00Z',
+      remember_me: false,
+    }
+    vi.mocked(apiClient.post).mockResolvedValue({ data: result })
 
-    await verifyTotpLogin('recovery-code', 'temp-token', true)
+    await expect(verifyTotpLogin('recovery-code', 'temp-token', true)).resolves.toEqual(result)
 
     expect(apiClient.post).toHaveBeenCalledWith('/auth/totp/recovery', {
       code: 'recovery-code',

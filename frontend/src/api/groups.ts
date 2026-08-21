@@ -2,17 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { apiClient } from './client'
+import type { GroupMembersResponse, GroupResponse } from '../types/generated'
 
-export interface Group {
-  id: number
-  name: string
-  description: string | null
-  created_at: string
-}
-
-export interface GroupMembersResponse {
-  user_ids: number[]
-}
+export type Group = GroupResponse
 
 export interface CreateGroupRequest {
   name: string

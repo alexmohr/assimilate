@@ -46,7 +46,10 @@ describe('system api', () => {
       data: { timezone: 'Europe/Berlin', retention_days: 7 },
     })
 
-    await getSystemSettings()
+    await expect(getSystemSettings()).resolves.toEqual({
+      timezone: 'Europe/Berlin',
+      retention_days: 7,
+    })
 
     expect(apiClient.get).toHaveBeenCalledWith('/system/settings')
   })
@@ -78,26 +81,25 @@ describe('system api', () => {
   })
 
   it('gets the system version', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        server_version: '1.0.0',
-        server_git_sha: 'abc123',
-        build_timestamp: '2026-01-01T00:00:00Z',
-        agent_version: '1.0.0',
-      },
-    })
+    const version = {
+      server_version: '1.0.0',
+      server_git_sha: 'abc123',
+      build_timestamp: '2026-01-01T00:00:00Z',
+      server_commit_count: 42,
+      agent_version: '1.0.0',
+    }
+    vi.mocked(apiClient.get).mockResolvedValue({ data: version })
 
-    await getSystemVersion()
+    await expect(getSystemVersion()).resolves.toEqual(version)
 
     expect(apiClient.get).toHaveBeenCalledWith('/system/version')
   })
 
   it('gets database storage', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: { database_bytes: 100, other_bytes: 10, relations: [] },
-    })
+    const storage = { database_bytes: 100, other_bytes: 10, relations: [] }
+    vi.mocked(apiClient.get).mockResolvedValue({ data: storage })
 
-    await getDatabaseStorage()
+    await expect(getDatabaseStorage()).resolves.toEqual(storage)
 
     expect(apiClient.get).toHaveBeenCalledWith('/system/database-storage')
   })
@@ -119,19 +121,18 @@ describe('system api', () => {
   })
 
   it('imports config', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      data: {
-        hosts_created: 1,
-        hosts_updated: 0,
-        schedules_created: 0,
-        repos_created: 0,
-        repos_updated: 0,
-        warnings: [],
-      },
-    })
+    const result = {
+      hosts_created: 1,
+      hosts_updated: 0,
+      schedules_created: 0,
+      repos_created: 0,
+      repos_updated: 0,
+      warnings: [],
+    }
+    vi.mocked(apiClient.post).mockResolvedValue({ data: result })
 
     const payload = { version: 1, hosts: [] }
-    await importConfig(payload)
+    await expect(importConfig(payload)).resolves.toEqual(result)
 
     expect(apiClient.post).toHaveBeenCalledWith('/config/import', payload)
   })

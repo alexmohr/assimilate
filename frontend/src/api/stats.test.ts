@@ -14,6 +14,7 @@ import {
   getCalendar,
   getDashboardOverview,
   getDashboardSummary,
+  getScheduleCounts,
   getSystemEvents,
 } from './stats'
 
@@ -89,6 +90,14 @@ describe('stats api', () => {
     await getDashboardOverview()
 
     expect(apiClient.get).toHaveBeenCalledWith('/stats/dashboard-overview')
+  })
+
+  it('gets schedule counts by agent', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ agent_id: 1, count: 3 }] })
+
+    await expect(getScheduleCounts()).resolves.toEqual([{ agent_id: 1, count: 3 }])
+
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/schedule-counts')
   })
 
   it('dismisses a finding', async () => {

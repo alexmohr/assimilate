@@ -226,6 +226,45 @@ describe('HostsView', () => {
     expect(wrapper.text()).not.toContain('protected-host')
   })
 
+  it('applies the unassigned and disabled-only coverage filters', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: agents })
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [{ agent_id: 1, hostname: 'protected-host' }],
+              never_succeeded_agents: [],
+              disabled_only_agents: [{ agent_id: 2, hostname: 'never-succeeded-host' }],
+            },
+            running_operations: [],
+          },
+        })
+      }
+      if (url === '/system/version') {
+        return Promise.resolve({ data: { agent_version: null } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const router = makeRouter()
+    await router.push('/agents?coverage=unassigned')
+    await router.isReady()
+    const wrapper = mount(HostsView, {
+      global: { plugins: [createPinia(), router] },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('protected-host')
+    expect(wrapper.text()).not.toContain('never-succeeded-host')
+
+    await wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').setValue('disabled-only')
+
+    expect(wrapper.text()).toContain('never-succeeded-host')
+    expect(wrapper.text()).not.toContain('protected-host')
+  })
+
   it('shows the fleet summary band with agent, online and schedule counts', async () => {
     const router = makeRouter()
     await router.push('/agents')

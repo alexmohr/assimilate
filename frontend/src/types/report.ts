@@ -3,6 +3,4 @@
 
 import type { ReportResponse } from './generated'
 
-export type ReportRow = Omit<ReportResponse, 'schedule_id'> & {
-  schedule_id: number | null
-}
+export type ReportRow = ReportResponse

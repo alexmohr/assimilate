@@ -4,6 +4,7 @@
 import { apiClient } from './client'
 import type { AgentHostnamePattern, AgentRow } from '../types/agent'
 import type {
+  AgentTagEntryResponse,
   CreateAgentResponse,
   DeployAgentResponse,
   MergeAgentResponse,
@@ -74,6 +75,11 @@ export interface ListAgentReportsParams {
 export async function listAgents(includeHidden?: boolean): Promise<AgentRow[]> {
   const params = includeHidden ? { include_hidden: true } : undefined
   const response = await apiClient.get<AgentRow[]>('/agents', { params })
+  return response.data
+}
+
+export async function listAgentTags(): Promise<AgentTagEntryResponse[]> {
+  const response = await apiClient.get<AgentTagEntryResponse[]>('/agent-tags')
   return response.data
 }
 

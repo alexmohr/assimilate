@@ -1158,9 +1158,9 @@ mod tests {
     /// place this codebase runs `#[ignore = "requires DATABASE_URL"]` tests
     /// (the "Database Integration Tests" CI job, and the coverage job's
     /// `--include-ignored` run) forces `--test-threads=1`.
-    struct TestSshKeyDir(
-        #[allow(dead_code, reason = "held only to keep the tempdir alive")] tempfile::TempDir,
-    );
+    struct TestSshKeyDir {
+        _dir: tempfile::TempDir,
+    }
 
     impl TestSshKeyDir {
         fn setup() -> Self {
@@ -1171,7 +1171,7 @@ mod tests {
                 .expect("encode test server key as OpenSSH PEM");
             std::fs::write(dir.path().join("id_ed25519"), pem.as_bytes())
                 .expect("write test server key");
-            Self(dir)
+            Self { _dir: dir }
         }
     }
 

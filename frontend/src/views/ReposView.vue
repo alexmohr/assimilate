@@ -6,7 +6,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
@@ -27,6 +26,7 @@ import type { TagRow } from '../types/tag'
 import type { RepoTagEntryResponse, ServerQuotaResponse } from '../types/generated'
 import { listServerQuotas } from '../api/serverQuotas'
 import { listRepoStats, listRepoTags } from '../api/repos'
+import { listTags } from '../api/tags'
 import {
   actionForHealth,
   actionLabel,
@@ -331,16 +331,14 @@ async function loadRepos(): Promise<void> {
     const [reposRes, repoTagAssoc, repoTagsRes, serverQuotasRes] = await Promise.all([
       listRepoStats(),
       listRepoTags().catch(() => [] as RepoTagEntryResponse[]),
-      apiClient
-        .get<TagRow[]>('/tags', { params: { scope: 'repo' } })
-        .catch(() => ({ data: [] as TagRow[] })),
+      listTags('repo').catch(() => [] as TagRow[]),
       authStore.isAdmin
         ? listServerQuotas().catch(() => [] as ServerQuotaResponse[])
         : Promise.resolve([] as ServerQuotaResponse[]),
     ])
     repos.value = reposRes
 
-    allRepoTags.value = repoTagsRes.data
+    allRepoTags.value = repoTagsRes
     const tagMap: Record<number, { name: string; color: string }[]> = {}
     repoTagAssoc.forEach((rt) => {
       if (!tagMap[rt.repo_id]) tagMap[rt.repo_id] = []

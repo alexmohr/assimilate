@@ -1028,29 +1028,36 @@ async fn push_pre_run_config(
     }
 }
 
-async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_triggered: &mut bool) {
-    let schedule_id = ctx.schedule_id;
-    match calculate_next_run(ctx.cron, ctx.now, ctx.tz) {
-        Ok(next) => {
-            if let Err(e) = db::mark_schedule_triggered(ctx.pool, schedule_id, ctx.now, next).await
-            {
-                tracing::error!(
-                    schedule_id,
-                    error = %e,
-                    "sequential: failed to mark schedule triggered"
-                );
-            } else {
-                *marked_triggered = true;
-            }
-        }
-        Err(e) => {
+/// Computes the schedule's next cron occurrence from `ctx`, logging and returning
+/// `None` on an invalid cron expression - shared by [`mark_schedule_triggered_once`]
+/// and [`record_schedule_failure_once`], which both need this same "advance
+/// `next_run_at`" starting point.
+fn calculate_next_run_or_log(ctx: &SequentialTargetCtx<'_>) -> Option<DateTime<Utc>> {
+    calculate_next_run(ctx.cron, ctx.now, ctx.tz)
+        .inspect_err(|e| {
             tracing::error!(
-                schedule_id,
+                schedule_id = ctx.schedule_id,
                 cron = %ctx.cron,
                 error = %e,
                 "sequential: invalid cron expression"
             );
-        }
+        })
+        .ok()
+}
+
+async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_triggered: &mut bool) {
+    let Some(next) = calculate_next_run_or_log(ctx) else {
+        return;
+    };
+    let schedule_id = ctx.schedule_id;
+    if let Err(e) = db::mark_schedule_triggered(ctx.pool, schedule_id, ctx.now, next).await {
+        tracing::error!(
+            schedule_id,
+            error = %e,
+            "sequential: failed to mark schedule triggered"
+        );
+    } else {
+        *marked_triggered = true;
     }
 }
 
@@ -1060,45 +1067,34 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 /// the first target failure of a tick counts, mirroring [`mark_schedule_triggered_once`]
 /// - a schedule with multiple targets shouldn't be double-counted for one tick.
 async fn record_schedule_failure_once(ctx: &SequentialTargetCtx<'_>, recorded_failure: &mut bool) {
+    let Some(next) = calculate_next_run_or_log(ctx) else {
+        return;
+    };
     let schedule_id = ctx.schedule_id;
-    match calculate_next_run(ctx.cron, ctx.now, ctx.tz) {
-        Ok(next) => {
-            match db::record_schedule_failure(ctx.pool, schedule_id, next, MAX_CONSECUTIVE_FAILURES)
-                .await
-            {
-                Ok(outcome) => {
-                    *recorded_failure = true;
-                    if outcome.auto_disabled {
-                        tracing::error!(
-                            schedule_id,
-                            consecutive_failures = outcome.consecutive_failures,
-                            "sequential: schedule auto-disabled after repeated agent-unreachable \
-                             failures; will re-enable automatically once the agent reconnects"
-                        );
-                    } else {
-                        tracing::warn!(
-                            schedule_id,
-                            consecutive_failures = outcome.consecutive_failures,
-                            max = MAX_CONSECUTIVE_FAILURES,
-                            "sequential: agent unreachable, backing off to next scheduled run"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        schedule_id,
-                        error = %e,
-                        "sequential: failed to record schedule failure"
-                    );
-                }
+    match db::record_schedule_failure(ctx.pool, schedule_id, next, MAX_CONSECUTIVE_FAILURES).await {
+        Ok(outcome) => {
+            *recorded_failure = true;
+            if outcome.auto_disabled {
+                tracing::error!(
+                    schedule_id,
+                    consecutive_failures = outcome.consecutive_failures,
+                    "sequential: schedule auto-disabled after repeated agent-unreachable \
+                     failures; will re-enable automatically once the agent reconnects"
+                );
+            } else {
+                tracing::warn!(
+                    schedule_id,
+                    consecutive_failures = outcome.consecutive_failures,
+                    max = MAX_CONSECUTIVE_FAILURES,
+                    "sequential: agent unreachable, backing off to next scheduled run"
+                );
             }
         }
         Err(e) => {
             tracing::error!(
                 schedule_id,
-                cron = %ctx.cron,
                 error = %e,
-                "sequential: invalid cron expression"
+                "sequential: failed to record schedule failure"
             );
         }
     }

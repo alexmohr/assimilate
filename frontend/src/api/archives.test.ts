@@ -32,17 +32,16 @@ describe('archives api', () => {
   it('lists repo archives', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
-    await listRepoArchives(1)
+    await expect(listRepoArchives(1)).resolves.toEqual([])
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/1/archives')
   })
 
   it('gets the archive index status', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: { status: 'done', file_count: 12, error: null },
-    })
+    const data = { status: 'done', file_count: 12, error: null }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
 
-    await getArchiveIndexStatus(1, ARCHIVE_NAME)
+    await expect(getArchiveIndexStatus(1, ARCHIVE_NAME)).resolves.toEqual(data)
 
     expect(apiClient.get).toHaveBeenCalledWith(
       `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/index-status`,
@@ -50,9 +49,10 @@ describe('archives api', () => {
   })
 
   it('gets archive contents at the root when no path is given', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: [] } })
+    const data = { index_status: 'done', entries: [] }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
 
-    await getArchiveContents(1, ARCHIVE_NAME)
+    await expect(getArchiveContents(1, ARCHIVE_NAME)).resolves.toEqual(data)
 
     expect(apiClient.get).toHaveBeenCalledWith(
       `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/contents`,
@@ -63,9 +63,10 @@ describe('archives api', () => {
   })
 
   it('gets archive contents at a given path', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: [] } })
+    const data = { index_status: 'done', entries: [] }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
 
-    await getArchiveContents(1, ARCHIVE_NAME, { path: 'etc/nginx' })
+    await expect(getArchiveContents(1, ARCHIVE_NAME, { path: 'etc/nginx' })).resolves.toEqual(data)
 
     expect(apiClient.get).toHaveBeenCalledWith(
       `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/contents`,
@@ -76,11 +77,12 @@ describe('archives api', () => {
   })
 
   it('searches within a single archive', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: { items: [], total_matched: 0, limit: 100, offset: 0 },
-    })
+    const data = { items: [], total_matched: 0, limit: 100, offset: 0 }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
 
-    await searchArchive(1, ARCHIVE_NAME, { pattern: '*.conf', limit: 100, offset: 0 })
+    await expect(
+      searchArchive(1, ARCHIVE_NAME, { pattern: '*.conf', limit: 100, offset: 0 }),
+    ).resolves.toEqual(data)
 
     expect(apiClient.get).toHaveBeenCalledWith(`/repos/1/archives/${ENCODED_ARCHIVE_NAME}/search`, {
       params: { pattern: '*.conf', limit: 100, offset: 0 },
@@ -88,11 +90,12 @@ describe('archives api', () => {
   })
 
   it('searches across archives', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: { items: [], total_archives_searched: 0, limit: 200, offset: 0 },
-    })
+    const data = { items: [], total_archives_searched: 0, limit: 200, offset: 0 }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
 
-    await searchAcrossArchives(1, { pattern: '*.conf', maxArchives: 20 })
+    await expect(searchAcrossArchives(1, { pattern: '*.conf', maxArchives: 20 })).resolves.toEqual(
+      data,
+    )
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/1/search', {
       params: { pattern: '*.conf', max_archives: 20 },
@@ -100,11 +103,10 @@ describe('archives api', () => {
   })
 
   it('diffs two archives', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: { added: [], removed: [], modified: [], total_changes: 0, limit: 100, offset: 0 },
-    })
+    const data = { added: [], removed: [], modified: [], total_changes: 0, limit: 100, offset: 0 }
+    vi.mocked(apiClient.get).mockResolvedValue({ data })
 
-    await diffArchives(1, { archive1: 'a1', archive2: 'a2' })
+    await expect(diffArchives(1, { archive1: 'a1', archive2: 'a2' })).resolves.toEqual(data)
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/1/archives/diff', {
       params: { archive1: 'a1', archive2: 'a2' },
@@ -132,15 +134,16 @@ describe('archives api', () => {
   })
 
   it('restores archive files to an agent', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      data: { success: true, files_restored: 2, error_message: null },
-    })
+    const data = { success: true, files_restored: 2, error_message: null }
+    vi.mocked(apiClient.post).mockResolvedValue({ data })
 
-    await restoreArchiveFiles(1, ARCHIVE_NAME, {
-      paths: ['/etc/nginx/nginx.conf'],
-      target_path: '/tmp/restore',
-      hostname: 'web-server-01',
-    })
+    await expect(
+      restoreArchiveFiles(1, ARCHIVE_NAME, {
+        paths: ['/etc/nginx/nginx.conf'],
+        target_path: '/tmp/restore',
+        hostname: 'web-server-01',
+      }),
+    ).resolves.toEqual(data)
 
     expect(apiClient.post).toHaveBeenCalledWith(
       `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/restore`,
@@ -153,11 +156,10 @@ describe('archives api', () => {
   })
 
   it('deletes an archive', async () => {
-    vi.mocked(apiClient.delete).mockResolvedValue({
-      data: { success: true, archive_name: ARCHIVE_NAME },
-    })
+    const data = { success: true, archive_name: ARCHIVE_NAME }
+    vi.mocked(apiClient.delete).mockResolvedValue({ data })
 
-    await deleteArchive(1, ARCHIVE_NAME)
+    await expect(deleteArchive(1, ARCHIVE_NAME)).resolves.toEqual(data)
 
     expect(apiClient.delete).toHaveBeenCalledWith(`/repos/1/archives/${ENCODED_ARCHIVE_NAME}`)
   })

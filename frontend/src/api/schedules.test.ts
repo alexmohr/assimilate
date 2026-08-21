@@ -89,12 +89,17 @@ describe('schedules api', () => {
   it('updates a schedule', async () => {
     vi.mocked(apiClient.put).mockResolvedValue({ data: { id: 7, enabled: false } })
 
-    await expect(updateSchedule(7, { enabled: false })).resolves.toEqual({
+    await expect(
+      updateSchedule(7, { cron_expression: '0 2 * * *', enabled: false }),
+    ).resolves.toEqual({
       id: 7,
       enabled: false,
     })
 
-    expect(apiClient.put).toHaveBeenCalledWith('/schedules/7', { enabled: false })
+    expect(apiClient.put).toHaveBeenCalledWith('/schedules/7', {
+      cron_expression: '0 2 * * *',
+      enabled: false,
+    })
   })
 
   it('deletes a schedule', async () => {

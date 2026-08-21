@@ -28,9 +28,9 @@ describe('users api', () => {
   })
 
   it('lists users', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ id: 1, username: 'alice' }] })
 
-    await listUsers()
+    await expect(listUsers()).resolves.toEqual([{ id: 1, username: 'alice' }])
 
     expect(apiClient.get).toHaveBeenCalledWith('/users')
   })
@@ -56,25 +56,25 @@ describe('users api', () => {
   })
 
   it('gets user roles', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ id: 1, name: 'admin' }] })
 
-    await getUserRoles(5)
+    await expect(getUserRoles(5)).resolves.toEqual([{ id: 1, name: 'admin' }])
 
     expect(apiClient.get).toHaveBeenCalledWith('/users/5/roles')
   })
 
   it('gets user groups', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ id: 1, name: 'ops' }] })
 
-    await getUserGroups(5)
+    await expect(getUserGroups(5)).resolves.toEqual([{ id: 1, name: 'ops' }])
 
     expect(apiClient.get).toHaveBeenCalledWith('/users/5/groups')
   })
 
   it('gets user permissions', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ user_id: 5, repo_id: 1 }] })
 
-    await getUserPermissions(5)
+    await expect(getUserPermissions(5)).resolves.toEqual([{ user_id: 5, repo_id: 1 }])
 
     expect(apiClient.get).toHaveBeenCalledWith('/users/5/permissions')
   })

@@ -41,49 +41,55 @@ describe('repos api', () => {
   })
 
   it('lists repos', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ id: 1, name: 'nas' }] })
 
-    await listRepos()
+    await expect(listRepos()).resolves.toEqual([{ id: 1, name: 'nas' }])
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos')
   })
 
   it('lists repo stats', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ id: 1, name: 'nas' }] })
 
-    await listRepoStats()
+    await expect(listRepoStats()).resolves.toEqual([{ id: 1, name: 'nas' }])
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/stats')
   })
 
   it('lists repo tags', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: [{ repo_id: 1, tag_name: 'prod', tag_color: '#fff' }],
+    })
 
-    await listRepoTags()
+    await expect(listRepoTags()).resolves.toEqual([
+      { repo_id: 1, tag_name: 'prod', tag_color: '#fff' },
+    ])
 
     expect(apiClient.get).toHaveBeenCalledWith('/repo-tags')
   })
 
   it('gets a repo', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { id: 12, name: 'nas' } })
 
-    await getRepo(12)
+    await expect(getRepo(12)).resolves.toEqual({ id: 12, name: 'nas' })
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/12')
   })
 
   it('creates a repo', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { id: 1, name: 'nas' } })
 
-    await createRepo({
-      name: 'nas',
-      repo_path: '/backup/repos/nas',
-      ssh_user: 'root',
-      ssh_host: '10.0.0.1',
-      ssh_port: 22,
-      passphrase: 'secret',
-      compression: 'zstd',
-    })
+    await expect(
+      createRepo({
+        name: 'nas',
+        repo_path: '/backup/repos/nas',
+        ssh_user: 'root',
+        ssh_host: '10.0.0.1',
+        ssh_port: 22,
+        passphrase: 'secret',
+        compression: 'zstd',
+      }),
+    ).resolves.toEqual({ id: 1, name: 'nas' })
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos', {
       name: 'nas',
@@ -193,7 +199,7 @@ describe('repos api', () => {
   it('gets the repo passphrase', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({ data: { passphrase: 'secret' } })
 
-    await getRepoPassphrase(12)
+    await expect(getRepoPassphrase(12)).resolves.toEqual({ passphrase: 'secret' })
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/12/passphrase')
   })
@@ -201,7 +207,7 @@ describe('repos api', () => {
   it('scans the repo ssh host key', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: { ssh_host_key: 'ssh-ed25519 AAAA' } })
 
-    await scanRepoSshHostKey(12)
+    await expect(scanRepoSshHostKey(12)).resolves.toEqual({ ssh_host_key: 'ssh-ed25519 AAAA' })
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos/12/ssh-host-key/scan')
   })
@@ -217,33 +223,37 @@ describe('repos api', () => {
   })
 
   it('confirms a repo relocation', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { confirmed: true } })
 
-    await confirmRepoRelocation(12)
+    await expect(confirmRepoRelocation(12)).resolves.toEqual({ confirmed: true })
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos/12/confirm-relocation')
   })
 
   it('breaks a repo lock', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { broke_lock: true } })
 
-    await breakRepoLock(12)
+    await expect(breakRepoLock(12)).resolves.toEqual({ broke_lock: true })
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos/12/break-lock')
   })
 
   it('executes a borg command on a repo', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { stdout: 'ok', stderr: '', code: 0 } })
 
-    await execRepoCommand(12, ['list'])
+    await expect(execRepoCommand(12, ['list'])).resolves.toEqual({
+      stdout: 'ok',
+      stderr: '',
+      code: 0,
+    })
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos/12/exec', { args: ['list'] })
   })
 
   it('rescans a repo', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { matched: 3 } })
 
-    await rescanRepo(12)
+    await expect(rescanRepo(12)).resolves.toEqual({ matched: 3 })
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos/12/rescan')
   })
@@ -253,11 +263,13 @@ describe('repos api', () => {
       data: { ssh_ok: true, borg_installed: true, borg_version: '1.4.0' },
     })
 
-    await testRepoConnection({
-      ssh_host: '10.0.0.1',
-      ssh_user: 'root',
-      ssh_port: 22,
-    })
+    await expect(
+      testRepoConnection({
+        ssh_host: '10.0.0.1',
+        ssh_user: 'root',
+        ssh_port: 22,
+      }),
+    ).resolves.toEqual({ ssh_ok: true, borg_installed: true, borg_version: '1.4.0' })
 
     expect(apiClient.post).toHaveBeenCalledWith('/ssh/test-connection', {
       ssh_host: '10.0.0.1',
@@ -277,7 +289,13 @@ describe('repos api', () => {
       },
     })
 
-    await getRepoQuota(12)
+    await expect(getRepoQuota(12)).resolves.toEqual({
+      warn_bytes: 1000,
+      critical_bytes: 2000,
+      warn_action: 'notify_only',
+      critical_action: 'block_backups',
+      enabled: true,
+    })
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/12/quota')
   })

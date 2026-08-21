@@ -4,15 +4,9 @@
 import { apiClient } from './client'
 import type { Role } from './roles'
 import type { Group } from './groups'
+import type { UserResponse } from '../types/generated'
 
-export interface User {
-  id: number
-  username: string
-  role: string
-  must_change_password: boolean
-  created_at: string
-  last_login_at: string | null
-}
+export type User = UserResponse
 
 export interface RepoPermission {
   user_id: number

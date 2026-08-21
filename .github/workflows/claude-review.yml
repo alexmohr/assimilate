@@ -302,6 +302,19 @@ jobs:
       # grants no capability beyond what the existing git/gh access already
       # allows - it just removes the friction that was burning the turn
       # budget before Claude could reach its own verdict.
+      #
+      # `TodoWrite` is the same pattern a third time: PR #441 (89 changed
+      # files) burned 30 permission denials over 42 turns and again ended
+      # `is_error: false` with no verdict, on two consecutive full runs back
+      # to back (confirmed via the run logs - no `gh pr review`/`gh pr edit`
+      # ever executed, no inline comments buffered). A review spanning this
+      # many files is exactly the shape of task Claude Code defaults to
+      # tracking with a todo list; every one of those internal
+      # planning/progress-tracking calls was denied since `TodoWrite` was
+      # never in this allowlist, unlike the read-only tools above it costs
+      # nothing beyond in-memory state local to the run, so allowing it
+      # trades no capability for removing another confirmed source of
+      # wasted turns.
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
@@ -314,7 +327,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,TodoWrite"
           prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.
@@ -373,6 +386,28 @@ jobs:
       # upsertMarkedComment (shared with those two scripts) edits the same
       # comment in place across retries instead of piling up a new one per
       # failed attempt - see .github/scripts/lib/pr-comment.js.
+      #
+      # steps.claude.outcome only catches the action *erroring* (non-zero
+      # exit, e.g. an actual quota/API failure) - it does not catch the
+      # documented "is_error: false, zero verdict" case: on a large diff (89
+      # files was the confirmed repro, PR #441) Claude repeatedly reaches for
+      # tools outside allowedTools, burns its turns on the resulting
+      # permission denials (30 in that run), and then follows its own
+      # "better to submit nothing than an incomplete verdict" instruction and
+      # stops - a clean `is_error: false` exit with no `gh pr review`/`gh pr
+      # edit` ever called. Nothing about that looked like a failure to this
+      # step before, so no label or comment ever appeared, `needs review`
+      # stayed on the PR with zero explanation, and the only way anyone
+      # discovered the review had silently gone nowhere was noticing the
+      # label never moved - which is what forced the exact "remove and
+      # re-add the label by hand" workaround #430 already fixed the trigger
+      # side of once, plus a second unattended one before this fix (see
+      # PR #441's history: two full ~3 minute Claude runs back to back,
+      # neither posting a review or a label change). Detect it the same way
+      # a human would: after a real attempt, does a review from this bot
+      # actually exist for the commit under review? If not, treat it exactly
+      # like a failure so the label/comment/retry-hint path fires instead of
+      # leaving the PR silently stuck.
       - name: Sync claude-review-failed signal
         if: steps.precheck.outputs.run_claude == 'true'
         uses: actions/github-script@v7
@@ -383,8 +418,24 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const prNumber = Number("${{ steps.resolve.outputs.pr_number }}");
+            const headSha = "${{ steps.head.outputs.sha }}";
             const MARKER = "<!-- claude-review-unavailable -->";
-            const failed = "${{ steps.claude.outcome }}" === "failure";
+            const erroredOutright = "${{ steps.claude.outcome }}" === "failure";
+
+            let noVerdictPosted = false;
+            if (!erroredOutright) {
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner,
+                repo,
+                pull_number: prNumber,
+                per_page: 100,
+              });
+              const postedThisCommit = reviews.some(
+                (r) => r.user && r.user.login === "github-actions[bot]" && r.commit_id === headSha,
+              );
+              noVerdictPosted = !postedThisCommit;
+            }
+            const failed = erroredOutright || noVerdictPosted;
 
             if (failed) {
               await sync.ensureLabelExists(github, owner, repo, sync.CLAUDE_REVIEW_FAILED_LABEL);
@@ -394,6 +445,9 @@ jobs:
                 issue_number: prNumber,
                 labels: [sync.CLAUDE_REVIEW_FAILED_LABEL.name],
               });
+              const reason = erroredOutright
+                ? "was unavailable this run (quota exhausted or an error)"
+                : "ran but did not reach a verdict this run (likely ran out of turns/permissions on a large diff)";
               await upsertMarkedComment(
                 github,
                 owner,
@@ -401,7 +455,7 @@ jobs:
                 prNumber,
                 MARKER,
                 `${MARKER}\n` +
-                  "Automated review via Claude was unavailable this run (quota exhausted or an error). " +
+                  `Automated review via Claude ${reason}. ` +
                   "This PR still needs review - a human can review it directly on GitHub, or any agent " +
                   "can review it per `skills/review/SKILL.md`. Comment `/claude-review` to retry once " +
                   "the automated path is available again.",

@@ -33,6 +33,19 @@ vi.mock('@primevue/core/api', () => ({
   FilterMatchMode: { CONTAINS: 'contains' },
 }))
 
+// Captured WebSocket handlers - the page subscribes the three events that
+// release an archive row's "deleting..." marker.
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    status: { value: 'connected' },
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
+}))
+
 import { apiClient } from '../api/client'
 import ArchivesView from './ArchivesView.vue'
 import { dismissModal, openModals } from '../test-utils'
@@ -127,7 +140,62 @@ function mockReposAndArchives(archives: unknown[] = ARCHIVES): void {
 describe('ArchivesView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    for (const type of Object.keys(wsHandlers)) delete wsHandlers[type]
     mockGet.mockResolvedValue({ data: [] })
+  })
+
+  describe('archive deletion events', () => {
+    it('refetches the archive list when the server reports data changed', async () => {
+      mockReposAndArchives()
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+
+      const before = mockGet.mock.calls.filter((c) => String(c[0]).includes('/archives')).length
+      wsHandlers.DataChanged({})
+      await flushPromises()
+
+      const after = mockGet.mock.calls.filter((c) => String(c[0]).includes('/archives')).length
+      expect(after).toBe(before + 1)
+    })
+
+    it('ignores archive events belonging to another repository', async () => {
+      mockReposAndArchives()
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+      await flushPromises()
+
+      // Selected repo is 1; nothing here concerns repo 2.
+      wsHandlers.ArchiveDeleted({ repo_id: 2, archive_name: ARCHIVES[0].name })
+      wsHandlers.RepoOpChanged({ repo_id: 2, op: null })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(ARCHIVES[0].name)
+    })
+
+    it('drops the row the server says finished deleting', async () => {
+      mockReposAndArchives()
+      const wrapper = mountView()
+      await flushPromises()
+      await pickFirstRepo(wrapper)
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(ARCHIVES[0].name)
+
+      // The archive is gone server-side, so the reload behind DataChanged
+      // returns the shorter list and the row leaves with it.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/repos') return Promise.resolve({ data: REPOS })
+        if (url.includes('/archives')) return Promise.resolve({ data: [ARCHIVES[1]] })
+        return Promise.resolve({ data: [] })
+      })
+      wsHandlers.ArchiveDeleted({ repo_id: 1, archive_name: ARCHIVES[0].name })
+      wsHandlers.DataChanged({})
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain(ARCHIVES[0].name)
+    })
   })
 
   it('renders the page title', async () => {

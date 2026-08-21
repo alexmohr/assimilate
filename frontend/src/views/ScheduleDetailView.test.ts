@@ -1256,6 +1256,72 @@ describe('ScheduleDetailView - Backups tab', () => {
     expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
   })
 
+  it('refetches the schedule reports when the server reports data changed', async () => {
+    const wrapper = await createBackupsWrapper([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    await goToBackups(wrapper)
+
+    const before = mockApiClient.get.mock.calls.filter((c) =>
+      String(c[0]).includes('/reports'),
+    ).length
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    const after = mockApiClient.get.mock.calls.filter((c) =>
+      String(c[0]).includes('/reports'),
+    ).length
+    expect(after).toBe(before + 1)
+  })
+
+  it('releases the row the server names as finished deleting', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        deduplicated_size: 200,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    mockApiClient.delete.mockResolvedValue({
+      data: { success: true, archive_name: 'test-archive-2026-06-01' },
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await goToBackups(wrapper)
+
+    await wrapper.find('button[title="Delete archive"]').trigger('click')
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('.modal-dialog button.btn-danger')!.click()
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+
+    // The server names exactly which archive finished, so the marker goes
+    // without waiting for a refetch to notice the row is gone.
+    wsHandlers['ArchiveDeleted']?.({ repo_id: 20, archive_name: 'test-archive-2026-06-01' })
+    await flushPromises()
+
+    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+  })
+
   it('hides save bar on Backups tab', async () => {
     const wrapper = await createBackupsWrapper([
       {

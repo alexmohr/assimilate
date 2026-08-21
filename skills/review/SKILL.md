@@ -268,11 +268,12 @@ instead: `claude_args` in `claude-review.yml` grants Bash access to a
 specific set of subcommands (not blanket Bash access) — `gh pr diff`/`gh pr
 view`/`git log`/`git diff`/`git show` to actually see the change, `gh pr
 review`/`gh pr edit` for the verdict — plus `Read`/`Grep`/`Glob` against the
-already-checked-out PR worktree, so a review of a large, many-file diff can
-check a claim against the actual source instead of every such attempt being
-denied (which on a big enough diff was observed to burn the entire turn
-budget on nothing but denials, ending with `is_error: false` and no verdict
-ever submitted — see PR #425). A `GH_TOKEN` env var on that step
+already-checked-out PR worktree and `TodoWrite` for tracking a large review's
+own progress, so a review of a large, many-file diff can check a claim
+against the actual source instead of every such attempt being denied (which
+on a big enough diff was observed to burn the entire turn budget on nothing
+but denials, ending with `is_error: false` and no verdict ever submitted —
+see PR #425 and PR #441). A `GH_TOKEN` env var on that step
 authenticates `gh`. The prompt tells Claude to start with `gh pr diff`/`gh
 pr view` before forming an opinion, to use `gh pr review --comment` to post
 its findings as the review body and `gh pr edit --add-label|--remove-label`
@@ -284,10 +285,21 @@ gate" below for how it actually happens.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright
-(quota exhausted, action error), the workflow posts a plain comment instead
-of a fake verdict — the PR still needs a review, from a human (native GitHub
+(quota exhausted, action error) *or* completes cleanly but never actually
+posts a verdict (the `is_error: false`/zero-denials-visible failure mode
+above, still possible on a diff large enough to exhaust the allowlisted
+tools anyway), the workflow treats both the same way: it adds the `claude
+review failed` label and posts a plain comment instead of a fake verdict —
+detected by checking, after the run, whether this bot actually posted a
+review against the commit under review, not just whether the action step
+itself errored, so a run that quietly gives up no longer leaves the PR
+looking untouched. The PR still needs a review, from a human (native GitHub
 review) or any other agent (the verdict labels), through the same channels
-documented above; nothing about `ready to merge` depends on Claude specifically.
+documented above; nothing about `ready to merge` depends on Claude
+specifically. Retry with `/claude-review` rather than removing and re-adding
+`needs review` by hand — the label toggle is a fallback trigger, not a
+guaranteed retry path, and doesn't by itself change anything about the
+budget that caused the previous attempt to give up.
 
 **Clearing a pre-existing formal review:** a PR that already carries a
 bot-authored formal `CHANGES_REQUESTED` review from before this workflow

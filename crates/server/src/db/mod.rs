@@ -3033,11 +3033,18 @@ pub struct ScheduleFailureOutcome {
 /// successful trigger - so the scheduler backs off to the normal cron cadence
 /// instead of retrying every tick, and disables the schedule once
 /// `consecutive_failures` reaches `max_consecutive_failures`, so an agent that stays
-/// offline indefinitely doesn't generate failures forever. Also records `agent_id` as
-/// the target most recently responsible for the failure streak, so
-/// [`reenable_system_disabled_schedules_for_agent`] can re-enable only when *that*
-/// specific target reconnects - not any of the schedule's other targets - see the
-/// comment there for why a multi-target schedule needs this distinction.
+/// offline indefinitely doesn't generate failures forever.
+///
+/// `agent_unreachable` distinguishes *why* this attempt failed: only a connectivity
+/// failure (the agent itself unreachable) marks `auto_disabled_agent_unreachable` and
+/// records `agent_id` as `auto_disabled_by_agent_id`, so
+/// [`reenable_system_disabled_schedules_for_agent`] re-enables the schedule once that
+/// specific target reconnects. A local/data failure (e.g. config assembly, a corrupted
+/// encrypted passphrase) still counts toward `consecutive_failures` and still disables
+/// the schedule at the threshold, but deliberately leaves that bookkeeping untouched:
+/// the agent reconnecting over the websocket says nothing about whether the underlying
+/// data problem was fixed, so it must not silently self-heal a disable that was never
+/// about connectivity - a human has to fix it and re-enable the schedule.
 ///
 /// # Errors
 ///
@@ -3048,24 +3055,26 @@ pub async fn record_schedule_failure(
     agent_id: i64,
     next_run_at: DateTime<Utc>,
     max_consecutive_failures: i32,
+    agent_unreachable: bool,
 ) -> Result<ScheduleFailureOutcome, ApiError> {
     let row = sqlx::query!(
         "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, next_run_at = $2, \
          enabled = enabled AND consecutive_failures + 1 < $3, auto_disabled_agent_unreachable = \
-         auto_disabled_agent_unreachable OR consecutive_failures + 1 >= $3, \
-         auto_disabled_by_agent_id = $4 WHERE id = $1 RETURNING consecutive_failures, \
-         auto_disabled_agent_unreachable",
+         CASE WHEN $5 THEN auto_disabled_agent_unreachable OR consecutive_failures + 1 >= $3 ELSE \
+         auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN $5 THEN $4 \
+         ELSE auto_disabled_by_agent_id END WHERE id = $1 RETURNING consecutive_failures, enabled",
         schedule_id,
         next_run_at,
         max_consecutive_failures,
         agent_id,
+        agent_unreachable,
     )
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)?;
     Ok(ScheduleFailureOutcome {
         consecutive_failures: row.consecutive_failures,
-        auto_disabled: row.auto_disabled_agent_unreachable,
+        auto_disabled: !row.enabled,
     })
 }
 

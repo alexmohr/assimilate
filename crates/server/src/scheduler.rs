@@ -896,7 +896,7 @@ async fn run_sequential_target(
             // independently, and a schedule with `on_failure: Continue` processes
             // every target regardless of earlier outcomes.
             if !*recorded_failure {
-                record_schedule_failure_once(ctx, recorded_failure).await;
+                record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
             }
             signal_first_target_attempted(triggered_tx);
             return match ctx.on_failure {
@@ -910,7 +910,7 @@ async fn run_sequential_target(
             // an unreachable agent - route it through the same backoff/auto-disable
             // path rather than leaving next_run_at untouched.
             if !*recorded_failure {
-                record_schedule_failure_once(ctx, recorded_failure).await;
+                record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
             }
             signal_first_target_attempted(triggered_tx);
             return match ctx.on_failure {
@@ -967,7 +967,7 @@ async fn run_sequential_target(
             // by recorded_failure - see the comments on the equivalent ordering and
             // guard in the AgentUnreachable arm above.
             if !*recorded_failure {
-                record_schedule_failure_once(ctx, recorded_failure).await;
+                record_schedule_failure_once(ctx, target.agent_id, recorded_failure).await;
             }
             // Signal tick() that we've attempted the first target
             signal_first_target_attempted(triggered_tx);
@@ -1061,17 +1061,32 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
     }
 }
 
-/// Records that this schedule failed to reach its agent, backing off `next_run_at`
+/// Records that this schedule failed to reach `agent_id`, backing off `next_run_at`
 /// to the next scheduled occurrence (instead of the every-30s tick cadence) and
-/// auto-disabling the schedule once [`MAX_CONSECUTIVE_FAILURES`] is reached. Only
-/// the first target failure of a tick counts, mirroring [`mark_schedule_triggered_once`]
-/// - a schedule with multiple targets shouldn't be double-counted for one tick.
-async fn record_schedule_failure_once(ctx: &SequentialTargetCtx<'_>, recorded_failure: &mut bool) {
+/// auto-disabling the schedule once [`MAX_CONSECUTIVE_FAILURES`] is reached. Only the
+/// first target failure of a tick counts, mirroring [`mark_schedule_triggered_once`],
+/// since a schedule with multiple targets shouldn't be double-counted for one tick.
+/// `agent_id` is recorded as the schedule's `auto_disabled_by_agent_id`, so a
+/// reconnect only re-enables the schedule when this specific target comes back - see
+/// [`db::reenable_system_disabled_schedules_for_agent`].
+async fn record_schedule_failure_once(
+    ctx: &SequentialTargetCtx<'_>,
+    agent_id: i64,
+    recorded_failure: &mut bool,
+) {
     let Some(next) = calculate_next_run_or_log(ctx) else {
         return;
     };
     let schedule_id = ctx.schedule_id;
-    match db::record_schedule_failure(ctx.pool, schedule_id, next, MAX_CONSECUTIVE_FAILURES).await {
+    match db::record_schedule_failure(
+        ctx.pool,
+        schedule_id,
+        agent_id,
+        next,
+        MAX_CONSECUTIVE_FAILURES,
+    )
+    .await
+    {
         Ok(outcome) => {
             *recorded_failure = true;
             if outcome.auto_disabled {
@@ -1871,6 +1886,7 @@ esac
             db::record_schedule_failure(
                 &pool,
                 auto_disabled_schedule_id,
+                agent_id,
                 next,
                 MAX_CONSECUTIVE_FAILURES,
             )
@@ -1958,9 +1974,15 @@ esac
             let next = Utc::now()
                 .checked_add_signed(chrono::Duration::days(1))
                 .unwrap();
-            db::record_schedule_failure(&pool, schedule_id, next, MAX_CONSECUTIVE_FAILURES)
-                .await
-                .unwrap();
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+            )
+            .await
+            .unwrap();
         }
         let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
         assert!(
@@ -2119,6 +2141,240 @@ esac
                 assert!(auto_disabled);
             }
         }
+    }
+
+    /// A multi-target schedule auto-disabled because of one specific unreachable
+    /// target must not be re-enabled just because a *different* target of the same
+    /// schedule reconnects - only the target whose failures actually caused the
+    /// disable should bring it back. Without this, a schedule with one permanently-
+    /// broken target and one merely-flaky-but-fine target would have its failure
+    /// count reset every time the flaky target's routine reconnects happened, and
+    /// the broken target would never actually reach the auto-disable threshold for
+    /// good.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reconnect_only_reenables_for_the_agent_that_caused_the_disable(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", &key).unwrap();
+        let broken_agent = db::insert_agent(&pool, "scoped-reconnect-broken", None, "hash", None)
+            .await
+            .unwrap();
+        let flaky_agent = db::insert_agent(&pool, "scoped-reconnect-flaky", None, "hash", None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "scoped-reconnect-repo",
+                repo_path: "/backup/scoped-reconnect",
+                ssh_user: "borg",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_enc,
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::update_repo_ssh_host_key(&pool, repo.id, "ssh-ed25519 AAAASCOPEDTEST")
+            .await
+            .unwrap();
+        let schedule = db::insert_schedule(
+            &pool,
+            repo.id,
+            &ScheduleParams {
+                name: "scoped-reconnect-sched",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 0,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                on_failure: "continue",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let schedule_id = schedule.id;
+        db::insert_schedule_targets(
+            &pool,
+            schedule_id,
+            &[(broken_agent.id, 0), (flaky_agent.id, 1)],
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            let next = Utc::now()
+                .checked_add_signed(chrono::Duration::days(1))
+                .unwrap();
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                broken_agent.id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+            )
+            .await
+            .unwrap();
+        }
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(
+            !enabled && auto_disabled,
+            "setup must have auto-disabled it"
+        );
+
+        let reenabled_by_flaky =
+            db::reenable_system_disabled_schedules_for_agent(&pool, flaky_agent.id, Utc::now())
+                .await
+                .unwrap();
+        assert_eq!(
+            reenabled_by_flaky,
+            Vec::<i64>::new(),
+            "a different target of the schedule reconnecting must not re-enable it"
+        );
+        let (consecutive_failures, still_enabled, still_auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert!(!still_enabled);
+        assert!(still_auto_disabled);
+        assert_eq!(consecutive_failures, MAX_CONSECUTIVE_FAILURES);
+
+        let reenabled_by_broken =
+            db::reenable_system_disabled_schedules_for_agent(&pool, broken_agent.id, Utc::now())
+                .await
+                .unwrap();
+        assert_eq!(reenabled_by_broken, vec![schedule_id]);
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(consecutive_failures, 0);
+        assert!(enabled);
+        assert!(!auto_disabled);
+    }
+
+    /// `update_schedule` backs the general edit-schedule form, which resubmits
+    /// `enabled` unchanged on every save of any other field. It must preserve the
+    /// auto-disable bookkeeping when `enabled` doesn't actually change, or an
+    /// unrelated edit (e.g. a retention tweak) made while the agent is still offline
+    /// would permanently strand the schedule - the reconnect handler matches on
+    /// `auto_disabled_by_agent_id`, which this same edit would otherwise have wiped.
+    /// An edit that *does* toggle `enabled` must still clear it, exactly like
+    /// `set_schedule_enabled`.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn update_schedule_preserves_auto_disabled_state_unless_enabled_changes(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+
+        let unrelated_edit_params = |enabled: bool| ScheduleParams {
+            name: "tick-sched-renamed",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 0,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            on_failure: "stop",
+        };
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            let next = Utc::now()
+                .checked_add_signed(chrono::Duration::days(1))
+                .unwrap();
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+            )
+            .await
+            .unwrap();
+        }
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(
+            !enabled && auto_disabled,
+            "setup must have auto-disabled it"
+        );
+
+        // Edit an unrelated field, resubmitting the current (disabled) `enabled`
+        // value unchanged.
+        db::update_schedule(&pool, schedule_id, &unrelated_edit_params(false))
+            .await
+            .unwrap();
+        let (consecutive_failures, still_enabled, still_auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert!(!still_enabled);
+        assert!(
+            still_auto_disabled,
+            "an unrelated edit that leaves `enabled` unchanged must not clear the auto-disabled \
+             flag"
+        );
+        assert_eq!(consecutive_failures, MAX_CONSECUTIVE_FAILURES);
+
+        // Reconnect must still be able to re-enable it after that unrelated edit.
+        let reenabled =
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+                .await
+                .unwrap();
+        assert_eq!(reenabled, vec![schedule_id]);
+
+        // Auto-disable it again, then this time actually flip `enabled` through the
+        // same edit form - a real transition must still clear the bookkeeping.
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            let next = Utc::now()
+                .checked_add_signed(chrono::Duration::days(1))
+                .unwrap();
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+            )
+            .await
+            .unwrap();
+        }
+        db::update_schedule(&pool, schedule_id, &unrelated_edit_params(true))
+            .await
+            .unwrap();
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert!(enabled);
+        assert!(
+            !auto_disabled,
+            "an edit that actually toggles `enabled` must still clear the flag"
+        );
+        assert_eq!(consecutive_failures, 0);
     }
 
     /// Like `setup_due_schedule`, but with two targets so `tick()` dispatches

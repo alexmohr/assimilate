@@ -2079,10 +2079,16 @@ pub async fn update_schedule(
     id: i64,
     params: &ScheduleParams<'_>,
 ) -> Result<ScheduleRow, ApiError> {
-    // See the comment on set_schedule_enabled: any direct write to `enabled` from
-    // outside the failure-tracking path clears auto_disabled_agent_unreachable and
-    // consecutive_failures so the auto-disable bookkeeping can't outlive the reason it
-    // was set for.
+    // Unlike set_schedule_enabled (only ever called to explicitly flip `enabled`),
+    // this backs the general edit-schedule form, which resubmits `enabled` unchanged
+    // on every save of any other field (rename, retention tweak, cron change, ...).
+    // Clearing the auto-disable bookkeeping unconditionally here would let an
+    // unrelated edit permanently strand an auto-disabled schedule: the reconnect
+    // handler only matches on auto_disabled_by_agent_id, so once this cleared it,
+    // reconnecting would never re-enable the schedule again. Only clear it when
+    // `enabled` is actually transitioning - i.e. a human explicitly toggled it
+    // through this same form - the same "direct write from outside the failure-
+    // tracking path" trigger set_schedule_enabled uses.
     sqlx::query_as!(
         ScheduleRow,
         "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, \
@@ -2090,7 +2096,10 @@ pub async fn update_schedule(
          keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = \
          $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, \
          post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, \
-         auto_disabled_agent_unreachable = false, consecutive_failures = 0 WHERE id = $1 \
+         auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE \
+         auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS \
+         DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = \
+         CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END WHERE id = $1 \
          RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
@@ -3024,7 +3033,11 @@ pub struct ScheduleFailureOutcome {
 /// successful trigger - so the scheduler backs off to the normal cron cadence
 /// instead of retrying every tick, and disables the schedule once
 /// `consecutive_failures` reaches `max_consecutive_failures`, so an agent that stays
-/// offline indefinitely doesn't generate failures forever.
+/// offline indefinitely doesn't generate failures forever. Also records `agent_id` as
+/// the target most recently responsible for the failure streak, so
+/// [`reenable_system_disabled_schedules_for_agent`] can re-enable only when *that*
+/// specific target reconnects - not any of the schedule's other targets - see the
+/// comment there for why a multi-target schedule needs this distinction.
 ///
 /// # Errors
 ///
@@ -3032,17 +3045,20 @@ pub struct ScheduleFailureOutcome {
 pub async fn record_schedule_failure(
     pool: &PgPool,
     schedule_id: i64,
+    agent_id: i64,
     next_run_at: DateTime<Utc>,
     max_consecutive_failures: i32,
 ) -> Result<ScheduleFailureOutcome, ApiError> {
     let row = sqlx::query!(
         "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, next_run_at = $2, \
          enabled = enabled AND consecutive_failures + 1 < $3, auto_disabled_agent_unreachable = \
-         auto_disabled_agent_unreachable OR consecutive_failures + 1 >= $3 WHERE id = $1 \
-         RETURNING consecutive_failures, auto_disabled_agent_unreachable",
+         auto_disabled_agent_unreachable OR consecutive_failures + 1 >= $3, \
+         auto_disabled_by_agent_id = $4 WHERE id = $1 RETURNING consecutive_failures, \
+         auto_disabled_agent_unreachable",
         schedule_id,
         next_run_at,
         max_consecutive_failures,
+        agent_id,
     )
     .fetch_one(pool)
     .await
@@ -3053,11 +3069,19 @@ pub async fn record_schedule_failure(
     })
 }
 
-/// Re-enables every schedule targeting `agent_id` that the scheduler had auto-disabled
-/// after repeated agent-unreachable failures (never a schedule a human or quota
-/// enforcement disabled), resetting its failure count and making it due again
-/// immediately - called when the agent reconnects, so a schedule that gave up while
-/// the agent was offline resumes on its own once it's back.
+/// Re-enables every schedule that the scheduler had auto-disabled after repeated
+/// unreachable-agent failures *from this specific `agent_id`* (never a schedule a
+/// human or quota enforcement disabled, and never a multi-target schedule auto-
+/// disabled because a *different* target of it is unreachable), resetting its failure
+/// count and making it due again immediately - called when the agent reconnects, so a
+/// schedule that gave up while this agent was offline resumes on its own once it's
+/// back.
+///
+/// Matching on `auto_disabled_by_agent_id` rather than "any of this schedule's
+/// targets" matters for multi-target schedules: a schedule with one permanently-
+/// unreachable target and one merely-flaky-but-generally-fine target must not have
+/// its failure count reset every time the flaky target's routine reconnects happen -
+/// only the actually-broken target's own reconnect should count.
 ///
 /// # Errors
 ///
@@ -3069,8 +3093,8 @@ pub async fn reenable_system_disabled_schedules_for_agent(
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
         "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
-         consecutive_failures = 0, next_run_at = $2 WHERE auto_disabled_agent_unreachable = true \
-         AND id IN (SELECT schedule_id FROM schedule_targets WHERE agent_id = $1) RETURNING id",
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, next_run_at = $2 WHERE \
+         auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id = $1 RETURNING id",
         agent_id,
         now,
     )
@@ -3114,7 +3138,7 @@ pub async fn set_schedule_enabled(
     // `true` flag would make a later agent reconnect silently lift the quota block).
     sqlx::query!(
         "UPDATE schedules SET enabled = $2, auto_disabled_agent_unreachable = false, \
-         consecutive_failures = 0 WHERE id = $1",
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0 WHERE id = $1",
         schedule_id,
         enabled,
     )

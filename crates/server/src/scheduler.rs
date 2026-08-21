@@ -1955,6 +1955,72 @@ esac
         );
     }
 
+    /// `auto_disabled_agent_unreachable`/`auto_disabled_by_agent_id` must reflect
+    /// whether the specific call that actually crossed the failure threshold was a
+    /// connectivity failure - not whether *any* failure earlier in the same streak
+    /// was. A streak that happens to end on a config-error call must not be
+    /// re-enabled by an unrelated agent reconnect just because an earlier failure in
+    /// that same streak was connectivity-related.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn record_schedule_failure_only_marks_unreachable_on_the_disabling_call(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        // Two connectivity failures, then a config-error failure that crosses the
+        // threshold and actually disables the schedule.
+        for _ in 0..MAX_CONSECUTIVE_FAILURES - 1 {
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let outcome = db::record_schedule_failure(
+            &pool,
+            schedule_id,
+            agent_id,
+            next,
+            MAX_CONSECUTIVE_FAILURES,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(outcome.auto_disabled);
+
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(!enabled, "must be disabled once the threshold is crossed");
+        assert!(
+            !auto_disabled,
+            "the disabling call was a config error, so the streak must not be marked \
+             agent-unreachable just because earlier failures in it were"
+        );
+
+        let reenabled =
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+                .await
+                .unwrap();
+        assert_eq!(
+            reenabled,
+            Vec::<i64>::new(),
+            "an unrelated reconnect must not clear a streak that ended on a config error"
+        );
+    }
+
     /// A schedule the scheduler auto-disabled after repeated unreachable-agent
     /// failures must come back on its own once the agent reconnects - never stay off
     /// until a human notices, and never touch a schedule disabled for another reason.

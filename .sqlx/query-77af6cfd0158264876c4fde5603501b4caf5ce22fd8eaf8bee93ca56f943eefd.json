@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, next_run_at = $2, enabled = enabled AND consecutive_failures + 1 < $3, auto_disabled_agent_unreachable = CASE WHEN $5 AND consecutive_failures + 1 >= $3 THEN true ELSE auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN $5 AND consecutive_failures + 1 >= $3 THEN $4 ELSE auto_disabled_by_agent_id END WHERE id = $1 RETURNING consecutive_failures, enabled",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "consecutive_failures",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz",
+        "Int4",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "77af6cfd0158264876c4fde5603501b4caf5ce22fd8eaf8bee93ca56f943eefd"
+}

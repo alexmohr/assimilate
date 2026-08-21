@@ -3060,9 +3060,10 @@ pub async fn record_schedule_failure(
     let row = sqlx::query!(
         "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, next_run_at = $2, \
          enabled = enabled AND consecutive_failures + 1 < $3, auto_disabled_agent_unreachable = \
-         CASE WHEN $5 THEN auto_disabled_agent_unreachable OR consecutive_failures + 1 >= $3 ELSE \
-         auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN $5 THEN $4 \
-         ELSE auto_disabled_by_agent_id END WHERE id = $1 RETURNING consecutive_failures, enabled",
+         CASE WHEN $5 AND consecutive_failures + 1 >= $3 THEN true ELSE \
+         auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN $5 AND \
+         consecutive_failures + 1 >= $3 THEN $4 ELSE auto_disabled_by_agent_id END WHERE id = $1 \
+         RETURNING consecutive_failures, enabled",
         schedule_id,
         next_run_at,
         max_consecutive_failures,

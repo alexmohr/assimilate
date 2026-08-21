@@ -1488,11 +1488,7 @@ mod tests {
             Err(SshError::PublicKeyNotFound(_))
         ));
 
-        let private_key = ssh_key::PrivateKey::random(
-            &mut ssh_key::rand_core::OsRng,
-            ssh_key::Algorithm::Ed25519,
-        )
-        .unwrap();
+        let private_key = crate::test_support::generate_ed25519_key();
         let private_pem = private_key.to_openssh(ssh_key::LineEnding::LF).unwrap();
         std::fs::write(dir.path().join("id_ed25519"), private_pem.as_bytes()).unwrap();
         let public_str = private_key.public_key().to_openssh().unwrap();

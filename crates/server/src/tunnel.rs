@@ -203,20 +203,9 @@ impl TunnelManager {
         }
 
         let manager = self.clone();
-        tokio::spawn(async move {
-            let _completion = TunnelTaskCompletion(completion);
-            let mut backoff = Duration::from_secs(1);
-            loop {
-                match run_tunnel_connection_attempt(
-                    &manager, tunnel_id, &hostname, &cancel, backoff,
-                )
-                .await
-                {
-                    ConnectionOutcome::Stop => return,
-                    ConnectionOutcome::Retry(next_backoff) => backoff = next_backoff,
-                }
-            }
-        });
+        tokio::spawn(run_reconnect_loop(
+            manager, tunnel_id, hostname, cancel, completion,
+        ));
     }
 
     /// Stop a running tunnel by its ID, cancelling the task and waiting for it to complete.
@@ -311,9 +300,34 @@ impl TunnelManager {
     }
 }
 
+#[derive(Debug)]
 enum ConnectionOutcome {
     Stop,
     Retry(Duration),
+}
+
+/// Runs a tunnel's connect/retry loop until `ConnectionOutcome::Stop`.
+/// Spawned in the background by `start_tunnel`; factored out of that
+/// `tokio::spawn` closure so tests can await it directly instead of racing a
+/// detached background task against the test's own completion - previously
+/// nothing in the test suite drove this loop at all, so its coverage in CI
+/// depended entirely on incidental scheduling from unrelated tests.
+async fn run_reconnect_loop(
+    manager: TunnelManager,
+    tunnel_id: i64,
+    hostname: String,
+    cancel: CancellationToken,
+    completion: Arc<Notify>,
+) {
+    let _completion = TunnelTaskCompletion(completion);
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        match run_tunnel_connection_attempt(&manager, tunnel_id, &hostname, &cancel, backoff).await
+        {
+            ConnectionOutcome::Stop => return,
+            ConnectionOutcome::Retry(next_backoff) => backoff = next_backoff,
+        }
+    }
 }
 
 struct TunnelConnectionParams {
@@ -556,6 +570,25 @@ async fn run_tunnel_connection_attempt(
             Err(outcome) => return outcome,
         };
 
+    run_connected_session(manager, tunnel_id, hostname, cancel, session, backoff).await
+}
+
+/// Waits for a connected tunnel session to end - either the caller cancels
+/// it, or the periodic liveness check finds it closed - then decides
+/// whether the reconnect loop should stop entirely or retry after backoff.
+/// Split out of `run_tunnel_connection_attempt` so it can be exercised
+/// directly against a local test SSH server: reaching this code otherwise
+/// requires a real successful SSH connect-authenticate-forward cycle, which
+/// nothing in the test suite ever drove, so its coverage in CI depended
+/// entirely on incidental scheduling from unrelated tests.
+async fn run_connected_session(
+    manager: &TunnelManager,
+    tunnel_id: i64,
+    hostname: &str,
+    cancel: &CancellationToken,
+    session: client::Handle<TunnelSshHandler>,
+    backoff: Duration,
+) -> ConnectionOutcome {
     loop {
         tokio::select! {
             () = cancel.cancelled() => {
@@ -622,6 +655,10 @@ async fn resolve_and_persist_host_key(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::fs for simple synchronous setup/assertions"
+)]
 mod tests {
     use std::{
         net::SocketAddr,
@@ -632,15 +669,16 @@ mod tests {
         time::Duration,
     };
 
-    use russh::{client::Handler, keys::PublicKey};
+    use russh::{client::Handler, keys::PublicKey, server::Server as _};
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        TunnelManager, TunnelState, TunnelTaskCompletion, resolve_and_persist_host_key,
-        tunnel_ssh_config, tunnel_target_addr,
+        ConnectionOutcome, TunnelConnectionParams, TunnelManager, TunnelState,
+        TunnelTaskCompletion, connect_and_forward, resolve_and_persist_host_key,
+        run_connected_session, run_reconnect_loop, tunnel_ssh_config, tunnel_target_addr,
     };
-    use crate::ws::ui_broadcast::UiBroadcast;
+    use crate::{db, test_support::generate_ed25519_key, ws::ui_broadcast::UiBroadcast};
 
     fn dummy_manager() -> TunnelManager {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
@@ -868,5 +906,401 @@ mod tests {
         )
         .await;
         assert_eq!(result, Some("ssh-ed25519 EXISTING".to_string()));
+    }
+
+    /// Regression: `run_reconnect_loop`'s outer `match` (the `Stop => return` /
+    /// `Retry => backoff = ...` arms) previously had no dedicated test - it was
+    /// only ever covered by chance, when some other test's leftover
+    /// `start_tunnel`-spawned background task happened to still be scheduled
+    /// when the coverage-instrumented process exited. That produced
+    /// non-deterministic coverage on this loop (see #440). `dummy_manager()`'s
+    /// pool points at a nonexistent database, so the very first
+    /// `run_tunnel_connection_attempt` call fails its DB lookup and returns
+    /// `ConnectionOutcome::Stop` on the first iteration, deterministically.
+    #[tokio::test]
+    async fn reconnect_loop_stops_immediately_when_tunnel_lookup_fails() {
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+        let completion = Arc::new(Notify::new());
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            run_reconnect_loop(mgr, 999, "unreachable-host".to_string(), cancel, completion),
+        )
+        .await
+        .expect("reconnect loop should stop immediately on DB lookup failure");
+    }
+
+    /// Minimal local SSH server accepting any public key and granting any
+    /// `tcpip_forward` request, so `connect_and_forward`/`run_connected_session`
+    /// can be exercised against a real SSH session instead of only through
+    /// incidental background-task scheduling during unrelated tests (see
+    /// #440's coverage-diff investigation for how that showed up as
+    /// non-deterministic coverage on these functions).
+    struct AcceptAllHandler;
+
+    impl russh::server::Handler for AcceptAllHandler {
+        type Error = russh::Error;
+
+        fn auth_publickey(
+            &mut self,
+            _user: &str,
+            _public_key: &russh::keys::PublicKey,
+        ) -> impl std::future::Future<Output = Result<russh::server::Auth, Self::Error>> {
+            std::future::ready(Ok(russh::server::Auth::Accept))
+        }
+
+        fn tcpip_forward(
+            &mut self,
+            _address: &str,
+            port: &mut u32,
+            _session: &mut russh::server::Session,
+        ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
+            if *port == 0 {
+                *port = 2222;
+            }
+            std::future::ready(Ok(true))
+        }
+    }
+
+    struct AcceptAllServer;
+
+    impl russh::server::Server for AcceptAllServer {
+        type Handler = AcceptAllHandler;
+
+        fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
+            AcceptAllHandler
+        }
+    }
+
+    /// Generates a fresh ed25519 key pair. `russh::keys::PrivateKey` pins its
+    /// own `ssh-key`/`rand_core` versions internally (not the crate's direct
+    /// `ssh-key` dependency used elsewhere, e.g. in `api::system`), so this
+    /// generates with the crate's own `ssh_key::PrivateKey::random` and
+    /// round-trips through OpenSSH PEM - the same conversion
+    /// `crate::ssh::load_server_private_key` already does when loading a key
+    /// from disk.
+    fn generate_test_key() -> russh::keys::PrivateKey {
+        let pem = generate_ed25519_key()
+            .to_openssh(ssh_key::LineEnding::LF)
+            .expect("encode test key as OpenSSH PEM");
+        russh::keys::decode_secret_key(&pem, None).expect("decode test key")
+    }
+
+    /// A running [`AcceptAllServer`] test fixture. Call [`Self::shutdown`] to
+    /// deterministically drain it at the end of a test, instead of leaving it
+    /// running until the process exits - the same class of non-determinism
+    /// this whole set of changes exists to eliminate.
+    struct TestSshServer {
+        port: u16,
+        handle: russh::server::RunningServerHandle,
+        join: tokio::task::JoinHandle<()>,
+    }
+
+    impl TestSshServer {
+        async fn shutdown(self) {
+            self.handle.shutdown(String::new());
+            tokio::time::timeout(Duration::from_secs(5), self.join)
+                .await
+                .expect("test SSH server should shut down promptly")
+                .expect("test SSH server task should not panic");
+        }
+    }
+
+    /// Starts [`AcceptAllServer`] on an ephemeral loopback port.
+    async fn spawn_test_ssh_server() -> TestSshServer {
+        let host_key = generate_test_key();
+        let config = Arc::new(russh::server::Config {
+            keys: vec![host_key],
+            ..Default::default()
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test SSH server");
+        let port = listener.local_addr().expect("listener addr").port();
+
+        let (handle_tx, handle_rx) = tokio::sync::oneshot::channel();
+        let join = tokio::spawn(async move {
+            let mut server = AcceptAllServer;
+            let running = server.run_on_socket(config, &listener);
+            let _ = handle_tx.send(running.handle());
+            let _ = running.await;
+        });
+        let handle = handle_rx.await.expect("test SSH server handle");
+
+        TestSshServer { port, handle, join }
+    }
+
+    fn test_tunnel_row(ssh_port: u16) -> crate::db::SshTunnel {
+        crate::db::SshTunnel {
+            id: 1,
+            agent_id: 1,
+            ssh_host: "127.0.0.1".to_string(),
+            ssh_user: "test".to_string(),
+            ssh_port: i32::from(ssh_port),
+            tunnel_port: 0,
+            ssh_host_key: None,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    fn test_connection_params(ssh_port: u16) -> TunnelConnectionParams {
+        let client_key = generate_test_key();
+
+        TunnelConnectionParams {
+            tunnel: test_tunnel_row(ssh_port),
+            ssh_port,
+            tunnel_port: 0,
+            key: client_key,
+            handler: super::TunnelSshHandler {
+                server_addr: "127.0.0.1:0".parse().unwrap(),
+                ui_broadcast: UiBroadcast::new(),
+                agent_id: 1,
+                expected_host_key: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_and_forward_succeeds_against_local_ssh_server() {
+        let server = spawn_test_ssh_server().await;
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+
+        let session = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_and_forward(
+                &mgr,
+                1,
+                "test-host",
+                &cancel,
+                test_connection_params(server.port),
+                Duration::from_millis(10),
+            ),
+        )
+        .await
+        .expect("connect_and_forward should not hang")
+        .expect("connect_and_forward should succeed against the local test server");
+
+        drop(session);
+        server.shutdown().await;
+    }
+
+    /// Regression: reaching `run_connected_session`'s cancellation branch
+    /// (disconnect the live session, mark the tunnel disconnected, return
+    /// `Stop`) requires a real successful SSH connect-authenticate-forward
+    /// cycle, which nothing in the test suite drove before this test existed
+    /// - see #440.
+    #[tokio::test]
+    async fn connected_session_disconnects_and_stops_when_cancelled() {
+        let server = spawn_test_ssh_server().await;
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+
+        let session = connect_and_forward(
+            &mgr,
+            1,
+            "test-host",
+            &cancel,
+            test_connection_params(server.port),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("connect_and_forward should succeed against the local test server");
+
+        // Cancel before waiting so the `cancel.cancelled()` arm wins the
+        // `tokio::select!` deterministically instead of racing the 5-second
+        // liveness-check sleep.
+        cancel.cancel();
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_connected_session(
+                &mgr,
+                1,
+                "test-host",
+                &cancel,
+                session,
+                Duration::from_millis(10),
+            ),
+        )
+        .await
+        .expect("run_connected_session should not hang");
+
+        assert!(matches!(outcome, ConnectionOutcome::Stop));
+        server.shutdown().await;
+    }
+
+    /// Points `SSH_KEY_DIR` at a fresh tempdir containing a generated
+    /// `id_ed25519`, so `crate::ssh::load_server_private_key` (called by
+    /// `resolve_tunnel_connection_params`, unconditionally, for every
+    /// connection attempt) succeeds. Mirrors the established pattern in
+    /// `crate::ssh::tests::ssh_key_helpers_read_from_ssh_key_dir`. Combined
+    /// with `#[ignore = "requires DATABASE_URL"]`, this never runs in the
+    /// same process as that (non-ignored) test, so there's no risk of the
+    /// two racing on the shared env var.
+    ///
+    /// # Safety
+    /// `std::env::set_var` is only unsound under concurrent access; every
+    /// place this codebase runs `#[ignore = "requires DATABASE_URL"]` tests
+    /// (the "Database Integration Tests" CI job, and the coverage job's
+    /// `--include-ignored` run) forces `--test-threads=1`.
+    struct TestSshKeyDir {
+        _dir: tempfile::TempDir,
+    }
+
+    impl TestSshKeyDir {
+        fn setup() -> Self {
+            let dir = tempfile::tempdir().expect("create tempdir");
+            unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
+            let pem = generate_ed25519_key()
+                .to_openssh(ssh_key::LineEnding::LF)
+                .expect("encode test server key as OpenSSH PEM");
+            std::fs::write(dir.path().join("id_ed25519"), pem.as_bytes())
+                .expect("write test server key");
+            Self { _dir: dir }
+        }
+    }
+
+    impl Drop for TestSshKeyDir {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var("SSH_KEY_DIR") };
+        }
+    }
+
+    async fn insert_test_agent(pool: &sqlx::PgPool, hostname: &str) -> i64 {
+        sqlx::query_scalar!(
+            "INSERT INTO agents (hostname, agent_token_hash) VALUES ($1, 'fakehash') RETURNING id",
+            hostname,
+        )
+        .fetch_one(pool)
+        .await
+        .expect("insert test agent")
+    }
+
+    /// End-to-end regression test for the gap this whole file's changes
+    /// close: `start_tunnel`'s own `tokio::spawn(run_reconnect_loop(...))`
+    /// call site, and the full `resolve_tunnel_connection_params` ->
+    /// `connect_and_forward` -> `run_connected_session` chain it drives, were
+    /// never reachable by any test - `TunnelManager::start_tunnel` was only
+    /// ever invoked (in production) once an SSH tunnel row existed, and
+    /// nothing in the test suite created one with `enabled = true` (see
+    /// #440's coverage-diff investigation).
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn start_tunnel_connects_and_stops_against_local_ssh_server(pool: sqlx::PgPool) {
+        let _key_dir = TestSshKeyDir::setup();
+        let server = spawn_test_ssh_server().await;
+        let agent_id = insert_test_agent(&pool, "tunnel-e2e-host").await;
+        let tunnel = db::insert_tunnel(
+            &pool,
+            &db::NewSshTunnel {
+                agent_id,
+                ssh_host: "127.0.0.1".to_string(),
+                ssh_user: "test".to_string(),
+                ssh_port: Some(i32::from(server.port)),
+                tunnel_port: 0,
+                enabled: Some(true),
+                ssh_host_key: None,
+            },
+        )
+        .await
+        .expect("insert test tunnel");
+
+        let mgr = TunnelManager::new(pool, UiBroadcast::new(), "127.0.0.1:0".parse().unwrap());
+        mgr.start_tunnel(tunnel.id).await;
+
+        let connected = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if matches!(
+                    mgr.tunnel_status(tunnel.id).await,
+                    Some(shared::protocol::TunnelStatus::Connected)
+                ) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(connected.is_ok(), "tunnel should reach Connected status");
+
+        // Exercises run_connected_session's cancellation branch via the full
+        // production call chain (start_tunnel -> run_reconnect_loop ->
+        // run_tunnel_connection_attempt -> run_connected_session).
+        mgr.stop_tunnel(tunnel.id).await;
+        assert!(mgr.tunnel_status(tunnel.id).await.is_none());
+
+        server.shutdown().await;
+    }
+
+    /// Regression: `run_reconnect_loop`'s `ConnectionOutcome::Retry` match arm
+    /// (`backoff = next_backoff`) was never reachable by any test either,
+    /// since it requires a real failed connection attempt followed by the
+    /// loop actually running a second iteration.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn start_tunnel_retries_after_connection_refused(pool: sqlx::PgPool) {
+        let _key_dir = TestSshKeyDir::setup();
+        // Bind and immediately drop a listener: its port is guaranteed to
+        // refuse connections for the rest of the test.
+        let refused_port = {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind throwaway listener");
+            listener.local_addr().expect("listener addr").port()
+        };
+        let agent_id = insert_test_agent(&pool, "tunnel-retry-host").await;
+        let tunnel = db::insert_tunnel(
+            &pool,
+            &db::NewSshTunnel {
+                agent_id,
+                ssh_host: "127.0.0.1".to_string(),
+                ssh_user: "test".to_string(),
+                ssh_port: Some(i32::from(refused_port)),
+                tunnel_port: 0,
+                enabled: Some(true),
+                ssh_host_key: None,
+            },
+        )
+        .await
+        .expect("insert test tunnel");
+
+        let ui_broadcast = UiBroadcast::new();
+        let mut ui_events = ui_broadcast.subscribe();
+        let mgr = TunnelManager::new(pool, ui_broadcast, "127.0.0.1:0".parse().unwrap());
+        mgr.start_tunnel(tunnel.id).await;
+
+        // The first `Reconnecting` status change comes from the initial
+        // failed connect attempt; a second one only happens after
+        // `run_reconnect_loop`'s `ConnectionOutcome::Retry` arm re-loops and
+        // `connect_and_forward` fails again. Waiting for two proves the
+        // Retry arm actually ran, instead of just inferring it from
+        // wall-clock timing (which can't tell a broken Retry arm from a
+        // slow-but-working one).
+        let reconnecting_count = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut count = 0u32;
+            while count < 2 {
+                match ui_events.recv().await {
+                    Ok(shared::protocol::ServerToUi::TunnelStatusChanged {
+                        status: shared::protocol::TunnelStatus::Reconnecting,
+                        ..
+                    }) => count = count.saturating_add(1),
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            count
+        })
+        .await;
+        assert_eq!(
+            reconnecting_count,
+            Ok(2),
+            "retry loop should reach Reconnecting twice, proving the Retry arm ran"
+        );
+
+        mgr.stop_tunnel(tunnel.id).await;
+        assert!(mgr.tunnel_status(tunnel.id).await.is_none());
     }
 }

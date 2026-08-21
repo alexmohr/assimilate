@@ -71,6 +71,23 @@ describe('ArchiveExplorer', () => {
     expect(wrapper.emitted('update:selected')?.[0]).toEqual([ARCHIVE])
   })
 
+  it("forwards the selector's count of archives no agent claims", async () => {
+    // The repository tab draws its unmatched banner from this rather than
+    // deriving "unmatched" a second time beside the list that already knows.
+    const wrapper = explorer({
+      archives: [
+        ARCHIVE,
+        { ...ARCHIVE, name: 'legacy-1', matched: false, agent_hostname: null, hostname: 'nas-01' },
+        { ...ARCHIVE, name: 'legacy-2', matched: false, agent_hostname: null, hostname: 'nas-01' },
+      ],
+    })
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as { unmatchedCount: number; unmatchedHostnames: string[] }
+    expect(vm.unmatchedCount).toBe(2)
+    expect(vm.unmatchedHostnames).toEqual(['nas-01'])
+  })
+
   it('offers deletion only to an admin working against a real repository', () => {
     expect(explorer().find('.archive-row-delete').exists()).toBe(true)
     expect(explorer({ isAdmin: false }).find('.archive-row-delete').exists()).toBe(false)

@@ -35,9 +35,10 @@ const explorer = useTemplateRef<InstanceType<typeof ArchiveExplorer>>('explorer'
 
 const selectedArchive = ref<ArchiveEntry | null>(null)
 
-const unmatched = computed(() => sortedArchives.value.filter((a) => a.matched !== true))
-const unmatchedCount = computed(() => unmatched.value.length)
-const unmatchedHostnames = computed(() => [...new Set(unmatched.value.map((a) => a.hostname))])
+// Read from the explorer rather than derived again here: its list is what
+// decides which archives no agent claims, and the banner should say the same.
+const unmatchedCount = computed(() => explorer.value?.unmatchedCount ?? 0)
+const unmatchedHostnames = computed<string[]>(() => explorer.value?.unmatchedHostnames ?? [])
 
 const archiveFilterName = computed(() => props.filterName)
 const hasArchiveFilter = computed(() => props.filterName !== null)

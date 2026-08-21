@@ -108,6 +108,11 @@ defineExpose({
   resetList(): void {
     selector.value?.reset()
   },
+  // Forwarded rather than recomputed by the caller: the selector's list already
+  // decides what "unmatched" means, and a second definition beside it is free
+  // to drift the day that rule changes.
+  unmatchedCount: computed(() => selector.value?.unmatchedCount ?? 0),
+  unmatchedHostnames: computed<string[]>(() => selector.value?.unmatchedHostnames ?? []),
   /** The server names the archive that finished deleting, so drop its marker. */
   onArchiveDeleted(name: string): void {
     forget(name)

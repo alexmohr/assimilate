@@ -239,12 +239,14 @@ describe('repos api', () => {
   })
 
   it('executes a borg command on a repo', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({ data: { stdout: 'ok', stderr: '', code: 0 } })
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { stdout: 'ok', stderr: '', exit_code: 0 },
+    })
 
     await expect(execRepoCommand(12, ['list'])).resolves.toEqual({
       stdout: 'ok',
       stderr: '',
-      code: 0,
+      exit_code: 0,
     })
 
     expect(apiClient.post).toHaveBeenCalledWith('/repos/12/exec', { args: ['list'] })

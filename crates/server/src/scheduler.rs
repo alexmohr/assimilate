@@ -1955,12 +1955,10 @@ esac
         );
     }
 
-    /// `auto_disabled_agent_unreachable`/`auto_disabled_by_agent_id` must reflect
-    /// whether the specific call that actually crossed the failure threshold was a
-    /// connectivity failure - not whether *any* failure earlier in the same streak
-    /// was. A streak that happens to end on a config-error call must not be
-    /// re-enabled by an unrelated agent reconnect just because an earlier failure in
-    /// that same streak was connectivity-related.
+    /// A streak that ends on a config-error failure must never be marked
+    /// `auto_disabled_agent_unreachable`, even if earlier failures in that same
+    /// streak were connectivity failures - an unrelated agent reconnect must not
+    /// re-enable it.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn record_schedule_failure_only_marks_unreachable_on_the_disabling_call(
@@ -2018,6 +2016,79 @@ esac
             reenabled,
             Vec::<i64>::new(),
             "an unrelated reconnect must not clear a streak that ended on a config error"
+        );
+    }
+
+    /// A streak that contains even one config-error failure must never be marked
+    /// `auto_disabled_agent_unreachable`, even when the specific failure that crosses
+    /// the threshold is itself a connectivity failure - the mid-streak data problem
+    /// was never confirmed fixed, so an unrelated agent reconnect must not silently
+    /// re-enable the schedule.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn record_schedule_failure_requires_the_whole_streak_to_be_pure_connectivity(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        // Connectivity failure, then a config-error failure, then a connectivity
+        // failure again that crosses the threshold and disables the schedule.
+        db::record_schedule_failure(
+            &pool,
+            schedule_id,
+            agent_id,
+            next,
+            MAX_CONSECUTIVE_FAILURES,
+            true,
+        )
+        .await
+        .unwrap();
+        db::record_schedule_failure(
+            &pool,
+            schedule_id,
+            agent_id,
+            next,
+            MAX_CONSECUTIVE_FAILURES,
+            false,
+        )
+        .await
+        .unwrap();
+        let outcome = db::record_schedule_failure(
+            &pool,
+            schedule_id,
+            agent_id,
+            next,
+            MAX_CONSECUTIVE_FAILURES,
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(outcome.auto_disabled);
+
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(!enabled, "must be disabled once the threshold is crossed");
+        assert!(
+            !auto_disabled,
+            "the streak contained a config error, so it must not be marked agent-unreachable even \
+             though the disabling call itself was a connectivity failure"
+        );
+
+        let reenabled =
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+                .await
+                .unwrap();
+        assert_eq!(
+            reenabled,
+            Vec::<i64>::new(),
+            "an unrelated reconnect must not clear a streak that contained a config error"
         );
     }
 

@@ -2099,14 +2099,16 @@ pub async fn update_schedule(
          auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE \
          auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS \
          DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = \
-         CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END WHERE id = $1 \
-         RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
-         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+         CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END, \
+         failure_streak_pure_connectivity = CASE WHEN enabled IS DISTINCT FROM $4 THEN true ELSE \
+         failure_streak_pure_connectivity END WHERE id = $1 RETURNING id, repo_id, name, \
+         schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\"",
         id,
         params.name,
         params.cron_expression,
@@ -3010,7 +3012,8 @@ pub async fn reset_schedule_consecutive_failures(
     schedule_id: i64,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE schedules SET consecutive_failures = 0 WHERE id = $1",
+        "UPDATE schedules SET consecutive_failures = 0, failure_streak_pure_connectivity = true \
+         WHERE id = $1",
         schedule_id,
     )
     .execute(pool)
@@ -3046,6 +3049,12 @@ pub struct ScheduleFailureOutcome {
 /// data problem was fixed, so it must not silently self-heal a disable that was never
 /// about connectivity - a human has to fix it and re-enable the schedule.
 ///
+/// `failure_streak_pure_connectivity` tracks this across the *whole* streak, not just
+/// this one call: it's only ever true if every failure since the last reset was
+/// `agent_unreachable`, so a streak with even one local/data failure in it can never
+/// mark `auto_disabled_agent_unreachable` - even if the specific call that happens to
+/// cross the threshold is itself a connectivity failure.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -3059,11 +3068,12 @@ pub async fn record_schedule_failure(
 ) -> Result<ScheduleFailureOutcome, ApiError> {
     let row = sqlx::query!(
         "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, next_run_at = $2, \
-         enabled = enabled AND consecutive_failures + 1 < $3, auto_disabled_agent_unreachable = \
-         CASE WHEN $5 AND consecutive_failures + 1 >= $3 THEN true ELSE \
-         auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN $5 AND \
-         consecutive_failures + 1 >= $3 THEN $4 ELSE auto_disabled_by_agent_id END WHERE id = $1 \
-         RETURNING consecutive_failures, enabled",
+         enabled = enabled AND consecutive_failures + 1 < $3, failure_streak_pure_connectivity = \
+         failure_streak_pure_connectivity AND $5, auto_disabled_agent_unreachable = CASE WHEN \
+         (failure_streak_pure_connectivity AND $5) AND consecutive_failures + 1 >= $3 THEN true \
+         ELSE auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN \
+         (failure_streak_pure_connectivity AND $5) AND consecutive_failures + 1 >= $3 THEN $4 \
+         ELSE auto_disabled_by_agent_id END WHERE id = $1 RETURNING consecutive_failures, enabled",
         schedule_id,
         next_run_at,
         max_consecutive_failures,
@@ -3103,7 +3113,8 @@ pub async fn reenable_system_disabled_schedules_for_agent(
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
         "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
-         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, next_run_at = $2 WHERE \
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true, next_run_at = $2 WHERE \
          auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id = $1 RETURNING id",
         agent_id,
         now,
@@ -3148,7 +3159,8 @@ pub async fn set_schedule_enabled(
     // `true` flag would make a later agent reconnect silently lift the quota block).
     sqlx::query!(
         "UPDATE schedules SET enabled = $2, auto_disabled_agent_unreachable = false, \
-         auto_disabled_by_agent_id = NULL, consecutive_failures = 0 WHERE id = $1",
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true WHERE id = $1",
         schedule_id,
         enabled,
     )

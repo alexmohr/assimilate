@@ -58,7 +58,13 @@ export interface CreateScheduleRequest {
 // relevant to the current per-agent override toggles get set) and never
 // includes `schedule_type` - it isn't editable after creation. The schedules
 // list's inline enable/disable toggle sends an even smaller subset.
-export type UpdateScheduleRequest = Partial<Omit<CreateScheduleRequest, 'schedule_type'>>
+//
+// `cron_expression` and `enabled` stay required: the backend's
+// UpdateScheduleRequest declares `cron_expression` as a non-optional String
+// (omitting it fails cron validation) and defaults a missing `enabled` to
+// `true` (omitting it would silently re-enable a disabled schedule).
+export type UpdateScheduleRequest = Pick<CreateScheduleRequest, 'cron_expression' | 'enabled'> &
+  Partial<Omit<CreateScheduleRequest, 'schedule_type' | 'cron_expression' | 'enabled'>>
 
 export interface RunScheduleRequest {
   agent_ids?: number[]

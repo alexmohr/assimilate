@@ -13,6 +13,7 @@ export interface VersionInfo {
   server_version: string
   server_git_sha: string
   build_timestamp: string
+  server_commit_count: number | null
   agent_version: string | null
 }
 

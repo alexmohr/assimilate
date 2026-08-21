@@ -6,7 +6,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
 import {
   listAgents,
   updateAgent,
@@ -17,6 +16,7 @@ import {
   createAgentHostnamePattern,
 } from '../api/agents'
 import { listSchedules, getScheduleHealth } from '../api/schedules'
+import { getSystemVersion } from '../api/system'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -476,11 +476,10 @@ watch(
 )
 onMounted(() => {
   loadAgent()
-  apiClient
-    .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
+  getSystemVersion()
     .then((res) => {
-      availableAgentVersion.value = res.data.agent_version
-      serverCommitCount.value = res.data.server_commit_count ?? null
+      availableAgentVersion.value = res.agent_version
+      serverCommitCount.value = res.server_commit_count
     })
     .catch(logger.error)
 })

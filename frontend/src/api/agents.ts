@@ -45,6 +45,7 @@ export interface DeployAgentRequest {
   server_url: string
   install_path?: string
   systemd_service_content?: string
+  force?: boolean
 }
 
 export interface DeployAgentResult {

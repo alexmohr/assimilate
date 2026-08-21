@@ -158,6 +158,7 @@ const restartError = ref<string | null>(null)
 const availableAgentVersion = ref<string | null>(null)
 const serverCommitCount = ref<number | null>(null)
 const showDeployDialog = ref(false)
+const deployForceRedeploy = ref(false)
 
 // Deploy SSH key
 const showDeploySshKey = ref(false)
@@ -181,6 +182,16 @@ function deployButtonLabel(): string | null {
 const headerDeployLabel = computed(() =>
   !isImported.value && authStore.canUpgradeAgent ? deployButtonLabel() : null,
 )
+
+/** Once an agent has been deployed at least once, it can always be redeployed. */
+const canRedeploy = computed(
+  () => !isImported.value && authStore.canUpgradeAgent && !!agent.value?.agent_version,
+)
+
+function openRedeployDialog(): void {
+  deployForceRedeploy.value = true
+  showDeployDialog.value = true
+}
 
 // Hostname & display name editing. A dialog rather than the inline panel this
 // used to be: the panel appeared mid-page and pushed six cards down, while
@@ -575,12 +586,19 @@ watch(wsStatus, (newStatus, oldStatus) => {
       <AgentHeader
         :agent="agent"
         :deploy-label="headerDeployLabel"
+        :can-redeploy="canRedeploy"
         :restart-loading="restartLoading"
         :regen-loading="regenLoading"
         :restart-error="restartError"
         @adopt="adoptHost"
         @merge="openMergeDialog"
-        @deploy="showDeployDialog = true"
+        @deploy="
+          () => {
+            deployForceRedeploy = false
+            showDeployDialog = true
+          }
+        "
+        @redeploy="openRedeployDialog"
         @activity-log="goToActivityLog"
         @edit-identity="startEditIdentity"
         @deploy-ssh-key="showDeploySshKey = true"
@@ -808,13 +826,14 @@ watch(wsStatus, (newStatus, oldStatus) => {
       :agent-version="agent.agent_version ?? null"
       :available-version="availableAgentVersion"
       :last-ssh-user="agent.last_ssh_user"
-      @close="showDeployDialog = false"
-      @deployed="
+      :force-redeploy="deployForceRedeploy"
+      @close="
         () => {
           showDeployDialog = false
-          loadAgent()
+          deployForceRedeploy = false
         }
       "
+      @deployed="loadAgent"
     />
   </div>
 </template>

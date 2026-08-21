@@ -96,9 +96,9 @@ the remote forwarding port before opening a replacement session.
 
 Tunnels in an **Error** state (e.g., public key authentication rejected) do **not** auto-reconnect — the error must be resolved and the tunnel re-enabled manually.
 
-If the tunnel is **Connected** but the agent cannot connect, redeploy the agent from the host's
-**Deploy** dialog and verify that `ASSIMILATE_BIND_ADDR` identifies an address assigned to the
-server host or container.
+If the tunnel is **Connected** but the agent cannot connect, redeploy the agent (see
+[Redeploying an Agent](agents.md#redeploying-an-agent)) and verify that `ASSIMILATE_BIND_ADDR`
+identifies an address assigned to the server host or container.
 
 ### Server startup
 

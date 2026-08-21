@@ -20,6 +20,11 @@ const props = defineProps<{
   /** The version installable from the server, when known - drives the version-transition summary. */
   availableVersion?: string | null
   lastSshUser?: string | null
+  /**
+   * Reinstall even though the agent already reports the latest version -
+   * for a host that was reimaged or otherwise lost its installation.
+   */
+  forceRedeploy?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -33,7 +38,8 @@ useEscapeKey(visible, () => {
   emit('close')
 })
 
-const isUpgrade = computed(() => props.agentVersion !== null)
+const isRedeploy = computed(() => props.forceRedeploy === true)
+const isUpgrade = computed(() => !isRedeploy.value && props.agentVersion !== null)
 // A build can be newer without the semantic version string changing (a dev
 // server compared by commit count) - the arrow-to-version layout only makes
 // sense when the two strings actually differ.
@@ -128,11 +134,13 @@ async function loadExistingServiceUnit(options: { silent?: boolean } = {}): Prom
 }
 
 function dialogTitle(): string {
+  if (isRedeploy.value) return 'Redeploy'
   return props.agentVersion ? 'Upgrade' : 'Deploy'
 }
 
 function submitLabel(): string {
-  if (deployLoading.value) return 'Deploying...'
+  if (deployLoading.value) return isRedeploy.value ? 'Redeploying...' : 'Deploying...'
+  if (isRedeploy.value) return 'Redeploy Agent'
   if (isUpgrade.value) {
     return showAvailableVersion.value ? `Upgrade to ${props.availableVersion}` : 'Upgrade Agent'
   }
@@ -158,6 +166,7 @@ async function submitDeploy(): Promise<void> {
       server_url: deployForm.server_url.trim(),
       install_path: deployForm.install_path.trim() || undefined,
       systemd_service_content: deployForm.systemd_service_content.trim() || undefined,
+      force: isRedeploy.value || undefined,
     })
     deployResult.value = res.data
     if (res.data.success) {
@@ -186,7 +195,32 @@ async function submitDeploy(): Promise<void> {
       </h2>
     </template>
     <template v-if="!deployResult?.success">
-      <template v-if="isUpgrade">
+      <template v-if="isRedeploy">
+        <p class="deploy-info">
+          Reinstall the agent binary and systemd service on this host over SSH — useful after the
+          machine was reimaged or the installation was otherwise lost. The agent already reports
+          version <span class="mono">{{ agentVersion }}</span
+          >; this does not change which version is expected to run.
+        </p>
+        <ul class="icon-list">
+          <li>
+            <Upload :size="14" />
+            <span
+              >The binary is re-uploaded over SSH and the <code>assimilate-agent</code> service is
+              reinstalled and restarted.</span
+            >
+          </li>
+          <li>
+            <KeyRound :size="14" />
+            <span>A new agent token is generated and written into the service unit.</span>
+          </li>
+          <li>
+            <CheckCircle :size="14" />
+            <span>Schedules, repositories and existing archives are untouched.</span>
+          </li>
+        </ul>
+      </template>
+      <template v-else-if="isUpgrade">
         <div class="upgrade-hero">
           <div class="hero-version">
             <span class="group-label">Installed</span>
@@ -301,7 +335,7 @@ async function submitDeploy(): Promise<void> {
         <BaseDisclosure
           title="Systemd service unit"
           :badge="hasCustomUnit ? 'Customized' : 'Default'"
-          :default-open="!isUpgrade"
+          :default-open="!agentVersion"
         >
           <div class="disclosure-actions">
             <button
@@ -359,9 +393,11 @@ async function submitDeploy(): Promise<void> {
         <template v-else>
           <p class="deploy-success-msg">
             {{
-              isUpgrade
-                ? `Upgraded to ${deployResult.available_version ?? 'the latest version'}.`
-                : 'Agent deployed and service started successfully.'
+              isRedeploy
+                ? 'Agent redeployed successfully.'
+                : isUpgrade
+                  ? `Upgraded to ${deployResult.available_version ?? 'the latest version'}.`
+                  : 'Agent deployed and service started successfully.'
             }}
           </p>
           <p
@@ -369,9 +405,11 @@ async function submitDeploy(): Promise<void> {
             class="deploy-version-info"
           >
             {{
-              isUpgrade
-                ? `${hostname} is running the new agent and has reconnected.`
-                : `Deployed version: ${deployResult.available_version}`
+              isRedeploy
+                ? `${hostname} is running the reinstalled agent and has reconnected.`
+                : isUpgrade
+                  ? `${hostname} is running the new agent and has reconnected.`
+                  : `Deployed version: ${deployResult.available_version}`
             }}
           </p>
           <p class="token-warning">A new agent token was generated for this deployment:</p>

@@ -113,6 +113,14 @@ Whenever the dialog is opened, the server automatically attempts to read an exis
 
 If the existing unit contains a `BORG_AGENT_TOKEN` value, the server redacts it to `[REDACTED]` before it is ever sent to the browser — the real token is never exposed in the API response or displayed in the UI. A newly generated token is injected automatically when you click **Deploy**, regardless of what is shown in the field.
 
+### Redeploying an Agent
+
+Once an agent is already running the latest version, the header no longer offers **Upgrade agent** — there is nothing newer to install. The host it runs on can still lose its installation, though (a reimage, a wiped disk, a systemd unit that was hand-edited into a broken state), and reconnecting it needs the same SSH push used for the original install.
+
+1. Open the agent detail page and choose **Redeploy agent** from the header's **...** menu.
+2. Fill in the SSH connection fields as for a normal deploy.
+3. Click **Redeploy agent**. The server reinstalls the binary and systemd unit and regenerates the token, exactly as an upgrade would — the only difference is that it proceeds even though the agent already reports the current version.
+
 ## Token Management
 
 Each agent has exactly one active token. Tokens are stored as bcrypt hashes — the plaintext is never persisted.

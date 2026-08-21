@@ -35,6 +35,10 @@ pub struct DeployAgentRequest {
     pub ssh_password: Option<String>,
     /// Optional custom systemd service unit content.
     pub systemd_service_content: Option<String>,
+    /// Redeploy even if the agent already reports the latest version --
+    /// e.g. after the host was reimaged or the installation was otherwise lost.
+    #[serde(default)]
+    pub force: bool,
 }
 
 /// Result of an agent deployment attempt.
@@ -172,7 +176,7 @@ pub async fn deploy_agent(
         agent.agent_version.as_deref(),
     );
 
-    if !uses_tunnel && already_current {
+    if should_skip_deploy(uses_tunnel, already_current, req.force) {
         let version = available_version
             .clone()
             .or_else(|| agent.agent_version.clone());
@@ -315,6 +319,13 @@ pub async fn fetch_service_unit(
     Ok(Json(FetchServiceUnitResponse { content }))
 }
 
+/// Whether a deploy request can be skipped as a no-op: the agent is already
+/// current, it isn't reached through a tunnel (which always redeploys, since
+/// the tunnel itself may need re-establishing), and the caller didn't force it.
+fn should_skip_deploy(uses_tunnel: bool, already_current: bool, force: bool) -> bool {
+    !uses_tunnel && already_current && !force
+}
+
 fn agent_is_current(
     server_commit_count: Option<i32>,
     agent_commit_count: Option<i32>,
@@ -390,6 +401,24 @@ mod tests {
 
         unsafe { std::env::remove_var("AGENT_BINARY_DIR") };
         assert!(agent_binary_dir().await.is_absolute());
+    }
+
+    #[test]
+    fn should_skip_deploy_skips_only_when_current_untunneled_and_not_forced() {
+        assert!(should_skip_deploy(false, true, false));
+        assert!(
+            !should_skip_deploy(false, true, true),
+            "force must bypass the skip"
+        );
+        assert!(
+            !should_skip_deploy(false, false, false),
+            "not current -> never skip"
+        );
+        assert!(
+            !should_skip_deploy(true, true, false),
+            "a tunnel must always redeploy so it can be re-established"
+        );
+        assert!(!should_skip_deploy(true, true, true));
     }
 
     #[test]

@@ -56,6 +56,44 @@ test.describe('Agent detail', () => {
     await expect(page.locator('input[placeholder="hostname"]')).toHaveValue('web-server-01')
   })
 
+  // An already-deployed agent has nothing in the primary header slot once it
+  // is current, but the host it runs on may still need reinstalling - e.g.
+  // after being reimaged - so Redeploy stays reachable through the menu.
+  test('redeploy agent forces a deploy from the overflow menu', async ({ page }) => {
+    await openAgent(page)
+
+    await page.route(
+      (url) => url.pathname === '/api/agents/web-server-01/service-unit',
+      async (route) =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: '{"content":null}' }),
+    )
+    let deployBody: Record<string, unknown> | null = null
+    await page.route(
+      (url) => url.pathname === '/api/agents/web-server-01/deploy',
+      async (route) => {
+        deployBody = route.request().postDataJSON() as Record<string, unknown>
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, skipped: false, token: 'tok-redeploy-e2e' }),
+        })
+      },
+    )
+
+    await page.locator('.overflow-toggle').click()
+    const redeployItem = page.locator('.overflow-menu-item', { hasText: 'Redeploy agent' })
+    await expect(redeployItem).toBeVisible()
+    await redeployItem.click()
+
+    await expect(page.getByRole('heading', { name: /Redeploy Agent/ })).toBeVisible()
+    await page.getByPlaceholder('e.g. 192.168.1.10').fill('10.0.0.9')
+    await page.getByRole('button', { name: 'Redeploy Agent' }).click()
+
+    await expect(page.locator('.deploy-success-msg')).toHaveText('Agent redeployed successfully.')
+    await expect(page.locator('.token-text')).toHaveText('tok-redeploy-e2e')
+    expect(deployBody).toMatchObject({ force: true, ssh_host: '10.0.0.9' })
+  })
+
   test('backups are one line per run and expand their failure output', async ({ page }) => {
     await openAgent(page)
     await page.getByRole('tab', { name: /Backups/ }).click()

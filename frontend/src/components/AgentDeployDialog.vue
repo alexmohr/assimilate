@@ -30,7 +30,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  deployed: [version: string | undefined]
+  deployed: [version: string | null]
 }>()
 
 const visible = ref(true)

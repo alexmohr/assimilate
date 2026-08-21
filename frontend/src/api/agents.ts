@@ -3,7 +3,11 @@
 
 import { apiClient } from './client'
 import type { AgentHostnamePattern, AgentRow } from '../types/agent'
-import type { CreateAgentResponse } from '../types/generated'
+import type {
+  CreateAgentResponse,
+  DeployAgentResponse,
+  MergeAgentResponse,
+} from '../types/generated'
 import type { Repo } from '../types/repo'
 import type { ReportRow } from '../types/report'
 
@@ -22,9 +26,7 @@ export interface UpdateAgentRequest {
   default_file_change_patterns_raw?: string
 }
 
-export interface MergeAgentResult {
-  merged: boolean
-}
+export type MergeAgentResult = MergeAgentResponse
 
 export interface ServiceUnitPreviewRequest {
   ssh_host: string
@@ -48,13 +50,7 @@ export interface DeployAgentRequest {
   force?: boolean
 }
 
-export interface DeployAgentResult {
-  success: boolean
-  skipped: boolean
-  token?: string
-  available_version?: string
-  error?: string
-}
+export type DeployAgentResult = DeployAgentResponse
 
 export interface DeploySshKeyRequest {
   ssh_host: string

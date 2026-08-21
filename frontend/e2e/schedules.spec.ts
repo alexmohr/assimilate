@@ -397,9 +397,13 @@ test.describe('Schedules management', () => {
         const body = (await response.json()) as
           | Array<Record<string, unknown>>
           | Record<string, unknown>
+        // Schedule 1 is the seeded web-server-01 -> server-daily schedule (see
+        // mockScheduleOneHealth above for the same id/target pairing). It has
+        // no explicit name, so its card falls back to displaying its repo's
+        // name ("server-daily") - matching on id, not name, avoids that.
         const patched = Array.isArray(body)
-          ? body.map((s) => (s.name === 'server-daily' ? { ...s, ...autoDisable } : s))
-          : body.name === 'server-daily'
+          ? body.map((s) => (s.id === 1 ? { ...s, ...autoDisable } : s))
+          : body.id === 1
             ? { ...body, ...autoDisable }
             : body
         return route.fulfill({

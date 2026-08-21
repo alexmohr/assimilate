@@ -2099,12 +2099,13 @@ esac
         .unwrap();
 
         let registry = AgentRegistry::new();
-        let (tx, _rx) = mpsc::channel(32);
+        let (tx, mut rx) = mpsc::channel(32);
         registry
             .register("continue-test-reachable".to_owned(), tx, false, None)
             .await;
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
 
         for attempt in 1..=MAX_CONSECUTIVE_FAILURES {
             let past = Utc::now()
@@ -2121,10 +2122,47 @@ esac
                 repo_lock: &RepoLock::default(),
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
-                background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                background_task_tracker: &background_task_tracker,
             })
             .await
             .unwrap();
+
+            // tick() only waits for the first target (the unreachable one, which is
+            // what lets the assertions below run right after it returns) - the
+            // reachable target's own trigger/completion runs in the background. Drive
+            // it to completion and wait for the whole tick's background task to go
+            // idle before the next iteration; otherwise its lingering
+            // mark_schedule_triggered_once/await_target_completion call can straggle
+            // into the next iteration and race this test's own forced next_run_at,
+            // which is what made this test flake in CI.
+            let trigger = loop {
+                match rx
+                    .recv()
+                    .await
+                    .expect("expected messages for the reachable target")
+                {
+                    shared::protocol::ServerToAgent::ConfigUpdate(_) => {}
+                    other => break other,
+                }
+            };
+            assert!(
+                matches!(
+                    trigger,
+                    shared::protocol::ServerToAgent::RunBackupNow { .. }
+                ),
+                "expected RunBackupNow for the reachable target, got: {trigger:?}"
+            );
+            bus.publish(completion_bus::OperationOutcome {
+                hostname: "continue-test-reachable".to_owned(),
+                repo_id: repo.id,
+                success: true,
+            });
+            assert!(
+                background_task_tracker
+                    .wait_until_idle(std::time::Duration::from_secs(5))
+                    .await,
+                "the tick's background task must finish before the next iteration"
+            );
 
             let (consecutive_failures, enabled, auto_disabled) =
                 schedule_failure_state(&pool, schedule_id).await;

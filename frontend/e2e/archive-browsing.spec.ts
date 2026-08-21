@@ -200,20 +200,42 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(page.locator('.archive-meta-bar')).toContainText('Dedup')
   })
 
-  test('archive tags API endpoint is accessible and returns structured data', async ({ page }) => {
+  test('archive tags API endpoint returns the seeded tags, not just an array', async ({ page }) => {
     await loginAsAdmin(page)
     const archivesRes = await page.request.get('/api/repos/1/archives')
     expect(archivesRes.ok()).toBeTruthy()
 
-    const archives: { name: string }[] = await archivesRes.json()
+    const archives: { name: string; start: string }[] = await archivesRes.json()
     expect(archives.length).toBeGreaterThan(0)
 
-    const tagsRes = await page.request.get(
-      `/api/repos/1/archives/${encodeURIComponent(archives[0].name)}/tags`,
-    )
-    expect(tagsRes.ok()).toBeTruthy()
-    const tags: unknown = await tagsRes.json()
-    expect(Array.isArray(tags)).toBeTruthy()
+    // The seed tags web-server-01's newest and third-newest archives, so look
+    // there rather than at whichever archive happens to sort first: other
+    // hosts back up to this repository too. Asking an untagged archive returns
+    // `[]`, which the old `Array.isArray` assertion accepted - so this test
+    // passed while covering none of the tag response it is named for.
+    const newest = archives
+      .filter((a) => a.name.startsWith('web-server-01-backup-'))
+      .sort((a, b) => b.start.localeCompare(a.start))
+      .slice(0, 4)
+    expect(newest.length).toBeGreaterThan(0)
+
+    const responses = []
+    for (const archive of newest) {
+      const res = await page.request.get(
+        `/api/repos/1/archives/${encodeURIComponent(archive.name)}/tags`,
+      )
+      expect(res.ok()).toBeTruthy()
+      const tags = (await res.json()) as { tag: string; archive_name: string; repo_id: number }[]
+      expect(Array.isArray(tags)).toBeTruthy()
+      if (tags.length > 0) responses.push({ archive, tags })
+    }
+
+    expect(responses.length).toBeGreaterThan(0)
+    const [{ archive, tags }] = responses
+    expect(tags[0].archive_name).toBe(archive.name)
+    expect(tags[0].repo_id).toBe(1)
+    expect(typeof tags[0].tag).toBe('string')
+    expect(tags[0].tag.length).toBeGreaterThan(0)
   })
 
   test('archive diff API returns structured results for two archives', async ({ page }) => {

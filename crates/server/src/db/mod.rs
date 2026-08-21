@@ -3170,6 +3170,37 @@ pub async fn set_schedule_enabled(
     Ok(())
 }
 
+/// Clears the auto-disable bookkeeping if the schedule's target list no longer
+/// includes the agent that caused it to be auto-disabled. Without this, retargeting an
+/// auto-disabled schedule away from its permanently-unreachable agent - the realistic
+/// way an admin fixes this - would leave `auto_disabled_by_agent_id` pointing at an
+/// agent that isn't a target anymore, so [`reenable_system_disabled_schedules_for_agent`]
+/// could never match it again and the schedule would stay disabled forever despite the
+/// admin's fix. A no-op unless the schedule is currently auto-disabled for a
+/// connectivity reason and the causing agent was actually dropped from `agent_ids`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn clear_auto_disable_if_causing_agent_no_longer_a_target(
+    pool: &PgPool,
+    schedule_id: i64,
+    agent_ids: &[i64],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
+         = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE id = $1 \
+         AND auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id IS NOT NULL AND \
+         NOT (auto_disabled_by_agent_id = ANY($2))",
+        schedule_id,
+        agent_ids,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 /// IDs of every schedule belonging to a repo whose `ssh_host` matches, used to enforce a
 /// `server_quotas` `block_backups` action across all repos sharing that host.
 ///

@@ -852,6 +852,28 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     }
 }
 
+/// Records a target's failure and signals `tick()` that the first target has been
+/// attempted, in that order - the signal lets `tick()` stop waiting as soon as the
+/// first target has been attempted, and if it fired first, the DB write would race the
+/// caller reading the schedule's updated failure count right after `tick()` returns.
+/// Shared by all three `run_sequential_target` failure paths (config-push
+/// unreachable/error, and trigger-send failure), which differ only in whether the
+/// failure was a connectivity problem (`agent_unreachable`).
+async fn fail_target(
+    ctx: &SequentialTargetCtx<'_>,
+    agent_id: i64,
+    agent_unreachable: bool,
+    recorded_failure: &mut bool,
+    triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> TargetControl {
+    record_schedule_failure_once(ctx, agent_id, agent_unreachable, recorded_failure).await;
+    signal_first_target_attempted(triggered_tx);
+    match ctx.on_failure {
+        OnFailure::Stop => TargetControl::Stop,
+        OnFailure::Continue => TargetControl::Continue,
+    }
+}
+
 async fn run_sequential_target(
     ctx: &SequentialTargetCtx<'_>,
     target: &DueScheduleRow,
@@ -885,22 +907,12 @@ async fn run_sequential_target(
     match push_pre_run_config(ctx, target).await {
         PreRunConfigOutcome::Sent => {}
         PreRunConfigOutcome::AgentUnreachable => {
-            // Record the failure before signalling tick() to return - the signal lets
-            // tick() stop waiting as soon as the first target has been attempted, and
-            // if it fired first here, the DB write below would race the caller reading
-            // the schedule's updated failure count right after tick() returns.
-            //
             // recorded_failure is not guarded on marked_triggered: an earlier target
             // in this same tick succeeding must not suppress recording a later
             // target's failure - each is a distinct target that can fail
             // independently, and a schedule with `on_failure: Continue` processes
             // every target regardless of earlier outcomes.
-            record_schedule_failure_once(ctx, target.agent_id, true, recorded_failure).await;
-            signal_first_target_attempted(triggered_tx);
-            return match ctx.on_failure {
-                OnFailure::Stop => TargetControl::Stop,
-                OnFailure::Continue => TargetControl::Continue,
-            };
+            return fail_target(ctx, target.agent_id, true, recorded_failure, triggered_tx).await;
         }
         PreRunConfigOutcome::ConfigError => {
             // A persistent config-assembly error (e.g. a corrupted encrypted
@@ -910,12 +922,7 @@ async fn run_sequential_target(
             // failure (not agent_unreachable), so the disable it may cause won't be
             // silently cleared by an unrelated agent reconnect - see the doc comment
             // on db::record_schedule_failure.
-            record_schedule_failure_once(ctx, target.agent_id, false, recorded_failure).await;
-            signal_first_target_attempted(triggered_tx);
-            return match ctx.on_failure {
-                OnFailure::Stop => TargetControl::Stop,
-                OnFailure::Continue => TargetControl::Continue,
-            };
+            return fail_target(ctx, target.agent_id, false, recorded_failure, triggered_tx).await;
         }
     }
 
@@ -962,15 +969,7 @@ async fn run_sequential_target(
                 error = %e,
                 "sequential: agent not connected, skipping target"
             );
-            // Record the failure before signalling tick() to return - see the
-            // comments on the equivalent ordering in the AgentUnreachable arm above.
-            record_schedule_failure_once(ctx, target.agent_id, true, recorded_failure).await;
-            // Signal tick() that we've attempted the first target
-            signal_first_target_attempted(triggered_tx);
-            return match ctx.on_failure {
-                OnFailure::Stop => TargetControl::Stop,
-                OnFailure::Continue => TargetControl::Continue,
-            };
+            return fail_target(ctx, target.agent_id, true, recorded_failure, triggered_tx).await;
         }
     }
 
@@ -2090,6 +2089,78 @@ esac
             Vec::<i64>::new(),
             "an unrelated reconnect must not clear a streak that contained a config error"
         );
+    }
+
+    /// Retargeting an auto-disabled schedule away from the agent that caused the
+    /// disable must clear the stale auto-disable bookkeeping - otherwise the old
+    /// agent, no longer even a target, would incorrectly re-enable this schedule if
+    /// it ever reconnects again, and the schedule would have no legitimate path back
+    /// to enabled through the normal failure/reconnect cycle.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retargeting_clears_auto_disable_bookkeeping_for_the_dropped_agent(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let new_agent = db::insert_agent(&pool, "retarget-test-new-agent", None, "hash", None)
+            .await
+            .unwrap();
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                old_agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(
+            !enabled && auto_disabled,
+            "setup must have auto-disabled it"
+        );
+
+        // Retarget the schedule away from the broken agent, the realistic remediation.
+        db::delete_schedule_targets(&pool, schedule_id)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(new_agent.id, 0)])
+            .await
+            .unwrap();
+        db::clear_auto_disable_if_causing_agent_no_longer_a_target(
+            &pool,
+            schedule_id,
+            &[new_agent.id],
+        )
+        .await
+        .unwrap();
+
+        let (consecutive_failures, still_enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert!(!still_enabled, "retargeting alone must not re-enable it");
+        assert!(
+            !auto_disabled,
+            "the stale bookkeeping pointing at the dropped agent must be cleared"
+        );
+        assert_eq!(consecutive_failures, 0);
+
+        // The old (now-unrelated) agent reconnecting must never re-enable this
+        // schedule again - it isn't even a target of it anymore.
+        let reenabled =
+            db::reenable_system_disabled_schedules_for_agent(&pool, old_agent_id, Utc::now())
+                .await
+                .unwrap();
+        assert_eq!(reenabled, Vec::<i64>::new());
     }
 
     /// A schedule the scheduler auto-disabled after repeated unreachable-agent

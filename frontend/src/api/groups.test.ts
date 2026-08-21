@@ -59,11 +59,12 @@ describe('groups api', () => {
   })
 
   it('lists group members', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ user_id: 1 }] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { user_ids: [1] } })
 
-    await listGroupMembers(3)
+    const result = await listGroupMembers(3)
 
     expect(apiClient.get).toHaveBeenCalledWith('/groups/3/members')
+    expect(result).toEqual([1])
   })
 
   it('updates group members', async () => {

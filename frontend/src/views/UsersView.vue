@@ -60,7 +60,7 @@ const editTabs: TabOption<EditTab>[] = [
 ]
 
 const editTab = ref<EditTab>('general')
-const editRole = ref<'admin' | 'user'>('user')
+const editRole = ref<string>('user')
 const editRoleSubmitting = ref(false)
 const editRoleError = ref('')
 

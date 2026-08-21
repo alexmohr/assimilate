@@ -172,8 +172,7 @@ async function openMembers(group: Group): Promise<void> {
   memberUserIds.value = []
   showMembersModal.value = true
   try {
-    const members = await listGroupMembers(group.id)
-    memberUserIds.value = members.map((m) => m.user_id)
+    memberUserIds.value = await listGroupMembers(group.id)
   } catch (e: unknown) {
     membersError.value = extractError(e, 'Failed to load members')
   } finally {

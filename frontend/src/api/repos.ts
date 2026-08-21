@@ -10,6 +10,7 @@ import type {
   PassphraseResponse,
   QuotaAction,
   RepoHostKeyResponse,
+  RepoQuotaResponse,
   RepoTagEntryResponse,
   RescanResponse,
 } from '../types/generated'
@@ -156,13 +157,7 @@ export async function testRepoConnection(
   return response.data
 }
 
-export interface QuotaData {
-  warn_bytes: number
-  critical_bytes: number
-  warn_action: QuotaAction
-  critical_action: QuotaAction
-  enabled: boolean
-}
+export type QuotaData = RepoQuotaResponse
 
 export async function getRepoQuota(id: number): Promise<QuotaData> {
   const response = await apiClient.get<QuotaData>(`/repos/${id}/quota`)

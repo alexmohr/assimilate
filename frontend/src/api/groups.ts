@@ -10,8 +10,8 @@ export interface Group {
   created_at: string
 }
 
-export interface GroupMember {
-  user_id: number
+export interface GroupMembersResponse {
+  user_ids: number[]
 }
 
 export interface CreateGroupRequest {
@@ -42,9 +42,9 @@ export async function deleteGroup(id: number): Promise<void> {
   await apiClient.delete(`/groups/${id}`)
 }
 
-export async function listGroupMembers(id: number): Promise<GroupMember[]> {
-  const response = await apiClient.get<GroupMember[]>(`/groups/${id}/members`)
-  return response.data
+export async function listGroupMembers(id: number): Promise<number[]> {
+  const response = await apiClient.get<GroupMembersResponse>(`/groups/${id}/members`)
+  return response.data.user_ids
 }
 
 export async function updateGroupMembers(

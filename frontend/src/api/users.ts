@@ -8,7 +8,8 @@ import type { Group } from './groups'
 export interface User {
   id: number
   username: string
-  role: 'admin' | 'user'
+  role: string
+  must_change_password: boolean
   created_at: string
   last_login_at: string | null
 }
@@ -30,7 +31,7 @@ export interface CreateUserRequest {
 }
 
 export interface UpdateUserRoleRequest {
-  role: 'admin' | 'user'
+  role: string
 }
 
 export interface UpdateUserPasswordRequest {

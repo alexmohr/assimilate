@@ -678,7 +678,7 @@ mod tests {
         TunnelTaskCompletion, connect_and_forward, resolve_and_persist_host_key,
         run_connected_session, run_reconnect_loop, tunnel_ssh_config, tunnel_target_addr,
     };
-    use crate::{db, ws::ui_broadcast::UiBroadcast};
+    use crate::{db, test_support::generate_ed25519_key, ws::ui_broadcast::UiBroadcast};
 
     fn dummy_manager() -> TunnelManager {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
@@ -971,17 +971,6 @@ mod tests {
         fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
             AcceptAllHandler
         }
-    }
-
-    /// Generates a fresh ed25519 key pair. Shared by [`generate_test_key`]
-    /// and [`TestSshKeyDir::setup`], which each PEM-encode the result
-    /// differently (one round-trips it into a `russh` key, the other writes
-    /// it straight to disk) - factoring out the PEM encoding too would mean
-    /// naming `to_openssh`'s `Zeroizing<String>` return type, which isn't
-    /// reachable without adding the `zeroize` crate as a direct dependency.
-    fn generate_ed25519_key() -> ssh_key::PrivateKey {
-        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
-            .expect("generate test key")
     }
 
     /// Generates a fresh ed25519 key pair. `russh::keys::PrivateKey` pins its

@@ -39,6 +39,9 @@ pub mod repo_op_tracker;
 pub mod scheduler;
 /// SSH key management, host key scanning, and key deployment.
 pub mod ssh;
+/// Test-only helpers shared across this crate's unit test modules.
+#[cfg(test)]
+pub(crate) mod test_support;
 /// SSH reverse-tunnel management for agent connectivity.
 pub mod tunnel;
 /// WebSocket handlers (agent, UI, SSH relay).

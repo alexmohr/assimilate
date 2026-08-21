@@ -3,7 +3,11 @@
 
 import { apiClient } from './client'
 import type { DashboardOverview } from '../types/dashboard'
-import type { CalendarDayResponse, DashboardSummaryResponse } from '../types/generated'
+import type {
+  CalendarDayResponse,
+  DashboardSummaryResponse,
+  ScheduleCountByAgentResponse,
+} from '../types/generated'
 
 // NOTE: /stats/health is intentionally not covered by this module - it is
 // owned by a separate schedules module and call sites keep the raw
@@ -101,6 +105,11 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 
 export async function getDashboardOverview(): Promise<DashboardOverview> {
   const response = await apiClient.get<DashboardOverview>('/stats/dashboard-overview')
+  return response.data
+}
+
+export async function getScheduleCounts(): Promise<ScheduleCountByAgentResponse[]> {
+  const response = await apiClient.get<ScheduleCountByAgentResponse[]>('/stats/schedule-counts')
   return response.data
 }
 

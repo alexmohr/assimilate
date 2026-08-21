@@ -6,14 +6,18 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { apiClient } from '../api/client'
 import {
   listAgents,
+  listAgentTags,
   createAgent,
   updateAgent,
   regenerateAgentToken,
   unhideAgent as unhideAgentRequest,
 } from '../api/agents'
+import { listTags } from '../api/tags'
+import { getDashboardOverview, getScheduleCounts } from '../api/stats'
+import { getScheduleHealth, listSchedules } from '../api/schedules'
+import { getSystemVersion } from '../api/system'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -36,24 +40,12 @@ import AgentCoverageMeter from '../components/AgentCoverageMeter.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
+import type {
+  AgentTagEntryResponse,
+  HealthSummaryResponse,
+  ScheduleCountByAgentResponse,
+} from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
-
-interface AgentTagRow {
-  agent_id: number
-  tag_name: string
-  tag_color: string
-}
-
-interface HealthEntry {
-  hostname: string
-  target_name: string
-  last_status: string | null
-  last_backup_at: string | null
-  is_overdue: boolean
-  last_error_message: string | null
-  cron_expression?: string | null
-  schedule_enabled?: boolean | null
-}
 
 interface AgentHealth {
   failed: number
@@ -361,44 +353,32 @@ async function loadAgents(): Promise<void> {
       schedulesRes,
       overviewRes,
     ] = await Promise.all([
-      apiClient
-        .get<AgentTagRow[]>('/agent-tags', { timeout: 8000 })
-        .catch(() => ({ data: [] as AgentTagRow[] })),
-      apiClient
-        .get<TagRow[]>('/tags', { params: { scope: 'host' }, timeout: 8000 })
-        .catch(() => ({ data: [] as TagRow[] })),
-      apiClient
-        .get<HealthEntry[]>('/stats/health', { timeout: 8000 })
-        .catch(() => ({ data: [] as HealthEntry[] })),
-      apiClient
-        .get<{ agent_id: number; count: number }[]>('/stats/schedule-counts', { timeout: 8000 })
-        .catch(() => ({ data: [] as { agent_id: number; count: number }[] })),
-      apiClient
-        .get<{ id: number }[]>('/schedules', { timeout: 8000 })
-        .catch(() => ({ data: [] as { id: number }[] })),
-      apiClient
-        .get<DashboardOverview>('/stats/dashboard-overview', { timeout: 8000 })
-        .catch(() => ({ data: emptyOverview })),
+      listAgentTags().catch(() => [] as AgentTagEntryResponse[]),
+      listTags('host').catch(() => [] as TagRow[]),
+      getScheduleHealth().catch(() => [] as HealthSummaryResponse[]),
+      getScheduleCounts().catch(() => [] as ScheduleCountByAgentResponse[]),
+      listSchedules().catch(() => [] as { id: number }[]),
+      getDashboardOverview().catch(() => emptyOverview),
     ])
     machineScheduleCount.value = {}
-    scheduleCountsRes.data.forEach((entry) => {
+    scheduleCountsRes.forEach((entry) => {
       machineScheduleCount.value[entry.agent_id] = entry.count
     })
     // Fleet-wide total is the distinct schedule count, not a sum of
     // per-agent counts - a schedule targeting N agents would otherwise be
     // counted N times.
-    fleetScheduleCount.value = schedulesRes.data.length
+    fleetScheduleCount.value = schedulesRes.length
 
-    allAgentTags.value = agentTagsRes.data
+    allAgentTags.value = agentTagsRes
     const tagMap: Record<number, { name: string; color: string }[]> = {}
-    agentTagAssocRes.data.forEach((ht) => {
+    agentTagAssocRes.forEach((ht) => {
       if (!tagMap[ht.agent_id]) tagMap[ht.agent_id] = []
       tagMap[ht.agent_id].push({ name: ht.tag_name, color: ht.tag_color })
     })
     agentTagsMap.value = tagMap
 
     const hMap: Record<string, AgentHealth> = {}
-    healthRes.data.forEach((entry) => {
+    healthRes.forEach((entry) => {
       if (!hMap[entry.hostname]) {
         hMap[entry.hostname] = {
           failed: 0,
@@ -440,7 +420,7 @@ async function loadAgents(): Promise<void> {
     healthByHost.value = hMap
 
     const activeMap: Record<string, string[]> = {}
-    overviewRes.data.running_operations.forEach((op) => {
+    overviewRes.running_operations.forEach((op) => {
       const list = activeMap[op.hostname] ?? []
       if (!list.includes(op.repo_name)) list.push(op.repo_name)
       activeMap[op.hostname] = list
@@ -448,17 +428,13 @@ async function loadAgents(): Promise<void> {
     activeBackupsByHost.value = activeMap
 
     coverageHostIds.value = {
-      protected: new Set(
-        overviewRes.data.protection.protected_agent_links.map((host) => host.agent_id),
-      ),
-      unassigned: new Set(
-        overviewRes.data.protection.unassigned_agents.map((host) => host.agent_id),
-      ),
+      protected: new Set(overviewRes.protection.protected_agent_links.map((host) => host.agent_id)),
+      unassigned: new Set(overviewRes.protection.unassigned_agents.map((host) => host.agent_id)),
       'never-succeeded': new Set(
-        overviewRes.data.protection.never_succeeded_agents.map((host) => host.agent_id),
+        overviewRes.protection.never_succeeded_agents.map((host) => host.agent_id),
       ),
       'disabled-only': new Set(
-        overviewRes.data.protection.disabled_only_agents.map((host) => host.agent_id),
+        overviewRes.protection.disabled_only_agents.map((host) => host.agent_id),
       ),
     }
   } catch (e: unknown) {
@@ -562,11 +538,10 @@ function onMerged(): void {
 
 onMounted(() => {
   loadAgents().catch(logger.error)
-  apiClient
-    .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
+  getSystemVersion()
     .then((res) => {
-      availableAgentVersion.value = res.data.agent_version
-      serverCommitCount.value = res.data.server_commit_count ?? null
+      availableAgentVersion.value = res.agent_version
+      serverCommitCount.value = res.server_commit_count
     })
     .catch(logger.error)
 })

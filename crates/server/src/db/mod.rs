@@ -1649,8 +1649,16 @@ pub async fn update_repo_and_set_relocation_pending(
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    // Clears the auto-disable bookkeeping the same way set_schedule_enabled does for
+    // any other direct `enabled` write - otherwise a schedule auto-disabled for an
+    // unreachable agent keeps auto_disabled_by_agent_id pointing at that agent even
+    // after its repo (and thus this schedule's only reason to run) is gone, so a
+    // later reconnect from that agent would silently flip enabled back to true on an
+    // orphaned schedule that nobody decided to re-enable.
     sqlx::query!(
-        "UPDATE schedules SET enabled = false WHERE repo_id = $1",
+        "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = false, \
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true WHERE repo_id = $1",
         repo_id
     )
     .execute(pool)

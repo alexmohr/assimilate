@@ -328,6 +328,61 @@ async fn repo_delete(pool: PgPool) {
     assert!(result.is_err());
 }
 
+/// Deleting a repo whose schedule was auto-disabled for an unreachable agent must
+/// clear that schedule's stale auto-disable bookkeeping - the same as every other
+/// direct `enabled` write in the auto-disable feature (`set_schedule_enabled`,
+/// `update_schedule`, retargeting) - so a later reconnect from the agent that caused
+/// the disable can never silently re-enable an orphaned schedule nobody decided to
+/// turn back on.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let next = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(1))
+        .unwrap();
+
+    for _ in 0..3 {
+        db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
+            .await
+            .unwrap();
+    }
+    let row = sqlx::query!(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+        schedule.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.enabled && row.auto_disabled_agent_unreachable);
+
+    db::delete_repo(&pool, repo.id).await.unwrap();
+
+    let row = sqlx::query!(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+        schedule.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.enabled);
+    assert!(
+        !row.auto_disabled_agent_unreachable,
+        "the stale auto-disable flag must be cleared once the schedule's repo is gone"
+    );
+    assert_eq!(row.auto_disabled_by_agent_id, None);
+    assert_eq!(row.consecutive_failures, 0);
+
+    // The agent that caused the disable reconnecting later must never touch this
+    // orphaned schedule again.
+    let reenabled =
+        db::reenable_system_disabled_schedules_for_agent(&pool, agent.id, chrono::Utc::now())
+            .await
+            .unwrap();
+    assert_eq!(reenabled, Vec::<i64>::new());
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_passphrase(pool: PgPool) {
     let repo = create_test_repo(&pool).await;

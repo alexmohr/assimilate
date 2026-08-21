@@ -863,6 +863,23 @@ pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
+    // Clears the auto-disable bookkeeping the same way
+    // clear_auto_disable_if_causing_agent_no_longer_a_target does for retargeting -
+    // otherwise deleting the agent that caused a schedule's auto-disable leaves
+    // consecutive_failures/auto_disabled_agent_unreachable stale (the FK only nulls
+    // auto_disabled_by_agent_id), which would also silently defeat that function's
+    // IS NOT NULL guard on any later retarget.
+    sqlx::query!(
+        "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
+         = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE \
+         auto_disabled_by_agent_id = (SELECT id FROM agents WHERE hostname = $1) AND \
+         auto_disabled_agent_unreachable = true",
+        hostname
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
     let result = sqlx::query!("DELETE FROM agents WHERE hostname = $1", hostname)
         .execute(pool)
         .await

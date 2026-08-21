@@ -960,8 +960,6 @@ async fn run_sequential_target(
                 schedule_id,
                 "sequential: triggered"
             );
-            // Signal tick() that the first target's messages are now in the channel.
-            signal_first_target_attempted(triggered_tx);
             // Mark the repo as actively in use for the lifetime of the lock guard
             // (not just while the agent happens to be reporting progress), so the
             // repo detail page can show that it's locked right now rather than
@@ -980,6 +978,12 @@ async fn run_sequential_target(
             if !*marked_triggered {
                 mark_schedule_triggered_once(ctx, marked_triggered).await;
             }
+            // Signal tick() only now that mark_schedule_triggered_once's DB write (if
+            // any) has completed - matching fail_target's record-before-signal order,
+            // so a caller unblocked by this signal and immediately reading the
+            // schedule row back can't race this write. See the doc comment above
+            // fail_target for the full race explanation.
+            signal_first_target_attempted(triggered_tx);
         }
         Err(e) => {
             tracing::warn!(

@@ -221,6 +221,53 @@ async fn agent_delete_not_found(pool: PgPool) {
     assert!(result.is_err());
 }
 
+/// Deleting the agent that caused a schedule's auto-disable must clear that
+/// schedule's stale auto-disable bookkeeping. The FK on `auto_disabled_by_agent_id`
+/// only nulls that one column on delete, leaving `auto_disabled_agent_unreachable`
+/// and `consecutive_failures` stale - and an `IS NOT NULL` guard on
+/// `auto_disabled_by_agent_id` in `clear_auto_disable_if_causing_agent_no_longer_a_target`
+/// would then silently never fire on a later retarget.
+#[sqlx::test(migrations = "./migrations")]
+async fn agent_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
+    let (agent, _repo, schedule) = create_test_schedule(&pool).await;
+    let next = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(1))
+        .unwrap();
+
+    for _ in 0..3 {
+        db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
+            .await
+            .unwrap();
+    }
+    let row = sqlx::query!(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+        schedule.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.enabled && row.auto_disabled_agent_unreachable);
+
+    db::delete_agent(&pool, &agent.hostname).await.unwrap();
+
+    let row = sqlx::query!(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+        schedule.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.enabled);
+    assert!(
+        !row.auto_disabled_agent_unreachable,
+        "the stale auto-disable flag must be cleared once the causing agent is gone"
+    );
+    assert_eq!(row.auto_disabled_by_agent_id, None);
+    assert_eq!(row.consecutive_failures, 0);
+}
+
 #[cfg(test)]
 async fn create_test_repo(pool: &PgPool) -> RepoRow {
     db::insert_repo(

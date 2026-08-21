@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE auto_disabled_by_agent_id = (SELECT id FROM agents WHERE hostname = $1) AND auto_disabled_agent_unreachable = true",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cbe07329885dafd33abd2eb9912bd42832119e50cd7ca5939268f93ed4e8c41b"
+}

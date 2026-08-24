@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, default_exclude_patterns = $5, default_pre_backup_commands = $6, default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
+  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain FROM agents WHERE is_hidden = false ORDER BY hostname",
   "describe": {
     "columns": [
       {
@@ -97,19 +97,15 @@
         "ordinal": 18,
         "name": "last_ssh_user",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "domain",
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "TextArray",
-        "TextArray",
-        "Jsonb",
-        "Jsonb",
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -130,8 +126,9 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "6808134edaa5ac76c8f0ff82bb4f24eacd2e909e071ab922168c63e1b34f89c8"
+  "hash": "dcd71489b320e22a8be80cc6c56b3745c5211b910bcd685e713ea26e3e2546d5"
 }

@@ -57,14 +57,19 @@ async function save(): Promise<void> {
   saving.value = true
   error.value = null
   try {
-    const res = await updateAgent(props.agent.hostname, {
-      display_name: props.agent.display_name,
-      default_backup_paths: parseLines(pathsText.value),
-      default_exclude_patterns: parseLines(excludesText.value),
-      default_pre_backup_commands: parseLines(preCmdsText.value),
-      default_post_backup_commands: parseLines(postCmdsText.value),
-      default_file_change_patterns_raw: fcpText.value,
-    })
+    const res = await updateAgent(
+      props.agent.hostname,
+      {
+        display_name: props.agent.display_name,
+        domain: props.agent.domain,
+        default_backup_paths: parseLines(pathsText.value),
+        default_exclude_patterns: parseLines(excludesText.value),
+        default_pre_backup_commands: parseLines(preCmdsText.value),
+        default_post_backup_commands: parseLines(postCmdsText.value),
+        default_file_change_patterns_raw: fcpText.value,
+      },
+      props.agent.domain,
+    )
     emit('saved', res)
     editing.value = false
   } catch (e: unknown) {

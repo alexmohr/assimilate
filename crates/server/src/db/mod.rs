@@ -42,11 +42,18 @@ pub enum ResolveResult {
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
+///
+/// A hostname shared by more than one non-placeholder agent (agents in
+/// different domains reporting the same OS hostname) can't be resolved from
+/// the hostname alone -- callers that need such a report or archive
+/// attributed correctly must resolve it manually (hostname patterns or the
+/// merge-agent flow), so an ambiguous exact match is treated as
+/// [`ResolveResult::Unmatched`] rather than guessing.
 pub async fn resolve_agent_for_hostname(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<ResolveResult, ApiError> {
-    let exact = sqlx::query_as!(
+    let exact_matches = sqlx::query_as!(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
@@ -54,15 +61,15 @@ pub async fn resolve_agent_for_hostname(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user FROM agents WHERE hostname = $1 AND agent_token_hash != \
+         is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1 AND agent_token_hash != \
          'imported:no-auth'",
         hostname,
     )
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
 
-    if let Some(agent) = exact {
+    if let Ok([agent]) = <[AgentRow; 1]>::try_from(exact_matches) {
         return Ok(ResolveResult::ExactMatch(agent));
     }
 
@@ -126,7 +133,7 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user FROM agents WHERE id = $1",
+         is_hidden, last_ssh_user, domain FROM agents WHERE id = $1",
         source_id,
     )
     .fetch_optional(&mut *tx)
@@ -260,6 +267,9 @@ pub struct AgentRow {
     pub is_hidden: bool,
     /// SSH username last used to deploy/upgrade this agent.
     pub last_ssh_user: Option<String>,
+    /// Optional DNS domain, set by an admin to disambiguate agents that
+    /// share an OS hostname across different networks.
+    pub domain: Option<String>,
 }
 
 /// A row from the `repos` table (sensitive fields excluded).
@@ -478,13 +488,47 @@ pub async fn get_schedule_counts_by_agent(
     .map_err(ApiError::Database)
 }
 
+/// Looks up an agent by hostname, optionally narrowed to a specific
+/// `domain`.
+///
 /// # Errors
 ///
 /// Returns an error if:
-/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::NotFound`]: no agent matches
+/// - [`ApiError::Conflict`]: `domain` was omitted and more than one agent
+///   shares `hostname` across different domains -- the caller must specify
+///   one
 /// - [`ApiError::Database`]: the database query fails
-pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<AgentRow, ApiError> {
-    sqlx::query_as!(
+pub async fn get_agent_by_hostname(
+    pool: &PgPool,
+    hostname: &str,
+    domain: Option<&str>,
+) -> Result<AgentRow, ApiError> {
+    if let Some(domain) = domain {
+        return sqlx::query_as!(
+            AgentRow,
+            "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
+             agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+             default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+             \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+             default_post_backup_commands AS \"default_post_backup_commands: \
+             sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
+             agent_token_hash, is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1 \
+             AND domain = $2",
+            hostname,
+            domain,
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => {
+                ApiError::NotFound(format!("agent '{hostname}' in domain '{domain}' not found"))
+            }
+            other => ApiError::Database(other),
+        });
+    }
+
+    let matches = sqlx::query_as!(
         AgentRow,
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
@@ -492,15 +536,29 @@ pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<Agen
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user FROM agents WHERE hostname = $1",
+         is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1 ORDER BY domain",
         hostname,
     )
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent '{hostname}' not found")),
-        other => ApiError::Database(other),
-    })
+    .map_err(ApiError::Database)?;
+
+    match <[AgentRow; 1]>::try_from(matches) {
+        Ok([agent]) => Ok(agent),
+        Err(matches) if matches.is_empty() => {
+            Err(ApiError::NotFound(format!("agent '{hostname}' not found")))
+        }
+        Err(matches) => {
+            let domains: Vec<String> = matches
+                .iter()
+                .map(|a| a.domain.clone().unwrap_or_default())
+                .collect();
+            Err(ApiError::Conflict(format!(
+                "hostname '{hostname}' is shared by agents in domains {domains:?}; specify a \
+                 domain"
+            )))
+        }
+    }
 }
 
 /// # Errors
@@ -517,7 +575,7 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user FROM agents WHERE id = $1",
+         is_hidden, last_ssh_user, domain FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -528,34 +586,43 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
     })
 }
 
+/// Candidate agent identity for token verification during connection.
+#[derive(sqlx::FromRow)]
+pub struct AgentTokenCandidate {
+    /// Agent ID.
+    pub id: i64,
+    /// Hash of the agent's authentication token.
+    pub agent_token_hash: String,
+}
+
+/// Returns every agent registered under `hostname`. A connecting agent only
+/// reports its OS hostname, never its domain, so when more than one agent
+/// shares a hostname (agents in different domains), the caller must verify
+/// the presented token against each candidate to find the right one.
+///
 /// # Errors
 ///
 /// Returns an error if:
-/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::NotFound`]: no agent is registered under `hostname`
 /// - [`ApiError::Database`]: the database query fails
-pub async fn get_agent_token_hash(
+pub async fn get_agent_token_hashes(
     pool: &PgPool,
     hostname: &str,
-) -> Result<(i64, String), ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: i64,
-        agent_token_hash: String,
-    }
-
-    let row = sqlx::query_as!(
-        Row,
+) -> Result<Vec<AgentTokenCandidate>, ApiError> {
+    let rows = sqlx::query_as!(
+        AgentTokenCandidate,
         "SELECT id, agent_token_hash FROM agents WHERE hostname = $1",
         hostname
     )
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent '{hostname}' not found")),
-        other => ApiError::Database(other),
-    })?;
+    .map_err(ApiError::Database)?;
 
-    Ok((row.id, row.agent_token_hash))
+    if rows.is_empty() {
+        return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
+    }
+
+    Ok(rows)
 }
 
 /// # Errors
@@ -644,7 +711,7 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
              \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
              default_post_backup_commands AS \"default_post_backup_commands: \
              sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user FROM agents ORDER BY hostname",
+             agent_token_hash, is_hidden, last_ssh_user, domain FROM agents ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -658,8 +725,8 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
              \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
              default_post_backup_commands AS \"default_post_backup_commands: \
              sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user FROM agents WHERE is_hidden = false ORDER \
-             BY hostname",
+             agent_token_hash, is_hidden, last_ssh_user, domain FROM agents WHERE is_hidden = \
+             false ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -674,31 +741,36 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn set_agent_hidden(
     pool: &PgPool,
-    hostname: &str,
+    agent_id: i64,
     hidden: bool,
 ) -> Result<AgentRow, ApiError> {
     sqlx::query_as!(
         AgentRow,
-        "UPDATE agents SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
-         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
+        "UPDATE agents SET is_hidden = $2 WHERE id = $1 RETURNING id, hostname, display_name, \
+         agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, \
+         last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, \
+         default_pre_backup_commands AS \"default_pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
          \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
-        hostname,
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain",
+        agent_id,
         hidden,
     )
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?
-    .ok_or_else(|| ApiError::NotFound(format!("Agent {hostname} not found")))
+    .ok_or_else(|| ApiError::NotFound(format!("Agent id '{agent_id}' not found")))
 }
 
 /// Finds an agent by hostname, or creates a placeholder agent for archive imports.
 ///
 /// Placeholder agents have a dummy token hash and cannot authenticate. They serve
 /// only as a foreign key target for imported `backup_reports`.
+///
+/// If more than one agent already shares `hostname` (agents in different
+/// domains), which one an archive belongs to can't be inferred from the
+/// hostname alone, so a fresh placeholder is created instead of guessing; a
+/// human resolves the ambiguity afterwards via hostname patterns or merge.
 ///
 /// # Errors
 ///
@@ -715,14 +787,14 @@ pub async fn get_or_create_agent_by_hostname(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user FROM agents WHERE hostname = $1",
+         is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1",
         hostname,
     )
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
 
-    if let Some(agent) = existing {
+    if let Ok([agent]) = <[AgentRow; 1]>::try_from(existing) {
         return Ok(agent);
     }
 
@@ -735,7 +807,7 @@ pub async fn get_or_create_agent_by_hostname(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user",
+         is_hidden, last_ssh_user, domain",
         hostname,
         Some(format!("{hostname} (imported)")),
         "imported:no-auth",
@@ -754,21 +826,23 @@ pub async fn insert_agent(
     display_name: Option<&str>,
     token_hash: &str,
     owner_id: Option<i64>,
+    domain: Option<&str>,
 ) -> Result<AgentRow, ApiError> {
     sqlx::query_as!(
         AgentRow,
-        "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
-         $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
+        "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id, domain) VALUES \
+         ($1, $2, $3, $4, $5) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user",
+         is_hidden, last_ssh_user, domain",
         hostname,
         display_name,
         token_hash,
         owner_id,
+        domain,
     )
     .fetch_one(pool)
     .await
@@ -779,6 +853,8 @@ pub async fn insert_agent(
 pub struct AgentDefaults<'a> {
     /// Optional display name.
     pub display_name: Option<&'a str>,
+    /// Optional DNS domain, to disambiguate agents that share a hostname.
+    pub domain: Option<&'a str>,
     /// Default backup paths.
     pub default_backup_paths: &'a [String],
     /// Default exclude patterns.
@@ -804,14 +880,14 @@ pub async fn insert_agent_with_paths(
         AgentRow,
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         default_file_change_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, \
-         hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
+         default_file_change_patterns_raw, domain) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+         RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user",
+         is_hidden, last_ssh_user, domain",
         hostname,
         defaults.display_name,
         token_hash,
@@ -820,6 +896,7 @@ pub async fn insert_agent_with_paths(
         sqlx::types::Json(defaults.default_pre_backup_commands) as _,
         sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
+        defaults.domain,
     )
     .fetch_one(pool)
     .await
@@ -833,7 +910,7 @@ pub async fn insert_agent_with_paths(
 /// - [`ApiError::Database`]: the database query fails
 pub async fn update_agent(
     pool: &PgPool,
-    hostname: &str,
+    agent_id: i64,
     new_hostname: &str,
     defaults: AgentDefaults<'_>,
 ) -> Result<AgentRow, ApiError> {
@@ -841,15 +918,15 @@ pub async fn update_agent(
         AgentRow,
         "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, \
          default_exclude_patterns = $5, default_pre_backup_commands = $6, \
-         default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname \
-         = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
+         default_post_backup_commands = $7, default_file_change_patterns_raw = $8, domain = $9 \
+         WHERE id = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user",
-        hostname,
+         is_hidden, last_ssh_user, domain",
+        agent_id,
         new_hostname,
         defaults.display_name,
         defaults.default_backup_paths,
@@ -857,11 +934,12 @@ pub async fn update_agent(
         sqlx::types::Json(defaults.default_pre_backup_commands) as _,
         sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
+        defaults.domain,
     )
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent '{hostname}' not found")),
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
         other => ApiError::Database(other),
     })
 }
@@ -873,25 +951,25 @@ pub async fn update_agent(
 /// - [`ApiError::Database`]: the database query fails
 pub async fn regenerate_agent_token(
     pool: &PgPool,
-    hostname: &str,
+    agent_id: i64,
     token_hash: &str,
 ) -> Result<AgentRow, ApiError> {
     sqlx::query_as!(
         AgentRow,
-        "UPDATE agents SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
+        "UPDATE agents SET agent_token_hash = $2 WHERE id = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
          default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
          \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
-        hostname,
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain",
+        agent_id,
         token_hash,
     )
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent '{hostname}' not found")),
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
         other => ApiError::Database(other),
     })
 }
@@ -915,16 +993,8 @@ pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<
 /// Returns an error if:
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
-pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
+pub async fn delete_agent(pool: &PgPool, agent_id: i64) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-
-    let agent_id = sqlx::query_scalar!("SELECT id FROM agents WHERE hostname = $1", hostname)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    let Some(agent_id) = agent_id else {
-        return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
-    };
 
     // See lock_schedules_targeting_agent's doc comment: without this, a schedule that
     // crosses the auto-disable threshold for this agent concurrently (e.g. an
@@ -948,10 +1018,16 @@ pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError>
     .await
     .map_err(ApiError::Database)?;
 
-    sqlx::query!("DELETE FROM agents WHERE id = $1", agent_id)
+    let result = sqlx::query!("DELETE FROM agents WHERE id = $1", agent_id)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!(
+            "agent id '{agent_id}' not found"
+        )));
+    }
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
@@ -1066,26 +1142,19 @@ pub async fn get_archives_for_agent_with_patterns(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_schedule_target_hostnames_for_repo(
+pub async fn get_schedule_target_agents_for_repo(
     pool: &PgPool,
     repo_id: i64,
-) -> Result<Vec<String>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        hostname: String,
-    }
-
-    let rows = sqlx::query_as!(
-        Row,
-        "SELECT DISTINCT a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id = a.id \
-         JOIN schedules s ON s.id = st.schedule_id WHERE s.repo_id = $1",
+) -> Result<Vec<ScheduleRunTarget>, ApiError> {
+    sqlx::query_as!(
+        ScheduleRunTarget,
+        "SELECT DISTINCT a.id AS agent_id, a.hostname FROM agents a JOIN schedule_targets st ON \
+         st.agent_id = a.id JOIN schedules s ON s.id = st.schedule_id WHERE s.repo_id = $1",
         repo_id,
     )
     .fetch_all(pool)
     .await
-    .map_err(ApiError::Database)?;
-
-    Ok(rows.into_iter().map(|r| r.hostname).collect())
+    .map_err(ApiError::Database)
 }
 
 /// Parameters for inserting a new repository.
@@ -3465,32 +3534,7 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
     })
 }
 
-/// # Errors
-///
-/// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_schedule_target_hostnames(
-    pool: &PgPool,
-    schedule_id: i64,
-) -> Result<Vec<String>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        hostname: String,
-    }
-
-    let rows = sqlx::query_as!(
-        Row,
-        "SELECT a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id = a.id WHERE \
-         st.schedule_id = $1 AND a.is_hidden = false ORDER BY st.execution_order",
-        schedule_id,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    Ok(rows.into_iter().map(|r| r.hostname).collect())
-}
-
-/// Batched form of [`get_schedule_target_hostnames`] for callers that need target hostnames
+/// Batched form of [`get_schedule_targets_for_run`] for callers that need target hostnames
 /// for many schedules at once (e.g. projecting calendar events for every schedule in a
 /// fleet) -- one round trip instead of one query per schedule.
 ///

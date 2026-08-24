@@ -17,9 +17,9 @@ use crate::{AppState, db, error::ApiError};
 pub async fn assemble_config(
     pool: &PgPool,
     encryption_key: &[u8; 32],
-    hostname: &str,
+    agent_id: i64,
 ) -> Result<AgentConfig, ApiError> {
-    let agent = db::get_agent_by_hostname(pool, hostname).await?;
+    let agent = db::get_agent_by_id(pool, agent_id).await?;
 
     let global_excludes = parse_raw_excludes(&db::get_global_excludes_raw(pool).await?);
 
@@ -58,7 +58,7 @@ pub async fn assemble_config(
     }
 
     Ok(AgentConfig {
-        agent_hostname: hostname.to_string(),
+        agent_hostname: agent.hostname,
         skip_targets: Vec::new(),
         repos,
     })
@@ -282,13 +282,13 @@ async fn build_repo_config(
 }
 
 /// Push the assembled config to a single agent via its WebSocket connection.
-pub async fn push_config_to_agent(state: &AppState, hostname: &str) {
-    match assemble_config(&state.pool, &state.encryption_key, hostname).await {
+pub async fn push_config_to_agent(state: &AppState, agent_id: i64) {
+    match assemble_config(&state.pool, &state.encryption_key, agent_id).await {
         Ok(config) => {
             let msg = ServerToAgent::ConfigUpdate(config);
-            if let Err(e) = state.registry.send_to(hostname, msg).await {
+            if let Err(e) = state.registry.send_to(agent_id, msg).await {
                 tracing::debug!(
-                    hostname = %hostname,
+                    agent_id,
                     error = %e,
                     "agent not connected, config push skipped"
                 );
@@ -296,7 +296,7 @@ pub async fn push_config_to_agent(state: &AppState, hostname: &str) {
         }
         Err(e) => {
             tracing::error!(
-                hostname = %hostname,
+                agent_id,
                 error = %e,
                 "failed to assemble config for push"
             );
@@ -306,19 +306,19 @@ pub async fn push_config_to_agent(state: &AppState, hostname: &str) {
 
 /// Push the assembled config to every target agent of the given schedule.
 pub async fn push_config_to_all_schedule_targets(state: &AppState, schedule_id: i64) {
-    let hostnames = match db::get_schedule_target_hostnames(&state.pool, schedule_id).await {
-        Ok(h) => h,
+    let targets = match db::get_schedule_targets_for_run(&state.pool, schedule_id).await {
+        Ok(t) => t,
         Err(e) => {
             tracing::warn!(
                 schedule_id,
                 error = %e,
-                "failed to get schedule target hostnames for config push"
+                "failed to get schedule targets for config push"
             );
             return;
         }
     };
-    for hostname in &hostnames {
-        push_config_to_agent(state, hostname).await;
+    for target in &targets {
+        push_config_to_agent(state, target.agent_id).await;
     }
 }
 

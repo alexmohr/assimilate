@@ -17,10 +17,14 @@ pub struct AgentConnection {
     pub restart_unavailable_reason: Option<String>,
 }
 
-/// Registry of all currently connected agents, keyed by hostname.
+/// Registry of all currently connected agents, keyed by agent ID.
+///
+/// Keyed by ID rather than hostname because more than one agent can share
+/// an OS hostname (agents in different domains) -- hostname alone can't
+/// safely address a specific live connection.
 #[derive(Debug, Clone, Default)]
 pub struct AgentRegistry {
-    connections: Arc<RwLock<HashMap<String, AgentConnection>>>,
+    connections: Arc<RwLock<HashMap<i64, AgentConnection>>>,
 }
 
 impl AgentRegistry {
@@ -33,14 +37,14 @@ impl AgentRegistry {
     }
 
     /// Register a newly connected agent. Returns `true` if this replaced an
-    /// already-registered connection for the same hostname (a reconnect) -
+    /// already-registered connection for the same agent ID (a reconnect) -
     /// callers use this to detect that the previous session is gone and any
     /// in-flight operations tied to it are now abandoned, since
     /// [`is_connected`](Self::is_connected) alone can't tell a fresh session
     /// apart from the one that was there before.
     pub async fn register(
         &self,
-        hostname: String,
+        agent_id: i64,
         sender: mpsc::Sender<ServerToAgent>,
         supports_restart: bool,
         restart_unavailable_reason: Option<String>,
@@ -53,13 +57,13 @@ impl AgentRegistry {
         self.connections
             .write()
             .await
-            .insert(hostname, connection)
+            .insert(agent_id, connection)
             .is_some()
     }
 
     /// Remove a disconnected agent from the registry.
-    pub async fn unregister(&self, hostname: &str) {
-        self.connections.write().await.remove(hostname);
+    pub async fn unregister(&self, agent_id: i64) {
+        self.connections.write().await.remove(&agent_id);
     }
 
     /// # Errors
@@ -67,31 +71,31 @@ impl AgentRegistry {
     /// Returns an error if the underlying operation fails.
     pub async fn send_to(
         &self,
-        hostname: &str,
+        agent_id: i64,
         msg: ServerToAgent,
     ) -> Result<(), Box<mpsc::error::SendError<ServerToAgent>>> {
         let connections = self.connections.read().await;
-        if let Some(conn) = connections.get(hostname) {
+        if let Some(conn) = connections.get(&agent_id) {
             conn.sender.send(msg).await.map_err(Box::new)
         } else {
             Err(Box::new(mpsc::error::SendError(msg)))
         }
     }
 
-    /// Return the hostnames of all currently connected agents.
-    pub async fn connected_agents(&self) -> Vec<String> {
-        self.connections.read().await.keys().cloned().collect()
+    /// Return the IDs of all currently connected agents.
+    pub async fn connected_agents(&self) -> Vec<i64> {
+        self.connections.read().await.keys().copied().collect()
     }
 
     /// Check whether a given agent is currently connected.
-    pub async fn is_connected(&self, hostname: &str) -> bool {
-        self.connections.read().await.contains_key(hostname)
+    pub async fn is_connected(&self, agent_id: i64) -> bool {
+        self.connections.read().await.contains_key(&agent_id)
     }
 
     /// Return the restart capability for a given agent (`supports_restart`, reason).
-    pub async fn restart_capability(&self, hostname: &str) -> (bool, Option<String>) {
+    pub async fn restart_capability(&self, agent_id: i64) -> (bool, Option<String>) {
         let connections = self.connections.read().await;
-        connections.get(hostname).map_or(
+        connections.get(&agent_id).map_or(
             (false, Some("agent is not connected".to_owned())),
             |conn| {
                 (
@@ -114,12 +118,10 @@ mod tests {
         let registry = AgentRegistry::new();
         let (tx, _rx) = mpsc::channel(1);
 
-        let replaced = registry
-            .register("agent-a".to_owned(), tx, true, None)
-            .await;
+        let replaced = registry.register(1, tx, true, None).await;
 
         assert!(!replaced);
-        assert!(registry.is_connected("agent-a").await);
+        assert!(registry.is_connected(1).await);
     }
 
     #[tokio::test]
@@ -128,30 +130,38 @@ mod tests {
         let (tx1, _rx1) = mpsc::channel(1);
         let (tx2, _rx2) = mpsc::channel(1);
 
-        let first = registry
-            .register("agent-a".to_owned(), tx1, true, None)
-            .await;
-        let second = registry
-            .register("agent-a".to_owned(), tx2, true, None)
-            .await;
+        let first = registry.register(1, tx1, true, None).await;
+        let second = registry.register(1, tx2, true, None).await;
 
         assert!(!first);
         assert!(second);
     }
 
     #[tokio::test]
-    async fn register_does_not_report_replacement_for_a_different_hostname() {
+    async fn register_does_not_report_replacement_for_a_different_agent() {
         let registry = AgentRegistry::new();
         let (tx1, _rx1) = mpsc::channel(1);
         let (tx2, _rx2) = mpsc::channel(1);
 
-        registry
-            .register("agent-a".to_owned(), tx1, true, None)
-            .await;
-        let replaced = registry
-            .register("agent-b".to_owned(), tx2, true, None)
-            .await;
+        registry.register(1, tx1, true, None).await;
+        let replaced = registry.register(2, tx2, true, None).await;
 
         assert!(!replaced);
+    }
+
+    #[tokio::test]
+    async fn two_agents_sharing_a_hostname_get_independent_registry_slots() {
+        // Regression test: before the registry was keyed by agent ID, two
+        // agents reporting the same OS hostname (different domains) would
+        // collide on a single hostname-keyed slot.
+        let registry = AgentRegistry::new();
+        let (tx1, _rx1) = mpsc::channel(1);
+        let (tx2, _rx2) = mpsc::channel(1);
+
+        registry.register(1, tx1, true, None).await;
+        registry.register(2, tx2, true, None).await;
+
+        assert!(registry.is_connected(1).await);
+        assert!(registry.is_connected(2).await);
     }
 }

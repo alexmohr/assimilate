@@ -286,6 +286,7 @@ describe('AgentDeployDialog', () => {
           server_url: 'https://assimilate.example.com',
           install_path: '/opt/assimilate',
         }),
+        { params: {} },
       )
     })
 

@@ -66,7 +66,7 @@ describe('AgentDangerZone', () => {
     dialogButton('Delete agent').click()
     await flushPromises()
 
-    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01')
+    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01', { params: {} })
   })
 
   it('confirms before destroying an imported host archives', async () => {
@@ -80,7 +80,11 @@ describe('AgentDangerZone', () => {
     dialogButton('Delete archives and remove').click()
     await flushPromises()
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/legacy-01/delete-archives')
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/legacy-01/delete-archives',
+      {},
+      { params: {} },
+    )
   })
 
   it('hides an imported agent without a confirmation, since it is reversible', async () => {
@@ -88,7 +92,7 @@ describe('AgentDangerZone', () => {
     await wrapper.find('.btn-ghost').trigger('click')
     await flushPromises()
 
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/legacy-01/hide')
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/legacy-01/hide', {}, { params: {} })
   })
 
   it('keeps the user on the page when a delete fails', async () => {
@@ -119,7 +123,11 @@ describe('AgentDangerZone', () => {
     dialogButton('Delete archives and remove').click()
     await flushPromises()
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/legacy-01/delete-archives')
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/legacy-01/delete-archives',
+      {},
+      { params: {} },
+    )
   })
 
   it('releases the button when deleting the archives fails', async () => {

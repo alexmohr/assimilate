@@ -650,15 +650,13 @@ pub async fn delete_schedule(
         ));
     }
 
-    let hostnames = db::get_schedule_target_hostnames(&state.pool, id)
-        .await
-        .ok();
+    let targets = db::get_schedule_targets_for_run(&state.pool, id).await.ok();
 
     db::delete_schedule(&state.pool, id).await?;
 
-    if let Some(hostnames) = hostnames {
-        for hostname in &hostnames {
-            config_assembler::push_config_to_agent(&state, hostname).await;
+    if let Some(targets) = targets {
+        for target in &targets {
+            config_assembler::push_config_to_agent(&state, target.agent_id).await;
         }
     }
 
@@ -940,47 +938,36 @@ pub async fn cancel_running_backup(
     })
     .await?;
 
-    let hostnames = db::get_schedule_target_hostnames(&state.pool, id).await?;
+    let targets = db::get_schedule_targets_for_run(&state.pool, id).await?;
     let repo_id = RepoId(schedule_repo_id);
 
-    for hostname in &hostnames {
+    for target in &targets {
         let msg = ServerToAgent::CancelBackup { repo_id };
-        if let Err(e) = state.registry.send_to(hostname, msg).await {
+        if let Err(e) = state.registry.send_to(target.agent_id, msg).await {
             tracing::warn!(
-                hostname = %hostname,
+                hostname = %target.hostname,
                 error = %e,
                 "agent not connected for cancel_running_backup"
             );
             // Agent is offline - cancel the backup directly in the DB
-            if let Some(target) = db::resolve_agent_for_hostname(&state.pool, hostname)
-                .await
-                .ok()
-                .and_then(|r| match r {
-                    db::ResolveResult::ExactMatch(a) | db::ResolveResult::PatternMatch(a) => {
-                        Some(a)
-                    }
-                    db::ResolveResult::Unmatched => None,
-                })
+            if let Err(e) =
+                db::cancel_backup_report(&state.pool, target.agent_id, schedule_repo_id).await
             {
-                if let Err(e) =
-                    db::cancel_backup_report(&state.pool, target.id, schedule_repo_id).await
-                {
-                    tracing::error!(
-                        hostname = %hostname,
-                        error = %e,
-                        "failed to cancel backup in DB after agent not connected"
-                    );
-                }
-                state
-                    .completion_bus
-                    .publish(crate::ws::completion_bus::OperationOutcome {
-                        hostname: hostname.clone(),
-                        repo_id: schedule_repo_id,
-                        success: false,
-                    });
-                state.ui_broadcast.clear_active_backup(schedule_repo_id);
-                state.ui_broadcast.send(ServerToUi::DataChanged);
+                tracing::error!(
+                    hostname = %target.hostname,
+                    error = %e,
+                    "failed to cancel backup in DB after agent not connected"
+                );
             }
+            state
+                .completion_bus
+                .publish(crate::ws::completion_bus::OperationOutcome {
+                    agent_id: target.agent_id,
+                    repo_id: schedule_repo_id,
+                    success: false,
+                });
+            state.ui_broadcast.clear_active_backup(schedule_repo_id);
+            state.ui_broadcast.send(ServerToUi::DataChanged);
         }
     }
 
@@ -1155,6 +1142,7 @@ async fn run_manual_target(
                 repo_id.0,
                 crate::scheduler::repo_op_kind_for(schedule_type),
                 target.hostname.clone(),
+                Some(target.agent_id),
             )
             .await;
         state.ui_broadcast.send(ServerToUi::RepoOpChanged {
@@ -1171,7 +1159,8 @@ async fn run_manual_target(
         let hostname = target.hostname.clone();
         let repo_id_val = repo_id.0;
         let outcome =
-            completion_bus::wait_for_completion(&state.registry, rx, &hostname, repo_id_val).await;
+            completion_bus::wait_for_completion(&state.registry, rx, target.agent_id, repo_id_val)
+                .await;
 
         state.repo_op_tracker.clear(repo_id_val).await;
         state.ui_broadcast.send(ServerToUi::RepoOpChanged {
@@ -1203,14 +1192,14 @@ async fn push_config_and_trigger_target(
     let agent_reachable = match config_assembler::assemble_config(
         &state.pool,
         &state.encryption_key,
-        &target.hostname,
+        target.agent_id,
     )
     .await
     {
         Ok(config) => {
             if state
                 .registry
-                .send_to(&target.hostname, ServerToAgent::ConfigUpdate(config))
+                .send_to(target.agent_id, ServerToAgent::ConfigUpdate(config))
                 .await
                 .is_ok()
             {
@@ -1254,7 +1243,7 @@ async fn push_config_and_trigger_target(
         },
     };
 
-    match state.registry.send_to(&target.hostname, msg).await {
+    match state.registry.send_to(target.agent_id, msg).await {
         Ok(()) => {
             tracing::info!(
                 hostname = %target.hostname,

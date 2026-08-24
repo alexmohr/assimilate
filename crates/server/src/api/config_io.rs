@@ -55,6 +55,7 @@ pub async fn export_config(
         hosts.push(HostExport {
             hostname: agent.hostname.clone(),
             display_name: agent.display_name.clone(),
+            domain: agent.domain.clone(),
             default_backup_paths: agent.default_backup_paths.clone(),
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
             default_pre_backup_commands: agent.default_pre_backup_commands.0.clone(),
@@ -454,10 +455,11 @@ async fn import_host(
     if let Some(&existing_id) = hostname_to_id.get(&host.hostname) {
         db::update_agent(
             pool,
-            &host.hostname,
+            existing_id,
             &host.hostname,
             db::AgentDefaults {
                 display_name: host.display_name.as_deref(),
+                domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
                 default_pre_backup_commands: &host.default_pre_backup_commands,
@@ -486,6 +488,7 @@ async fn import_host(
             IMPORTED_TOKEN_HASH,
             db::AgentDefaults {
                 display_name: host.display_name.as_deref(),
+                domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
                 default_pre_backup_commands: &host.default_pre_backup_commands,
@@ -586,8 +589,15 @@ async fn resolve_schedule_target_agent_ids(
         let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
             cid
         } else {
-            let agent =
-                db::insert_agent(pool, &target.hostname, None, IMPORTED_TOKEN_HASH, None).await?;
+            let agent = db::insert_agent(
+                pool,
+                &target.hostname,
+                None,
+                IMPORTED_TOKEN_HASH,
+                None,
+                None,
+            )
+            .await?;
             result.warnings.push(format!(
                 "created placeholder agent {:?} referenced by schedule {:?}",
                 target.hostname, sched.name

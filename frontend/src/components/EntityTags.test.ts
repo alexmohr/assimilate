@@ -49,7 +49,7 @@ describe('EntityTags', () => {
       params: { scope: 'repo' },
       timeout: undefined,
     })
-    expect(apiClient.get).toHaveBeenCalledWith('/repos/12/tags')
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/12/tags', { params: undefined })
   })
 
   it('reads the scope it was given rather than assuming repositories', async () => {
@@ -59,7 +59,7 @@ describe('EntityTags', () => {
       params: { scope: 'host' },
       timeout: undefined,
     })
-    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/tags')
+    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/tags', { params: undefined })
   })
 
   it('shows the assigned tags as pills', async () => {
@@ -98,7 +98,7 @@ describe('EntityTags', () => {
     await wrapper.setProps({ entityPath: '/repos/99' })
     await flushPromises()
 
-    expect(apiClient.get).toHaveBeenCalledWith('/repos/99/tags')
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/99/tags', { params: undefined })
   })
 
   // The tag list is a side panel: if the entity's own tags fail to load, the
@@ -133,7 +133,11 @@ describe('EntityTags', () => {
       await select.trigger('change')
       await flushPromises()
 
-      expect(apiClient.put).toHaveBeenCalledWith('/repos/12/tags', { tag_ids: [1, 2] })
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/repos/12/tags',
+        { tag_ids: [1, 2] },
+        { params: undefined },
+      )
       expect(wrapper.findAll('.tag-pill').map((p) => p.text())).toEqual(['production', 'offsite'])
     })
 
@@ -157,7 +161,11 @@ describe('EntityTags', () => {
       await wrapper.findAll('.tag-remove')[0].trigger('click')
       await flushPromises()
 
-      expect(apiClient.put).toHaveBeenCalledWith('/repos/12/tags', { tag_ids: [2] })
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/repos/12/tags',
+        { tag_ids: [2] },
+        { params: undefined },
+      )
     })
 
     it('leaves the pills alone when saving fails', async () => {
@@ -241,7 +249,11 @@ describe('EntityTags', () => {
         color: '#6b7280',
         scope: 'repo',
       })
-      expect(apiClient.put).toHaveBeenCalledWith('/repos/12/tags', { tag_ids: [1, 9] })
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/repos/12/tags',
+        { tag_ids: [1, 9] },
+        { params: undefined },
+      )
     })
 
     /** Types a tag name, presses Create, and hands back the name field. */
@@ -288,6 +300,6 @@ describe('EntityTags', () => {
     await (wrapper.vm as unknown as { reload: () => Promise<void> }).reload()
     await flushPromises()
 
-    expect(apiClient.get).toHaveBeenCalledWith('/repos/12/tags')
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/12/tags', { params: undefined })
   })
 })

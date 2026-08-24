@@ -960,7 +960,7 @@ async fn run_sequential_target(
     let msg = build_trigger_msg(schedule_type, repo_id, schedule_id, ctx.run_id);
     let action = schedule_type_label(schedule_type);
 
-    match ctx.registry.send_to(&target.hostname, msg).await {
+    match ctx.registry.send_to(target.agent_id, msg).await {
         Ok(()) => {
             tracing::info!(
                 hostname = %target.hostname,
@@ -978,6 +978,7 @@ async fn run_sequential_target(
                     target.repo_id,
                     repo_op_kind_for(schedule_type),
                     target.hostname.clone(),
+                    Some(target.agent_id),
                 )
                 .await;
             ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
@@ -1039,10 +1040,10 @@ async fn push_pre_run_config(
     target: &DueScheduleRow,
 ) -> PreRunConfigOutcome {
     let schedule_id = ctx.schedule_id;
-    match config_assembler::assemble_config(ctx.pool, ctx.encryption_key, &target.hostname).await {
+    match config_assembler::assemble_config(ctx.pool, ctx.encryption_key, target.agent_id).await {
         Ok(config) => {
             let config_msg = ServerToAgent::ConfigUpdate(config);
-            if let Err(e) = ctx.registry.send_to(&target.hostname, config_msg).await {
+            if let Err(e) = ctx.registry.send_to(target.agent_id, config_msg).await {
                 tracing::warn!(
                     hostname = %target.hostname,
                     schedule_id,
@@ -1224,11 +1225,10 @@ async fn await_target_completion(
     rx: tokio::sync::broadcast::Receiver<completion_bus::OperationOutcome>,
 ) -> TargetControl {
     let schedule_id = ctx.schedule_id;
-    let hostname = target.hostname.clone();
     let repo_id_val = target.repo_id;
 
     let outcome =
-        completion_bus::wait_for_completion(ctx.registry, rx, &hostname, repo_id_val).await;
+        completion_bus::wait_for_completion(ctx.registry, rx, target.agent_id, repo_id_val).await;
 
     ctx.repo_op_tracker.clear(repo_id_val).await;
     ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
@@ -1484,6 +1484,7 @@ esac
             Some("Scheduler Test Host"),
             "hash",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1688,9 +1689,9 @@ esac
         TunnelManager::new(pool, UiBroadcast::new(), "127.0.0.1:0".parse().unwrap())
     }
 
-    async fn setup_due_schedule(pool: &sqlx::PgPool, key: &[u8; 32]) -> (i64, i64) {
+    async fn setup_due_schedule(pool: &sqlx::PgPool, key: &[u8; 32]) -> (i64, i64, i64) {
         let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", key).unwrap();
-        let agent = db::insert_agent(pool, TICK_TEST_HOSTNAME, None, "hash", None)
+        let agent = db::insert_agent(pool, TICK_TEST_HOSTNAME, None, "hash", None, None)
             .await
             .unwrap();
         let repo = db::insert_repo(
@@ -1747,16 +1748,15 @@ esac
             .checked_sub_signed(chrono::Duration::hours(1))
             .unwrap();
         db::set_next_run_at(pool, schedule.id, past).await.unwrap();
-        (repo.id, schedule.id)
+        (repo.id, schedule.id, agent.id)
     }
 
     async fn register_fake_agent(
         registry: &AgentRegistry,
+        agent_id: i64,
     ) -> mpsc::Receiver<shared::protocol::ServerToAgent> {
         let (tx, rx) = mpsc::channel(32);
-        registry
-            .register(TICK_TEST_HOSTNAME.to_owned(), tx, false, None)
-            .await;
+        registry.register(agent_id, tx, false, None).await;
         rx
     }
 
@@ -1766,10 +1766,10 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_sends_config_update_before_run_trigger(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (repo_id, _) = setup_due_schedule(&pool, &key).await;
+        let (repo_id, _, agent_id) = setup_due_schedule(&pool, &key).await;
 
         let registry = AgentRegistry::new();
-        let mut rx = register_fake_agent(&registry).await;
+        let mut rx = register_fake_agent(&registry, agent_id).await;
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
@@ -1812,13 +1812,13 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_config_carries_updated_global_excludes(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        setup_due_schedule(&pool, &key).await;
+        let (_, _, agent_id) = setup_due_schedule(&pool, &key).await;
 
         // Set global excludes raw text; tick must deliver the current value.
         db::set_global_excludes_raw(&pool, "*.tmp").await.unwrap();
 
         let registry = AgentRegistry::new();
-        let mut rx = register_fake_agent(&registry).await;
+        let mut rx = register_fake_agent(&registry, agent_id).await;
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
@@ -1884,7 +1884,7 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_backs_off_and_records_failure_when_agent_disconnected(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
 
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
@@ -3398,15 +3398,12 @@ esac
 
     /// Like `setup_due_schedule`, but with two targets so `tick()` dispatches
     /// through `run_sequential_schedule` for more than a single agent.
-    async fn setup_due_sequential_schedule(
-        pool: &sqlx::PgPool,
-        key: &[u8; 32],
-    ) -> (i64, String, String) {
+    async fn setup_due_sequential_schedule(pool: &sqlx::PgPool, key: &[u8; 32]) -> (i64, i64, i64) {
         let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", key).unwrap();
-        let agent1 = db::insert_agent(pool, "tick-test-agent-1", None, "hash", None)
+        let agent1 = db::insert_agent(pool, "tick-test-agent-1", None, "hash", None, None)
             .await
             .unwrap();
-        let agent2 = db::insert_agent(pool, "tick-test-agent-2", None, "hash", None)
+        let agent2 = db::insert_agent(pool, "tick-test-agent-2", None, "hash", None, None)
             .await
             .unwrap();
         let repo = db::insert_repo(
@@ -3463,11 +3460,7 @@ esac
             .checked_sub_signed(chrono::Duration::hours(1))
             .unwrap();
         db::set_next_run_at(pool, schedule.id, past).await.unwrap();
-        (
-            repo.id,
-            "tick-test-agent-1".to_owned(),
-            "tick-test-agent-2".to_owned(),
-        )
+        (repo.id, agent1.id, agent2.id)
     }
 
     /// Regression test for the untracked `tokio::spawn(run_sequential_schedule)` in
@@ -3479,13 +3472,13 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_tracks_sequential_schedule_via_background_task_tracker(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (repo_id, host1, host2) = setup_due_sequential_schedule(&pool, &key).await;
+        let (repo_id, agent1_id, agent2_id) = setup_due_sequential_schedule(&pool, &key).await;
 
         let registry = AgentRegistry::new();
         let (tx1, mut rx1) = mpsc::channel(32);
-        registry.register(host1.clone(), tx1, false, None).await;
+        registry.register(agent1_id, tx1, false, None).await;
         let (tx2, mut rx2) = mpsc::channel(32);
-        registry.register(host2.clone(), tx2, false, None).await;
+        registry.register(agent2_id, tx2, false, None).await;
 
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
@@ -3531,7 +3524,7 @@ esac
             "expected RunBackupNow for the first target, got: {first_trigger:?}"
         );
         bus.publish(completion_bus::OperationOutcome {
-            hostname: host1,
+            agent_id: agent1_id,
             repo_id,
             success: true,
         });
@@ -3554,7 +3547,7 @@ esac
             "expected RunBackupNow for the second target, got: {second_trigger:?}"
         );
         bus.publish(completion_bus::OperationOutcome {
-            hostname: host2,
+            agent_id: agent2_id,
             repo_id,
             success: true,
         });

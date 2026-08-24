@@ -36,6 +36,12 @@ struct RepoOpState {
     /// per-tracker monotonic token sidesteps having to reason about whether
     /// it could ever wrap back to a value a still-live guard remembers.
     token: u64,
+    /// ID of the agent driving the active operation, if any (`None` for
+    /// server-driven operations like `ServerSync`/`BreakLock`). `actor` is a
+    /// display label and can't be used to identify a specific agent
+    /// connection on its own, since more than one agent can share an OS
+    /// hostname; `clear_for_agent` matches on this instead.
+    agent_id: Option<i64>,
 }
 
 /// Tracks the operation currently running against each repository, plus how many
@@ -53,9 +59,16 @@ impl RepoOpTracker {
     /// guard's deferred clear) was previously associated with this entry.
     /// Shared by every method that claims an entry's active slot - see the
     /// `token` field's doc comment for why they all need to do this.
-    fn claim(&self, state: &mut RepoOpState, kind: RepoOpKind, actor: String) -> u64 {
+    fn claim(
+        &self,
+        state: &mut RepoOpState,
+        kind: RepoOpKind,
+        actor: String,
+        agent_id: Option<i64>,
+    ) -> u64 {
         let token = self.next_token.fetch_add(1, Ordering::SeqCst);
         state.token = token;
+        state.agent_id = agent_id;
         state.active = Some(ActiveRepoOp {
             kind,
             actor,
@@ -84,18 +97,29 @@ impl RepoOpTracker {
     }
 
     /// Mark an operation as the one now running for this repository.
-    pub async fn set(&self, repo_id: i64, kind: RepoOpKind, actor: String) {
+    /// `agent_id` identifies the connected agent driving the operation, if
+    /// any (`None` for server-driven operations); [`Self::clear_for_agent`]
+    /// matches on it, since `actor` alone can't identify a specific agent
+    /// connection when a hostname is shared.
+    pub async fn set(&self, repo_id: i64, kind: RepoOpKind, actor: String, agent_id: Option<i64>) {
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
-        self.claim(state, kind, actor);
+        self.claim(state, kind, actor, agent_id);
     }
 
-    /// Transition a queued operation into the running slot.
-    pub async fn begin(&self, repo_id: i64, kind: RepoOpKind, actor: String) {
+    /// Transition a queued operation into the running slot. See
+    /// [`Self::set`] for `agent_id`.
+    pub async fn begin(
+        &self,
+        repo_id: i64,
+        kind: RepoOpKind,
+        actor: String,
+        agent_id: Option<i64>,
+    ) {
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
         state.queued = state.queued.saturating_sub(1);
-        self.claim(state, kind, actor);
+        self.claim(state, kind, actor, agent_id);
     }
 
     /// Clear the running operation. The repository entry is dropped once nothing
@@ -138,13 +162,13 @@ impl RepoOpTracker {
         !self.state.read().await.is_empty()
     }
 
-    /// Clear all active operations whose actor matches `hostname` and return
-    /// the repo IDs that were affected, so callers can broadcast updates.
-    pub async fn clear_for_agent(&self, hostname: &str) -> Vec<i64> {
+    /// Clear all active operations driven by `agent_id` and return the repo
+    /// IDs that were affected, so callers can broadcast updates.
+    pub async fn clear_for_agent(&self, agent_id: i64) -> Vec<i64> {
         let mut map = self.state.write().await;
         let mut cleared = Vec::new();
         for (&repo_id, state) in map.iter_mut() {
-            if state.active.as_ref().is_some_and(|a| a.actor == hostname) {
+            if state.active.is_some() && state.agent_id == Some(agent_id) {
                 state.active = None;
                 cleared.push(repo_id);
             }
@@ -195,7 +219,7 @@ impl RepoOpTracker {
     ) -> RepoOpGuard {
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
-        let token = self.claim(state, kind, actor);
+        let token = self.claim(state, kind, actor, None);
         RepoOpGuard {
             tracker: self.clone(),
             repo_id,
@@ -258,16 +282,16 @@ mod tests {
     async fn clear_for_agent_removes_matching_ops() {
         let tracker = RepoOpTracker::default();
         tracker
-            .set(1, RepoOpKind::AgentBackup, "gremlin".to_owned())
+            .set(1, RepoOpKind::AgentBackup, "gremlin".to_owned(), Some(1))
             .await;
         tracker
-            .set(2, RepoOpKind::AgentBackup, "gremlin".to_owned())
+            .set(2, RepoOpKind::AgentBackup, "gremlin".to_owned(), Some(1))
             .await;
         tracker
-            .set(3, RepoOpKind::AgentBackup, "other-host".to_owned())
+            .set(3, RepoOpKind::AgentBackup, "other-host".to_owned(), Some(2))
             .await;
 
-        let mut cleared = tracker.clear_for_agent("gremlin").await;
+        let mut cleared = tracker.clear_for_agent(1).await;
         cleared.sort_unstable();
 
         assert_eq!(cleared, vec![1, 2]);
@@ -281,10 +305,10 @@ mod tests {
         let tracker = RepoOpTracker::default();
         tracker.enqueue(1).await;
         tracker
-            .set(1, RepoOpKind::AgentBackup, "gremlin".to_owned())
+            .set(1, RepoOpKind::AgentBackup, "gremlin".to_owned(), Some(1))
             .await;
 
-        let cleared = tracker.clear_for_agent("gremlin").await;
+        let cleared = tracker.clear_for_agent(1).await;
         assert_eq!(cleared, vec![1]);
         assert!(tracker.get(1).await.is_none());
         assert_eq!(tracker.queued_count(1).await, 1);
@@ -294,12 +318,42 @@ mod tests {
     async fn clear_for_agent_is_idempotent_on_no_match() {
         let tracker = RepoOpTracker::default();
         tracker
-            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned(), Some(2))
             .await;
 
-        let cleared = tracker.clear_for_agent("gremlin").await;
+        let cleared = tracker.clear_for_agent(1).await;
         assert_eq!(cleared.len(), 0);
         assert!(tracker.get(1).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn clear_for_agent_does_not_clear_a_second_agent_sharing_the_actor_label() {
+        // Regression test: before matching moved from `actor` (a display
+        // label) to `agent_id`, two agents reporting the same hostname
+        // would clobber each other's tracked operation on reconnect.
+        let tracker = RepoOpTracker::default();
+        tracker
+            .set(
+                1,
+                RepoOpKind::AgentBackup,
+                "shared-hostname".to_owned(),
+                Some(1),
+            )
+            .await;
+        tracker
+            .set(
+                2,
+                RepoOpKind::AgentBackup,
+                "shared-hostname".to_owned(),
+                Some(2),
+            )
+            .await;
+
+        let cleared = tracker.clear_for_agent(1).await;
+
+        assert_eq!(cleared, vec![1]);
+        assert!(tracker.get(1).await.is_none());
+        assert!(tracker.get(2).await.is_some());
     }
 
     #[tokio::test]
@@ -308,7 +362,7 @@ mod tests {
         assert!(!tracker.any_active().await);
 
         tracker
-            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned(), None)
             .await;
         assert!(tracker.any_active().await);
 
@@ -447,7 +501,7 @@ mod tests {
         // The queued operation transitions into the running slot via the
         // plain, non-guarded `begin()`.
         tracker
-            .begin(1, RepoOpKind::DeleteArchive, "user".to_owned())
+            .begin(1, RepoOpKind::DeleteArchive, "user".to_owned(), None)
             .await;
         assert_eq!(
             tracker.get(1).await.map(|op| op.kind),
@@ -483,7 +537,7 @@ mod tests {
         assert!(tracker.get(1).await.is_none());
 
         tracker
-            .set(1, RepoOpKind::BreakLock, "admin".to_owned())
+            .set(1, RepoOpKind::BreakLock, "admin".to_owned(), None)
             .await;
         assert_eq!(
             tracker.get(1).await.map(|op| op.kind),

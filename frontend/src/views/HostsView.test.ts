@@ -822,6 +822,7 @@ describe('HostsView deploy button label', () => {
       expect(apiClient.post).toHaveBeenCalledWith('/agents', {
         hostname: 'workstation01',
         display_name: null,
+        domain: null,
       })
     })
 
@@ -840,6 +841,7 @@ describe('HostsView deploy button label', () => {
       expect(apiClient.post).toHaveBeenCalledWith('/agents', {
         hostname: 'workstation-01',
         display_name: 'Front desk',
+        domain: null,
       })
     })
 
@@ -904,8 +906,16 @@ describe('HostsView deploy button label', () => {
       )
       await adopt(wrapper)
 
-      expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent', { display_name: 'Test' })
-      expect(apiClient.post).toHaveBeenCalledWith('/agents/test-agent/regenerate-token')
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/agents/test-agent',
+        { display_name: 'Test', domain: undefined },
+        { params: {} },
+      )
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/agents/test-agent/regenerate-token',
+        {},
+        { params: {} },
+      )
       expect(document.querySelector('.token-text')?.textContent).toBe('tok_adopted')
       expect(document.body.textContent).toContain('Agent Adopted')
       // The row is no longer imported, so Adopt is gone from it.

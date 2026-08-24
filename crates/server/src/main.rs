@@ -1040,13 +1040,13 @@ async fn shutdown_signal(
     tracing::info!("shutdown signal received, notifying agents");
 
     let agents = registry.connected_agents().await;
-    for hostname in &agents {
+    for agent_id in &agents {
         if let Err(e) = registry
-            .send_to(hostname, ServerToAgent::ShuttingDown)
+            .send_to(*agent_id, ServerToAgent::ShuttingDown)
             .await
         {
             tracing::debug!(
-                hostname = %hostname,
+                agent_id = *agent_id,
                 error = %e,
                 "failed to send shutdown message to agent"
             );

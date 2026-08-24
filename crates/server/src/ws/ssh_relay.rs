@@ -13,7 +13,7 @@ use shared::ssh::{RelayFrame, drain_frames_to_writer};
 use tokio::{net::UnixStream, time};
 use tokio_util::io::ReaderStream;
 
-use crate::{AppState, db};
+use crate::{AppState, ws::handler::verify_agent_token};
 
 /// WebSocket upgrade handler for SSH agent forwarding.
 ///
@@ -43,24 +43,10 @@ async fn handle_ssh_relay(mut socket: WebSocket, hostname: String, state: AppSta
             }
         };
 
-    let authenticated = match db::get_agent_token_hash(&state.pool, &hostname).await {
-        Ok((_, hash)) => tokio::task::spawn_blocking(move || bcrypt::verify(&token, &hash))
-            .await
-            .map_err(|e| tracing::error!(hostname = %hostname, error = %e, "bcrypt task panicked"))
-            .and_then(|r| {
-                r.inspect_err(|e| {
-                    tracing::error!(hostname = %hostname, error = %e, "bcrypt verify failed");
-                })
-                .map_err(|_| ())
-            })
-            .unwrap_or(false),
-        Err(e) => {
-            tracing::warn!(hostname = %hostname, error = %e, "ssh relay: agent lookup failed");
-            false
-        }
-    };
-
-    if !authenticated {
+    if verify_agent_token(&state.pool, &hostname, &token)
+        .await
+        .is_none()
+    {
         tracing::warn!(hostname = %hostname, "ssh relay: authentication failed");
         let _ = socket.send(Message::Close(None)).await;
         return;

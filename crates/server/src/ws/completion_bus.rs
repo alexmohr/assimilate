@@ -16,8 +16,8 @@ const CONNECTIVITY_POLL_INTERVAL: Duration = Duration::from_secs(30);
 /// The result of a triggered operation reported by the agent.
 #[derive(Debug, Clone)]
 pub struct OperationOutcome {
-    /// Hostname of the agent that completed the operation.
-    pub hostname: String,
+    /// ID of the agent that completed the operation.
+    pub agent_id: i64,
     /// Repository ID the operation was performed on.
     pub repo_id: i64,
     /// Whether the operation succeeded.
@@ -70,7 +70,7 @@ pub enum CompletionOutcome {
     AgentDisconnected,
 }
 
-/// Waits for the matching completion event for `hostname`/`repo_id` on `rx`.
+/// Waits for the matching completion event for `agent_id`/`repo_id` on `rx`.
 ///
 /// There is deliberately no fixed timeout: a legitimate backup of a large
 /// repository can run for many hours, and bailing out early would let the next
@@ -81,13 +81,13 @@ pub enum CompletionOutcome {
 pub async fn wait_for_completion(
     registry: &AgentRegistry,
     rx: broadcast::Receiver<OperationOutcome>,
-    hostname: &str,
+    agent_id: i64,
     repo_id: i64,
 ) -> CompletionOutcome {
     wait_for_completion_with_poll_interval(
         registry,
         rx,
-        hostname,
+        agent_id,
         repo_id,
         CONNECTIVITY_POLL_INTERVAL,
     )
@@ -97,7 +97,7 @@ pub async fn wait_for_completion(
 async fn wait_for_completion_with_poll_interval(
     registry: &AgentRegistry,
     mut rx: broadcast::Receiver<OperationOutcome>,
-    hostname: &str,
+    agent_id: i64,
     repo_id: i64,
     poll_interval: Duration,
 ) -> CompletionOutcome {
@@ -105,7 +105,7 @@ async fn wait_for_completion_with_poll_interval(
         tokio::select! {
             outcome = rx.recv() => {
                 match outcome {
-                    Ok(o) if o.hostname == hostname && o.repo_id == repo_id => {
+                    Ok(o) if o.agent_id == agent_id && o.repo_id == repo_id => {
                         return if o.success {
                             CompletionOutcome::Success
                         } else {
@@ -119,7 +119,7 @@ async fn wait_for_completion_with_poll_interval(
                 }
             }
             () = tokio::time::sleep(poll_interval) => {
-                if !registry.is_connected(hostname).await {
+                if !registry.is_connected(agent_id).await {
                     return CompletionOutcome::AgentDisconnected;
                 }
             }
@@ -138,12 +138,12 @@ mod tests {
         let rx = bus.subscribe();
 
         bus.publish(OperationOutcome {
-            hostname: "host-a".to_string(),
+            agent_id: 1,
             repo_id: 1,
             success: true,
         });
 
-        let outcome = wait_for_completion(&registry, rx, "host-a", 1).await;
+        let outcome = wait_for_completion(&registry, rx, 1, 1).await;
         assert_eq!(outcome, CompletionOutcome::Success);
     }
 
@@ -154,29 +154,29 @@ mod tests {
         let rx = bus.subscribe();
 
         bus.publish(OperationOutcome {
-            hostname: "other-host".to_string(),
+            agent_id: 2,
             repo_id: 1,
             success: true,
         });
         bus.publish(OperationOutcome {
-            hostname: "host-a".to_string(),
+            agent_id: 1,
             repo_id: 2,
             success: true,
         });
         bus.publish(OperationOutcome {
-            hostname: "host-a".to_string(),
+            agent_id: 1,
             repo_id: 1,
             success: false,
         });
 
-        let outcome = wait_for_completion(&registry, rx, "host-a", 1).await;
+        let outcome = wait_for_completion(&registry, rx, 1, 1).await;
         assert_eq!(outcome, CompletionOutcome::Failed);
     }
 
-    /// Sets up a `CompletionBus`/`AgentRegistry` pair with `host-a` connected
+    /// Sets up a `CompletionBus`/`AgentRegistry` pair with agent `1` connected
     /// and a `wait_for_completion_with_poll_interval` waiter (10ms poll, so
     /// disconnect-driven tests resolve quickly) already running against
-    /// `host-a`/repo `1`. Shared by every test below that needs a waiter in
+    /// agent `1`/repo `1`. Shared by every test below that needs a waiter in
     /// the background to then race some event against.
     async fn setup_connected_waiter() -> (
         CompletionBus,
@@ -186,9 +186,7 @@ mod tests {
         let bus = CompletionBus::new();
         let registry = AgentRegistry::new();
         let (tx, _) = tokio::sync::mpsc::channel(1);
-        registry
-            .register("host-a".to_string(), tx, false, None)
-            .await;
+        registry.register(1, tx, false, None).await;
 
         let rx = bus.subscribe();
         let wait = tokio::spawn({
@@ -197,7 +195,7 @@ mod tests {
                 wait_for_completion_with_poll_interval(
                     &registry,
                     rx,
-                    "host-a",
+                    1,
                     1,
                     Duration::from_millis(10),
                 )
@@ -224,7 +222,7 @@ mod tests {
         let (_bus, registry, wait) = setup_connected_waiter().await;
 
         tokio::time::sleep(Duration::from_millis(30)).await;
-        registry.unregister("host-a").await;
+        registry.unregister(1).await;
 
         let outcome = tokio::time::timeout(Duration::from_secs(1), wait)
             .await
@@ -244,17 +242,15 @@ mod tests {
         let (bus, registry, wait) = setup_connected_waiter().await;
 
         tokio::time::sleep(Duration::from_millis(30)).await;
-        // The agent reconnects under the same hostname - registry still shows
-        // it connected the whole time.
+        // The agent reconnects under the same ID - registry still shows it
+        // connected the whole time.
         let (tx2, _) = tokio::sync::mpsc::channel(1);
-        let replaced = registry
-            .register("host-a".to_string(), tx2, false, None)
-            .await;
+        let replaced = registry.register(1, tx2, false, None).await;
         assert!(replaced);
-        assert!(registry.is_connected("host-a").await);
+        assert!(registry.is_connected(1).await);
 
         bus.publish(OperationOutcome {
-            hostname: "host-a".to_string(),
+            agent_id: 1,
             repo_id: 1,
             success: false,
         });

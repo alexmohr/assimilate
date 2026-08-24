@@ -90,7 +90,7 @@ describe('MergeAgentDialog', () => {
   it('emits merged event on successful submit', async () => {
     const wrapper = mountDialog()
     const select = wrapper.find('select')
-    await select.setValue('web-server-01')
+    await select.setValue('1')
     const mergeBtn = wrapper.findAll('button').find((b) => b.text().includes('Merge'))
     await mergeBtn?.trigger('click')
     await flushPromises()
@@ -137,14 +137,16 @@ describe('MergeAgentDialog', () => {
   it('sends the edited pattern with the merge', async () => {
     const wrapper = mountDialog()
 
-    await wrapper.find('select').setValue('web-server-01')
+    await wrapper.find('select').setValue('1')
     await patternField(wrapper).setValue('  legacy-*  ')
     await clickMerge(wrapper)
     await flushPromises()
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-server-01/merge-from/10', {
-      create_pattern: 'legacy-*',
-    })
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-server-01/merge-from/10',
+      { create_pattern: 'legacy-*' },
+      { params: {} },
+    )
   })
 
   // A blank pattern is the same request as an unchecked box: the merge still
@@ -158,12 +160,16 @@ describe('MergeAgentDialog', () => {
   ])('sends no pattern when %s', async (_name, decline) => {
     const wrapper = mountDialog()
 
-    await wrapper.find('select').setValue('web-server-01')
+    await wrapper.find('select').setValue('1')
     await decline(wrapper)
     await clickMerge(wrapper)
     await flushPromises()
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-server-01/merge-from/10', {})
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-server-01/merge-from/10',
+      {},
+      { params: {} },
+    )
   })
 
   // Escape and the backdrop reach the dialog through BaseModal's close event,
@@ -179,7 +185,7 @@ describe('MergeAgentDialog', () => {
     vi.mocked(apiClient.post).mockRejectedValue(new Error('target busy'))
     const wrapper = mountDialog()
 
-    await wrapper.find('select').setValue('web-server-01')
+    await wrapper.find('select').setValue('1')
     await clickMerge(wrapper)
     await flushPromises()
 

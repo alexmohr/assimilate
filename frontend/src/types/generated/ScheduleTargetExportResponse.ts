@@ -9,6 +9,11 @@ export type ScheduleTargetExportResponse = {
    */
   hostname: string;
   /**
+   * Optional DNS domain, present when the target's hostname is shared by
+   * more than one agent and must be disambiguated on import.
+   */
+  domain: string | null;
+  /**
    * Execution order for the target.
    */
   execution_order: number;

@@ -1987,6 +1987,10 @@ pub struct HostExportResponse {
 pub struct ScheduleTargetExportResponse {
     /// Hostname of the target machine.
     pub hostname: String,
+    /// Optional DNS domain, present when the target's hostname is shared by
+    /// more than one agent and must be disambiguated on import.
+    #[serde(default)]
+    pub domain: Option<String>,
     /// Execution order for the target.
     pub execution_order: i32,
     /// Backup source paths for the target.

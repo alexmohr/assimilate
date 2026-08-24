@@ -428,6 +428,11 @@ test.describe('Schedules management', () => {
 
     await card.click()
     await expect(page).toHaveURL(/\/schedules\/\d+$/)
-    await expect(page.getByText('Auto-disabled · agent unreachable')).toBeVisible()
+    // Scoped to the page's own identity header, not just getByText - the
+    // same wording can also appear in an unrelated "other schedules for this
+    // agent" widget elsewhere on the page.
+    await expect(
+      page.locator('.detail-header').getByText('Auto-disabled · agent unreachable'),
+    ).toBeVisible()
   })
 })

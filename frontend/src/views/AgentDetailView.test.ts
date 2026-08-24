@@ -1119,6 +1119,24 @@ describe('AgentDetailView - identity, token and merge', () => {
     expect(wrapper.text()).not.toContain('Hostname changed from')
   })
 
+  // Changing only the domain must not trigger the hostname-rename alias
+  // offer, but it does need to land in the URL so a bookmarked/shared link
+  // to this agent keeps resolving to it once its domain is set.
+  it('updates the URL domain query when only the domain changed', async () => {
+    const wrapper = await render({ domain: null })
+    vi.mocked(apiClient.put).mockResolvedValue({
+      data: { ...mockAgent, domain: 'lab.example.com' },
+    } as never)
+
+    await clickMenuAction(wrapper, 'Edit identity')
+    await wrapper.find('#identity-domain').setValue('lab.example.com')
+    await clickButton(wrapper, 'Save')
+
+    expect(wrapper.text()).not.toContain('Hostname changed from')
+    const route = (wrapper.vm as unknown as { $route: { query: Record<string, unknown> } }).$route
+    expect(route.query.domain).toBe('lab.example.com')
+  })
+
   it('closes the merge dialog for an imported agent on cancel', async () => {
     const wrapper = await render({ is_imported: true })
 
@@ -1734,6 +1752,24 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.text()).not.toContain('Host B')
 
     await router.push({ query: { domain: 'b.example.com' } })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.text()).toContain('Host B')
+    expect(wrapper.text()).not.toContain('Host A')
+  })
+
+  it('clicking a candidate in the picker resolves to that agent', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    const candidate = wrapper.findAll('.entity-card').find((c) => c.text().includes('Host B'))
+    if (!candidate) throw new Error('no candidate card for Host B')
+    await candidate.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)

@@ -417,7 +417,11 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card', { hasText: 'server-daily' })
+    // Several other seeded schedules also fall back to displaying the same
+    // "server-daily" repo name (see the id-based match above), so hasText
+    // would match multiple cards - the schedule's own data-schedule-id is
+    // the only unambiguous selector.
+    const card = page.locator('.entity-card[data-schedule-id="1"]')
     const statusPill = card.locator('.entity-status-pill')
     await expect(statusPill).toBeVisible()
     await expect(statusPill).toHaveText('Auto-disabled · agent unreachable')

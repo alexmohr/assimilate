@@ -7,8 +7,11 @@ import type { TagRow } from '../types/tag'
 /** Tag namespace: which kind of entity a tag applies to. */
 export type TagScope = 'repo' | 'host'
 
-export async function listTags(scope: TagScope): Promise<TagRow[]> {
-  const response = await apiClient.get<TagRow[]>('/tags', { params: { scope } })
+export async function listTags(scope: TagScope, options?: { timeout?: number }): Promise<TagRow[]> {
+  const response = await apiClient.get<TagRow[]>('/tags', {
+    params: { scope },
+    timeout: options?.timeout,
+  })
   return response.data
 }
 

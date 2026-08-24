@@ -78,8 +78,12 @@ export async function listAgents(includeHidden?: boolean): Promise<AgentRow[]> {
   return response.data
 }
 
-export async function listAgentTags(): Promise<AgentTagEntryResponse[]> {
-  const response = await apiClient.get<AgentTagEntryResponse[]>('/agent-tags')
+export async function listAgentTags(options?: {
+  timeout?: number
+}): Promise<AgentTagEntryResponse[]> {
+  const response = await apiClient.get<AgentTagEntryResponse[]>('/agent-tags', {
+    timeout: options?.timeout,
+  })
   return response.data
 }
 

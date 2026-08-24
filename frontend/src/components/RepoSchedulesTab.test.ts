@@ -59,7 +59,7 @@ describe('RepoSchedulesTab', () => {
     await flushPromises()
 
     expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/repos/3/schedules')
-    expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/stats/health')
+    expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/stats/health', { timeout: undefined })
   })
 
   it('renders a card per schedule', async () => {

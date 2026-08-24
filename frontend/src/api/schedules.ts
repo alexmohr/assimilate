@@ -70,8 +70,10 @@ export interface RunScheduleRequest {
   agent_ids?: number[]
 }
 
-export async function listSchedules(): Promise<ScheduleRow[]> {
-  const response = await apiClient.get<ScheduleRow[]>('/schedules')
+export async function listSchedules(options?: { timeout?: number }): Promise<ScheduleRow[]> {
+  const response = await apiClient.get<ScheduleRow[]>('/schedules', {
+    timeout: options?.timeout,
+  })
   return response.data
 }
 
@@ -135,7 +137,11 @@ export async function listRepoSchedules(repoId: number | string): Promise<Schedu
   return response.data
 }
 
-export async function getScheduleHealth(): Promise<HealthSummaryResponse[]> {
-  const response = await apiClient.get<HealthSummaryResponse[]>('/stats/health')
+export async function getScheduleHealth(options?: {
+  timeout?: number
+}): Promise<HealthSummaryResponse[]> {
+  const response = await apiClient.get<HealthSummaryResponse[]>('/stats/health', {
+    timeout: options?.timeout,
+  })
   return response.data
 }

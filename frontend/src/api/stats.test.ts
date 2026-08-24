@@ -89,7 +89,7 @@ describe('stats api', () => {
 
     await getDashboardOverview()
 
-    expect(apiClient.get).toHaveBeenCalledWith('/stats/dashboard-overview')
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/dashboard-overview', { timeout: undefined })
   })
 
   it('gets schedule counts by agent', async () => {
@@ -97,7 +97,7 @@ describe('stats api', () => {
 
     await expect(getScheduleCounts()).resolves.toEqual([{ agent_id: 1, count: 3 }])
 
-    expect(apiClient.get).toHaveBeenCalledWith('/stats/schedule-counts')
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/schedule-counts', { timeout: undefined })
   })
 
   it('dismisses a finding', async () => {

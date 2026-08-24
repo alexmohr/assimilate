@@ -59,7 +59,7 @@ describe('schedules api', () => {
 
     await expect(listSchedules()).resolves.toEqual([{ id: 7, name: 'Nightly' }])
 
-    expect(apiClient.get).toHaveBeenCalledWith('/schedules')
+    expect(apiClient.get).toHaveBeenCalledWith('/schedules', { timeout: undefined })
   })
 
   it('gets a schedule', async () => {
@@ -181,6 +181,6 @@ describe('schedules api', () => {
 
     await expect(getScheduleHealth()).resolves.toEqual([{ hostname: 'web-01' }])
 
-    expect(apiClient.get).toHaveBeenCalledWith('/stats/health')
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/health', { timeout: undefined })
   })
 })

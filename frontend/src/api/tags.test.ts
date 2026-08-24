@@ -21,15 +21,21 @@ describe('tags api', () => {
 
     await listTags('repo')
 
-    expect(apiClient.get).toHaveBeenCalledWith('/tags', { params: { scope: 'repo' } })
+    expect(apiClient.get).toHaveBeenCalledWith('/tags', {
+      params: { scope: 'repo' },
+      timeout: undefined,
+    })
   })
 
   it('lists tags in the host scope', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
-    await listTags('host')
+    await listTags('host', { timeout: 8000 })
 
-    expect(apiClient.get).toHaveBeenCalledWith('/tags', { params: { scope: 'host' } })
+    expect(apiClient.get).toHaveBeenCalledWith('/tags', {
+      params: { scope: 'host' },
+      timeout: 8000,
+    })
   })
 
   it('lists the tags assigned to an entity', async () => {

@@ -103,13 +103,21 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   return response.data
 }
 
-export async function getDashboardOverview(): Promise<DashboardOverview> {
-  const response = await apiClient.get<DashboardOverview>('/stats/dashboard-overview')
+export async function getDashboardOverview(options?: {
+  timeout?: number
+}): Promise<DashboardOverview> {
+  const response = await apiClient.get<DashboardOverview>('/stats/dashboard-overview', {
+    timeout: options?.timeout,
+  })
   return response.data
 }
 
-export async function getScheduleCounts(): Promise<ScheduleCountByAgentResponse[]> {
-  const response = await apiClient.get<ScheduleCountByAgentResponse[]>('/stats/schedule-counts')
+export async function getScheduleCounts(options?: {
+  timeout?: number
+}): Promise<ScheduleCountByAgentResponse[]> {
+  const response = await apiClient.get<ScheduleCountByAgentResponse[]>('/stats/schedule-counts', {
+    timeout: options?.timeout,
+  })
   return response.data
 }
 

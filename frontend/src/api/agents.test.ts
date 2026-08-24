@@ -61,7 +61,7 @@ describe('agents api', () => {
       { agent_id: 1, tag_name: 'prod', tag_color: '#fff' },
     ])
 
-    expect(apiClient.get).toHaveBeenCalledWith('/agent-tags')
+    expect(apiClient.get).toHaveBeenCalledWith('/agent-tags', { timeout: undefined })
   })
 
   it('creates an agent', async () => {

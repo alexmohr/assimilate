@@ -353,12 +353,12 @@ async function loadAgents(): Promise<void> {
       schedulesRes,
       overviewRes,
     ] = await Promise.all([
-      listAgentTags().catch(() => [] as AgentTagEntryResponse[]),
-      listTags('host').catch(() => [] as TagRow[]),
-      getScheduleHealth().catch(() => [] as HealthSummaryResponse[]),
-      getScheduleCounts().catch(() => [] as ScheduleCountByAgentResponse[]),
-      listSchedules().catch(() => [] as { id: number }[]),
-      getDashboardOverview().catch(() => emptyOverview),
+      listAgentTags({ timeout: 8000 }).catch(() => [] as AgentTagEntryResponse[]),
+      listTags('host', { timeout: 8000 }).catch(() => [] as TagRow[]),
+      getScheduleHealth({ timeout: 8000 }).catch(() => [] as HealthSummaryResponse[]),
+      getScheduleCounts({ timeout: 8000 }).catch(() => [] as ScheduleCountByAgentResponse[]),
+      listSchedules({ timeout: 8000 }).catch(() => [] as { id: number }[]),
+      getDashboardOverview({ timeout: 8000 }).catch(() => emptyOverview),
     ])
     machineScheduleCount.value = {}
     scheduleCountsRes.forEach((entry) => {

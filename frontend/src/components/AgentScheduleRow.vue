@@ -13,6 +13,7 @@ import {
   withErrorTitles,
   type ScheduleHealthEntry,
 } from '../utils/scheduleHealth'
+import { scheduleDisabledLabel } from '../utils/scheduleStatus'
 import EntityStatusBadges from './EntityStatusBadges.vue'
 import type { ScheduleRow } from '../types/schedule'
 
@@ -86,7 +87,7 @@ const lastRun = computed(() => {
     <span class="agent-row-sub">{{ repoName }}</span>
     <EntityStatusBadges
       :notable="!schedule.enabled"
-      notable-label="Disabled"
+      :notable-label="scheduleDisabledLabel(schedule)"
       :issues="issues"
     />
     <span class="agent-row-stats">

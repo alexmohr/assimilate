@@ -47,6 +47,7 @@ System events record significant server-side occurrences:
 - Agent connected / disconnected
 - Backup failures and warnings
 - Configuration changes
+- A schedule auto-disabled after repeated failures to reach its agent, and its automatic re-enable once that agent reconnects (see [Agents](agents.md))
 
 Each event row shows a timestamp, hostname (if applicable), message, and event type badge.
 

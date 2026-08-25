@@ -539,6 +539,21 @@ pub async fn update_schedule(
     Ok(Json(schedule))
 }
 
+/// Not wrapped in a transaction or a `lock_schedules_targeting_agent`-style row lock,
+/// unlike `delete_agent`/`merge_agent`: a concurrent `record_schedule_failure` for
+/// this schedule can in principle land between the `old_agent_ids` read below and the
+/// `reset_schedule_failure_tracking_if_target_dropped` call at the end, using
+/// `old_agent_ids`/`new_agent_ids` values that no longer reflect that write.
+///
+/// Accepted as a narrower, self-correcting case rather than hardened like delete/merge:
+/// `reset_schedule_failure_tracking_if_target_dropped`'s "already auto-disabled" branch
+/// (the one that matters once a concurrent failure write has landed) decides purely
+/// from the schedule row's *live* `auto_disabled_by_agent_id` against `new_agent_ids` -
+/// it never reads `old_agent_ids` in that branch - so a failure write racing in here
+/// doesn't make it decide wrong, only (at worst) run one write behind, which the next
+/// scheduler tick or retarget naturally corrects. Contrast `delete_agent`/`merge_agent`,
+/// where the same race can permanently strand a schedule with no agent left to ever
+/// reconnect and fix it - that's what actually needed the row lock.
 async fn apply_schedule_target_overrides(
     pool: &sqlx::PgPool,
     schedule_id: i64,
@@ -550,6 +565,11 @@ async fn apply_schedule_target_overrides(
                 "agent_ids must contain at least one entry".into(),
             ));
         }
+        let old_agent_ids: Vec<i64> = db::list_schedule_targets(pool, schedule_id)
+            .await?
+            .into_iter()
+            .map(|t| t.agent_id)
+            .collect();
         db::delete_schedule_targets(pool, schedule_id).await?;
         let targets: Vec<(i64, i32)> = agent_ids
             .iter()
@@ -560,6 +580,13 @@ async fn apply_schedule_target_overrides(
             })
             .collect();
         db::insert_schedule_targets(pool, schedule_id, &targets).await?;
+        db::reset_schedule_failure_tracking_if_target_dropped(
+            pool,
+            schedule_id,
+            &old_agent_ids,
+            agent_ids,
+        )
+        .await?;
     }
 
     if let Some(sources) = &req.backup_sources {

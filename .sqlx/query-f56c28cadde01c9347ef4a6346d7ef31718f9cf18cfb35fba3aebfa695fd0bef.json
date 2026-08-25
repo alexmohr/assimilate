@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE s.auto_disabled_agent_unreachable = true AND st.agent_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f56c28cadde01c9347ef4a6346d7ef31718f9cf18cfb35fba3aebfa695fd0bef"
+}

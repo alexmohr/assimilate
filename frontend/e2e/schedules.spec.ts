@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockScheduleOneHealth, test } from './fixtures'
+import { expect, loginAsAdmin, mockScheduleOneHealth, mockScheduleOnePatch, test } from './fixtures'
 import type { Locator, Page } from '@playwright/test'
 
 interface ScheduleListEntry {
@@ -390,5 +390,82 @@ test.describe('Schedules management', () => {
     // backend expects. A successful save navigates to the new schedule's detail page.
     await expect(page).toHaveURL(/\/schedules\/\d+$/)
     await expect(page.locator('.error-inline')).not.toBeVisible()
+  })
+
+  test('a schedule the scheduler auto-disabled for an unreachable agent shows why, not just that it is off', async ({
+    page,
+  }) => {
+    // The scheduler itself flips these fields after repeated failures to reach
+    // the schedule's target agent (see docs/agents.md) - simulated here via a
+    // mocked list response rather than waiting out real backoff ticks.
+    await loginAsAdmin(page)
+    await mockScheduleOnePatch(page, {
+      enabled: false,
+      auto_disabled_agent_unreachable: true,
+      consecutive_failures: 3,
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // Several other seeded schedules also fall back to displaying the same
+    // "server-daily" repo name (schedule 1 has no explicit name), so hasText
+    // would match multiple cards - the schedule's own data-schedule-id is
+    // the only unambiguous selector.
+    const card = page.locator('.entity-card[data-schedule-id="1"]')
+    const statusPill = card.locator('.entity-status-pill')
+    await expect(statusPill).toBeVisible()
+    await expect(statusPill).toHaveText('Auto-disabled · agent unreachable')
+
+    await card.click()
+    await expect(page).toHaveURL(/\/schedules\/\d+$/)
+    // Scoped to the page's own identity header, not just getByText - the
+    // same wording can also appear in an unrelated "other schedules for this
+    // agent" widget elsewhere on the page.
+    await expect(
+      page.locator('.detail-header').getByText('Auto-disabled · agent unreachable'),
+    ).toBeVisible()
+
+    // Third surface: the agent's own Schedules tab (AgentScheduleRow.vue), which
+    // reuses scheduleDisabledLabel independently of the schedule card/detail
+    // header - a wiring mistake there (wrong prop, label not reaching the DOM)
+    // wouldn't be caught by the two assertions above.
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
+    await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · agent unreachable')
+  })
+
+  test('a schedule auto-disabled by a local/config error (not an unreachable agent) shows the error variant', async ({
+    page,
+  }) => {
+    // Same scheduler-driven state as the "agent unreachable" test above, but for
+    // the other branch of scheduleDisabledLabel: a local/config failure (e.g. a
+    // corrupted encrypted passphrase) counts toward the same threshold but is
+    // never marked auto_disabled_agent_unreachable, since an unrelated agent
+    // reconnect says nothing about whether the underlying data problem was fixed.
+    await loginAsAdmin(page)
+    await mockScheduleOnePatch(page, {
+      enabled: false,
+      auto_disabled_agent_unreachable: false,
+      consecutive_failures: 3,
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card[data-schedule-id="1"]')
+    const statusPill = card.locator('.entity-status-pill')
+    await expect(statusPill).toBeVisible()
+    await expect(statusPill).toHaveText('Auto-disabled · error')
+
+    await card.click()
+    await expect(page).toHaveURL(/\/schedules\/\d+$/)
+    await expect(page.locator('.detail-header').getByText('Auto-disabled · error')).toBeVisible()
+
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
+    await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · error')
   })
 })

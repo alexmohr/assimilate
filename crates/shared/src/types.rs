@@ -531,6 +531,12 @@ pub enum SystemEventType {
     SecurityViolation,
     /// A user account was locked after repeated failed login attempts.
     AccountLocked,
+    /// The scheduler auto-disabled a schedule after repeated failures to reach its
+    /// target agent.
+    ScheduleAutoDisabled,
+    /// A schedule the scheduler had auto-disabled was automatically re-enabled once
+    /// the causing agent reconnected.
+    ScheduleReenabled,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -545,6 +551,8 @@ impl std::fmt::Display for SystemEventType {
             Self::ArchiveCompactFailed => write!(f, "archive_compact_failed"),
             Self::SecurityViolation => write!(f, "security_violation"),
             Self::AccountLocked => write!(f, "account_locked"),
+            Self::ScheduleAutoDisabled => write!(f, "schedule_auto_disabled"),
+            Self::ScheduleReenabled => write!(f, "schedule_reenabled"),
         }
     }
 }
@@ -563,6 +571,8 @@ impl FromStr for SystemEventType {
             "archive_compact_failed" => Ok(Self::ArchiveCompactFailed),
             "security_violation" => Ok(Self::SecurityViolation),
             "account_locked" => Ok(Self::AccountLocked),
+            "schedule_auto_disabled" => Ok(Self::ScheduleAutoDisabled),
+            "schedule_reenabled" => Ok(Self::ScheduleReenabled),
             other => Err(format!("unknown system event type: {other}")),
         }
     }

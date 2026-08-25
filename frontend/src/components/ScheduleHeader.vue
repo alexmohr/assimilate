@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import DetailHeader from './DetailHeader.vue'
 import OverflowMenu from './OverflowMenu.vue'
+import { scheduleDisabledLabel } from '../utils/scheduleStatus'
 import type { ScheduleRow } from '../types/schedule'
 
 /**
@@ -48,7 +49,7 @@ const emit = defineEmits<{
         :class="schedule.enabled ? 'badge--success' : 'badge--neutral'"
       >
         <span class="badge-dot" />
-        {{ schedule.enabled ? 'Enabled' : 'Disabled' }}
+        {{ scheduleDisabledLabel(schedule) }}
       </span>
       <span
         v-if="backupRunning"

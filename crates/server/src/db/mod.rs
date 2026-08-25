@@ -73,6 +73,42 @@ pub async fn resolve_agent_for_hostname(
     Ok(ResolveResult::Unmatched)
 }
 
+/// Takes a `SELECT ... FOR UPDATE` lock on every schedule that currently targets
+/// `agent_id`, so a concurrent single-statement `UPDATE schedules ...` for one of
+/// them - most importantly `record_schedule_failure`, run by an in-flight scheduler
+/// tick - blocks until this transaction commits or rolls back, instead of racing it.
+///
+/// Without this, a schedule that crosses the auto-disable threshold for this agent
+/// (setting `auto_disabled_by_agent_id = agent_id`, `auto_disabled_agent_unreachable =
+/// true`, `consecutive_failures = N`) in a transaction that commits after this
+/// transaction's own bookkeeping-reset check ran but before its destructive step
+/// (deleting or merging away the agent) would end up permanently stale: the
+/// destructive step's `ON DELETE SET NULL` FK only clears `auto_disabled_by_agent_id`,
+/// leaving `auto_disabled_agent_unreachable`/`consecutive_failures` stuck, and since
+/// the causing agent is gone, no reconnect can ever un-stick it.
+///
+/// Must run before anything in the same transaction that would stop `agent_id` from
+/// still being a target of these schedules (e.g. retargeting `schedule_targets`) -
+/// otherwise the lookup that finds which rows to lock races the same way.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+async fn lock_schedules_targeting_agent(
+    tx: &mut sqlx::PgConnection,
+    agent_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE \
+         st.agent_id = $1 FOR UPDATE OF s",
+        agent_id,
+    )
+    .fetch_all(tx)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 /// # Errors
 ///
 /// Returns an error if:
@@ -117,6 +153,10 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
         ));
     }
 
+    // Must run before the schedule_targets retarget below, while source_id can still be
+    // found via a schedule_targets join - see lock_schedules_targeting_agent's doc comment.
+    lock_schedules_targeting_agent(&mut tx, source_id).await?;
+
     sqlx::query!(
         "UPDATE backup_reports SET agent_id = $1, matched = true WHERE agent_id = $2",
         target_id,
@@ -149,6 +189,19 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
         .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
+
+    // See delete_agent's comment: same auto-disable bookkeeping must be cleared here too,
+    // since the source agent's row disappears the same way (FK only nulls
+    // auto_disabled_by_agent_id, leaving the rest stale).
+    sqlx::query!(
+        "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
+         = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE \
+         auto_disabled_by_agent_id = $1 AND auto_disabled_agent_unreachable = true",
+        source_id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
 
     sqlx::query!("DELETE FROM agents WHERE id = $1", source_id)
         .execute(&mut *tx)
@@ -378,6 +431,17 @@ pub struct ScheduleRow {
     #[serde(default)]
     #[sqlx(default)]
     pub target_hostnames: Vec<String>,
+    /// How many consecutive attempts have failed to reach the schedule's target
+    /// agent(s) since the last success (or reconnect). Reset to 0 on success, on
+    /// reconnect from the causing agent, or on any direct edit of `enabled`.
+    pub consecutive_failures: i32,
+    /// Whether the scheduler itself disabled this schedule after
+    /// `consecutive_failures` reached the threshold, specifically because its
+    /// target agent stayed unreachable - as opposed to a local/data failure (e.g. a
+    /// corrupted passphrase), a human, or quota enforcement. Only ever true while
+    /// `enabled` is false; the schedule re-enables automatically once the causing
+    /// agent reconnects.
+    pub auto_disabled_agent_unreachable: bool,
 }
 
 /// A row from the `schedule_targets` join table.
@@ -852,14 +916,44 @@ pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
-    let result = sqlx::query!("DELETE FROM agents WHERE hostname = $1", hostname)
-        .execute(pool)
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    let agent_id = sqlx::query_scalar!("SELECT id FROM agents WHERE hostname = $1", hostname)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+    let Some(agent_id) = agent_id else {
+        return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
+    };
+
+    // See lock_schedules_targeting_agent's doc comment: without this, a schedule that
+    // crosses the auto-disable threshold for this agent concurrently (e.g. an
+    // in-flight scheduler tick) could race the bookkeeping-reset UPDATE below and end
+    // up permanently stale once DELETE FROM agents runs.
+    lock_schedules_targeting_agent(&mut tx, agent_id).await?;
+
+    // Clears the auto-disable bookkeeping the same way
+    // reset_schedule_failure_tracking_if_target_dropped does for retargeting - a
+    // deleted agent can never appear in a later PUT's old-vs-new target diff, so that
+    // function alone can't reach this case. Otherwise deleting the agent that caused a
+    // schedule's auto-disable would leave consecutive_failures/auto_disabled_agent_unreachable
+    // stale (the FK only nulls auto_disabled_by_agent_id).
+    sqlx::query!(
+        "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
+         = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE \
+         auto_disabled_by_agent_id = $1 AND auto_disabled_agent_unreachable = true",
+        agent_id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    sqlx::query!("DELETE FROM agents WHERE id = $1", agent_id)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
 
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
-    }
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 
@@ -1649,8 +1743,16 @@ pub async fn update_repo_and_set_relocation_pending(
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    // Clears the auto-disable bookkeeping the same way set_schedule_enabled does for
+    // any other direct `enabled` write - otherwise a schedule auto-disabled for an
+    // unreachable agent keeps auto_disabled_by_agent_id pointing at that agent even
+    // after its repo (and thus this schedule's only reason to run) is gone, so a
+    // later reconnect from that agent would silently flip enabled back to true on an
+    // orphaned schedule that nobody decided to re-enable.
     sqlx::query!(
-        "UPDATE schedules SET enabled = false WHERE repo_id = $1",
+        "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = false, \
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true WHERE repo_id = $1",
         repo_id
     )
     .execute(pool)
@@ -1964,10 +2066,10 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM \
-         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
-         ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER \
-         BY s.id",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY(SELECT a.hostname FROM schedule_targets st JOIN \
+         agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
+         a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -2041,8 +2143,8 @@ pub async fn insert_schedule(
          keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\"",
+         execution_mode, on_failure, owner_id, visibility, consecutive_failures, \
+         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -2079,20 +2181,36 @@ pub async fn update_schedule(
     id: i64,
     params: &ScheduleParams<'_>,
 ) -> Result<ScheduleRow, ApiError> {
+    // Unlike set_schedule_enabled (only ever called to explicitly flip `enabled`),
+    // this backs the general edit-schedule form, which resubmits `enabled` unchanged
+    // on every save of any other field (rename, retention tweak, cron change, ...).
+    // Clearing the auto-disable bookkeeping unconditionally here would let an
+    // unrelated edit permanently strand an auto-disabled schedule: the reconnect
+    // handler only matches on auto_disabled_by_agent_id, so once this cleared it,
+    // reconnecting would never re-enable the schedule again. Only clear it when
+    // `enabled` is actually transitioning - i.e. a human explicitly toggled it
+    // through this same form - the same "direct write from outside the failure-
+    // tracking path" trigger set_schedule_enabled uses.
     sqlx::query_as!(
         ScheduleRow,
         "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, \
          exclude_patterns_raw = $6, file_change_patterns_raw = $7, ignore_global_excludes = $8, \
          keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = \
          $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, \
-         post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18 WHERE id = \
-         $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
-         sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+         post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, \
+         auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE \
+         auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS \
+         DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = \
+         CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END, \
+         failure_streak_pure_connectivity = CASE WHEN enabled IS DISTINCT FROM $4 THEN true ELSE \
+         failure_streak_pure_connectivity END WHERE id = $1 RETURNING id, repo_id, name, \
+         schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         execution_mode, on_failure, owner_id, visibility, consecutive_failures, \
+         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         id,
         params.name,
         params.cron_expression,
@@ -2805,7 +2923,8 @@ pub async fn get_schedule_for_repo(
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -2836,10 +2955,11 @@ pub async fn get_schedule_for_hostname_repo(
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
-         JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
-         s.schedule_type = $3 LIMIT 1",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON \
+         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 \
+         LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -2864,10 +2984,11 @@ pub async fn list_schedules_for_repo(
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, COALESCE(ARRAY(SELECT \
-         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
-         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \
-         \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT a.hostname FROM \
+         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
+         ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM \
+         schedules s WHERE s.repo_id = $1 ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -2907,9 +3028,10 @@ pub async fn list_schedules_for_agent(
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
-         WHERE st.agent_id = $1 ORDER by s.id",
+         s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, \
+         s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 \
+         ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -2922,6 +3044,8 @@ pub async fn list_schedules_for_agent(
 pub struct DueScheduleRow {
     /// Schedule ID.
     pub schedule_id: i64,
+    /// Schedule display name.
+    pub schedule_name: String,
     /// Repository ID.
     pub repo_id: i64,
     /// Target agent ID.
@@ -2947,12 +3071,12 @@ pub async fn list_due_schedules(
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as!(
         DueScheduleRow,
-        "SELECT s.id AS schedule_id, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, \
-         s.schedule_type, s.cron_expression, s.on_failure, st.execution_order FROM schedules s \
-         JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
-         agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND \
-         a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, \
-         st.execution_order",
+        "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", \
+         st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, \
+         st.execution_order FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN \
+         schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE \
+         s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT \
+         NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
         now,
     )
     .fetch_all(pool)
@@ -2979,6 +3103,218 @@ pub async fn mark_schedule_triggered(
     .await
     .map_err(ApiError::Database)?;
     Ok(())
+}
+
+/// Resets a schedule's consecutive-failure count once a tick completes having
+/// recorded no failure for any of its targets - the only place `consecutive_failures`
+/// goes back to 0 (deliberately *not* folded into [`mark_schedule_triggered`], which
+/// runs on each individual target's success: a multi-target schedule can have one
+/// target succeed while another fails in the same tick, and that success must not
+/// erase the other target's failure count - see the call site in `scheduler.rs`).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn reset_schedule_consecutive_failures(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedules SET consecutive_failures = 0, failure_streak_pure_connectivity = true \
+         WHERE id = $1",
+        schedule_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Outcome of [`record_schedule_failure`]: the schedule's updated consecutive-failure
+/// count, and whether this call was the one that crossed the auto-disable threshold.
+pub struct ScheduleFailureOutcome {
+    /// The schedule's consecutive-failure count after this call.
+    pub consecutive_failures: i32,
+    /// Whether this call disabled the schedule (crossed `max_consecutive_failures`).
+    pub auto_disabled: bool,
+    /// The schedule's `auto_disabled_agent_unreachable` value after this call - only
+    /// ever true if the *whole* failure streak was pure connectivity, which can differ
+    /// from this call's own `agent_unreachable` argument when an earlier local/data
+    /// failure in the same streak already marked it impure. Callers reporting *why* a
+    /// schedule was disabled (e.g. a log line or system event) must derive the reason
+    /// from this field, not from their own `agent_unreachable` argument, or the
+    /// message can claim "agent unreachable" for a call that actually left
+    /// `auto_disabled_agent_unreachable` false in the database.
+    pub auto_disabled_agent_unreachable: bool,
+}
+
+/// Records one failed attempt to reach a schedule's agent (config push or trigger
+/// send). Advances `next_run_at` to the next scheduled occurrence - same as a
+/// successful trigger - so the scheduler backs off to the normal cron cadence
+/// instead of retrying every tick, and disables the schedule once
+/// `consecutive_failures` reaches `max_consecutive_failures`, so an agent that stays
+/// offline indefinitely doesn't generate failures forever.
+///
+/// `agent_unreachable` distinguishes *why* this attempt failed: only a connectivity
+/// failure (the agent itself unreachable) marks `auto_disabled_agent_unreachable` and
+/// records `agent_id` as `auto_disabled_by_agent_id`, so the reconnect handler (see
+/// [`list_auto_disabled_schedule_ids_for_agent`]/[`reenable_specific_schedules`])
+/// re-enables the schedule once every one of its targets reconnects. A local/data
+/// failure (e.g. config assembly, a corrupted encrypted passphrase) still counts
+/// toward `consecutive_failures` and still disables
+/// the schedule at the threshold, but deliberately leaves that bookkeeping untouched:
+/// the agent reconnecting over the websocket says nothing about whether the underlying
+/// data problem was fixed, so it must not silently self-heal a disable that was never
+/// about connectivity - a human has to fix it and re-enable the schedule.
+///
+/// `failure_streak_pure_connectivity` tracks this across the *whole* streak, not just
+/// this one call: it's only ever true if every failure since the last reset was
+/// `agent_unreachable`, so a streak with even one local/data failure in it can never
+/// mark `auto_disabled_agent_unreachable` - even if the specific call that happens to
+/// cross the threshold is itself a connectivity failure.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn record_schedule_failure(
+    pool: &PgPool,
+    schedule_id: i64,
+    agent_id: i64,
+    next_run_at: DateTime<Utc>,
+    max_consecutive_failures: i32,
+    agent_unreachable: bool,
+) -> Result<ScheduleFailureOutcome, ApiError> {
+    let row = sqlx::query!(
+        "UPDATE schedules SET consecutive_failures = consecutive_failures + 1, next_run_at = $2, \
+         enabled = enabled AND consecutive_failures + 1 < $3, failure_streak_pure_connectivity = \
+         failure_streak_pure_connectivity AND $5, auto_disabled_agent_unreachable = CASE WHEN \
+         (failure_streak_pure_connectivity AND $5) AND consecutive_failures + 1 >= $3 THEN true \
+         ELSE auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN \
+         (failure_streak_pure_connectivity AND $5) AND consecutive_failures + 1 >= $3 THEN $4 \
+         ELSE auto_disabled_by_agent_id END WHERE id = $1 RETURNING consecutive_failures, \
+         enabled, auto_disabled_agent_unreachable",
+        schedule_id,
+        next_run_at,
+        max_consecutive_failures,
+        agent_id,
+        agent_unreachable,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(ScheduleFailureOutcome {
+        consecutive_failures: row.consecutive_failures,
+        // Derived from the threshold check itself, not from `enabled`'s final value:
+        // if a concurrent human/quota write disabled this schedule (and reset
+        // consecutive_failures) between it being selected as due and this write
+        // landing, `enabled` is already false for an unrelated reason and staying
+        // false here doesn't mean *this* call crossed the threshold.
+        auto_disabled: row.consecutive_failures >= max_consecutive_failures,
+        auto_disabled_agent_unreachable: row.auto_disabled_agent_unreachable,
+    })
+}
+
+/// Re-enables every schedule that the scheduler had auto-disabled after repeated
+/// unreachable-agent failures *from this specific `agent_id`* (never a schedule a
+/// human or quota enforcement disabled), resetting its failure count and making it due
+/// again immediately - matches only on `auto_disabled_by_agent_id`, an atomic
+/// single-step primitive kept as a lower-level building block and exercised directly
+/// by tests.
+///
+/// Not used by the production reconnect path (see
+/// `ws::handler::reenable_system_disabled_schedules_on_reconnect`) - a multi-target
+/// schedule's `auto_disabled_by_agent_id` only ever names whichever target happened to
+/// be first-recorded on the disabling tick, not every target that contributed to the
+/// streak, so gating solely on that one credited agent's reconnect (as this function
+/// does) can leave a schedule with an unreachable *other* target disabled forever. The
+/// production path instead reconsiders on any target's reconnect and only actually
+/// re-enables once every target is independently confirmed connected - see
+/// [`list_auto_disabled_schedule_ids_for_agent`] and [`reenable_specific_schedules`].
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn reenable_system_disabled_schedules_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+    now: DateTime<Utc>,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true, next_run_at = $2 WHERE \
+         auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id = $1 RETURNING id",
+        agent_id,
+        now,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// Schedules currently auto-disabled where `agent_id` is one of the schedule's
+/// targets - the candidate set for [`reenable_specific_schedules`]. Split out as a
+/// read so a caller (the reconnect handler) can filter the candidates before
+/// committing to the write.
+///
+/// Deliberately matches on *any* target of the schedule, not just the one recorded in
+/// `auto_disabled_by_agent_id`: for a multi-target schedule, that column only ever
+/// names whichever target happened to be first-recorded on the disabling tick, not
+/// every target that contributed to the streak (`consecutive_failures` is
+/// schedule-wide). Gating solely on that one credited agent's reconnect would mean a
+/// schedule could stay disabled forever if *that* agent never reconnects again after
+/// the disable (e.g. it already recovered and stayed connected while a different
+/// target was the one still down) - even once every target is actually back.
+/// Reconsidering on any target's reconnect is safe because
+/// [`reenable_specific_schedules`]'s caller only ever includes a schedule here once it
+/// has independently verified every one of its targets is currently connected.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_auto_disabled_schedule_ids_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE \
+         s.auto_disabled_agent_unreachable = true AND st.agent_id = $1",
+        agent_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// Re-enables exactly the given `schedule_ids` (a caller-filtered subset of
+/// [`list_auto_disabled_schedule_ids_for_agent`]'s result), the same way
+/// [`reenable_system_disabled_schedules_for_agent`] does. Matches only on
+/// `auto_disabled_agent_unreachable = true`, not on which agent is recorded in
+/// `auto_disabled_by_agent_id` - the reconnecting agent that produced `schedule_ids`
+/// may not be the one originally credited with the disable, see
+/// [`list_auto_disabled_schedule_ids_for_agent`] - so a schedule whose state changed
+/// between the two calls (e.g. a human disabled it for an unrelated reason in between)
+/// is safely skipped rather than blindly overwritten.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn reenable_specific_schedules(
+    pool: &PgPool,
+    schedule_ids: &[i64],
+    now: DateTime<Utc>,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true, next_run_at = $2 WHERE id = ANY($1) AND \
+         auto_disabled_agent_unreachable = true RETURNING id",
+        schedule_ids,
+        now,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
 }
 
 /// # Errors
@@ -3008,10 +3344,67 @@ pub async fn set_schedule_enabled(
     schedule_id: i64,
     enabled: bool,
 ) -> Result<(), ApiError> {
+    // Clears the agent-unreachable failure-tracking columns whenever something other
+    // than record_schedule_failure/reenable_system_disabled_schedules_for_agent writes
+    // `enabled` directly - otherwise auto_disabled_agent_unreachable can outlive the
+    // auto-disable it was set for (e.g. a human re-enables the schedule, then quota
+    // enforcement disables it again for an unrelated reason: without this, the stale
+    // `true` flag would make a later agent reconnect silently lift the quota block).
     sqlx::query!(
-        "UPDATE schedules SET enabled = $2 WHERE id = $1",
+        "UPDATE schedules SET enabled = $2, auto_disabled_agent_unreachable = false, \
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true WHERE id = $1",
         schedule_id,
         enabled,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Resets a schedule's connectivity-failure bookkeeping (`consecutive_failures`,
+/// `auto_disabled_agent_unreachable`, `auto_disabled_by_agent_id`) when retargeting
+/// drops the specific agent a failure streak is attributable to - never merely
+/// because *some* target changed, which would wrongly forgive a still-targeted,
+/// still-broken agent just because an unrelated sibling target was added or
+/// removed. Two cases, based on whether `auto_disabled_by_agent_id` has attribution
+/// recorded yet (it's only ever set once the schedule fully auto-disables):
+/// - **Already auto-disabled**: resets only if `auto_disabled_by_agent_id` itself is
+///   no longer in the new target list. Without this, retargeting away from the
+///   causing agent - the realistic way an admin fixes this - would leave
+///   `auto_disabled_by_agent_id` pointing at an agent that isn't a target anymore, so
+///   [`reenable_system_disabled_schedules_for_agent`] could never match it again and
+///   the schedule would stay disabled forever despite the admin's fix.
+/// - **Not yet disabled** (a partial streak, e.g. `consecutive_failures = 2` against
+///   threshold 3): there's no per-agent attribution to check yet, so this only
+///   resets if *every* previously-targeted agent is gone from the new list - the one
+///   case where whichever agent(s) were actually accruing the streak are
+///   unambiguously no longer targeted. If even one old target remains, the streak
+///   might still belong to it, so it's left untouched.
+///
+/// Deliberately a no-op either way when the streak contains a local/config failure
+/// (`failure_streak_pure_connectivity = false`): that state must only ever be
+/// cleared by a human fixing the actual cause and re-enabling the schedule
+/// themselves, never implicitly by a retarget.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn reset_schedule_failure_tracking_if_target_dropped(
+    pool: &PgPool,
+    schedule_id: i64,
+    old_agent_ids: &[i64],
+    new_agent_ids: &[i64],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
+         = NULL, consecutive_failures = 0 WHERE id = $1 AND failure_streak_pure_connectivity = \
+         true AND ((auto_disabled_by_agent_id IS NOT NULL AND NOT (auto_disabled_by_agent_id = \
+         ANY($2))) OR (auto_disabled_by_agent_id IS NULL AND NOT ($3::bigint[] && $2::bigint[])))",
+        schedule_id,
+        new_agent_ids,
+        old_agent_ids,
     )
     .execute(pool)
     .await
@@ -3060,7 +3453,8 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -7283,7 +7677,8 @@ pub async fn get_enabled_schedules_for_calendar(
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE enabled = true",
+         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

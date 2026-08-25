@@ -96,7 +96,7 @@ repos:
         pass_filenames: false
       - id: fmt-nightly
         name: cargo fmt (nightly)
-        entry: cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate
+        entry: cargo +nightly-2026-08-21 fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate
         language: system
         types: [rust]
         pass_filenames: false

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0c90bcec53236f75fdd80265a50eda5a6b53c523683bc0dc4ff9dca1f0b17943"
+}

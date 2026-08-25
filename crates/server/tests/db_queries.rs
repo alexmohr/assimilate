@@ -221,6 +221,67 @@ async fn agent_delete_not_found(pool: PgPool) {
     assert!(result.is_err());
 }
 
+/// Deleting the agent that caused a schedule's auto-disable must clear that
+/// schedule's stale auto-disable bookkeeping. The FK on `auto_disabled_by_agent_id`
+/// only nulls that one column on delete, leaving `auto_disabled_agent_unreachable`
+/// and `consecutive_failures` stale - and a deleted agent can never appear in a
+/// later PUT's old-vs-new target diff, so
+/// `reset_schedule_failure_tracking_if_target_dropped` alone could never reach it.
+/// Fetches the auto-disable bookkeeping columns exercised by the
+/// `*_clears_auto_disable_bookkeeping_for_its_schedules` tests below, mirroring
+/// `scheduler.rs`'s own `schedule_failure_state` test helper (kept separate since
+/// that one is private to `scheduler.rs`'s in-crate test module and this file is a
+/// standalone integration test binary).
+#[cfg(test)]
+async fn schedule_auto_disable_state(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> (bool, bool, Option<i64>, i32) {
+    let row = sqlx::query!(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+        schedule_id,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (
+        row.enabled,
+        row.auto_disabled_agent_unreachable,
+        row.auto_disabled_by_agent_id,
+        row.consecutive_failures,
+    )
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn agent_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
+    let (agent, _repo, schedule) = create_test_schedule(&pool).await;
+    let next = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(1))
+        .unwrap();
+
+    for _ in 0..3 {
+        db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
+            .await
+            .unwrap();
+    }
+    let (enabled, auto_disabled_agent_unreachable, _, _) =
+        schedule_auto_disable_state(&pool, schedule.id).await;
+    assert!(!enabled && auto_disabled_agent_unreachable);
+
+    db::delete_agent(&pool, &agent.hostname).await.unwrap();
+
+    let (enabled, agent_unreachable, by_agent_id, failures) =
+        schedule_auto_disable_state(&pool, schedule.id).await;
+    assert!(!enabled);
+    assert!(
+        !agent_unreachable,
+        "the stale auto-disable flag must be cleared once the causing agent is gone"
+    );
+    assert_eq!(by_agent_id, None);
+    assert_eq!(failures, 0);
+}
+
 #[cfg(test)]
 async fn create_test_repo(pool: &PgPool) -> RepoRow {
     db::insert_repo(
@@ -326,6 +387,49 @@ async fn repo_delete(pool: PgPool) {
 
     let result = db::get_repo_connection(&pool, repo.id).await;
     assert!(result.is_err());
+}
+
+/// Deleting a repo whose schedule was auto-disabled for an unreachable agent must
+/// clear that schedule's stale auto-disable bookkeeping - the same as every other
+/// direct `enabled` write in the auto-disable feature (`set_schedule_enabled`,
+/// `update_schedule`, retargeting) - so a later reconnect from the agent that caused
+/// the disable can never silently re-enable an orphaned schedule nobody decided to
+/// turn back on.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let next = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(1))
+        .unwrap();
+
+    for _ in 0..3 {
+        db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
+            .await
+            .unwrap();
+    }
+    let (enabled, auto_disabled_agent_unreachable, _, _) =
+        schedule_auto_disable_state(&pool, schedule.id).await;
+    assert!(!enabled && auto_disabled_agent_unreachable);
+
+    db::delete_repo(&pool, repo.id).await.unwrap();
+
+    let (enabled, agent_unreachable, by_agent_id, failures) =
+        schedule_auto_disable_state(&pool, schedule.id).await;
+    assert!(!enabled);
+    assert!(
+        !agent_unreachable,
+        "the stale auto-disable flag must be cleared once the schedule's repo is gone"
+    );
+    assert_eq!(by_agent_id, None);
+    assert_eq!(failures, 0);
+
+    // The agent that caused the disable reconnecting later must never touch this
+    // orphaned schedule again.
+    let reenabled =
+        db::reenable_system_disabled_schedules_for_agent(&pool, agent.id, chrono::Utc::now())
+            .await
+            .unwrap();
+    assert_eq!(reenabled, Vec::<i64>::new());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4764,6 +4868,94 @@ async fn test_merge_agent_refuses_non_placeholder(pool: PgPool) {
 
     let result = db::merge_agent(&pool, source.id, target.id).await;
     assert!(result.is_err());
+}
+
+/// Merging away the placeholder agent that caused a schedule's auto-disable must
+/// clear that schedule's stale auto-disable bookkeeping, the same as `delete_agent`
+/// and `delete_repo` - the FK on `auto_disabled_by_agent_id` only nulls that one
+/// column when the source agent's row is deleted, leaving `auto_disabled_agent_unreachable`
+/// and `consecutive_failures` stale.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
+    let placeholder = db::insert_agent(
+        &pool,
+        "merge-placeholder-auto-disable",
+        Some("Merge Placeholder"),
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    let target = db::insert_agent(
+        &pool,
+        "merge-target-auto-disable",
+        Some("Merge Target"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let schedule = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "test-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, schedule.id, &[(placeholder.id, 0)])
+        .await
+        .unwrap();
+
+    let next = Utc::now().checked_add_signed(Duration::days(1)).unwrap();
+    for _ in 0..3 {
+        db::record_schedule_failure(&pool, schedule.id, placeholder.id, next, 3, true)
+            .await
+            .unwrap();
+    }
+    let (enabled, auto_disabled_agent_unreachable, _, _) =
+        schedule_auto_disable_state(&pool, schedule.id).await;
+    assert!(!enabled && auto_disabled_agent_unreachable);
+
+    db::merge_agent(&pool, placeholder.id, target.id)
+        .await
+        .unwrap();
+
+    let (enabled, agent_unreachable, by_agent_id, failures) =
+        schedule_auto_disable_state(&pool, schedule.id).await;
+    assert!(!enabled);
+    assert!(
+        !agent_unreachable,
+        "the stale auto-disable flag must be cleared once the causing agent is merged away"
+    );
+    assert_eq!(by_agent_id, None);
+    assert_eq!(failures, 0);
+
+    // The merge target reconnecting later must never touch this orphaned schedule.
+    let reenabled = db::reenable_system_disabled_schedules_for_agent(&pool, target.id, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(reenabled, Vec::<i64>::new());
 }
 
 #[sqlx::test(migrations = "./migrations")]

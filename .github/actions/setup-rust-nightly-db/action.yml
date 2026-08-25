@@ -12,10 +12,15 @@ inputs:
 runs:
   using: composite
   steps:
+    # Pinned to a known-good date rather than the floating "nightly" channel -
+    # an unpinned nightly can ship a broken rustc/clippy build (e.g. an
+    # internal compiler error) with no warning, breaking every job that uses
+    # this action at once. Bump the date here when there's a reason to (a
+    # needed language feature, or this one going stale), not routinely.
     - name: Install Rust nightly
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: nightly
+        toolchain: nightly-2026-08-21
         components: ${{ inputs.components }}
     - name: Install sqlx-cli
       shell: bash

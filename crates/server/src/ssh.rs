@@ -1599,8 +1599,38 @@ mod tests {
         write_pinned_known_hosts_sets_restrictive_permissions().await;
         remove_pinned_known_hosts_deletes_the_file().await;
         remove_pinned_known_hosts_is_a_noop_when_nothing_was_written().await;
+        borg_env_for_repo_pins_known_hosts_when_host_key_present().await;
 
         unsafe { std::env::remove_var("SSH_KEY_DIR") };
+    }
+
+    // Lives here rather than in helpers.rs: it exercises borg_env_for_repo's
+    // pinned-known-hosts path, which writes a real file under SSH_KEY_DIR -
+    // that env var is exclusively owned by this combined test to avoid races
+    // between parallel tests mutating the same process-global var.
+    async fn borg_env_for_repo_pins_known_hosts_when_host_key_present() {
+        let env = crate::api::helpers::borg_env_for_repo(
+            "hunter2",
+            555_000_001,
+            "repo.example.com",
+            22,
+            Some("ssh-ed25519 AAAA"),
+        )
+        .await;
+
+        let rsh = env.get("BORG_RSH").unwrap();
+        assert!(
+            rsh.contains("StrictHostKeyChecking=yes"),
+            "expected pinned host-key checking, got: {rsh}"
+        );
+        assert!(
+            rsh.contains("UserKnownHostsFile="),
+            "expected a pinned known_hosts file, got: {rsh}"
+        );
+
+        tokio::fs::remove_file(pinned_known_hosts_path(555_000_001))
+            .await
+            .unwrap();
     }
 
     async fn write_pinned_known_hosts_writes_expected_content_for_default_port() {

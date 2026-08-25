@@ -198,27 +198,11 @@ pub async fn push_config_to_all_agents(state: &crate::AppState) {
 mod tests {
     use super::{borg_env_for_repo, validate_compression};
 
-    #[tokio::test]
-    async fn borg_env_for_repo_pins_known_hosts_when_host_key_present() {
-        let env = borg_env_for_repo(
-            "hunter2",
-            555_000_001,
-            "repo.example.com",
-            22,
-            Some("ssh-ed25519 AAAA"),
-        )
-        .await;
-
-        let rsh = env.get("BORG_RSH").unwrap();
-        assert!(
-            rsh.contains("StrictHostKeyChecking=yes"),
-            "expected pinned host-key checking, got: {rsh}"
-        );
-        assert!(
-            rsh.contains("UserKnownHostsFile="),
-            "expected a pinned known_hosts file, got: {rsh}"
-        );
-    }
+    // borg_env_for_repo_pins_known_hosts_when_host_key_present lives in
+    // ssh.rs's ssh_key_dir_scoped_helpers instead of here: it writes a real
+    // pinned known_hosts file under SSH_KEY_DIR, and that env var is already
+    // exclusively owned by ssh.rs's combined test to avoid races between
+    // parallel tests mutating the same process-global var.
 
     #[tokio::test]
     async fn borg_env_for_repo_falls_back_to_accept_new_without_host_key() {

@@ -188,24 +188,30 @@ fn pinned_known_hosts_path(repo_id: i64) -> PathBuf {
     pinned_known_hosts_dir().join(format!("repo-{repo_id}"))
 }
 
-/// Creates [`pinned_known_hosts_dir`] and hardens its permissions, once per
-/// process. `write_pinned_known_hosts` is reachable from many concurrent,
-/// unserialized request paths, and the directory's existence/permissions
-/// never change once set, so re-running `create_dir_all`/`set_permissions`
-/// on every single call is pure overhead - cache success behind a
-/// [`tokio::sync::OnceCell`] instead. A failed attempt is not cached, so a
-/// transient error (e.g. disk full) doesn't wedge every future write.
+/// Creates [`pinned_known_hosts_dir`] and hardens its permissions, skipping
+/// the `create_dir_all`/`set_permissions` syscalls when they were already
+/// done for this exact path. `write_pinned_known_hosts` is reachable from
+/// many concurrent, unserialized request paths, and the directory doesn't
+/// change once set, so re-running setup on every single call is pure
+/// overhead in the common case - but the cache key is the resolved path
+/// itself, not just a bare "ready" flag, so a call that ever sees a
+/// different `SSH_KEY_DIR` (only possible in tests today, via
+/// `unsafe { std::env::set_var(...) }`) still gets its own directory
+/// created instead of silently reusing another path's readiness. A failed
+/// attempt is not cached, so a transient error (e.g. disk full) doesn't
+/// wedge every future write.
 async fn ensure_pinned_known_hosts_dir() -> Result<PathBuf, SshError> {
-    static READY: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    static LAST_READY: tokio::sync::Mutex<Option<PathBuf>> = tokio::sync::Mutex::const_new(None);
     let dir = pinned_known_hosts_dir();
-    READY
-        .get_or_try_init(|| async {
-            tokio::fs::create_dir_all(&dir).await?;
-            #[cfg(unix)]
-            set_permissions(&dir, 0o700).await?;
-            Ok::<(), SshError>(())
-        })
-        .await?;
+
+    let mut last_ready = LAST_READY.lock().await;
+    if last_ready.as_deref() != Some(dir.as_path()) {
+        tokio::fs::create_dir_all(&dir).await?;
+        #[cfg(unix)]
+        set_permissions(&dir, 0o700).await?;
+        *last_ready = Some(dir.clone());
+    }
+
     Ok(dir)
 }
 
@@ -1620,8 +1626,34 @@ mod tests {
         remove_pinned_known_hosts_deletes_the_file().await;
         remove_pinned_known_hosts_is_a_noop_when_nothing_was_written().await;
         borg_env_for_repo_pins_known_hosts_when_host_key_present().await;
+        ensure_pinned_known_hosts_dir_recreates_when_ssh_key_dir_changes().await;
 
         unsafe { std::env::remove_var("SSH_KEY_DIR") };
+    }
+
+    // Regression test: ensure_pinned_known_hosts_dir used to cache readiness
+    // behind a bare OnceCell<()>, keyed only on the first SSH_KEY_DIR it ever
+    // saw - a later call with a different SSH_KEY_DIR would silently return
+    // a directory that was never actually created, and the write after it
+    // would fail. Must run after the other pinning tests above (which
+    // "win" the cache for the first tempdir) to actually exercise the
+    // mismatch.
+    async fn ensure_pinned_known_hosts_dir_recreates_when_ssh_key_dir_changes() {
+        let second_dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("SSH_KEY_DIR", second_dir.path()) };
+
+        let repo_id = 987_654_321_009;
+        let path = write_pinned_known_hosts(repo_id, "repo.example.com", 22, "ssh-ed25519 AAAA")
+            .await
+            .unwrap();
+
+        assert!(
+            path.starts_with(second_dir.path()),
+            "expected the pinned file under the new SSH_KEY_DIR, got: {}",
+            path.display()
+        );
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content, "repo.example.com ssh-ed25519 AAAA\n");
     }
 
     // Lives here rather than in helpers.rs: it exercises borg_env_for_repo's

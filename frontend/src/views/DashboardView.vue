@@ -594,7 +594,7 @@ async function fetchOverview(): Promise<void> {
         </div>
       </section>
 
-      <div class="stats-coverage-row">
+      <div class="summary-row">
         <BackupStatsWidget :repos="repoOptions" />
         <ProtectionCoverage
           :protection="
@@ -609,24 +609,19 @@ async function fetchOverview(): Promise<void> {
             }
           "
         />
-        <div class="calendar-cell">
-          <BackupCalendar :repos="repoOptions" />
-        </div>
       </div>
 
-      <div
-        class="attention-row"
-        :class="{ 'attention-row-full': !hasFindings }"
-      >
-        <NeedsAttention
-          v-if="hasFindings"
-          :findings="overview?.findings ?? []"
-          @dismissed="fetchOverview().catch(logger.error)"
-        />
-        <div
-          class="attention-sidebar"
-          :class="{ 'attention-sidebar-wide': !hasFindings }"
-        >
+      <div class="dashboard-columns">
+        <div class="dashboard-column">
+          <NeedsAttention
+            v-if="hasFindings"
+            :findings="overview?.findings ?? []"
+            @dismissed="fetchOverview().catch(logger.error)"
+          />
+          <BackupCalendar :repos="repoOptions" />
+          <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
+        </div>
+        <div class="dashboard-column">
           <UpcomingWork
             :operations="overview?.running_operations ?? []"
             :schedules="overview?.upcoming_schedules ?? []"
@@ -635,147 +630,142 @@ async function fetchOverview(): Promise<void> {
         </div>
       </div>
 
-      <!-- Main Grid: rings side by side, capacity below -->
-      <div class="main-grid">
-        <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
-        <div class="rings-row">
-          <!-- Section 2: 30-Day Success Ring -->
-          <section class="panel">
-            <div class="panel-header">
-              <h2 class="panel-title">Success rate</h2>
-              <ChartRangeControls
-                v-model:repo-id="successRepoFilter"
-                v-model:days="successDaysFilter"
-                :repos="repoOptions"
-                :options="rangeOptions"
-                label="Success rate range"
+      <div class="rings-row">
+        <!-- Success rate ring -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Success rate</h2>
+            <ChartRangeControls
+              v-model:repo-id="successRepoFilter"
+              v-model:days="successDaysFilter"
+              :repos="repoOptions"
+              :options="rangeOptions"
+              label="Success rate range"
+            />
+          </div>
+          <p class="chart-desc">
+            Proportion of scheduled backup runs that completed without errors over the selected
+            window.
+          </p>
+          <div class="ring-container">
+            <svg
+              viewBox="0 0 128 128"
+              class="ring-svg"
+            >
+              <circle
+                cx="64"
+                cy="64"
+                r="54"
+                fill="none"
+                stroke="var(--border)"
+                stroke-width="10"
               />
+              <circle
+                cx="64"
+                cy="64"
+                r="54"
+                fill="none"
+                :stroke="successRingColor"
+                stroke-width="10"
+                stroke-linecap="round"
+                :stroke-dasharray="successRingDasharray"
+                stroke-dashoffset="0"
+                transform="rotate(-90 64 64)"
+                class="ring-progress"
+              />
+            </svg>
+            <div class="ring-center">
+              <span class="ring-pct">{{ successRate }}%</span>
+              <span class="ring-sub"> {{ successCount }}/{{ successTotal }} OK </span>
             </div>
-            <p class="chart-desc">
-              Proportion of scheduled backup runs that completed without errors over the selected
-              window.
-            </p>
-            <div class="ring-container">
-              <svg
-                viewBox="0 0 128 128"
-                class="ring-svg"
-              >
-                <circle
-                  cx="64"
-                  cy="64"
-                  r="54"
-                  fill="none"
-                  stroke="var(--border)"
-                  stroke-width="10"
-                />
-                <circle
-                  cx="64"
-                  cy="64"
-                  r="54"
-                  fill="none"
-                  :stroke="successRingColor"
-                  stroke-width="10"
-                  stroke-linecap="round"
-                  :stroke-dasharray="successRingDasharray"
-                  stroke-dashoffset="0"
-                  transform="rotate(-90 64 64)"
-                  class="ring-progress"
-                />
-              </svg>
-              <div class="ring-center">
-                <span class="ring-pct">{{ successRate }}%</span>
-                <span class="ring-sub"> {{ successCount }}/{{ successTotal }} OK </span>
-              </div>
-            </div>
-            <div class="chart-legend">
-              <span
-                class="chart-legend-item chart-legend-item--link legend-pass"
-                @click="router.push({ name: 'schedules', query: { filter: 'success' } })"
-              >
-                <span class="chart-legend-swatch chart-legend-swatch--dot" />
-                Passed: {{ successCount }}
-              </span>
-              <span
-                class="chart-legend-item chart-legend-item--link legend-warn"
-                @click="router.push({ name: 'schedules', query: { filter: 'warning' } })"
-              >
-                <span class="chart-legend-swatch chart-legend-swatch--dot" />
-                Warned: {{ warnedCount }}
-              </span>
-              <span
-                class="chart-legend-item chart-legend-item--link legend-fail"
-                @click="router.push({ name: 'schedules', query: { filter: 'failed' } })"
-              >
-                <span class="chart-legend-swatch chart-legend-swatch--dot" />
-                Failed: {{ failedCount }}
-              </span>
-            </div>
-          </section>
+          </div>
+          <div class="chart-legend">
+            <span
+              class="chart-legend-item chart-legend-item--link legend-pass"
+              @click="router.push({ name: 'schedules', query: { filter: 'success' } })"
+            >
+              <span class="chart-legend-swatch chart-legend-swatch--dot" />
+              Passed: {{ successCount }}
+            </span>
+            <span
+              class="chart-legend-item chart-legend-item--link legend-warn"
+              @click="router.push({ name: 'schedules', query: { filter: 'warning' } })"
+            >
+              <span class="chart-legend-swatch chart-legend-swatch--dot" />
+              Warned: {{ warnedCount }}
+            </span>
+            <span
+              class="chart-legend-item chart-legend-item--link legend-fail"
+              @click="router.push({ name: 'schedules', query: { filter: 'failed' } })"
+            >
+              <span class="chart-legend-swatch chart-legend-swatch--dot" />
+              Failed: {{ failedCount }}
+            </span>
+          </div>
+        </section>
 
-          <!-- Section 3: Storage Donut -->
-          <section class="panel">
-            <div class="panel-header">
-              <h2 class="panel-title">Storage breakdown</h2>
-            </div>
-            <p class="chart-desc">
-              Current on-disk usage per repository — deduplicated (unique chunks across all
-              archives).
-            </p>
-            <div class="ring-container">
-              <svg
-                viewBox="0 0 128 128"
-                class="ring-svg"
-              >
-                <circle
-                  cx="64"
-                  cy="64"
-                  r="54"
-                  fill="none"
-                  stroke="var(--border)"
-                  stroke-width="10"
-                />
-                <circle
-                  v-for="seg in storageDonuts"
-                  :key="seg.name"
-                  cx="64"
-                  cy="64"
-                  r="54"
-                  fill="none"
-                  :stroke="seg.color"
-                  stroke-width="10"
-                  :stroke-dasharray="`${(seg.percentage / 100) * 2 * Math.PI * 54} ${2 * Math.PI * 54}`"
-                  :stroke-dashoffset="`${-seg.offset}`"
-                  transform="rotate(-90 64 64)"
-                />
-              </svg>
-              <div class="ring-center">
-                <span class="ring-pct ring-pct-sm">
-                  {{ formatBytes(summary?.total_storage_bytes ?? 0) }}
-                </span>
-                <span class="ring-sub">{{ storageDonuts.length }} repos</span>
-              </div>
-            </div>
-            <div class="chart-legend chart-legend--stack">
-              <div
-                v-for="seg in storageLegendItems"
+        <!-- Section 3: Storage Donut -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Storage breakdown</h2>
+          </div>
+          <p class="chart-desc">
+            Current on-disk usage per repository — deduplicated (unique chunks across all archives).
+          </p>
+          <div class="ring-container">
+            <svg
+              viewBox="0 0 128 128"
+              class="ring-svg"
+            >
+              <circle
+                cx="64"
+                cy="64"
+                r="54"
+                fill="none"
+                stroke="var(--border)"
+                stroke-width="10"
+              />
+              <circle
+                v-for="seg in storageDonuts"
                 :key="seg.name"
-                class="chart-legend-item chart-legend-item--toggle"
-                :class="{ 'chart-legend-item--off': seg.hidden }"
-                @click="toggleSegment(seg.name)"
-              >
-                <span
-                  class="chart-legend-swatch"
-                  :style="{ background: seg.hidden ? 'var(--border)' : seg.color }"
-                />
-                <span class="chart-legend-name">{{ seg.name }}</span>
-                <span class="chart-legend-detail"
-                  >{{ formatBytes(seg.compressedSize) }} compressed &middot;
-                  {{ formatBytes(seg.size) }} dedup</span
-                >
-              </div>
+                cx="64"
+                cy="64"
+                r="54"
+                fill="none"
+                :stroke="seg.color"
+                stroke-width="10"
+                :stroke-dasharray="`${(seg.percentage / 100) * 2 * Math.PI * 54} ${2 * Math.PI * 54}`"
+                :stroke-dashoffset="`${-seg.offset}`"
+                transform="rotate(-90 64 64)"
+              />
+            </svg>
+            <div class="ring-center">
+              <span class="ring-pct ring-pct-sm">
+                {{ formatBytes(summary?.total_storage_bytes ?? 0) }}
+              </span>
+              <span class="ring-sub">{{ storageDonuts.length }} repos</span>
             </div>
-          </section>
-        </div>
+          </div>
+          <div class="chart-legend chart-legend--stack">
+            <div
+              v-for="seg in storageLegendItems"
+              :key="seg.name"
+              class="chart-legend-item chart-legend-item--toggle"
+              :class="{ 'chart-legend-item--off': seg.hidden }"
+              @click="toggleSegment(seg.name)"
+            >
+              <span
+                class="chart-legend-swatch"
+                :style="{ background: seg.hidden ? 'var(--border)' : seg.color }"
+              />
+              <span class="chart-legend-name">{{ seg.name }}</span>
+              <span class="chart-legend-detail"
+                >{{ formatBytes(seg.compressedSize) }} compressed &middot;
+                {{ formatBytes(seg.size) }} dedup</span
+              >
+            </div>
+          </div>
+        </section>
       </div>
 
       <div class="trends-row">
@@ -809,59 +799,38 @@ async function fetchOverview(): Promise<void> {
   gap: var(--space-6);
 }
 
-.stats-coverage-row {
+/* Two counter panels of comparable height. The calendar is deliberately not
+   one of them: at a third of the page its seven day columns cannot fit, and
+   the overflow was clipping Saturday off the month entirely. */
+.summary-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: var(--space-8);
   align-items: stretch;
   min-width: 0;
 }
 
-.calendar-cell {
-  min-width: 0;
-  overflow: hidden;
-}
-
-@media (max-width: 1024px) {
-  .stats-coverage-row {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .calendar-cell {
-    grid-column: 1 / -1;
-  }
-}
-
 @media (max-width: 768px) {
-  .stats-coverage-row {
+  .summary-row {
     grid-template-columns: 1fr;
   }
-
-  .calendar-cell {
-    grid-column: auto;
-  }
 }
 
-.attention-row {
+/* Each half is an independent stack rather than a grid cell, because these
+   panels size to their content: a short one is followed by the next panel in
+   its own column instead of leaving a hole beside a tall neighbour. */
+.dashboard-columns {
   display: grid;
-  grid-template-columns: 3fr 2fr;
+  grid-template-columns: 1fr 1fr;
   gap: var(--space-8);
   align-items: start;
 }
 
-.attention-sidebar {
-  display: grid;
-  grid-template-rows: 1fr 1fr;
+.dashboard-column {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-8);
-}
-
-.attention-row-full {
-  grid-template-columns: 1fr;
-}
-
-.attention-sidebar-wide {
-  grid-template-rows: none;
-  grid-template-columns: 1fr 1fr;
+  min-width: 0;
 }
 
 /* Section 1: Status Banner */
@@ -894,13 +863,6 @@ async function fetchOverview(): Promise<void> {
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
-}
-
-/* Main grid: rings row + full-width capacity */
-.main-grid {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
 }
 
 .rings-row {
@@ -984,11 +946,9 @@ async function fetchOverview(): Promise<void> {
 }
 
 @media (max-width: 1024px) {
-  .attention-row {
-    grid-template-columns: 1fr;
-  }
-
-  .attention-sidebar-wide {
+  /* Below this the calendar column is narrower than a seven-day month grid,
+     so the two stacks fold into one full-width column. */
+  .dashboard-columns {
     grid-template-columns: 1fr;
   }
 

@@ -444,9 +444,14 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   color: var(--text-primary);
 }
 
+/* `minmax(0, 1fr)` rather than `1fr`: a plain `1fr` track refuses to shrink
+   below its content's min-content width, so a day with four dots and a "+189"
+   overflow count widened the whole grid and pushed Saturday out of the
+   panel's clip. Sized this way the seven columns always fit, and a cell too
+   narrow for its dots clips them instead of a whole weekday. */
 .cal-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px;
 }
 
@@ -468,6 +473,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   border-radius: var(--radius-sm);
   padding: var(--space-1);
   height: 2.25rem;
+  min-width: 0;
 }
 
 .cal-cell-active {
@@ -496,6 +502,8 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   display: flex;
   gap: 2px;
   align-items: center;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .cal-dot {

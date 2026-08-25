@@ -217,22 +217,29 @@ describe('DashboardView attention panel', () => {
     expect(wrapper.find('#needs-attention').exists()).toBe(true)
   })
 
-  it('applies attention-sidebar-wide class when findings are empty', async () => {
-    const wrapper = renderWithPlugins(DashboardView)
+  it('keeps both dashboard columns whether or not there are findings', async () => {
+    // The two columns are independent stacks, so a missing NeedsAttention just
+    // shortens the left one - it no longer reshapes the grid around it, which
+    // is what left a panel-sized hole beside the taller column.
+    const empty = renderWithPlugins(DashboardView)
     await flushPromises()
+    expect(empty.findAll('.dashboard-column')).toHaveLength(2)
 
-    const sidebar = wrapper.find('.attention-sidebar')
-    expect(sidebar.classes()).toContain('attention-sidebar-wide')
+    vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
+    const withFindings = renderWithPlugins(DashboardView)
+    await flushPromises()
+    expect(withFindings.findAll('.dashboard-column')).toHaveLength(2)
   })
 
-  it('does not apply attention-sidebar-wide class when findings exist', async () => {
-    vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
-
+  it('gives the calendar a half-width column rather than a third of the row', async () => {
+    // Three panels across left the calendar too narrow for seven day columns,
+    // and the last of them was clipped away entirely.
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
 
-    const sidebar = wrapper.find('.attention-sidebar')
-    expect(sidebar.classes()).not.toContain('attention-sidebar-wide')
+    expect(wrapper.find('.summary-row').exists()).toBe(true)
+    const column = wrapper.findComponent({ name: 'BackupCalendar' }).element.parentElement
+    expect(column?.classList.contains('dashboard-column')).toBe(true)
   })
 
   it('re-fetches overview when findings are dismissed', async () => {
@@ -267,22 +274,16 @@ describe('DashboardView attention panel', () => {
     expect(dashPlaceholder).toContain('\u2014')
   })
 
-  it('applies attention-row-full class when findings are empty', async () => {
-    const wrapper = renderWithPlugins(DashboardView)
-    await flushPromises()
-
-    const row = wrapper.find('.attention-row')
-    expect(row.classes()).toContain('attention-row-full')
-  })
-
-  it('removes attention-row-full class when findings exist', async () => {
+  it('stacks the calendar under NeedsAttention in the same column', async () => {
     vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
 
-    const row = wrapper.find('.attention-row')
-    expect(row.classes()).not.toContain('attention-row-full')
+    const column = wrapper.findAll('.dashboard-column')[0]
+    expect(column.find('#needs-attention').exists()).toBe(true)
+    expect(column.findComponent({ name: 'BackupCalendar' }).exists()).toBe(true)
+    expect(column.findComponent({ name: 'RepositoryCapacity' }).exists()).toBe(true)
   })
 
   it('hides NeedsAttention after dismiss when fetchOverview returns empty findings', async () => {
@@ -312,9 +313,9 @@ describe('DashboardView attention panel', () => {
     // After dismiss and fetchOverview with empty findings, NeedsAttention should hide
     expect(wrapper.find('#needs-attention').exists()).toBe(false)
 
-    // The attention row should now be full width
-    const row = wrapper.find('.attention-row')
-    expect(row.classes()).toContain('attention-row-full')
+    // The column it lived in stays, now led by the calendar.
+    const column = wrapper.findAll('.dashboard-column')[0]
+    expect(column.findComponent({ name: 'BackupCalendar' }).exists()).toBe(true)
   })
 })
 

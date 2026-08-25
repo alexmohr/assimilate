@@ -332,6 +332,8 @@ pub async fn create_repo(
     let need_borg_info = info_result.is_none();
     let bg_repo_url = repo_url.clone();
     let bg_passphrase = req.passphrase.clone();
+    let bg_ssh_host = req.ssh_host.clone();
+    let bg_ssh_host_key = ssh_host_key.clone();
     let task_state = state.clone();
 
     db::set_repo_importing(&state.pool, repo_id, true).await?;
@@ -350,6 +352,9 @@ pub async fn create_repo(
         need_borg_info,
         bg_repo_url,
         bg_passphrase,
+        bg_ssh_host,
+        bg_ssh_port: ssh_port_u16,
+        bg_ssh_host_key,
     }));
 
     Ok((StatusCode::CREATED, Json(RepoResponse::from(repo))))
@@ -367,6 +372,9 @@ struct InitialImportTask {
     need_borg_info: bool,
     bg_repo_url: String,
     bg_passphrase: String,
+    bg_ssh_host: String,
+    bg_ssh_port: u16,
+    bg_ssh_host_key: String,
 }
 
 /// Arguments for [`run_initial_import_work`], bundled (rather than passed
@@ -382,6 +390,9 @@ struct InitialImportWork<'a> {
     need_borg_info: bool,
     bg_repo_url: &'a str,
     bg_passphrase: &'a str,
+    bg_ssh_host: &'a str,
+    bg_ssh_port: u16,
+    bg_ssh_host_key: &'a str,
 }
 
 /// The actual sync work `run_initial_import_task` races against
@@ -401,6 +412,9 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
         need_borg_info,
         bg_repo_url,
         bg_passphrase,
+        bg_ssh_host,
+        bg_ssh_port,
+        bg_ssh_host_key,
     } = work;
 
     // Detect encryption before syncing rather than concurrently: both borg
@@ -408,13 +422,19 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
     // running them in parallel would force the list into the lock-retry path.
     if need_borg_info {
         let timeout = get_borg_timeout(pool).await;
-        match run_borg_info_with_retry(
-            bg_repo_url,
+        // The repo row (and its ssh_host_key) was already persisted before this
+        // background task was spawned, so - unlike the synchronous attempt in
+        // create_repo, which runs before any repo exists to pin against - this
+        // deferred retry can and should pin against the accepted host key.
+        let env = helpers::borg_env_for_repo(
             bg_passphrase,
-            timeout,
-            &task_state.task_registry,
+            repo_id,
+            bg_ssh_host,
+            bg_ssh_port,
+            Some(bg_ssh_host_key),
         )
-        .await
+        .await;
+        match run_borg_info_with_retry(bg_repo_url, &env, timeout, &task_state.task_registry).await
         {
             Ok(info) => {
                 if let Err(e) =
@@ -506,6 +526,9 @@ async fn run_initial_import_task(task: InitialImportTask) {
         need_borg_info,
         bg_repo_url,
         bg_passphrase,
+        bg_ssh_host,
+        bg_ssh_port,
+        bg_ssh_host_key,
     } = task;
 
     let op_clear_guard = set_server_sync_op(&task_state, repo_id).await;
@@ -524,6 +547,9 @@ async fn run_initial_import_task(task: InitialImportTask) {
             need_borg_info,
             bg_repo_url: &bg_repo_url,
             bg_passphrase: &bg_passphrase,
+            bg_ssh_host: &bg_ssh_host,
+            bg_ssh_port,
+            bg_ssh_host_key: &bg_ssh_host_key,
         }) => {}
     }
 
@@ -1536,7 +1562,8 @@ async fn run_borg_info(
     passphrase: &str,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
-    run_borg_info_once(repo_url, passphrase, task_registry).await
+    let env = helpers::borg_base_env(passphrase);
+    run_borg_info_once(repo_url, &env, task_registry).await
 }
 
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
@@ -1595,23 +1622,21 @@ async fn get_borg_list_stage_timeout(pool: &PgPool) -> Duration {
 
 async fn run_borg_info_with_retry(
     repo_url: &str,
-    passphrase: &str,
+    env: &HashMap<String, String>,
     timeout: Duration,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let attempt_result = match tokio::time::timeout(
-            timeout,
-            run_borg_info_once(repo_url, passphrase, task_registry),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(ApiError::Internal(format!(
-                "borg info timed out after {}s; the repository may be unreachable",
-                timeout.as_secs()
-            ))),
-        };
+        let attempt_result =
+            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
+                .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(ApiError::Internal(format!(
+                    "borg info timed out after {}s; the repository may be unreachable",
+                    timeout.as_secs()
+                ))),
+            };
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1636,14 +1661,12 @@ async fn run_borg_info_with_retry(
 
 async fn run_borg_info_once(
     repo_url: &str,
-    passphrase: &str,
+    env: &HashMap<String, String>,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
-
     let output = Borg::new()
         .with_registry(task_registry.clone())
-        .run(&["info", "--json", repo_url], &env)
+        .run(&["info", "--json", repo_url], env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 

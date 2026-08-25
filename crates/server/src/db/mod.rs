@@ -73,6 +73,42 @@ pub async fn resolve_agent_for_hostname(
     Ok(ResolveResult::Unmatched)
 }
 
+/// Takes a `SELECT ... FOR UPDATE` lock on every schedule that currently targets
+/// `agent_id`, so a concurrent single-statement `UPDATE schedules ...` for one of
+/// them - most importantly `record_schedule_failure`, run by an in-flight scheduler
+/// tick - blocks until this transaction commits or rolls back, instead of racing it.
+///
+/// Without this, a schedule that crosses the auto-disable threshold for this agent
+/// (setting `auto_disabled_by_agent_id = agent_id`, `auto_disabled_agent_unreachable =
+/// true`, `consecutive_failures = N`) in a transaction that commits after this
+/// transaction's own bookkeeping-reset check ran but before its destructive step
+/// (deleting or merging away the agent) would end up permanently stale: the
+/// destructive step's `ON DELETE SET NULL` FK only clears `auto_disabled_by_agent_id`,
+/// leaving `auto_disabled_agent_unreachable`/`consecutive_failures` stuck, and since
+/// the causing agent is gone, no reconnect can ever un-stick it.
+///
+/// Must run before anything in the same transaction that would stop `agent_id` from
+/// still being a target of these schedules (e.g. retargeting `schedule_targets`) -
+/// otherwise the lookup that finds which rows to lock races the same way.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+async fn lock_schedules_targeting_agent(
+    tx: &mut sqlx::PgConnection,
+    agent_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE \
+         st.agent_id = $1 FOR UPDATE OF s",
+        agent_id,
+    )
+    .fetch_all(tx)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 /// # Errors
 ///
 /// Returns an error if:
@@ -116,6 +152,10 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
             "source agent does not have imported:no-auth token".to_string(),
         ));
     }
+
+    // Must run before the schedule_targets retarget below, while source_id can still be
+    // found via a schedule_targets join - see lock_schedules_targeting_agent's doc comment.
+    lock_schedules_targeting_agent(&mut tx, source_id).await?;
 
     sqlx::query!(
         "UPDATE backup_reports SET agent_id = $1, matched = true WHERE agent_id = $2",
@@ -876,34 +916,43 @@ pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    let agent_id = sqlx::query_scalar!("SELECT id FROM agents WHERE hostname = $1", hostname)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+    let Some(agent_id) = agent_id else {
+        return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
+    };
+
+    // See lock_schedules_targeting_agent's doc comment: without this, a schedule that
+    // crosses the auto-disable threshold for this agent concurrently (e.g. an
+    // in-flight scheduler tick) could race the bookkeeping-reset UPDATE below and end
+    // up permanently stale once DELETE FROM agents runs.
+    lock_schedules_targeting_agent(&mut tx, agent_id).await?;
+
     // Clears the auto-disable bookkeeping the same way
     // reset_schedule_failure_tracking_if_target_dropped does for retargeting - a
     // deleted agent can never appear in a later PUT's old-vs-new target diff, so that
     // function alone can't reach this case. Otherwise deleting the agent that caused a
     // schedule's auto-disable would leave consecutive_failures/auto_disabled_agent_unreachable
-    // stale (the FK only nulls auto_disabled_by_agent_id). Both statements run in one
-    // transaction so a concurrent record_schedule_failure for this same agent can't
-    // land between them and get its own bookkeeping stranded by the DELETE's FK cascade.
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    // stale (the FK only nulls auto_disabled_by_agent_id).
     sqlx::query!(
         "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
          = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE \
-         auto_disabled_by_agent_id = (SELECT id FROM agents WHERE hostname = $1) AND \
-         auto_disabled_agent_unreachable = true",
-        hostname
+         auto_disabled_by_agent_id = $1 AND auto_disabled_agent_unreachable = true",
+        agent_id
     )
     .execute(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
 
-    let result = sqlx::query!("DELETE FROM agents WHERE hostname = $1", hostname)
+    sqlx::query!("DELETE FROM agents WHERE id = $1", agent_id)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
 
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
-    }
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }

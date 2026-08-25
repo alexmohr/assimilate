@@ -35,6 +35,14 @@ const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 /// see [`db::record_schedule_failure`]. It's re-enabled automatically once the agent
 /// reconnects (see [`db::reenable_system_disabled_schedules_for_agent`]).
 const MAX_CONSECUTIVE_FAILURES: i32 = 3;
+/// Fallback backoff (hours), applied by [`record_schedule_failure_once`] when the
+/// schedule's own cron expression can't be evaluated for `next_run_at` (an invalid
+/// expression, one with no next occurrence, or an ambiguous/invalid local time for this
+/// particular tick). Without some fixed backoff here, a schedule in that state would
+/// never get a real `next_run_at` to fall back on and would keep re-triggering on every
+/// scheduler tick forever - the exact unbounded-retry problem this whole mechanism
+/// exists to prevent.
+const CRON_EVAL_FAILURE_BACKOFF_HOURS: i64 = 1;
 
 /// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 /// Every inner loop races its interval tick against `state.shutdown_token`, so the whole
@@ -1109,6 +1117,16 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 /// post-loop [`db::reset_schedule_consecutive_failures`] call the same way a
 /// successfully-recorded failure does, or a transient DB error would wipe a real,
 /// already-persisted failure count.
+///
+/// Unlike [`mark_schedule_triggered_once`] (which just skips its DB write on an
+/// unevaluatable cron, since there's nothing useful to persist on a bare trigger), this
+/// function always records the failure - falling back to
+/// [`CRON_EVAL_FAILURE_BACKOFF_HOURS`] for `next_run_at` when the cron itself can't be
+/// evaluated. Skipping the DB write here entirely, the way the pre-existing
+/// success-path helper does, would mean `consecutive_failures` never increments and
+/// `next_run_at` never advances, so the schedule stays "due" and gets retried on every
+/// tick forever - reproducing, for an unparseable/unsatisfiable cron, the exact
+/// unbounded-retry problem this whole mechanism exists to fix for an unreachable agent.
 async fn record_schedule_failure_once(
     ctx: &SequentialTargetCtx<'_>,
     agent_id: i64,
@@ -1120,9 +1138,11 @@ async fn record_schedule_failure_once(
         return;
     }
     *recorded_failure = true;
-    let Some(next) = calculate_next_run_or_log(ctx) else {
-        return;
-    };
+    let next = calculate_next_run_or_log(ctx).unwrap_or_else(|| {
+        ctx.now
+            .checked_add_signed(chrono::Duration::hours(CRON_EVAL_FAILURE_BACKOFF_HOURS))
+            .unwrap_or(ctx.now)
+    });
     let schedule_id = ctx.schedule_id;
     match db::record_schedule_failure(
         ctx.pool,
@@ -1881,6 +1901,64 @@ esac
         let (consecutive_failures, enabled, auto_disabled) =
             schedule_failure_state(&pool, schedule_id).await;
         assert_eq!(consecutive_failures, 1, "one failure must be recorded");
+        assert!(enabled, "a single failure must not disable the schedule");
+        assert!(!auto_disabled);
+    }
+
+    /// A cron expression that can't be evaluated (here: syntactically invalid, but the
+    /// same gap applies to one with no next occurrence or an ambiguous local time) must
+    /// still count as a recorded failure with `next_run_at` pushed forward - not
+    /// silently skipped. Otherwise `consecutive_failures` never increments and
+    /// `next_run_at` never advances, so the schedule stays "due" and gets retried on
+    /// every 30s tick forever, reproducing the exact unbounded-retry problem this whole
+    /// mechanism exists to prevent, just triggered by a bad cron instead of an
+    /// unreachable agent.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_backs_off_and_records_failure_on_unevaluatable_cron(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        sqlx::query!(
+            "UPDATE schedules SET cron_expression = $1 WHERE id = $2",
+            "not-a-valid-cron",
+            schedule_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+        })
+        .await
+        .unwrap();
+
+        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        assert!(
+            !due.iter().any(|s| s.schedule_id == schedule_id),
+            "an unevaluatable cron must still back off next_run_at, not stay due for the next \
+             tick forever"
+        );
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 1,
+            "the failure must still be recorded even though next_run_at couldn't be computed from \
+             the cron itself"
+        );
         assert!(enabled, "a single failure must not disable the schedule");
         assert!(!auto_disabled);
     }

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 FOR UPDATE OF s",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "79273477e44398c6c998660d3ce8f19995f1c94853f5b69d198557262f15760d"
+}

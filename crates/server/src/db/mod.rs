@@ -3148,10 +3148,11 @@ pub struct ScheduleFailureOutcome {
 ///
 /// `agent_unreachable` distinguishes *why* this attempt failed: only a connectivity
 /// failure (the agent itself unreachable) marks `auto_disabled_agent_unreachable` and
-/// records `agent_id` as `auto_disabled_by_agent_id`, so
-/// [`reenable_system_disabled_schedules_for_agent`] re-enables the schedule once that
-/// specific target reconnects. A local/data failure (e.g. config assembly, a corrupted
-/// encrypted passphrase) still counts toward `consecutive_failures` and still disables
+/// records `agent_id` as `auto_disabled_by_agent_id`, so the reconnect handler (see
+/// [`list_auto_disabled_schedule_ids_for_agent`]/[`reenable_specific_schedules`])
+/// re-enables the schedule once every one of its targets reconnects. A local/data
+/// failure (e.g. config assembly, a corrupted encrypted passphrase) still counts
+/// toward `consecutive_failures` and still disables
 /// the schedule at the threshold, but deliberately leaves that bookkeeping untouched:
 /// the agent reconnecting over the websocket says nothing about whether the underlying
 /// data problem was fixed, so it must not silently self-heal a disable that was never
@@ -3204,17 +3205,20 @@ pub async fn record_schedule_failure(
 
 /// Re-enables every schedule that the scheduler had auto-disabled after repeated
 /// unreachable-agent failures *from this specific `agent_id`* (never a schedule a
-/// human or quota enforcement disabled, and never a multi-target schedule auto-
-/// disabled because a *different* target of it is unreachable), resetting its failure
-/// count and making it due again immediately - called when the agent reconnects, so a
-/// schedule that gave up while this agent was offline resumes on its own once it's
-/// back.
+/// human or quota enforcement disabled), resetting its failure count and making it due
+/// again immediately - matches only on `auto_disabled_by_agent_id`, an atomic
+/// single-step primitive kept as a lower-level building block and exercised directly
+/// by tests.
 ///
-/// Matching on `auto_disabled_by_agent_id` rather than "any of this schedule's
-/// targets" matters for multi-target schedules: a schedule with one permanently-
-/// unreachable target and one merely-flaky-but-generally-fine target must not have
-/// its failure count reset every time the flaky target's routine reconnects happen -
-/// only the actually-broken target's own reconnect should count.
+/// Not used by the production reconnect path (see
+/// `ws::handler::reenable_system_disabled_schedules_on_reconnect`) - a multi-target
+/// schedule's `auto_disabled_by_agent_id` only ever names whichever target happened to
+/// be first-recorded on the disabling tick, not every target that contributed to the
+/// streak, so gating solely on that one credited agent's reconnect (as this function
+/// does) can leave a schedule with an unreachable *other* target disabled forever. The
+/// production path instead reconsiders on any target's reconnect and only actually
+/// re-enables once every target is independently confirmed connected - see
+/// [`list_auto_disabled_schedule_ids_for_agent`] and [`reenable_specific_schedules`].
 ///
 /// # Errors
 ///

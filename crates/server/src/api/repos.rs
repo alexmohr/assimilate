@@ -989,13 +989,8 @@ pub async fn init_repo(
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
-    let borg_output = run_borg_init(
-        &repo_url,
-        &req.passphrase,
-        req.encryption,
-        &state.task_registry,
-    )
-    .await?;
+    let env = helpers::borg_base_env(&req.passphrase);
+    let borg_output = run_borg_init(&repo_url, &env, req.encryption, &state.task_registry).await?;
 
     let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
     let compression = helpers::validate_compression(req.compression.as_deref())?;
@@ -1428,55 +1423,15 @@ pub async fn migrate_encryption(
     // precedes it already mutates the repository a concurrent operation could be using.
     let _repo_lock_guard = state.repo_lock.acquire(repo_id).await;
 
-    let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
-
-    let ssh_rename_result = run_ssh_command(
-        &repo.ssh_user,
-        &repo.ssh_host,
-        repo.ssh_port,
-        &format!(
-            "mv {} {}",
-            shell_escape(&repo.repo_path),
-            shell_escape(&migrated_path)
-        ),
-        repo.ssh_host_key.clone(),
-    )
-    .await;
-
-    if let Err(e) = ssh_rename_result {
-        return Err(ApiError::BadGateway(format!(
-            "failed to rename old repository: {e}"
-        )));
-    }
-
-    info!(repo_id, %migrated_path, "renamed old repo for migration");
-
-    let init_result = run_borg_init(
-        &repo_url,
-        &passphrase,
-        req.target_encryption,
-        &state.task_registry,
-    )
-    .await;
-    if let Err(e) = init_result {
-        warn!(repo_id, %e, "borg init failed during migration, rolling back");
-        let _ = run_ssh_command(
-            &repo.ssh_user,
-            &repo.ssh_host,
-            repo.ssh_port,
-            &format!(
-                "mv {} {}",
-                shell_escape(&migrated_path),
-                shell_escape(&repo.repo_path)
-            ),
-            repo.ssh_host_key.clone(),
-        )
-        .await;
-        return Err(ApiError::BadGateway(format!(
-            "borg init failed during migration (rolled back): {e}"
-        )));
-    }
+    let migrated_path = rename_and_reinit_repo(RenameAndReinitParams {
+        state: &state,
+        repo_id,
+        repo: &repo,
+        repo_url: &repo_url,
+        passphrase: &passphrase,
+        target_encryption: req.target_encryption,
+    })
+    .await?;
 
     db::update_repo_encryption(&state.pool, repo_id, req.target_encryption.as_borg_arg()).await?;
 
@@ -1515,6 +1470,81 @@ pub async fn migrate_encryption(
         ),
         migrated_path: Some(migrated_path),
     }))
+}
+
+/// Arguments for [`rename_and_reinit_repo`], bundled (rather than passed
+/// individually) to stay under clippy's argument-count limit.
+struct RenameAndReinitParams<'a> {
+    state: &'a AppState,
+    repo_id: i64,
+    repo: &'a db::RepoWithPassphraseRow,
+    repo_url: &'a str,
+    passphrase: &'a str,
+    target_encryption: BorgEncryption,
+}
+
+/// Renames the repository's on-disk directory to a `.migrated-<date>` path
+/// and runs `borg init` at the original path with the target encryption,
+/// rolling the rename back if `borg init` fails. Returns the migrated path
+/// on success.
+async fn rename_and_reinit_repo(params: RenameAndReinitParams<'_>) -> Result<String, ApiError> {
+    let RenameAndReinitParams {
+        state,
+        repo_id,
+        repo,
+        repo_url,
+        passphrase,
+        target_encryption,
+    } = params;
+
+    let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
+
+    run_ssh_command(
+        &repo.ssh_user,
+        &repo.ssh_host,
+        repo.ssh_port,
+        &format!(
+            "mv {} {}",
+            shell_escape(&repo.repo_path),
+            shell_escape(&migrated_path)
+        ),
+        repo.ssh_host_key.clone(),
+    )
+    .await
+    .map_err(|e| ApiError::BadGateway(format!("failed to rename old repository: {e}")))?;
+
+    info!(repo_id, %migrated_path, "renamed old repo for migration");
+
+    let env = helpers::borg_env_for_repo(
+        passphrase,
+        repo_id,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        repo.ssh_host_key.as_deref(),
+    )
+    .await;
+
+    if let Err(e) = run_borg_init(repo_url, &env, target_encryption, &state.task_registry).await {
+        warn!(repo_id, %e, "borg init failed during migration, rolling back");
+        let _ = run_ssh_command(
+            &repo.ssh_user,
+            &repo.ssh_host,
+            repo.ssh_port,
+            &format!(
+                "mv {} {}",
+                shell_escape(&migrated_path),
+                shell_escape(&repo.repo_path)
+            ),
+            repo.ssh_host_key.clone(),
+        )
+        .await;
+        return Err(ApiError::BadGateway(format!(
+            "borg init failed during migration (rolled back): {e}"
+        )));
+    }
+
+    Ok(migrated_path)
 }
 
 async fn run_ssh_command(
@@ -1889,17 +1919,15 @@ async fn run_borg_break_lock(
 
 async fn run_borg_init(
     repo_url: &str,
-    passphrase: &str,
+    env: &HashMap<String, String>,
     encryption: BorgEncryption,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<String, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
-
     let output = Borg::new()
         .with_registry(task_registry.clone())
         .run(
             &["init", "--encryption", encryption.as_borg_arg(), repo_url],
-            &env,
+            env,
         )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;

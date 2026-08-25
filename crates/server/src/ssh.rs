@@ -180,8 +180,7 @@ pub async fn scan_host_key(host: &str, port: u16) -> Result<String, SshError> {
 /// that shouldn't sit under a predictable name in a directory other
 /// principals on the host/container can read or write.
 fn pinned_known_hosts_dir() -> PathBuf {
-    let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
-    PathBuf::from(ssh_key_dir).join("known-hosts")
+    ssh_key_dir().join("known-hosts")
 }
 
 /// Path of the pinned `known_hosts` file for `repo_id`, without writing it.
@@ -279,12 +278,16 @@ pub async fn remove_pinned_known_hosts(repo_id: i64) {
     }
 }
 
+/// Directory holding the server's own SSH keypair (`id_ed25519`/`id_ed25519.pub`).
+fn ssh_key_dir() -> PathBuf {
+    PathBuf::from(std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string()))
+}
+
 /// # Errors
 ///
 /// Returns [`SshError::PublicKeyNotFound`] if the operation fails.
 pub async fn read_server_public_key() -> Result<String, SshError> {
-    let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
-    let pub_key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519.pub");
+    let pub_key_path = ssh_key_dir().join("id_ed25519.pub");
 
     tokio::fs::read_to_string(&pub_key_path)
         .await
@@ -298,8 +301,7 @@ pub async fn read_server_public_key() -> Result<String, SshError> {
 /// - [`SshError::PublicKeyNotFound`]: the operation fails
 /// - [`SshError::Auth`]: SSH authentication fails
 pub async fn load_server_private_key() -> Result<PrivateKey, SshError> {
-    let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
-    let key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519");
+    let key_path = ssh_key_dir().join("id_ed25519");
 
     let key_data = tokio::fs::read_to_string(&key_path)
         .await

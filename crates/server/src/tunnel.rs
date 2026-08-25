@@ -1137,7 +1137,7 @@ mod tests {
     /// `id_ed25519`, so `crate::ssh::load_server_private_key` (called by
     /// `resolve_tunnel_connection_params`, unconditionally, for every
     /// connection attempt) succeeds. Mirrors the established pattern in
-    /// `crate::ssh::tests::ssh_key_helpers_read_from_ssh_key_dir`. Combined
+    /// `crate::ssh::tests::ssh_key_dir_scoped_helpers`. Combined
     /// with `#[ignore = "requires DATABASE_URL"]`, this never runs in the
     /// same process as that (non-ignored) test, so there's no risk of the
     /// two racing on the shared env var.

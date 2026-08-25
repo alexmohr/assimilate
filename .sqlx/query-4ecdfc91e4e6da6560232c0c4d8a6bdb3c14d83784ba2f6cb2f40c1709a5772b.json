@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM schedules WHERE auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4ecdfc91e4e6da6560232c0c4d8a6bdb3c14d83784ba2f6cb2f40c1709a5772b"
+}

@@ -3188,6 +3188,64 @@ pub async fn reenable_system_disabled_schedules_for_agent(
     .map_err(ApiError::Database)
 }
 
+/// Schedules currently auto-disabled specifically because `agent_id` is the one whose
+/// call crossed the failure threshold - the candidate set for
+/// [`reenable_specific_schedules`]. Split out as a read so a caller (the reconnect
+/// handler) can filter the candidates before committing to the write - e.g. for a
+/// multi-target schedule, `auto_disabled_by_agent_id` only ever names whichever target
+/// happened to be first-recorded on the disabling tick, not every target that
+/// contributed to the streak (`consecutive_failures` is schedule-wide). Blindly
+/// re-enabling on this agent's reconnect could resume a schedule whose *other* target
+/// is still fully unreachable, reproducing the same unbounded-retry problem this
+/// mechanism exists to prevent, just for that other target.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_auto_disabled_schedule_ids_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT id FROM schedules WHERE auto_disabled_agent_unreachable = true AND \
+         auto_disabled_by_agent_id = $1",
+        agent_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// Re-enables exactly the given `schedule_ids` (a caller-filtered subset of
+/// [`list_auto_disabled_schedule_ids_for_agent`]'s result), the same way
+/// [`reenable_system_disabled_schedules_for_agent`] does. Still re-checks
+/// `auto_disabled_by_agent_id = $2 AND auto_disabled_agent_unreachable = true` so a
+/// schedule whose state changed between the two calls (e.g. a human disabled it for an
+/// unrelated reason in between) is safely skipped rather than blindly overwritten.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn reenable_specific_schedules(
+    pool: &PgPool,
+    schedule_ids: &[i64],
+    agent_id: i64,
+    now: DateTime<Utc>,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
+         auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
+         failure_streak_pure_connectivity = true, next_run_at = $3 WHERE id = ANY($1) AND \
+         auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id = $2 RETURNING id",
+        schedule_ids,
+        agent_id,
+        now,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

@@ -1165,6 +1165,7 @@ async fn record_schedule_failure_once(
                         "sequential: failed to record schedule-auto-disabled system event"
                     );
                 }
+                ctx.ui_broadcast.send(ServerToUi::DataChanged);
             } else {
                 tracing::warn!(
                     schedule_id,
@@ -1895,6 +1896,8 @@ esac
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
+        let ui_broadcast = UiBroadcast::new();
+        let mut ui_rx = ui_broadcast.subscribe();
 
         for attempt in 1..=MAX_CONSECUTIVE_FAILURES {
             // Simulate the missed run's cron occurrence having arrived again.
@@ -1911,7 +1914,7 @@ esac
                 completion_bus: &bus,
                 repo_lock: &RepoLock::default(),
                 repo_op_tracker: &RepoOpTracker::default(),
-                ui_broadcast: &UiBroadcast::new(),
+                ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
             })
             .await
@@ -1943,6 +1946,115 @@ esac
                 .any(|e| matches!(e.event_type, SystemEventType::ScheduleAutoDisabled)),
             "auto-disabling a schedule must record a ScheduleAutoDisabled system event"
         );
+
+        // Nor invisible to a browser already looking at the schedules list: without a
+        // broadcast, SchedulesView.vue (which only refetches on mount or on a
+        // DataChanged message) would never show the new status until a manual reload.
+        let mut saw_data_changed = false;
+        while let Ok(msg) = ui_rx.try_recv() {
+            if matches!(msg, ServerToUi::DataChanged) {
+                saw_data_changed = true;
+            }
+        }
+        assert!(
+            saw_data_changed,
+            "auto-disabling a schedule must broadcast DataChanged so it shows up live in the UI"
+        );
+    }
+
+    /// `db::reset_schedule_consecutive_failures` (called from the post-loop `if
+    /// !recorded_failure` arm in `run_sequential_schedule`) is the sole place
+    /// `consecutive_failures` resets to 0, and is distinct from the reconnect/retarget
+    /// paths that clear the *auto-disable* bookkeeping - it fires for the ordinary
+    /// "agent recovers and a tick fully succeeds" case. A schedule that failed once
+    /// and later recovers must start counting from zero again, not carry a stale
+    /// failure count into whatever transient hiccup happens next.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_success_resets_consecutive_failures(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::hours(1))
+            .unwrap();
+        db::record_schedule_failure(
+            &pool,
+            schedule_id,
+            agent_id,
+            next,
+            MAX_CONSECUTIVE_FAILURES,
+            true,
+        )
+        .await
+        .unwrap();
+        let (consecutive_failures, enabled, _) = schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(consecutive_failures, 1);
+        assert!(enabled, "a single failure must not disable the schedule");
+
+        // Make the schedule due again for the recovering tick.
+        let past = Utc::now()
+            .checked_sub_signed(chrono::Duration::hours(1))
+            .unwrap();
+        db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry).await;
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &background_task_tracker,
+        })
+        .await
+        .unwrap();
+
+        let trigger = loop {
+            match rx.recv().await.expect("expected messages for the target") {
+                shared::protocol::ServerToAgent::ConfigUpdate(_) => {}
+                other => break other,
+            }
+        };
+        assert!(
+            matches!(
+                trigger,
+                shared::protocol::ServerToAgent::RunBackupNow { .. }
+            ),
+            "expected RunBackupNow, got: {trigger:?}"
+        );
+        bus.publish(completion_bus::OperationOutcome {
+            hostname: TICK_TEST_HOSTNAME.to_owned(),
+            repo_id,
+            success: true,
+        });
+        assert!(
+            background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(5))
+                .await,
+            "the tick's background task must finish"
+        );
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 0,
+            "a fully successful tick must reset the failure count back to zero"
+        );
+        assert!(enabled);
+        assert!(!auto_disabled);
     }
 
     /// A config-assembly failure (e.g. a corrupted encrypted passphrase) must still

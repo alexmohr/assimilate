@@ -378,6 +378,7 @@ async fn reenable_system_disabled_schedules_on_reconnect(
                     "failed to record schedule-reenabled system event"
                 );
             }
+            state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         Ok(_) => {}
         Err(e) => {
@@ -2980,6 +2981,7 @@ exit 0
         assert!(!disabled.enabled && disabled.auto_disabled_agent_unreachable);
 
         let state = build_test_state(pool.clone());
+        let mut ui_rx = state.ui_broadcast.subscribe();
         reenable_system_disabled_schedules_on_reconnect(&state, agent.id, &agent.hostname).await;
 
         let reenabled = crate::db::get_schedule_by_id(&pool, schedule.id)
@@ -2997,5 +2999,20 @@ exit 0
             .expect("a ScheduleReenabled system event was recorded");
         assert_eq!(event.hostname.as_deref(), Some(agent.hostname.as_str()));
         assert!(event.message.contains(&schedule.id.to_string()));
+
+        // Without this, SchedulesView.vue (which only refetches on mount or on a
+        // DataChanged message) would never show the re-enabled schedule until a
+        // manual reload.
+        let mut saw_data_changed = false;
+        while let Ok(msg) = ui_rx.try_recv() {
+            if matches!(msg, ServerToUi::DataChanged) {
+                saw_data_changed = true;
+            }
+        }
+        assert!(
+            saw_data_changed,
+            "re-enabling a schedule on reconnect must broadcast DataChanged so it shows up live \
+             in the UI"
+        );
     }
 }

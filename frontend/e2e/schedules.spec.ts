@@ -434,5 +434,66 @@ test.describe('Schedules management', () => {
     await expect(
       page.locator('.detail-header').getByText('Auto-disabled · agent unreachable'),
     ).toBeVisible()
+
+    // Third surface: the agent's own Schedules tab (AgentScheduleRow.vue), which
+    // reuses scheduleDisabledLabel independently of the schedule card/detail
+    // header - a wiring mistake there (wrong prop, label not reaching the DOM)
+    // wouldn't be caught by the two assertions above.
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
+    await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · agent unreachable')
+  })
+
+  test('a schedule auto-disabled by a local/config error (not an unreachable agent) shows the error variant', async ({
+    page,
+  }) => {
+    // Same scheduler-driven state as the "agent unreachable" test above, but for
+    // the other branch of scheduleDisabledLabel: a local/config failure (e.g. a
+    // corrupted encrypted passphrase) counts toward the same threshold but is
+    // never marked auto_disabled_agent_unreachable, since an unrelated agent
+    // reconnect says nothing about whether the underlying data problem was fixed.
+    const autoDisableError = {
+      enabled: false,
+      auto_disabled_agent_unreachable: false,
+      consecutive_failures: 3,
+    }
+    await loginAsAdmin(page)
+    await page.route(
+      (url) => url.pathname === '/api/schedules' || /^\/api\/schedules\/\d+$/.test(url.pathname),
+      async (route) => {
+        const response = await route.fetch()
+        const body = (await response.json()) as
+          | Array<Record<string, unknown>>
+          | Record<string, unknown>
+        const patched = Array.isArray(body)
+          ? body.map((s) => (s.id === 1 ? { ...s, ...autoDisableError } : s))
+          : body.id === 1
+            ? { ...body, ...autoDisableError }
+            : body
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify(patched),
+        })
+      },
+    )
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card[data-schedule-id="1"]')
+    const statusPill = card.locator('.entity-status-pill')
+    await expect(statusPill).toBeVisible()
+    await expect(statusPill).toHaveText('Auto-disabled · error')
+
+    await card.click()
+    await expect(page).toHaveURL(/\/schedules\/\d+$/)
+    await expect(page.locator('.detail-header').getByText('Auto-disabled · error')).toBeVisible()
+
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
+    await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · error')
   })
 })

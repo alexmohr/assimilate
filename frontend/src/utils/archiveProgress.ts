@@ -16,8 +16,17 @@ export interface BorgArchiveProgress {
 export function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
   try {
     const obj = JSON.parse(raw) as Record<string, unknown>
-    if (obj['type'] === 'archive_progress') return obj as unknown as BorgArchiveProgress
-    return null
+    if (obj['type'] !== 'archive_progress') return null
+    // Borg's final progress line before completion (`"finished": true`) omits
+    // nfiles/original_size/path - ignore it and keep the last known progress.
+    if (
+      typeof obj['nfiles'] !== 'number' ||
+      typeof obj['original_size'] !== 'number' ||
+      typeof obj['path'] !== 'string'
+    ) {
+      return null
+    }
+    return obj as unknown as BorgArchiveProgress
   } catch {
     return null
   }

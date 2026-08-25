@@ -5,7 +5,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { apiClient } from '../api/client'
+import {
+  acceptRepoSshHostKey,
+  scanRepoSshHostKey,
+  testRepoConnection,
+  updateRepo,
+} from '../api/repos'
 import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
@@ -136,20 +141,16 @@ async function saveEdit(): Promise<void> {
   editLoading.value = true
   editError.value = null
   try {
-    const connRes = await apiClient.post<{
-      ssh_ok: boolean
-      borg_installed: boolean
-      error?: string
-    }>('/ssh/test-connection', {
+    const connRes = await testRepoConnection({
       ssh_host: editForm.ssh_host.trim(),
       ssh_user: editForm.ssh_user.trim(),
       ssh_port: editForm.ssh_port,
     })
-    if (!connRes.data.ssh_ok) {
-      editError.value = connRes.data.error ?? 'Cannot reach repository host — changes not saved'
+    if (!connRes.ssh_ok) {
+      editError.value = connRes.error ?? 'Cannot reach repository host — changes not saved'
       return
     }
-    await apiClient.put(`/repos/${props.repo.id}`, {
+    await updateRepo(props.repo.id, {
       name: editForm.name.trim(),
       repo_path: editForm.repo_path.trim(),
       ssh_user: editForm.ssh_user.trim(),
@@ -185,10 +186,8 @@ async function checkHostKeyMismatch(): Promise<void> {
   expectedHostKey.value = null
   hostKeyMismatch.value = false
   try {
-    const res = await apiClient.post<{ ssh_host_key: string }>(
-      `/repos/${props.repo.id}/ssh-host-key/scan`,
-    )
-    const sshHostKey = res.data.ssh_host_key
+    const data = await scanRepoSshHostKey(props.repo.id)
+    const sshHostKey = data.ssh_host_key
     if (props.repo.ssh_host_key !== sshHostKey) {
       expectedHostKey.value = sshHostKey
       hostKeyMismatch.value = true
@@ -205,9 +204,7 @@ async function acceptHostKey(): Promise<void> {
   acceptHostKeyLoading.value = true
   acceptHostKeyError.value = null
   try {
-    await apiClient.post(`/repos/${props.repo.id}/ssh-host-key`, {
-      ssh_host_key: expectedHostKey.value,
-    })
+    await acceptRepoSshHostKey(props.repo.id, expectedHostKey.value)
     showAcceptHostKeyDialog.value = false
     emit('saved')
     await checkHostKeyMismatch()

@@ -6,7 +6,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { X } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import {
+  listAgentHostnamePatterns,
+  createAgentHostnamePattern,
+  deleteAgentHostnamePattern,
+} from '../api/agents'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import type { AgentHostnamePattern } from '../types/agent'
@@ -29,8 +33,7 @@ async function load(hostname?: string): Promise<void> {
   const h = hostname ?? props.hostname
   if (!h) return
   try {
-    const res = await apiClient.get<AgentHostnamePattern[]>(`/agents/${h}/hostname-patterns`)
-    patterns.value = res.data
+    patterns.value = await listAgentHostnamePatterns(h)
   } catch (e: unknown) {
     logger.error('loadHostnamePatterns failed', e)
   }
@@ -41,11 +44,8 @@ async function addPattern(): Promise<void> {
   addLoading.value = true
   error.value = null
   try {
-    const res = await apiClient.post<AgentHostnamePattern>(
-      `/agents/${props.hostname}/hostname-patterns`,
-      { pattern: newPattern.value.trim() },
-    )
-    patterns.value = [...patterns.value, res.data]
+    const res = await createAgentHostnamePattern(props.hostname, newPattern.value.trim())
+    patterns.value = [...patterns.value, res]
     newPattern.value = ''
   } catch (e: unknown) {
     error.value = extractError(e)
@@ -56,7 +56,7 @@ async function addPattern(): Promise<void> {
 
 async function deletePattern(id: number): Promise<void> {
   try {
-    await apiClient.delete(`/agents/${props.hostname}/hostname-patterns/${id}`)
+    await deleteAgentHostnamePattern(props.hostname, id)
     patterns.value = patterns.value.filter((p) => p.id !== id)
   } catch (e: unknown) {
     error.value = extractError(e)

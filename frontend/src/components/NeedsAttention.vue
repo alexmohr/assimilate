@@ -9,7 +9,7 @@ import { RouterLink } from 'vue-router'
 import { X } from '@lucide/vue'
 import type { DashboardFinding } from '../types/dashboard'
 import { relativeTime } from '../utils/format'
-import { apiClient } from '../api/client'
+import { dismissFinding } from '../api/stats'
 import { logger } from '../utils/logger'
 
 defineProps<{ findings: DashboardFinding[] }>()
@@ -40,7 +40,7 @@ function findingLabel(finding: DashboardFinding): string {
 
 async function dismiss(finding: DashboardFinding): Promise<void> {
   try {
-    await apiClient.post(`/stats/findings/${encodeURIComponent(finding.id)}/dismiss`)
+    await dismissFinding(finding.id)
     emit('dismissed')
   } catch (e: unknown) {
     logger.error('Failed to dismiss finding', e)

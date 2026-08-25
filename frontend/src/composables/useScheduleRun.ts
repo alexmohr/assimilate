@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, type Ref } from 'vue'
-import { apiClient } from '../api/client'
+import { runSchedule, type RunScheduleRequest } from '../api/schedules'
 import { extractError } from '../utils/error'
 import { useToast } from './useToast'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -19,7 +19,7 @@ export interface ScheduleRunOptions {
    * whose page it is, since a schedule can target several and pressing "Run
    * now" on one must not fire a backup on the others.
    */
-  body?: (schedule: ScheduleRow) => Record<string, unknown>
+  body?: (schedule: ScheduleRow) => RunScheduleRequest
   /**
    * Where a failure goes. Defaults to a toast; the agent page renders it
    * inline instead, above the rows it applies to. Called with `null` when a
@@ -57,7 +57,7 @@ export function useScheduleRun(
     runNowLoading.value = schedule.id
     reportError(null)
     try {
-      await apiClient.post(`/schedules/${schedule.id}/run`, options.body?.(schedule) ?? {})
+      await runSchedule(schedule.id, options.body?.(schedule) ?? {})
       if (labelFor) toastSuccess(`${labelFor(schedule.schedule_type)} started.`)
     } catch (e: unknown) {
       reportError(extractError(e))

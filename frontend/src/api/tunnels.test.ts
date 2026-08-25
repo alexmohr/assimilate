@@ -2,24 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiClient } from './client'
 
-type MockedApiClient = {
-  get: ReturnType<typeof vi.fn>
-  post: ReturnType<typeof vi.fn>
-  put: ReturnType<typeof vi.fn>
-  delete: ReturnType<typeof vi.fn>
-}
-
-const apiClient = vi.hoisted<MockedApiClient>(() => ({
-  get: vi.fn(),
-  post: vi.fn(),
-  put: vi.fn(),
-  delete: vi.fn(),
-}))
-
-vi.mock('./client', () => ({
-  apiClient,
-}))
+vi.mock('./client')
 
 import {
   createTunnel,
@@ -33,14 +18,14 @@ import {
 
 describe('tunnels api', () => {
   beforeEach(() => {
-    apiClient.get.mockReset()
-    apiClient.post.mockReset()
-    apiClient.put.mockReset()
-    apiClient.delete.mockReset()
+    vi.mocked(apiClient.get).mockReset()
+    vi.mocked(apiClient.post).mockReset()
+    vi.mocked(apiClient.put).mockReset()
+    vi.mocked(apiClient.delete).mockReset()
   })
 
   it('lists tunnels', async () => {
-    apiClient.get.mockResolvedValue({ data: [] })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
 
     await listTunnels()
 
@@ -48,7 +33,7 @@ describe('tunnels api', () => {
   })
 
   it('gets a tunnel', async () => {
-    apiClient.get.mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: {} })
 
     await getTunnel(7)
 
@@ -56,7 +41,7 @@ describe('tunnels api', () => {
   })
 
   it('creates a tunnel', async () => {
-    apiClient.post.mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} })
 
     await createTunnel({
       agent_id: 1,
@@ -78,7 +63,7 @@ describe('tunnels api', () => {
   })
 
   it('updates a tunnel', async () => {
-    apiClient.put.mockResolvedValue({ data: {} })
+    vi.mocked(apiClient.put).mockResolvedValue({ data: {} })
 
     await updateTunnel(7, { enabled: false })
 
@@ -86,7 +71,7 @@ describe('tunnels api', () => {
   })
 
   it('deletes a tunnel', async () => {
-    apiClient.delete.mockResolvedValue({})
+    vi.mocked(apiClient.delete).mockResolvedValue({})
 
     await deleteTunnel(7)
 
@@ -94,7 +79,7 @@ describe('tunnels api', () => {
   })
 
   it('enables a tunnel', async () => {
-    apiClient.post.mockResolvedValue({})
+    vi.mocked(apiClient.post).mockResolvedValue({})
 
     await enableTunnel(7)
 
@@ -102,7 +87,7 @@ describe('tunnels api', () => {
   })
 
   it('disables a tunnel', async () => {
-    apiClient.post.mockResolvedValue({})
+    vi.mocked(apiClient.post).mockResolvedValue({})
 
     await disableTunnel(7)
 

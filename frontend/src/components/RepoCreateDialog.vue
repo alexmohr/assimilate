@@ -6,7 +6,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { Folder, FolderPlus } from '@lucide/vue'
-import { apiClient } from '../api/client'
+import { createRepo, initRepo, testRepoConnection } from '../api/repos'
+import type { TestRepoConnectionResponse } from '../api/repos'
+import { createSshDirectory, listSshDirectory } from '../api/ssh'
+import type { SshDirEntry } from '../api/ssh'
 import { extractError } from '../utils/error'
 import BaseModal from './BaseModal.vue'
 import SshKeyDeployPanel from './SshKeyDeployPanel.vue'
@@ -52,17 +55,12 @@ interface SshTarget {
 
 interface TestConnState {
   loading: boolean
-  result: { ssh_ok: boolean; borg_installed: boolean; borg_version?: string; error?: string } | null
-}
-
-interface DirEntry {
-  name: string
-  is_dir: boolean
+  result: TestRepoConnectionResponse | null
 }
 
 interface BrowserState {
   path: string
-  entries: DirEntry[]
+  entries: SshDirEntry[]
   loading: boolean
   error: string | null
   showBrowser: boolean
@@ -153,7 +151,7 @@ const formValid = computed(
     form.passphrase.length > 0,
 )
 
-const autocompleteEntries = ref<DirEntry[]>([])
+const autocompleteEntries = ref<SshDirEntry[]>([])
 const showAutocomplete = ref(false)
 let autocompleteTimer: ReturnType<typeof setTimeout> | null = null
 let hideAutocompleteTimer: ReturnType<typeof setTimeout> | null = null
@@ -205,18 +203,15 @@ async function fetchAutocomplete(): Promise<void> {
     ? pathValue.substring(0, pathValue.lastIndexOf('/')) || '/'
     : '/'
   try {
-    const res = await apiClient.post<{ path: string; entries: DirEntry[]; error?: string }>(
-      '/ssh/list-dir',
-      {
-        ssh_host: form.ssh_host.trim(),
-        ssh_user: form.ssh_user.trim(),
-        ssh_port: form.ssh_port,
-        path: parentDir,
-      },
-    )
-    if (!res.data.error && res.data.entries) {
+    const res = await listSshDirectory({
+      ssh_host: form.ssh_host.trim(),
+      ssh_user: form.ssh_user.trim(),
+      ssh_port: form.ssh_port,
+      path: parentDir,
+    })
+    if (!res.error && res.entries) {
       const prefix = pathValue.substring(pathValue.lastIndexOf('/') + 1).toLowerCase()
-      autocompleteEntries.value = res.data.entries.filter(
+      autocompleteEntries.value = res.entries.filter(
         (e) => e.is_dir && e.name.toLowerCase().startsWith(prefix),
       )
       showAutocomplete.value = autocompleteEntries.value.length > 0
@@ -230,7 +225,7 @@ async function fetchAutocomplete(): Promise<void> {
   }
 }
 
-function selectAutocomplete(entry: DirEntry): void {
+function selectAutocomplete(entry: SshDirEntry): void {
   const pathValue = form.repo_path.trim()
   const parentDir = pathValue.substring(0, pathValue.lastIndexOf('/')) || ''
   form.repo_path = parentDir === ROOT_PATH ? `/${entry.name}` : `${parentDir}/${entry.name}`
@@ -260,7 +255,7 @@ async function confirmCreateFolder(): Promise<void> {
   }
   const newPath = browser.path === ROOT_PATH ? `/${name}` : `${browser.path}/${name}`
   try {
-    await apiClient.post('/ssh/mkdir', {
+    await createSshDirectory({
       ssh_host: form.ssh_host.trim(),
       ssh_user: form.ssh_user.trim(),
       ssh_port: form.ssh_port,
@@ -290,21 +285,18 @@ async function browseDir(path: string): Promise<void> {
   browser.error = null
   browser.showBrowser = true
   try {
-    const res = await apiClient.post<{ path: string; entries: DirEntry[]; error?: string }>(
-      '/ssh/list-dir',
-      {
-        ssh_host: form.ssh_host.trim(),
-        ssh_user: form.ssh_user.trim(),
-        ssh_port: form.ssh_port,
-        path,
-      },
-    )
-    if (res.data.error) {
-      browser.error = res.data.error
+    const res = await listSshDirectory({
+      ssh_host: form.ssh_host.trim(),
+      ssh_user: form.ssh_user.trim(),
+      ssh_port: form.ssh_port,
+      path,
+    })
+    if (res.error) {
+      browser.error = res.error
     } else {
-      browser.path = res.data.path
-      browser.entries = res.data.entries.filter((e) => e.is_dir)
-      form.repo_path = res.data.path
+      browser.path = res.path
+      browser.entries = res.entries.filter((e) => e.is_dir)
+      form.repo_path = res.path
     }
   } catch (e: unknown) {
     browser.error = extractError(e)
@@ -322,7 +314,7 @@ function navigateUp(): void {
   browseDir(parent)
 }
 
-function selectDir(entry: DirEntry): void {
+function selectDir(entry: SshDirEntry): void {
   if (entry.is_dir) {
     const base = browser.path.endsWith('/') ? browser.path.slice(0, -1) : browser.path
     const next = base === '' ? `/${entry.name}` : `${base}/${entry.name}`
@@ -335,7 +327,7 @@ async function submit(): Promise<void> {
   error.value = null
   try {
     if (props.mode === 'import') {
-      const res = await apiClient.post<Repo>('/repos', {
+      const repo = await createRepo({
         name: form.name.trim(),
         repo_path: form.repo_path.trim(),
         ssh_user: form.ssh_user.trim(),
@@ -344,11 +336,11 @@ async function submit(): Promise<void> {
         passphrase: form.passphrase,
         compression: form.compression,
       })
-      emit('imported', res.data)
+      emit('imported', repo)
       emit('close')
       return
     }
-    await apiClient.post('/repos/init', {
+    await initRepo({
       name: form.name.trim(),
       repo_path: form.repo_path.trim(),
       ssh_user: form.ssh_user.trim(),
@@ -371,17 +363,11 @@ async function testConnection(): Promise<void> {
   testConn.loading = true
   testConn.result = null
   try {
-    const res = await apiClient.post<{
-      ssh_ok: boolean
-      borg_installed: boolean
-      borg_version?: string
-      error?: string
-    }>('/ssh/test-connection', {
+    testConn.result = await testRepoConnection({
       ssh_host: form.ssh_host.trim(),
       ssh_user: form.ssh_user.trim(),
       ssh_port: form.ssh_port,
     })
-    testConn.result = res.data
   } catch (e: unknown) {
     testConn.result = { ssh_ok: false, borg_installed: false, error: extractError(e) }
   } finally {

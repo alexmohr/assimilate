@@ -45,14 +45,20 @@ describe('EntityTags', () => {
   it('lists the tags in the requested scope and the ones already assigned', async () => {
     mount()
     await flushPromises()
-    expect(apiClient.get).toHaveBeenCalledWith('/tags', { params: { scope: 'repo' } })
+    expect(apiClient.get).toHaveBeenCalledWith('/tags', {
+      params: { scope: 'repo' },
+      timeout: undefined,
+    })
     expect(apiClient.get).toHaveBeenCalledWith('/repos/12/tags')
   })
 
   it('reads the scope it was given rather than assuming repositories', async () => {
     mount({ scope: 'host', entityPath: '/agents/web-01' })
     await flushPromises()
-    expect(apiClient.get).toHaveBeenCalledWith('/tags', { params: { scope: 'host' } })
+    expect(apiClient.get).toHaveBeenCalledWith('/tags', {
+      params: { scope: 'host' },
+      timeout: undefined,
+    })
     expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/tags')
   })
 

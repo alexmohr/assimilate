@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { apiClient } from '../api/client'
+import { getExcludes, setExcludes } from '../api/excludes'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BorgPatternReference from '../components/BorgPatternReference.vue'
@@ -18,15 +18,15 @@ const refOpen = ref(false)
 
 async function loadData(): Promise<void> {
   await run(async () => {
-    const res = await apiClient.get<{ raw_text: string }>('/excludes')
-    text.value = res.data.raw_text
+    const res = await getExcludes()
+    text.value = res.raw_text
   })
 }
 
 async function save(): Promise<void> {
   saveOk.value = false
   await runSave(async () => {
-    await apiClient.put('/excludes', { raw_text: text.value })
+    await setExcludes({ raw_text: text.value })
     saveOk.value = true
     setTimeout(() => {
       saveOk.value = false

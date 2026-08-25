@@ -6,23 +6,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiClient } from '../api/client'
+import { getActivity, type ActivityEntry } from '../api/stats'
 import { relativeTime, formatDuration } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-
-interface ActivityEntry {
-  id: number
-  hostname: string
-  target_name: string
-  started_at: string
-  finished_at: string
-  status: string
-  duration_secs: number
-  repo_id: number | null
-  archive_name: string | null
-  error_message: string | null
-}
 
 const items = ref<ActivityEntry[]>([])
 const loading = ref(true)
@@ -33,8 +20,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 async function fetchActivity(): Promise<void> {
   try {
-    const response = await apiClient.get<ActivityEntry[]>('/stats/activity?limit=5')
-    items.value = response.data
+    items.value = await getActivity({ limit: 5 })
     now.value = Date.now()
   } finally {
     loading.value = false

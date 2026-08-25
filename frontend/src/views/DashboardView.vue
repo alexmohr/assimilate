@@ -6,7 +6,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, RouterLink } from 'vue-router'
-import { apiClient } from '../api/client'
+import {
+  getActivityByRange,
+  getActivityDurationSamples,
+  getDashboardOverview,
+  getDashboardSummary,
+  type ActivityEntry,
+  type DashboardSummary,
+} from '../api/stats'
+import { listRepos } from '../api/repos'
+import { getScheduleHealth } from '../api/schedules'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
@@ -42,37 +51,6 @@ interface StorageRepoEntry {
   percentage: number
 }
 
-interface DashboardSummary {
-  online_agents: number
-  total_agents: number
-  total_repos: number
-  last_backup_at: string | null
-  next_backup_at: string | null
-  last_backup_schedule_id: number | null
-  last_backup_repo_id: number | null
-  last_backup_archive_name: string | null
-  next_backup_schedule_id: number | null
-  active_schedules: number
-  total_schedules: number
-  total_storage_bytes: number
-  success_30d: number
-  failed_30d: number
-  total_30d: number
-  storage_by_repo: StorageRepoEntry[]
-  last_failure_at: string | null
-  last_warning_at: string | null
-  last_failure_schedule_id: number | null
-  last_warning_schedule_id: number | null
-  last_failure_message: string | null
-  last_warning_message: string | null
-  last_failure_repo_id: number | null
-  last_warning_repo_id: number | null
-  last_failure_repo_name: string | null
-  last_warning_repo_name: string | null
-  last_failure_schedule_name: string | null
-  last_warning_schedule_name: string | null
-}
-
 interface HealthEntry {
   repo_id: number
   hostname: string
@@ -82,16 +60,6 @@ interface HealthEntry {
   is_overdue: boolean
   cron_expression: string | null
   schedule_enabled: boolean | null
-}
-
-interface ActivityEntry {
-  id: number
-  hostname: string
-  target_name: string
-  started_at: string
-  finished_at: string
-  status: string
-  duration_secs: number
 }
 
 const summary = ref<DashboardSummary | null>(null)
@@ -141,15 +109,12 @@ async function fetchAvgDuration(scheduleId: number, repoId: number): Promise<voi
   if (avgDurationSecs.value.has(key) || avgDurationInFlight.has(key)) return
   avgDurationInFlight.add(key)
   try {
-    const params = new URLSearchParams({
-      schedule_id: String(scheduleId),
-      repo_id: String(repoId),
-      limit: String(AVG_DURATION_SAMPLE_WINDOW),
+    const data = await getActivityDurationSamples({
+      schedule_id: scheduleId,
+      repo_id: repoId,
+      limit: AVG_DURATION_SAMPLE_WINDOW,
     })
-    const response = await apiClient.get<Array<{ status: string; duration_secs: number }>>(
-      `/stats/activity?${params.toString()}`,
-    )
-    const completed = response.data
+    const completed = data
       .filter((entry) => {
         const status = normalizeBackupStatus(entry.status)
         return status === 'success' || status === 'warning'
@@ -209,28 +174,26 @@ function mergeActiveBackups(operations: DashboardOperation[]): void {
 }
 
 async function fetchSuccessActivity(): Promise<void> {
-  const params = new URLSearchParams({ days: String(successDaysFilter.value) })
-  if (successRepoFilter.value !== undefined) {
-    params.set('repo_id', String(successRepoFilter.value))
-  }
-  const response = await apiClient.get<ActivityEntry[]>(`/stats/activity?${params.toString()}`)
-  successActivity.value = response.data
+  successActivity.value = await getActivityByRange({
+    days: successDaysFilter.value,
+    repo_id: successRepoFilter.value,
+  })
 }
 
 async function fetchAll(): Promise<void> {
   try {
     const [s, h, o, r] = await Promise.all([
-      apiClient.get<DashboardSummary>('/stats/summary'),
-      apiClient.get<HealthEntry[]>('/stats/health'),
-      apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
-      apiClient.get<Repo[]>('/repos'),
+      getDashboardSummary(),
+      getScheduleHealth(),
+      getDashboardOverview(),
+      listRepos(),
     ])
-    summary.value = s.data
-    health.value = h.data
-    overview.value = o.data
-    mergeActiveBackups(o.data.running_operations)
-    repoOptions.value = r.data
-    storageBreakdown.value = s.data.storage_by_repo
+    summary.value = s
+    health.value = h
+    overview.value = o
+    mergeActiveBackups(o.running_operations)
+    repoOptions.value = r
+    storageBreakdown.value = s.storage_by_repo
     await fetchSuccessActivity()
   } finally {
     loading.value = false
@@ -419,8 +382,7 @@ function navigateToSchedule(scheduleId: number | null): void {
 }
 
 async function fetchOverview(): Promise<void> {
-  const o = await apiClient.get<DashboardOverview>('/stats/dashboard-overview')
-  overview.value = o.data
+  overview.value = await getDashboardOverview()
 }
 </script>
 

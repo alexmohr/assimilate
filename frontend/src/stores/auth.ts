@@ -3,19 +3,18 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { apiClient } from '../api/client'
+import {
+  changePassword as apiChangePassword,
+  getCurrentUser,
+  login as apiLogin,
+  logout as apiLogout,
+  refreshSession,
+  verifyTotpLogin,
+} from '../api/auth'
+import type { CurrentUserResponse } from '../api/auth'
 import { logger } from '../utils/logger'
 
-export interface AuthUser {
-  id: number
-  username: string
-  role: string
-  must_change_password: boolean
-  created_at: string
-  last_login_at: string | null
-  can_upgrade_agent: boolean
-  totp_enabled?: boolean
-}
+export type { CurrentUserResponse } from '../api/auth'
 
 // Refresh the session when this much time remains before expiry.
 const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000
@@ -25,7 +24,7 @@ const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000
 const ADMIN_ROLE_NAME = 'admin'
 
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref<AuthUser | null>(null)
+  const user = ref<CurrentUserResponse | null>(null)
   const isAdmin = computed(() => user.value?.role === ADMIN_ROLE_NAME)
   const canUpgradeAgent = computed(() => user.value?.can_upgrade_agent ?? false)
   const loading = ref(false)
@@ -53,9 +52,9 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function doRefresh(): Promise<void> {
     try {
-      const res = await apiClient.post<{ session_expires_at: string }>('/auth/refresh')
-      sessionExpiresAt.value = res.data.session_expires_at
-      scheduleRefresh(res.data.session_expires_at)
+      const data = await refreshSession()
+      sessionExpiresAt.value = data.session_expires_at
+      scheduleRefresh(data.session_expires_at)
     } catch (e: unknown) {
       logger.debug('session refresh failed', e)
     }
@@ -63,18 +62,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function fetchMe(): Promise<void> {
     try {
-      const res = await apiClient.get<
-        AuthUser & {
-          session_expires_at: string | null
-          remember_me: boolean
-          totp_enabled: boolean
-        }
-      >('/auth/me')
-      user.value = res.data
-      if (res.data.remember_me && res.data.session_expires_at) {
+      const data = await getCurrentUser()
+      user.value = data
+      if (data.remember_me && data.session_expires_at) {
         rememberMe.value = true
-        sessionExpiresAt.value = res.data.session_expires_at
-        scheduleRefresh(res.data.session_expires_at)
+        sessionExpiresAt.value = data.session_expires_at
+        scheduleRefresh(data.session_expires_at)
       }
     } catch (e: unknown) {
       logger.debug('fetchMe: not authenticated', e)
@@ -83,59 +76,34 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function login(username: string, password: string, remember = false): Promise<void> {
-    const res = await apiClient.post<{
-      user: AuthUser
-      session_expires_at: string
-      remember_me: boolean
-      totp_required: boolean
-      temp_token: string | null
-    }>('/auth/login', {
-      username,
-      password,
-      remember_me: remember,
-    })
+    const data = await apiLogin(username, password, remember)
 
-    if (res.data.totp_required) {
+    if (data.totp_required) {
       totpRequired.value = true
-      tempToken.value = res.data.temp_token
+      tempToken.value = data.temp_token
       return
     }
 
-    user.value = res.data.user
-    rememberMe.value = res.data.remember_me
-    sessionExpiresAt.value = res.data.session_expires_at
-    if (remember) {
-      scheduleRefresh(res.data.session_expires_at)
-    }
+    // The login response's `user` is the leaner UserResponse shape (no
+    // can_upgrade_agent) - fetch the full /auth/me record now the session is
+    // established, so permission-gated UI is correct without a page reload.
+    await fetchMe()
 
     totpRequired.value = false
     tempToken.value = null
   }
 
   async function verifyTotp(code: string, recovery = false): Promise<void> {
-    const endpoint = recovery ? '/auth/totp/recovery' : '/auth/totp/verify-login'
-    const res = await apiClient.post<{
-      user: AuthUser
-      session_expires_at: string
-      remember_me: boolean
-    }>(endpoint, {
-      code,
-      temp_token: tempToken.value,
-    })
+    await verifyTotpLogin(code, tempToken.value, recovery)
 
-    user.value = res.data.user
-    rememberMe.value = res.data.remember_me
-    sessionExpiresAt.value = res.data.session_expires_at
-    if (res.data.remember_me) {
-      scheduleRefresh(res.data.session_expires_at)
-    }
+    await fetchMe()
 
     totpRequired.value = false
     tempToken.value = null
   }
 
   async function changePassword(newPassword: string): Promise<void> {
-    await apiClient.post('/auth/change-password', { new_password: newPassword })
+    await apiChangePassword(newPassword)
     if (user.value) {
       user.value.must_change_password = false
     }
@@ -143,7 +111,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function logout(): Promise<void> {
     try {
-      await apiClient.post('/auth/logout')
+      await apiLogout()
     } finally {
       if (refreshTimer !== null) {
         clearTimeout(refreshTimer)

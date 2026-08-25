@@ -5,7 +5,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import { apiClient } from '../api/client'
+import {
+  disableTotp as apiDisableTotp,
+  listSessions,
+  revokeSession,
+  setupTotp as apiSetupTotp,
+  verifyTotp as apiVerifyTotp,
+} from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 import { useTheme } from '../composables/useTheme'
 import { useEscapeKey } from '../composables/useEscapeKey'
@@ -17,12 +23,7 @@ import { Trash2, Monitor, Sun, Moon, KeyRound } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import type {
-  SessionListResponse,
-  SessionResponse,
-  TotpSetupResponse,
-  TotpVerifyResponse,
-} from '../types/generated'
+import type { SessionResponse, TotpSetupResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
@@ -125,9 +126,9 @@ async function setupTotp(): Promise<void> {
   totpLoading.value = true
   totpError.value = ''
   try {
-    const res = await apiClient.post<TotpSetupResponse>('/auth/totp/setup')
-    totpSetupData.value = res.data
-    totpRecoveryCodes.value = res.data.recovery_codes
+    const data: TotpSetupResponse = await apiSetupTotp()
+    totpSetupData.value = data
+    totpRecoveryCodes.value = data.recovery_codes
   } catch (e: unknown) {
     totpError.value = extractError(e, 'Failed to set up TOTP')
   } finally {
@@ -139,7 +140,7 @@ async function verifyTotpSetup(): Promise<void> {
   totpVerifying.value = true
   totpVerifyError.value = ''
   try {
-    await apiClient.post<TotpVerifyResponse>('/auth/totp/verify', { code: totpVerifyCode.value })
+    await apiVerifyTotp(totpVerifyCode.value)
     totpSetupData.value = null
     totpVerifyCode.value = ''
     totpEnabled.value = true
@@ -156,9 +157,7 @@ async function disableTotp(): Promise<void> {
   totpDisabling.value = true
   totpDisableError.value = ''
   try {
-    await apiClient.post<TotpVerifyResponse>('/auth/totp/disable', {
-      password: totpDisablePassword.value,
-    })
+    await apiDisableTotp(totpDisablePassword.value)
     totpEnabled.value = false
     totpSetupData.value = null
     totpDisablePassword.value = ''
@@ -182,8 +181,7 @@ async function fetchSessions(): Promise<void> {
   sessionsLoading.value = true
   sessionsError.value = ''
   try {
-    const res = await apiClient.get<SessionListResponse>('/auth/sessions')
-    sessions.value = res.data.sessions
+    sessions.value = await listSessions()
   } catch (e: unknown) {
     sessionsError.value = extractError(e, 'Failed to load sessions')
   } finally {
@@ -201,7 +199,7 @@ async function doRevokeSession(): Promise<void> {
   revokeSubmitting.value = true
   revokeError.value = ''
   try {
-    await apiClient.delete(`/auth/sessions/${revokeSessionId.value}`)
+    await revokeSession(revokeSessionId.value)
     revokeSessionId.value = null
     await fetchSessions()
   } catch (e: unknown) {

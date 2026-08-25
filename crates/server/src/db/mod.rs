@@ -3137,6 +3137,15 @@ pub struct ScheduleFailureOutcome {
     pub consecutive_failures: i32,
     /// Whether this call disabled the schedule (crossed `max_consecutive_failures`).
     pub auto_disabled: bool,
+    /// The schedule's `auto_disabled_agent_unreachable` value after this call - only
+    /// ever true if the *whole* failure streak was pure connectivity, which can differ
+    /// from this call's own `agent_unreachable` argument when an earlier local/data
+    /// failure in the same streak already marked it impure. Callers reporting *why* a
+    /// schedule was disabled (e.g. a log line or system event) must derive the reason
+    /// from this field, not from their own `agent_unreachable` argument, or the
+    /// message can claim "agent unreachable" for a call that actually left
+    /// `auto_disabled_agent_unreachable` false in the database.
+    pub auto_disabled_agent_unreachable: bool,
 }
 
 /// Records one failed attempt to reach a schedule's agent (config push or trigger
@@ -3182,7 +3191,8 @@ pub async fn record_schedule_failure(
          (failure_streak_pure_connectivity AND $5) AND consecutive_failures + 1 >= $3 THEN true \
          ELSE auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN \
          (failure_streak_pure_connectivity AND $5) AND consecutive_failures + 1 >= $3 THEN $4 \
-         ELSE auto_disabled_by_agent_id END WHERE id = $1 RETURNING consecutive_failures, enabled",
+         ELSE auto_disabled_by_agent_id END WHERE id = $1 RETURNING consecutive_failures, \
+         enabled, auto_disabled_agent_unreachable",
         schedule_id,
         next_run_at,
         max_consecutive_failures,
@@ -3200,6 +3210,7 @@ pub async fn record_schedule_failure(
         // landing, `enabled` is already false for an unrelated reason and staying
         // false here doesn't mean *this* call crossed the threshold.
         auto_disabled: row.consecutive_failures >= max_consecutive_failures,
+        auto_disabled_agent_unreachable: row.auto_disabled_agent_unreachable,
     })
 }
 

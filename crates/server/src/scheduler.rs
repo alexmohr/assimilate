@@ -1162,9 +1162,19 @@ async fn record_schedule_failure_once(
                     schedule_id,
                     consecutive_failures = outcome.consecutive_failures,
                     agent_unreachable,
+                    persisted_auto_disabled_agent_unreachable =
+                        outcome.auto_disabled_agent_unreachable,
                     "sequential: schedule auto-disabled after repeated failures"
                 );
-                let reason = if agent_unreachable {
+                // Derived from what record_schedule_failure actually persisted, not
+                // from this call's own `agent_unreachable` argument: the two can
+                // diverge when an earlier local/data failure in the same streak
+                // already marked failure_streak_pure_connectivity false, in which case
+                // auto_disabled_agent_unreachable stays false even though this
+                // specific call was a connectivity failure - reporting "unreachable"
+                // here would contradict both the UI's "Auto-disabled - error" label
+                // and the fact that a reconnect will never auto-heal it.
+                let reason = if outcome.auto_disabled_agent_unreachable {
                     format!("agent '{hostname}' stayed unreachable")
                 } else {
                     "a local or configuration problem".to_owned()
@@ -2384,6 +2394,12 @@ esac
         .await
         .unwrap();
         assert!(outcome.auto_disabled);
+        assert!(
+            !outcome.auto_disabled_agent_unreachable,
+            "the returned outcome must reflect what was actually persisted (impure streak), not \
+             this call's own agent_unreachable=true argument - callers deriving a disable reason \
+             from this field must not report \"agent unreachable\" here"
+        );
 
         let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
         assert!(!enabled, "must be disabled once the threshold is crossed");
@@ -2401,6 +2417,96 @@ esac
             reenabled,
             Vec::<i64>::new(),
             "an unrelated reconnect must not clear a streak that contained a config error"
+        );
+    }
+
+    /// The persisted `ScheduleAutoDisabled` system event's message must describe the
+    /// reason actually recorded in the database (`auto_disabled_agent_unreachable`),
+    /// not just whether the specific tick that crossed the threshold happened to be a
+    /// connectivity failure. A config-error failure earlier in the same streak marks
+    /// it impure, so even though the disabling tick here is a connectivity failure,
+    /// the schedule ends up `auto_disabled_agent_unreachable = false` - the event text
+    /// must say so ("a local or configuration problem"), not "stayed unreachable",
+    /// since a reconnect will never auto-heal this schedule and an operator reading
+    /// the event needs to know that.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn auto_disable_event_reason_reflects_persisted_state_not_the_disabling_ticks_own_kind(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let wrong_key = [7u8; 32];
+        let registry = AgentRegistry::new(); // no agent registered - every tick is a
+        // connectivity failure once the key is
+        // correct again
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let ui_broadcast = UiBroadcast::new();
+
+        let past = Utc::now()
+            .checked_sub_signed(chrono::Duration::hours(1))
+            .unwrap();
+
+        // Tick 1: config error (wrong key) - marks the streak impure.
+        db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &wrong_key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &ui_broadcast,
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+        })
+        .await
+        .unwrap();
+
+        // Ticks 2 and 3: connectivity failures (correct key, no agent connected) -
+        // tick 3 crosses MAX_CONSECUTIVE_FAILURES and disables the schedule.
+        for _ in 2..=MAX_CONSECUTIVE_FAILURES {
+            db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+            tick(&TickDeps {
+                pool: &pool,
+                registry: &registry,
+                encryption_key: &key,
+                tunnel_manager: &tunnel,
+                completion_bus: &bus,
+                repo_lock: &RepoLock::default(),
+                repo_op_tracker: &RepoOpTracker::default(),
+                ui_broadcast: &ui_broadcast,
+                background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            })
+            .await
+            .unwrap();
+        }
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(consecutive_failures, MAX_CONSECUTIVE_FAILURES);
+        assert!(!enabled, "must be disabled once the threshold is crossed");
+        assert!(
+            !auto_disabled,
+            "the streak contained a config error, so it must not be marked agent-unreachable"
+        );
+
+        let events = db::get_system_events(&pool, 10).await.unwrap();
+        let event = events
+            .iter()
+            .find(|e| matches!(e.event_type, SystemEventType::ScheduleAutoDisabled))
+            .expect("a ScheduleAutoDisabled system event was recorded");
+        assert!(
+            event.message.contains("a local or configuration problem"),
+            "event message must reflect the persisted (impure) reason: {}",
+            event.message
+        );
+        assert!(
+            !event.message.contains("stayed unreachable"),
+            "event message must not claim the agent was unreachable when \
+             auto_disabled_agent_unreachable ended up false: {}",
+            event.message
         );
     }
 

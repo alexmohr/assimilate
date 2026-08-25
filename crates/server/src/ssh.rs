@@ -175,9 +175,18 @@ pub async fn scan_host_key(host: &str, port: u16) -> Result<String, SshError> {
 /// Directory where per-repository pinned SSH `known_hosts` files are written,
 /// so server-side borg invocations can pin against a repo's accepted host key
 /// the same way the agent does, instead of relying on the process's own
-/// default `~/.ssh/known_hosts`.
+/// default `~/.ssh/known_hosts`. Lives alongside the server's own SSH keypair
+/// (`SSH_KEY_DIR`) rather than the shared OS temp dir: both hold SSH material
+/// that shouldn't sit under a predictable name in a directory other
+/// principals on the host/container can read or write.
 fn pinned_known_hosts_dir() -> PathBuf {
-    std::env::temp_dir().join("assimilate-known-hosts")
+    let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
+    PathBuf::from(ssh_key_dir).join("known-hosts")
+}
+
+/// Path of the pinned `known_hosts` file for `repo_id`, without writing it.
+fn pinned_known_hosts_path(repo_id: i64) -> PathBuf {
+    pinned_known_hosts_dir().join(format!("repo-{repo_id}"))
 }
 
 /// Writes (or refreshes) the pinned `known_hosts` entry for `repo_id`, so
@@ -186,6 +195,15 @@ fn pinned_known_hosts_dir() -> PathBuf {
 /// (keyed by `repo_id`, not a temp file that gets deleted), so it stays valid
 /// across background tasks that reuse the same `BORG_RSH` value after the
 /// call that wrote it has already returned.
+///
+/// `get_repo_env`/`borg_env_for_repo` is reachable from many concurrent,
+/// unserialized request paths for the same repository (diff, search, export,
+/// restore, keys, archive indexing, ...), so this writes through a per-call
+/// temp file and renames it into place (atomic on the same filesystem)
+/// instead of truncating the target path directly - a borg subprocess
+/// reading this file mid-write would otherwise risk seeing a truncated/empty
+/// `known_hosts`, which `StrictHostKeyChecking=yes` treats as an unknown
+/// host and refuses to connect to.
 ///
 /// # Errors
 ///
@@ -198,12 +216,49 @@ pub async fn write_pinned_known_hosts(
 ) -> Result<PathBuf, SshError> {
     let dir = pinned_known_hosts_dir();
     tokio::fs::create_dir_all(&dir).await?;
+    #[cfg(unix)]
+    set_permissions(&dir, 0o700).await?;
 
-    let path = dir.join(format!("repo-{repo_id}"));
+    let path = pinned_known_hosts_path(repo_id);
+    let tmp_path = dir.join(format!(
+        "repo-{repo_id}.tmp-{}",
+        crate::api::helpers::generate_random_hex(8)
+    ));
     let content = format!("{} {host_key}\n", shared::ssh::known_hosts_host(host, port));
-    tokio::fs::write(&path, content).await?;
+
+    tokio::fs::write(&tmp_path, content).await?;
+    #[cfg(unix)]
+    set_permissions(&tmp_path, 0o600).await?;
+    tokio::fs::rename(&tmp_path, &path).await?;
 
     Ok(path)
+}
+
+#[cfg(unix)]
+async fn set_permissions(path: &std::path::Path, mode: u32) -> Result<(), SshError> {
+    use std::os::unix::fs::PermissionsExt;
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .await
+        .map_err(SshError::from)
+}
+
+/// Removes the pinned `known_hosts` file for `repo_id`, if one was ever
+/// written. Best-effort: a missing file is not an error, and any other
+/// failure is only logged, not propagated - this runs as part of repository
+/// deletion, where leaving a stale pinned-key file behind is a minor
+/// disk-space leak, not a reason to fail the deletion itself.
+pub async fn remove_pinned_known_hosts(repo_id: i64) {
+    let path = pinned_known_hosts_path(repo_id);
+    if let Err(e) = tokio::fs::remove_file(&path).await
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        warn!(
+            repo_id,
+            error = %e,
+            path = %path.display(),
+            "failed to remove pinned SSH known_hosts file"
+        );
+    }
 }
 
 /// # Errors
@@ -1506,10 +1561,11 @@ mod tests {
         assert_eq!(found.len(), 0);
     }
 
-    // Combined into one test: both helpers read from SSH_KEY_DIR, mutating the
-    // shared env var races if split across parallel tests.
+    // Combined into one test: every helper below reads SSH_KEY_DIR (directly,
+    // or via pinned_known_hosts_dir), so mutating the shared env var races if
+    // split across parallel tests.
     #[tokio::test]
-    async fn ssh_key_helpers_read_from_ssh_key_dir() {
+    async fn ssh_key_dir_scoped_helpers() {
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
 
@@ -1536,10 +1592,17 @@ mod tests {
         assert_eq!(read_server_public_key().await.unwrap(), public_line);
         assert!(load_server_private_key().await.is_ok());
 
+        write_pinned_known_hosts_writes_expected_content_for_default_port().await;
+        write_pinned_known_hosts_brackets_nonstandard_port().await;
+        write_pinned_known_hosts_refreshes_existing_entry().await;
+        write_pinned_known_hosts_keeps_different_repos_separate().await;
+        write_pinned_known_hosts_sets_restrictive_permissions().await;
+        remove_pinned_known_hosts_deletes_the_file().await;
+        remove_pinned_known_hosts_is_a_noop_when_nothing_was_written().await;
+
         unsafe { std::env::remove_var("SSH_KEY_DIR") };
     }
 
-    #[tokio::test]
     async fn write_pinned_known_hosts_writes_expected_content_for_default_port() {
         let repo_id = 987_654_321_001;
         let path = write_pinned_known_hosts(repo_id, "repo.example.com", 22, "ssh-ed25519 AAAA")
@@ -1552,7 +1615,6 @@ mod tests {
         tokio::fs::remove_file(&path).await.unwrap();
     }
 
-    #[tokio::test]
     async fn write_pinned_known_hosts_brackets_nonstandard_port() {
         let repo_id = 987_654_321_002;
         let path = write_pinned_known_hosts(repo_id, "repo.example.com", 2222, "ssh-ed25519 AAAA")
@@ -1565,7 +1627,6 @@ mod tests {
         tokio::fs::remove_file(&path).await.unwrap();
     }
 
-    #[tokio::test]
     async fn write_pinned_known_hosts_refreshes_existing_entry() {
         let repo_id = 987_654_321_003;
 
@@ -1585,7 +1646,6 @@ mod tests {
         tokio::fs::remove_file(&second).await.unwrap();
     }
 
-    #[tokio::test]
     async fn write_pinned_known_hosts_keeps_different_repos_separate() {
         let path_a = write_pinned_known_hosts(987_654_321_004, "host-a", 22, "key-a")
             .await
@@ -1606,5 +1666,53 @@ mod tests {
 
         tokio::fs::remove_file(&path_a).await.unwrap();
         tokio::fs::remove_file(&path_b).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    async fn write_pinned_known_hosts_sets_restrictive_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let repo_id = 987_654_321_006;
+        let path = write_pinned_known_hosts(repo_id, "repo.example.com", 22, "ssh-ed25519 AAAA")
+            .await
+            .unwrap();
+
+        let file_mode = tokio::fs::metadata(&path)
+            .await
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600, "pinned known_hosts file must be 0600");
+
+        let dir_mode = tokio::fs::metadata(path.parent().unwrap())
+            .await
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700, "pinned known_hosts dir must be 0700");
+
+        tokio::fs::remove_file(&path).await.unwrap();
+    }
+
+    #[cfg(not(unix))]
+    async fn write_pinned_known_hosts_sets_restrictive_permissions() {}
+
+    async fn remove_pinned_known_hosts_deletes_the_file() {
+        let repo_id = 987_654_321_007;
+        let path = write_pinned_known_hosts(repo_id, "repo.example.com", 22, "ssh-ed25519 AAAA")
+            .await
+            .unwrap();
+        assert!(tokio::fs::try_exists(&path).await.unwrap());
+
+        remove_pinned_known_hosts(repo_id).await;
+
+        assert!(!tokio::fs::try_exists(&path).await.unwrap());
+    }
+
+    async fn remove_pinned_known_hosts_is_a_noop_when_nothing_was_written() {
+        // No known_hosts file was ever written for this repo_id - must not panic or error.
+        remove_pinned_known_hosts(987_654_321_008).await;
     }
 }

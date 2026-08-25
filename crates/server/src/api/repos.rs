@@ -634,6 +634,7 @@ pub async fn delete_repo(
     Path(repo_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     db::delete_repo(&state.pool, repo_id).await?;
+    crate::ssh::remove_pinned_known_hosts(repo_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -692,6 +693,7 @@ pub async fn destroy_repo(
     })?;
 
     db::delete_repo(&state.pool, repo_id).await?;
+    crate::ssh::remove_pinned_known_hosts(repo_id).await;
 
     info!(repo_id, "repository destroyed successfully");
     Ok(StatusCode::NO_CONTENT)

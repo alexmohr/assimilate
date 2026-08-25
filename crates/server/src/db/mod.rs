@@ -3572,6 +3572,45 @@ pub async fn get_schedule_target_hostnames_by_schedule(
     Ok(by_schedule)
 }
 
+/// Batched form of [`get_schedule_target_hostnames_by_schedule`] returning agent IDs
+/// instead of hostnames, for callers that need to key live-connection state (which is
+/// tracked per agent ID, not per hostname, since a hostname can be shared by more than
+/// one agent).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_schedule_target_agent_ids_by_schedule(
+    pool: &PgPool,
+    schedule_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<i64>>, ApiError> {
+    struct Row {
+        schedule_id: i64,
+        agent_id: i64,
+    }
+
+    let rows = sqlx::query_as!(
+        Row,
+        "SELECT st.schedule_id, st.agent_id FROM schedule_targets st JOIN agents a ON a.id = \
+         st.agent_id WHERE st.schedule_id = ANY($1) AND a.is_hidden = false ORDER BY \
+         st.schedule_id, st.execution_order",
+        schedule_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut by_schedule: std::collections::HashMap<i64, Vec<i64>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        by_schedule
+            .entry(row.schedule_id)
+            .or_default()
+            .push(row.agent_id);
+    }
+    Ok(by_schedule)
+}
+
 /// A target agent for a schedule run.
 #[derive(Debug, sqlx::FromRow)]
 pub struct ScheduleRunTarget {

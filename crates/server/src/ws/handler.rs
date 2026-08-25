@@ -362,13 +362,13 @@ async fn reenable_system_disabled_schedules_on_reconnect(
     // only actually re-enable a candidate once every one of its targets is currently
     // connected, not just this reconnecting one.
     let targets_by_schedule =
-        match db::get_schedule_target_hostnames_by_schedule(&state.pool, &candidates).await {
+        match db::get_schedule_target_agent_ids_by_schedule(&state.pool, &candidates).await {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!(
                     hostname = %hostname,
                     error = %e,
-                    "failed to look up target hostnames for auto-disabled schedules"
+                    "failed to look up target agents for auto-disabled schedules"
                 );
                 return;
             }
@@ -379,8 +379,8 @@ async fn reenable_system_disabled_schedules_on_reconnect(
             .get(&schedule_id)
             .map_or(&[][..], |v| v.as_slice());
         let mut all_connected = true;
-        for target_hostname in targets {
-            if !state.registry.is_connected(target_hostname).await {
+        for target_agent_id in targets {
+            if !state.registry.is_connected(*target_agent_id).await {
                 all_connected = false;
                 break;
             }
@@ -2967,9 +2967,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn reconnect_reenables_schedule_and_records_system_event(pool: PgPool) {
-        let agent = crate::db::insert_agent(&pool, "reconnect-event-agent", None, "hash", None)
-            .await
-            .expect("insert agent");
+        let agent =
+            crate::db::insert_agent(&pool, "reconnect-event-agent", None, "hash", None, None)
+                .await
+                .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
             "test-passphrase",
             &derive_key(b"handler-test-secret-key").unwrap(),
@@ -3043,10 +3044,7 @@ exit 0
         // currently connected, which for this single-target schedule means just the
         // reconnecting agent itself.
         let (tx, _rx) = mpsc::channel(1);
-        state
-            .registry
-            .register(agent.hostname.clone(), tx, false, None)
-            .await;
+        state.registry.register(agent.id, tx, false, None).await;
         reenable_system_disabled_schedules_on_reconnect(&state, agent.id, &agent.hostname).await;
 
         let reenabled = crate::db::get_schedule_by_id(&pool, schedule.id)
@@ -3108,10 +3106,10 @@ exit 0
     async fn reconnect_only_reenables_multi_target_schedule_once_every_target_is_connected(
         pool: PgPool,
     ) {
-        let flaky = crate::db::insert_agent(&pool, "flaky-agent", None, "hash", None)
+        let flaky = crate::db::insert_agent(&pool, "flaky-agent", None, "hash", None, None)
             .await
             .expect("insert flaky agent");
-        let broken = crate::db::insert_agent(&pool, "broken-agent", None, "hash", None)
+        let broken = crate::db::insert_agent(&pool, "broken-agent", None, "hash", None, None)
             .await
             .expect("insert broken agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -3197,7 +3195,7 @@ exit 0
         let (flaky_tx, _flaky_rx) = mpsc::channel(1);
         state
             .registry
-            .register(flaky.hostname.clone(), flaky_tx, false, None)
+            .register(flaky.id, flaky_tx, false, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, flaky.id, &flaky.hostname).await;
 
@@ -3216,7 +3214,7 @@ exit 0
         let (broken_tx, _broken_rx) = mpsc::channel(1);
         state
             .registry
-            .register(broken.hostname.clone(), broken_tx, false, None)
+            .register(broken.id, broken_tx, false, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, flaky.id, &flaky.hostname).await;
 
@@ -3240,10 +3238,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn reconnect_from_uncredited_target_reenables_schedule_once_all_connected(pool: PgPool) {
-        let flaky = crate::db::insert_agent(&pool, "flaky-agent-2", None, "hash", None)
+        let flaky = crate::db::insert_agent(&pool, "flaky-agent-2", None, "hash", None, None)
             .await
             .expect("insert flaky agent");
-        let broken = crate::db::insert_agent(&pool, "broken-agent-2", None, "hash", None)
+        let broken = crate::db::insert_agent(&pool, "broken-agent-2", None, "hash", None, None)
             .await
             .expect("insert broken agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -3326,12 +3324,12 @@ exit 0
         let (flaky_tx, _flaky_rx) = mpsc::channel(1);
         state
             .registry
-            .register(flaky.hostname.clone(), flaky_tx, false, None)
+            .register(flaky.id, flaky_tx, false, None)
             .await;
         let (broken_tx, _broken_rx) = mpsc::channel(1);
         state
             .registry
-            .register(broken.hostname.clone(), broken_tx, false, None)
+            .register(broken.id, broken_tx, false, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, broken.id, &broken.hostname).await;
 

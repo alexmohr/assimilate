@@ -283,7 +283,7 @@ async fn agent_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: Pg
         schedule_auto_disable_state(&pool, schedule.id).await;
     assert!(!enabled && auto_disabled_agent_unreachable);
 
-    db::delete_agent(&pool, &agent.hostname).await.unwrap();
+    db::delete_agent(&pool, agent.id).await.unwrap();
 
     let (enabled, agent_unreachable, by_agent_id, failures) =
         schedule_auto_disable_state(&pool, schedule.id).await;
@@ -4919,6 +4919,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
         Some("Merge Placeholder"),
         "imported:no-auth",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4927,6 +4928,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
         "merge-target-auto-disable",
         Some("Merge Target"),
         "hash",
+        None,
         None,
     )
     .await

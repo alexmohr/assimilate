@@ -1929,7 +1929,7 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_backs_off_and_records_failure_on_unevaluatable_cron(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
         sqlx::query!(
             "UPDATE schedules SET cron_expression = $1 WHERE id = $2",
             "not-a-valid-cron",
@@ -1981,7 +1981,7 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_auto_disables_schedule_after_max_consecutive_failures(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
 
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
@@ -2063,8 +2063,8 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_success_resets_consecutive_failures(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (repo_id, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (repo_id, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -2093,7 +2093,7 @@ esac
         db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
 
         let registry = AgentRegistry::new();
-        let mut rx = register_fake_agent(&registry).await;
+        let mut rx = register_fake_agent(&registry, agent_id).await;
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
         let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
@@ -2126,7 +2126,7 @@ esac
             "expected RunBackupNow, got: {trigger:?}"
         );
         bus.publish(completion_bus::OperationOutcome {
-            hostname: TICK_TEST_HOSTNAME.to_owned(),
+            agent_id,
             repo_id,
             success: true,
         });
@@ -2157,8 +2157,8 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_auto_disables_but_does_not_mark_unreachable_on_config_error(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -2232,8 +2232,8 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -2302,8 +2302,8 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -2352,8 +2352,8 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -2435,7 +2435,7 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
         let wrong_key = [7u8; 32];
         let registry = AgentRegistry::new(); // no agent registered - every tick is a
         // connectivity failure once the key is
@@ -2519,14 +2519,15 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn retargeting_clears_auto_disable_bookkeeping_for_the_dropped_agent(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
-        let new_agent = db::insert_agent(&pool, "retarget-test-new-agent", None, "hash", None)
-            .await
-            .unwrap();
+        let new_agent =
+            db::insert_agent(&pool, "retarget-test-new-agent", None, "hash", None, None)
+                .await
+                .unwrap();
         let next = Utc::now()
             .checked_add_signed(chrono::Duration::days(1))
             .unwrap();
@@ -2595,14 +2596,21 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
-        let new_agent = db::insert_agent(&pool, "retarget-partial-new-agent", None, "hash", None)
-            .await
-            .unwrap();
+        let new_agent = db::insert_agent(
+            &pool,
+            "retarget-partial-new-agent",
+            None,
+            "hash",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         let next = Utc::now()
             .checked_add_signed(chrono::Duration::days(1))
             .unwrap();
@@ -2657,14 +2665,15 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn retargeting_does_not_clear_a_config_error_failure_streak(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
-        let new_agent = db::insert_agent(&pool, "retarget-config-new-agent", None, "hash", None)
-            .await
-            .unwrap();
+        let new_agent =
+            db::insert_agent(&pool, "retarget-config-new-agent", None, "hash", None, None)
+                .await
+                .unwrap();
         let next = Utc::now()
             .checked_add_signed(chrono::Duration::days(1))
             .unwrap();
@@ -2718,12 +2727,12 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let causing_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let causing_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
-        let sibling_agent = db::insert_agent(&pool, "multi-drop-sibling", None, "hash", None)
+        let sibling_agent = db::insert_agent(&pool, "multi-drop-sibling", None, "hash", None, None)
             .await
             .unwrap();
         db::insert_schedule_targets(&pool, schedule_id, &[(sibling_agent.id, 1)])
@@ -2783,12 +2792,12 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let causing_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let causing_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
-        let sibling_agent = db::insert_agent(&pool, "multi-drop-causing", None, "hash", None)
+        let sibling_agent = db::insert_agent(&pool, "multi-drop-causing", None, "hash", None, None)
             .await
             .unwrap();
         db::insert_schedule_targets(&pool, schedule_id, &[(sibling_agent.id, 1)])
@@ -2849,8 +2858,8 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn reconnect_reenables_only_auto_disabled_schedules(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, auto_disabled_schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, auto_disabled_schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -2941,8 +2950,8 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn set_schedule_enabled_clears_stale_auto_disabled_flag(pool: sqlx::PgPool) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;
@@ -3013,11 +3022,11 @@ esac
         let key = tick_test_key();
         let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", &key).unwrap();
         let unreachable_agent =
-            db::insert_agent(&pool, "continue-test-unreachable", None, "hash", None)
+            db::insert_agent(&pool, "continue-test-unreachable", None, "hash", None, None)
                 .await
                 .unwrap();
         let reachable_agent =
-            db::insert_agent(&pool, "continue-test-reachable", None, "hash", None)
+            db::insert_agent(&pool, "continue-test-reachable", None, "hash", None, None)
                 .await
                 .unwrap();
         let repo = db::insert_repo(
@@ -3078,9 +3087,7 @@ esac
 
         let registry = AgentRegistry::new();
         let (tx, mut rx) = mpsc::channel(32);
-        registry
-            .register("continue-test-reachable".to_owned(), tx, false, None)
-            .await;
+        registry.register(reachable_agent.id, tx, false, None).await;
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
         let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
@@ -3131,7 +3138,7 @@ esac
                 "expected RunBackupNow for the reachable target, got: {trigger:?}"
             );
             bus.publish(completion_bus::OperationOutcome {
-                hostname: "continue-test-reachable".to_owned(),
+                agent_id: reachable_agent.id,
                 repo_id: repo.id,
                 success: true,
             });
@@ -3172,12 +3179,14 @@ esac
     async fn reconnect_only_reenables_for_the_agent_that_caused_the_disable(pool: sqlx::PgPool) {
         let key = tick_test_key();
         let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", &key).unwrap();
-        let broken_agent = db::insert_agent(&pool, "scoped-reconnect-broken", None, "hash", None)
-            .await
-            .unwrap();
-        let flaky_agent = db::insert_agent(&pool, "scoped-reconnect-flaky", None, "hash", None)
-            .await
-            .unwrap();
+        let broken_agent =
+            db::insert_agent(&pool, "scoped-reconnect-broken", None, "hash", None, None)
+                .await
+                .unwrap();
+        let flaky_agent =
+            db::insert_agent(&pool, "scoped-reconnect-flaky", None, "hash", None, None)
+                .await
+                .unwrap();
         let repo = db::insert_repo(
             &pool,
             &InsertRepoParams {
@@ -3296,8 +3305,8 @@ esac
         pool: sqlx::PgPool,
     ) {
         let key = tick_test_key();
-        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
-        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME, None)
             .await
             .unwrap()
             .id;

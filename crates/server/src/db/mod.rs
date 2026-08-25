@@ -877,13 +877,13 @@ pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
     // Clears the auto-disable bookkeeping the same way
-    // clear_auto_disable_if_causing_agent_no_longer_a_target does for retargeting -
-    // otherwise deleting the agent that caused a schedule's auto-disable leaves
-    // consecutive_failures/auto_disabled_agent_unreachable stale (the FK only nulls
-    // auto_disabled_by_agent_id), which would also silently defeat that function's
-    // IS NOT NULL guard on any later retarget. Both statements run in one transaction
-    // so a concurrent record_schedule_failure for this same agent can't land between
-    // them and get its own bookkeeping stranded by the DELETE's FK cascade.
+    // reset_schedule_failure_tracking_if_target_dropped does for retargeting - a
+    // deleted agent can never appear in a later PUT's old-vs-new target diff, so that
+    // function alone can't reach this case. Otherwise deleting the agent that caused a
+    // schedule's auto-disable would leave consecutive_failures/auto_disabled_agent_unreachable
+    // stale (the FK only nulls auto_disabled_by_agent_id). Both statements run in one
+    // transaction so a concurrent record_schedule_failure for this same agent can't
+    // land between them and get its own bookkeeping stranded by the DELETE's FK cascade.
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     sqlx::query!(
         "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
@@ -3229,30 +3229,43 @@ pub async fn set_schedule_enabled(
     Ok(())
 }
 
-/// Clears the auto-disable bookkeeping if the schedule's target list no longer
-/// includes the agent that caused it to be auto-disabled. Without this, retargeting an
-/// auto-disabled schedule away from its permanently-unreachable agent - the realistic
-/// way an admin fixes this - would leave `auto_disabled_by_agent_id` pointing at an
-/// agent that isn't a target anymore, so [`reenable_system_disabled_schedules_for_agent`]
-/// could never match it again and the schedule would stay disabled forever despite the
-/// admin's fix. A no-op unless the schedule is currently auto-disabled for a
-/// connectivity reason and the causing agent was actually dropped from `agent_ids`.
+/// Resets a schedule's connectivity-failure bookkeeping (`consecutive_failures`,
+/// `auto_disabled_agent_unreachable`, `auto_disabled_by_agent_id`) whenever its
+/// target list drops an agent, whether or not the schedule has already crossed the
+/// auto-disable threshold. Without this, retargeting away from a broken agent -
+/// the realistic way an admin fixes this - either:
+/// - once already auto-disabled: would leave `auto_disabled_by_agent_id` pointing at
+///   an agent that isn't a target anymore, so
+///   [`reenable_system_disabled_schedules_for_agent`] could never match it again and
+///   the schedule would stay disabled forever despite the admin's fix; or
+/// - still enabled but partway through a failure streak against the dropped agent
+///   (e.g. `consecutive_failures = 2`, threshold 3): would carry that stale count
+///   onto whatever agent replaces it, so one failure from a brand new agent that has
+///   never failed could immediately cross the threshold and auto-disable the
+///   schedule, wrongly blaming the new agent.
+///
+/// Deliberately a no-op when the streak contains a local/config failure
+/// (`failure_streak_pure_connectivity = false`): that state must only ever be
+/// cleared by a human fixing the actual cause and re-enabling the schedule
+/// themselves, never implicitly by an unrelated retarget.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn clear_auto_disable_if_causing_agent_no_longer_a_target(
+pub async fn reset_schedule_failure_tracking_if_target_dropped(
     pool: &PgPool,
     schedule_id: i64,
-    agent_ids: &[i64],
+    old_agent_ids: &[i64],
+    new_agent_ids: &[i64],
 ) -> Result<(), ApiError> {
+    if !old_agent_ids.iter().any(|id| !new_agent_ids.contains(id)) {
+        return Ok(());
+    }
     sqlx::query!(
         "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
-         = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE id = $1 \
-         AND auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id IS NOT NULL AND \
-         NOT (auto_disabled_by_agent_id = ANY($2))",
+         = NULL, consecutive_failures = 0 WHERE id = $1 AND failure_streak_pure_connectivity = \
+         true",
         schedule_id,
-        agent_ids,
     )
     .execute(pool)
     .await

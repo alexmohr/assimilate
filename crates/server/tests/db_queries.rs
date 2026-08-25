@@ -224,9 +224,9 @@ async fn agent_delete_not_found(pool: PgPool) {
 /// Deleting the agent that caused a schedule's auto-disable must clear that
 /// schedule's stale auto-disable bookkeeping. The FK on `auto_disabled_by_agent_id`
 /// only nulls that one column on delete, leaving `auto_disabled_agent_unreachable`
-/// and `consecutive_failures` stale - and an `IS NOT NULL` guard on
-/// `auto_disabled_by_agent_id` in `clear_auto_disable_if_causing_agent_no_longer_a_target`
-/// would then silently never fire on a later retarget.
+/// and `consecutive_failures` stale - and a deleted agent can never appear in a
+/// later PUT's old-vs-new target diff, so
+/// `reset_schedule_failure_tracking_if_target_dropped` alone could never reach it.
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
     let (agent, _repo, schedule) = create_test_schedule(&pool).await;

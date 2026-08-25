@@ -2315,9 +2315,10 @@ esac
         db::insert_schedule_targets(&pool, schedule_id, &[(new_agent.id, 0)])
             .await
             .unwrap();
-        db::clear_auto_disable_if_causing_agent_no_longer_a_target(
+        db::reset_schedule_failure_tracking_if_target_dropped(
             &pool,
             schedule_id,
+            &[old_agent_id],
             &[new_agent.id],
         )
         .await
@@ -2339,6 +2340,131 @@ esac
                 .await
                 .unwrap();
         assert_eq!(reenabled, Vec::<i64>::new());
+    }
+
+    /// Retargeting away from an agent a schedule is *partway* through a connectivity
+    /// failure streak against - before it fully auto-disables - must reset the
+    /// carried-over failure count too, not just once the schedule is already
+    /// disabled. Otherwise a single failure from a brand new agent that has never
+    /// failed could immediately cross the threshold on top of the stale count,
+    /// wrongly auto-disabling the schedule and blaming the new agent.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retargeting_before_full_disable_resets_partial_connectivity_failures(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let new_agent = db::insert_agent(&pool, "retarget-partial-new-agent", None, "hash", None)
+            .await
+            .unwrap();
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        // One failure short of the threshold - still enabled, not yet auto-disabled.
+        for _ in 0..MAX_CONSECUTIVE_FAILURES - 1 {
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                old_agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(consecutive_failures, MAX_CONSECUTIVE_FAILURES - 1);
+        assert!(enabled && !auto_disabled, "must not be disabled yet");
+
+        db::delete_schedule_targets(&pool, schedule_id)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(new_agent.id, 0)])
+            .await
+            .unwrap();
+        db::reset_schedule_failure_tracking_if_target_dropped(
+            &pool,
+            schedule_id,
+            &[old_agent_id],
+            &[new_agent.id],
+        )
+        .await
+        .unwrap();
+
+        let (consecutive_failures, enabled, _) = schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 0,
+            "the stale failure count against the dropped agent must not carry over to the new one"
+        );
+        assert!(enabled);
+    }
+
+    /// The opposite of the above: retargeting must never silently clear a failure
+    /// streak that contains a local/config error, even partway through it - that
+    /// state is documented as requiring a human to fix the actual cause and
+    /// re-enable the schedule themselves, so an unrelated retarget must not give it
+    /// a free pass.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retargeting_does_not_clear_a_config_error_failure_streak(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let old_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let new_agent = db::insert_agent(&pool, "retarget-config-new-agent", None, "hash", None)
+            .await
+            .unwrap();
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        // A config/data failure taints the streak's purity, one short of the threshold.
+        db::record_schedule_failure(
+            &pool,
+            schedule_id,
+            old_agent_id,
+            next,
+            MAX_CONSECUTIVE_FAILURES,
+            false,
+        )
+        .await
+        .unwrap();
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(consecutive_failures, 1);
+        assert!(enabled && !auto_disabled);
+
+        db::delete_schedule_targets(&pool, schedule_id)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(new_agent.id, 0)])
+            .await
+            .unwrap();
+        db::reset_schedule_failure_tracking_if_target_dropped(
+            &pool,
+            schedule_id,
+            &[old_agent_id],
+            &[new_agent.id],
+        )
+        .await
+        .unwrap();
+
+        let (consecutive_failures, enabled, _) = schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 1,
+            "a config-error-tainted streak must survive an unrelated retarget"
+        );
+        assert!(enabled);
     }
 
     /// A schedule the scheduler auto-disabled after repeated unreachable-agent

@@ -550,6 +550,11 @@ async fn apply_schedule_target_overrides(
                 "agent_ids must contain at least one entry".into(),
             ));
         }
+        let old_agent_ids: Vec<i64> = db::list_schedule_targets(pool, schedule_id)
+            .await?
+            .into_iter()
+            .map(|t| t.agent_id)
+            .collect();
         db::delete_schedule_targets(pool, schedule_id).await?;
         let targets: Vec<(i64, i32)> = agent_ids
             .iter()
@@ -560,8 +565,13 @@ async fn apply_schedule_target_overrides(
             })
             .collect();
         db::insert_schedule_targets(pool, schedule_id, &targets).await?;
-        db::clear_auto_disable_if_causing_agent_no_longer_a_target(pool, schedule_id, agent_ids)
-            .await?;
+        db::reset_schedule_failure_tracking_if_target_dropped(
+            pool,
+            schedule_id,
+            &old_agent_ids,
+            agent_ids,
+        )
+        .await?;
     }
 
     if let Some(sources) = &req.backup_sources {

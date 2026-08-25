@@ -868,7 +868,10 @@ pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError>
     // otherwise deleting the agent that caused a schedule's auto-disable leaves
     // consecutive_failures/auto_disabled_agent_unreachable stale (the FK only nulls
     // auto_disabled_by_agent_id), which would also silently defeat that function's
-    // IS NOT NULL guard on any later retarget.
+    // IS NOT NULL guard on any later retarget. Both statements run in one transaction
+    // so a concurrent record_schedule_failure for this same agent can't land between
+    // them and get its own bookkeeping stranded by the DELETE's FK cascade.
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     sqlx::query!(
         "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
          = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE \
@@ -876,18 +879,19 @@ pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError>
          auto_disabled_agent_unreachable = true",
         hostname
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
 
     let result = sqlx::query!("DELETE FROM agents WHERE hostname = $1", hostname)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
     }
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 

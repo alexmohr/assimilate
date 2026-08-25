@@ -1062,6 +1062,6 @@ describe('HostsView deploy button label', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent/unhide')
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent/unhide', {}, { params: {} })
   })
 })

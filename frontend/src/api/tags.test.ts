@@ -43,7 +43,7 @@ describe('tags api', () => {
 
     await listEntityTags('/repos/12')
 
-    expect(apiClient.get).toHaveBeenCalledWith('/repos/12/tags')
+    expect(apiClient.get).toHaveBeenCalledWith('/repos/12/tags', { params: undefined })
   })
 
   it('sets the tags assigned to an entity', async () => {
@@ -51,7 +51,11 @@ describe('tags api', () => {
 
     await setEntityTags('/repos/12', [1, 2, 3])
 
-    expect(apiClient.put).toHaveBeenCalledWith('/repos/12/tags', { tag_ids: [1, 2, 3] })
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/repos/12/tags',
+      { tag_ids: [1, 2, 3] },
+      { params: undefined },
+    )
   })
 
   it('creates a tag', async () => {

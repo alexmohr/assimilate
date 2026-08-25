@@ -150,6 +150,19 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
         .await
         .map_err(ApiError::Database)?;
 
+    // See delete_agent's comment: same auto-disable bookkeeping must be cleared here too,
+    // since the source agent's row disappears the same way (FK only nulls
+    // auto_disabled_by_agent_id, leaving the rest stale).
+    sqlx::query!(
+        "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
+         = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true WHERE \
+         auto_disabled_by_agent_id = $1 AND auto_disabled_agent_unreachable = true",
+        source_id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
     sqlx::query!("DELETE FROM agents WHERE id = $1", source_id)
         .execute(&mut *tx)
         .await

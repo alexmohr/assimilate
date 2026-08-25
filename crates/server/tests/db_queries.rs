@@ -4868,6 +4868,106 @@ async fn test_merge_agent_refuses_non_placeholder(pool: PgPool) {
     assert!(result.is_err());
 }
 
+/// Merging away the placeholder agent that caused a schedule's auto-disable must
+/// clear that schedule's stale auto-disable bookkeeping, the same as `delete_agent`
+/// and `delete_repo` - the FK on `auto_disabled_by_agent_id` only nulls that one
+/// column when the source agent's row is deleted, leaving `auto_disabled_agent_unreachable`
+/// and `consecutive_failures` stale.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
+    let placeholder = db::insert_agent(
+        &pool,
+        "merge-placeholder-auto-disable",
+        Some("Merge Placeholder"),
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    let target = db::insert_agent(
+        &pool,
+        "merge-target-auto-disable",
+        Some("Merge Target"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let schedule = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "test-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, schedule.id, &[(placeholder.id, 0)])
+        .await
+        .unwrap();
+
+    let next = Utc::now().checked_add_signed(Duration::days(1)).unwrap();
+    for _ in 0..3 {
+        db::record_schedule_failure(&pool, schedule.id, placeholder.id, next, 3, true)
+            .await
+            .unwrap();
+    }
+    let row = sqlx::query!(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+        schedule.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.enabled && row.auto_disabled_agent_unreachable);
+
+    db::merge_agent(&pool, placeholder.id, target.id)
+        .await
+        .unwrap();
+
+    let row = sqlx::query!(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+        schedule.id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.enabled);
+    assert!(
+        !row.auto_disabled_agent_unreachable,
+        "the stale auto-disable flag must be cleared once the causing agent is merged away"
+    );
+    assert_eq!(row.auto_disabled_by_agent_id, None);
+    assert_eq!(row.consecutive_failures, 0);
+
+    // The merge target reconnecting later must never touch this orphaned schedule.
+    let reenabled = db::reenable_system_disabled_schedules_for_agent(&pool, target.id, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(reenabled, Vec::<i64>::new());
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_mark_agent_reports_matched(pool: PgPool) {
     let agent = db::insert_agent(

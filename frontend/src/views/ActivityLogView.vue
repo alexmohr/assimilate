@@ -83,10 +83,12 @@ function classifyEventType(eventType: string): EventTypeClass {
     case 'repo_sync':
     case 'agent_connected':
     case 'backup_complete':
+    case 'schedule_reenabled':
       return 'success'
     case 'repo_sync_slow':
     case 'backup_warning':
     case 'agent_disconnected':
+    case 'schedule_auto_disabled':
       return 'warning'
     case 'repo_sync_failed':
     case 'backup_failed':

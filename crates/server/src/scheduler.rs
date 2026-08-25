@@ -2196,6 +2196,61 @@ esac
         );
     }
 
+    /// `ScheduleFailureOutcome::auto_disabled` must reflect whether *this specific
+    /// call* crossed the auto-disable threshold, not just whether the schedule ends
+    /// up `enabled = false` - those can disagree if a concurrent write (e.g. a human
+    /// PUT disabling the schedule for an unrelated reason) races an in-flight
+    /// failure recording. Simulated here without an actual second connection racing:
+    /// after the schedule was already disabled and had its failure count reset by
+    /// something else, a single new failure lands - it must not be reported as the
+    /// call that disabled the schedule, or the caller would log a misleading
+    /// "auto-disabled after repeated failures" message and insert a
+    /// `ScheduleAutoDisabled` system event that misattributes the real cause.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn record_schedule_failure_does_not_report_auto_disabled_for_an_unrelated_prior_disable(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        // Simulates a concurrent human/quota disable landing between this schedule
+        // being selected as due and an in-flight failure write reaching the DB:
+        // enabled=false and consecutive_failures reset to 0, same as
+        // set_schedule_enabled/update_schedule leave it.
+        sqlx::query!(
+            "UPDATE schedules SET enabled = false, consecutive_failures = 0 WHERE id = $1",
+            schedule_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let outcome = db::record_schedule_failure(
+            &pool,
+            schedule_id,
+            agent_id,
+            next,
+            MAX_CONSECUTIVE_FAILURES,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.consecutive_failures, 1);
+        assert!(
+            !outcome.auto_disabled,
+            "one failure after an unrelated disable must not be reported as the call that \
+             auto-disabled the schedule"
+        );
+    }
+
     /// A streak that contains even one config-error failure must never be marked
     /// `auto_disabled_agent_unreachable`, even when the specific failure that crosses
     /// the threshold is itself a connectivity failure - the mid-streak data problem

@@ -3144,7 +3144,12 @@ pub async fn record_schedule_failure(
     .map_err(ApiError::Database)?;
     Ok(ScheduleFailureOutcome {
         consecutive_failures: row.consecutive_failures,
-        auto_disabled: !row.enabled,
+        // Derived from the threshold check itself, not from `enabled`'s final value:
+        // if a concurrent human/quota write disabled this schedule (and reset
+        // consecutive_failures) between it being selected as due and this write
+        // landing, `enabled` is already false for an unrelated reason and staying
+        // false here doesn't mean *this* call crossed the threshold.
+        auto_disabled: row.consecutive_failures >= max_consecutive_failures,
     })
 }
 

@@ -77,6 +77,67 @@ test.describe('Schedules management', () => {
     await expect(rail.locator('.timeline-tick').first()).toBeVisible()
   })
 
+  test('the rail collision note expands to the colliding runs and opens one', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // Seeded by seed-demo.sh: 'Colliding daily window' runs into the same
+    // repository as 'Offline agent due soon', five minutes apart.
+    const note = page.locator('.timeline-note')
+    await expect(note).toBeVisible()
+    await expect(note).toContainText('collide on server-daily')
+
+    await note.click()
+    const runs = page.locator('.timeline-collision-run')
+    await expect(runs).toHaveCount(2)
+    await expect(runs.filter({ hasText: 'Colliding daily window' })).toBeVisible()
+
+    await runs.first().click()
+    await expect(page).toHaveURL(/\/schedules\/\d+$/)
+  })
+
+  test('the text filter scopes agent: and host: terms and combines them with a pipe', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const search = page.locator('input.search-input')
+
+    await search.fill('agent:media-store-01')
+    await expect(page.locator('.entity-card', { hasText: 'media-weekly' })).toBeVisible()
+    await expect(page.locator('.entity-card', { hasText: 'database-hourly' })).toHaveCount(0)
+
+    await search.fill('agent:media-store-01 | agent:db-server-01')
+    await expect(page.locator('.entity-card', { hasText: 'media-weekly' })).toBeVisible()
+    await expect(page.locator('.entity-card', { hasText: 'database-hourly' }).first()).toBeVisible()
+
+    // Every demo repository lives on localhost, so a host: term keeps the list
+    // whole - and an agent hostname scoped to host: matches nothing, which is
+    // what makes the two fields distinct.
+    await search.fill('host:localhost')
+    await expect(page.locator('.entity-card').first()).toBeVisible()
+
+    await search.fill('host:media-store-01')
+    await expect(page.locator('.entity-card')).toHaveCount(0)
+  })
+
+  test('the toolbar explains the filter syntax, including the pipe', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'Filter syntax' }).click()
+
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('agent:k3s | agent:nas')
+    await expect(dialog).toContainText('either may match')
+    await expect(dialog).toContainText('Storage host the repository lives on')
+  })
+
   test('overdue schedule card shows an Overdue chip with a per-host detail tooltip', async ({
     page,
   }) => {

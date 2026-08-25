@@ -28,6 +28,7 @@ import {
   withErrorTitles,
   type ScheduleHealthEntry,
 } from '../utils/scheduleHealth'
+import { parseFilterQuery, matchesFilterQuery, type FilterSubject } from '../utils/filterQuery'
 import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -36,6 +37,7 @@ import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatus
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
 import ScheduleTimelineRail, { type TimelineEntry } from '../components/ScheduleTimelineRail.vue'
+import FilterSyntaxHelp from '../components/FilterSyntaxHelp.vue'
 import type { AgentRow } from '../types/agent'
 import { scheduleDisabledLabel } from '../utils/scheduleStatus'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -171,6 +173,22 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   }),
 )
 
+/**
+ * What a schedule offers each filter field. `host` is the storage host the
+ * repository lives on - the machine being backed up is the `agent`, and the two
+ * were previously indistinguishable because the search box only ever looked at
+ * the agent labels.
+ */
+function filterSubject(s: EnrichedSchedule): FilterSubject {
+  return {
+    name: [s.name],
+    // hostLabels carry "Display name (hostname)", so one entry covers both.
+    agent: s.hostLabels,
+    host: [s.repo?.ssh_host ?? null],
+    repo: [s.repo?.name ?? null],
+  }
+}
+
 const filteredSchedules = computed(() => {
   let list = [...enrichedSchedules.value]
 
@@ -194,14 +212,9 @@ const filteredSchedules = computed(() => {
     list = list.filter((s) => scheduleRunStatus(s.health) === 'failed')
   }
 
-  if (filterText.value.trim()) {
-    const q = filterText.value.toLowerCase()
-    list = list.filter(
-      (s) =>
-        (s.name?.toLowerCase().includes(q) ?? false) ||
-        s.hostLabels.some((label) => label.toLowerCase().includes(q)) ||
-        (s.repo?.name.toLowerCase().includes(q) ?? false),
-    )
+  const query = parseFilterQuery(filterText.value)
+  if (query.length > 0) {
+    list = list.filter((s) => matchesFilterQuery(query, filterSubject(s)))
   }
 
   list.sort((a, b) => {
@@ -291,8 +304,14 @@ const railEntries = computed<TimelineEntry[]>(() =>
       label: s.name || s.repo?.name || `Schedule #${s.id}`,
       atIso: s.next_run_at as string,
       host: s.repo?.ssh_host ?? null,
+      repoId: s.repo_id,
+      repoName: s.repo?.name ?? null,
     })),
 )
+
+function openTimelineEntry(entry: TimelineEntry): void {
+  router.push(`/schedules/${entry.id}`)
+}
 
 // Enriches the shared chip set with SchedulesView-specific tooltips: this
 // page aggregates across every host a schedule targets, so a bare "Overdue"
@@ -430,8 +449,9 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       <input
         v-model="filterText"
         class="input search-input"
-        placeholder="Filter by name, agent, or repo..."
+        placeholder="Filter by name, agent, host, or repo..."
       />
+      <FilterSyntaxHelp />
       <button
         v-if="isMobile"
         class="filter-toggle"
@@ -498,7 +518,10 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
     />
 
     <template v-else>
-      <ScheduleTimelineRail :entries="railEntries" />
+      <ScheduleTimelineRail
+        :entries="railEntries"
+        @select="openTimelineEntry"
+      />
 
       <div
         v-for="group in groupedSchedules"

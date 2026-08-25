@@ -143,9 +143,27 @@ const mockAgents = [
 ]
 
 const mockRepos = [
-  { id: 20, name: 'server-daily', repo_path: '/repo/daily', enabled: true },
-  { id: 21, name: 'database-hourly', repo_path: '/repo/db', enabled: true },
-  { id: 22, name: 'media-weekly', repo_path: '/repo/media', enabled: true },
+  {
+    id: 20,
+    name: 'server-daily',
+    repo_path: '/repo/daily',
+    ssh_host: 'borg-backup.example.com',
+    enabled: true,
+  },
+  {
+    id: 21,
+    name: 'database-hourly',
+    repo_path: '/repo/db',
+    ssh_host: 'nas.example.com',
+    enabled: true,
+  },
+  {
+    id: 22,
+    name: 'media-weekly',
+    repo_path: '/repo/media',
+    ssh_host: 'nas.example.com',
+    enabled: true,
+  },
 ]
 
 const mockHealth = [
@@ -468,6 +486,75 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).not.toContain('database-hourly')
   })
 
+  it('filters by the storage host with a bare term', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    await wrapper.find('input.search-input').setValue('borg-backup')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).not.toContain('database-hourly')
+  })
+
+  it('scopes a host: term to the storage host, not the agent', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const searchInput = wrapper.find('input.search-input')
+    await searchInput.setValue('host:nas')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('database-hourly')
+    expect(wrapper.text()).toContain('media-weekly')
+    expect(wrapper.text()).not.toContain('server-daily')
+
+    // db-server-01 is an agent, so scoping it to host matches nothing.
+    await searchInput.setValue('host:db-server')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('database-hourly')
+  })
+
+  it('scopes an agent: term to the target agents', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    await wrapper.find('input.search-input').setValue('agent:media-store')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('media-weekly')
+    expect(wrapper.text()).not.toContain('server-daily')
+  })
+
+  it('keeps a schedule matching either side of a pipe', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    await wrapper.find('input.search-input').setValue('agent:media-store | host:borg-backup')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('media-weekly')
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).not.toContain('database-hourly')
+  })
+
+  it('requires both space-separated terms to match', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const searchInput = wrapper.find('input.search-input')
+    await searchInput.setValue('host:nas agent:media-store')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('media-weekly')
+    expect(wrapper.text()).not.toContain('database-hourly')
+  })
+
   it('filters by health status: success', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
@@ -774,14 +861,17 @@ describe('SchedulesView', () => {
     expect(router.currentRoute.value.path).toBe('/schedules/1')
   })
 
-  it('shows the 24h collision rail for schedules due soon, flagging same-host collisions', async () => {
+  // The rail's collision warning is about repository contention, so two runs
+  // sharing a storage host but writing to different repositories are no longer
+  // flagged - only two runs writing to the same repository are.
+  function mockRailSchedules(repoIdOfSecond: number): void {
     const soon = (hours: number): string => new Date(Date.now() + hours * 3600_000).toISOString()
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') {
         return Promise.resolve({
           data: [
             { ...mockSchedules[0], repo_id: 20, next_run_at: soon(2) },
-            { ...mockSchedules[1], repo_id: 21, next_run_at: soon(2.1) },
+            { ...mockSchedules[1], repo_id: repoIdOfSecond, next_run_at: soon(2.1) },
           ],
         })
       }
@@ -797,12 +887,44 @@ describe('SchedulesView', () => {
       if (url === '/stats/health') return Promise.resolve({ data: [] })
       return Promise.resolve({ data: [] })
     })
+  }
+
+  it('shows the 24h collision rail without flagging runs that only share a storage host', async () => {
+    mockRailSchedules(21)
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
     expect(wrapper.find('.timeline-rail').exists()).toBe(true)
+    expect(wrapper.findAll('.timeline-tick')).toHaveLength(2)
+    expect(wrapper.findAll('.timeline-tick-collision')).toHaveLength(0)
+    expect(wrapper.find('.timeline-note').exists()).toBe(false)
+  })
+
+  it('flags two runs writing to the same repository and names the repository', async () => {
+    mockRailSchedules(20)
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
     expect(wrapper.findAll('.timeline-tick-collision')).toHaveLength(2)
-    expect(wrapper.find('.timeline-note').text()).toContain('shared-box.example.com')
+    expect(wrapper.find('.timeline-note').text()).toContain('2 runs collide on server-daily')
+  })
+
+  it('opens a colliding run from the rail note', async () => {
+    mockRailSchedules(20)
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    await wrapper.find('.timeline-note').trigger('click')
+    const runs = wrapper.findAll('.timeline-collision-run')
+    expect(runs).toHaveLength(2)
+
+    await runs[1].trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/schedules/2')
   })
 
   it('renders the run-history strip for a schedule from the activity feed', async () => {

@@ -566,7 +566,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
                   :label="s.enabled ? 'Disable schedule' : 'Enable schedule'"
                   @update:model-value="toggleScheduleEnabled(s)"
                 />
-                <span class="schedule-toggle-label">{{ s.enabled ? 'Enabled' : 'Disabled' }}</span>
+                <span class="schedule-toggle-label">{{ scheduleDisabledLabel(s) }}</span>
               </div>
               <button
                 v-if="s.isRunning"

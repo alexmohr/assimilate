@@ -189,6 +189,27 @@ fn pinned_known_hosts_path(repo_id: i64) -> PathBuf {
     pinned_known_hosts_dir().join(format!("repo-{repo_id}"))
 }
 
+/// Creates [`pinned_known_hosts_dir`] and hardens its permissions, once per
+/// process. `write_pinned_known_hosts` is reachable from many concurrent,
+/// unserialized request paths, and the directory's existence/permissions
+/// never change once set, so re-running `create_dir_all`/`set_permissions`
+/// on every single call is pure overhead - cache success behind a
+/// [`tokio::sync::OnceCell`] instead. A failed attempt is not cached, so a
+/// transient error (e.g. disk full) doesn't wedge every future write.
+async fn ensure_pinned_known_hosts_dir() -> Result<PathBuf, SshError> {
+    static READY: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+    let dir = pinned_known_hosts_dir();
+    READY
+        .get_or_try_init(|| async {
+            tokio::fs::create_dir_all(&dir).await?;
+            #[cfg(unix)]
+            set_permissions(&dir, 0o700).await?;
+            Ok::<(), SshError>(())
+        })
+        .await?;
+    Ok(dir)
+}
+
 /// Writes (or refreshes) the pinned `known_hosts` entry for `repo_id`, so
 /// borg's SSH transport can be pointed at a stable, repository-scoped file via
 /// [`shared::ssh::borg_rsh_with_known_hosts`]. The file lives at a stable path
@@ -214,10 +235,7 @@ pub async fn write_pinned_known_hosts(
     port: u16,
     host_key: &str,
 ) -> Result<PathBuf, SshError> {
-    let dir = pinned_known_hosts_dir();
-    tokio::fs::create_dir_all(&dir).await?;
-    #[cfg(unix)]
-    set_permissions(&dir, 0o700).await?;
+    let dir = ensure_pinned_known_hosts_dir().await?;
 
     let path = pinned_known_hosts_path(repo_id);
     let tmp_path = dir.join(format!(

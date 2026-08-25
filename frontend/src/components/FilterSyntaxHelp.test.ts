@@ -47,4 +47,21 @@ describe('FilterSyntaxHelp', () => {
     expect(text).toContain('agent:k3s | agent:nas')
     expect(text).toContain('either may match')
   })
+
+  it('closes on the modal close button, leaving the button clickable again', async () => {
+    open()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.body.textContent).toContain('Filter syntax')
+
+    const closeButton = document.querySelector<HTMLButtonElement>('.modal-close')
+    closeButton?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(document.body.textContent).not.toContain('Filter syntax')
+
+    // Re-opens cleanly rather than being stuck closed.
+    document.querySelector<HTMLButtonElement>('button.filter-toggle')?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.body.textContent).toContain('Filter syntax')
+  })
 })

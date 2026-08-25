@@ -3607,6 +3607,166 @@ async fn test_schedule_update_clears_auto_disable_bookkeeping_for_dropped_agent(
     assert_eq!(reenabled, Vec::<i64>::new());
 }
 
+/// For a multi-target schedule, retargeting through the actual `PUT
+/// /api/schedules/{id}` handler must not forgive a still-targeted, still-broken
+/// agent just because an unrelated sibling target was dropped in the same edit -
+/// scheduler.rs's DB-level tests only covered this via
+/// `db::reset_schedule_failure_tracking_if_target_dropped` directly; this exercises
+/// the same scenario through the production entry point.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_does_not_reset_bookkeeping_when_only_a_sibling_target_is_dropped(
+    pool: sqlx::PgPool,
+) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let causing_agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-http-causing', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let sibling_agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-http-sibling', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo_id = insert_test_repo(&pool, "multi-http-repo").await;
+    let schedule_id = insert_test_schedule(&pool, causing_agent_id, repo_id).await;
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 1)",
+    )
+    .bind(schedule_id)
+    .bind(sibling_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Simulate the scheduler having already auto-disabled this schedule because of
+    // causing_agent_id specifically, with sibling_agent_id an unrelated, healthy target.
+    sqlx::query(
+        "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = true, \
+         auto_disabled_by_agent_id = $2, consecutive_failures = 3, \
+         failure_streak_pure_connectivity = true WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .bind(causing_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Drop only the unrelated sibling; the causing agent stays a target.
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [causing_agent_id],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let row: (bool, bool, Option<i64>, i32) = sqlx::query_as(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.0);
+    assert!(
+        row.1,
+        "dropping an unrelated sibling must not clear bookkeeping the causing agent is still \
+         responsible for"
+    );
+    assert_eq!(row.2, Some(causing_agent_id));
+    assert_eq!(row.3, 3);
+}
+
+/// The inverse of the above, through the same production entry point: dropping the
+/// agent actually recorded as the cause must clear the bookkeeping, even though an
+/// unrelated sibling target stays on the schedule.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_clears_bookkeeping_when_causing_agent_dropped_multi_target(
+    pool: sqlx::PgPool,
+) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let causing_agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-http-causing-2', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let sibling_agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-http-sibling-2', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo_id = insert_test_repo(&pool, "multi-http-repo-2").await;
+    let schedule_id = insert_test_schedule(&pool, causing_agent_id, repo_id).await;
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 1)",
+    )
+    .bind(schedule_id)
+    .bind(sibling_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = true, \
+         auto_disabled_by_agent_id = $2, consecutive_failures = 3, \
+         failure_streak_pure_connectivity = true WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .bind(causing_agent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Drop the causing agent; the unrelated sibling stays a target.
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [sibling_agent_id],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let row: (bool, bool, Option<i64>, i32) = sqlx::query_as(
+        "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, \
+         consecutive_failures FROM schedules WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.0, "retargeting alone must not re-enable the schedule");
+    assert!(
+        !row.1,
+        "dropping the causing agent must clear the stale bookkeeping"
+    );
+    assert_eq!(row.2, None);
+    assert_eq!(row.3, 0);
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_global_excludes_get_initially_empty(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;

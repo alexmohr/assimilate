@@ -11,10 +11,10 @@ import {
   refreshSession,
   verifyTotpLogin,
 } from '../api/auth'
-import type { AuthUser } from '../api/auth'
+import type { CurrentUserResponse } from '../api/auth'
 import { logger } from '../utils/logger'
 
-export type { AuthUser } from '../api/auth'
+export type { CurrentUserResponse } from '../api/auth'
 
 // Refresh the session when this much time remains before expiry.
 const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000
@@ -24,7 +24,7 @@ const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000
 const ADMIN_ROLE_NAME = 'admin'
 
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref<AuthUser | null>(null)
+  const user = ref<CurrentUserResponse | null>(null)
   const isAdmin = computed(() => user.value?.role === ADMIN_ROLE_NAME)
   const canUpgradeAgent = computed(() => user.value?.can_upgrade_agent ?? false)
   const loading = ref(false)
@@ -84,26 +84,19 @@ export const useAuthStore = defineStore('auth', () => {
       return
     }
 
-    user.value = data.user
-    rememberMe.value = data.remember_me
-    sessionExpiresAt.value = data.session_expires_at
-    if (remember) {
-      scheduleRefresh(data.session_expires_at)
-    }
+    // The login response's `user` is the leaner UserResponse shape (no
+    // can_upgrade_agent) - fetch the full /auth/me record now the session is
+    // established, so permission-gated UI is correct without a page reload.
+    await fetchMe()
 
     totpRequired.value = false
     tempToken.value = null
   }
 
   async function verifyTotp(code: string, recovery = false): Promise<void> {
-    const data = await verifyTotpLogin(code, tempToken.value, recovery)
+    await verifyTotpLogin(code, tempToken.value, recovery)
 
-    user.value = data.user
-    rememberMe.value = data.remember_me
-    sessionExpiresAt.value = data.session_expires_at
-    if (data.remember_me) {
-      scheduleRefresh(data.session_expires_at)
-    }
+    await fetchMe()
 
     totpRequired.value = false
     tempToken.value = null

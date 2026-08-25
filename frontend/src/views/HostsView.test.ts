@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockApiClientRw } from '../test-utils/sharedMocks'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
-import type { AuthUser } from '../stores/auth'
+import type { CurrentUserResponse } from '../stores/auth'
 import HostsView from './HostsView.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
@@ -125,11 +125,12 @@ async function mountWithAgent(
     username: 'test-user',
     role: 'admin',
     must_change_password: false,
-    created_at: '2026-01-01T00:00:00Z',
-    last_login_at: null,
+    session_expires_at: null,
+    remember_me: false,
     can_upgrade_agent: true,
+    totp_enabled: false,
     ...authUserOverrides,
-  } as AuthUser
+  } as CurrentUserResponse
   const wrapper = mount(HostsView, { global: { plugins: [pinia, router] } })
   await flushPromises()
   return wrapper

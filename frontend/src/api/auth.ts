@@ -3,32 +3,23 @@
 
 import { apiClient } from './client'
 import type {
+  MeResponse,
   RefreshSessionResponse,
   SessionListResponse,
   SessionResponse,
   TotpSetupResponse,
   TotpVerifyResponse,
+  UserResponse,
 } from '../types/generated'
 
-export interface AuthUser {
-  id: number
-  username: string
-  role: string
-  must_change_password: boolean
-  created_at: string
-  last_login_at: string | null
-  can_upgrade_agent: boolean
-  totp_enabled?: boolean
-}
-
-export interface CurrentUserResponse extends AuthUser {
-  session_expires_at: string | null
-  remember_me: boolean
-  totp_enabled: boolean
-}
+// GET /auth/me returns MeResponse (session/permission fields, no
+// created_at/last_login_at); POST /auth/login and the TOTP login endpoints
+// return UserResponse (created_at/last_login_at, no can_upgrade_agent) -
+// these are two different backend shapes, not one shared "AuthUser".
+export type CurrentUserResponse = MeResponse
 
 export interface LoginResult {
-  user: AuthUser
+  user: UserResponse
   session_expires_at: string
   remember_me: boolean
   totp_required: boolean
@@ -36,7 +27,7 @@ export interface LoginResult {
 }
 
 export interface TotpLoginResult {
-  user: AuthUser
+  user: UserResponse
   session_expires_at: string
   remember_me: boolean
 }

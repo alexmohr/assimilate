@@ -22,7 +22,9 @@ FROM rust:trixie AS rust-builder
 ARG SERVER_VERSION
 ENV APP_VERSION_OVERRIDE=$SERVER_VERSION
 WORKDIR /app
-RUN rustup default nightly
+# Pinned to a known-good date rather than the floating "nightly" channel - see
+# .github/actions/setup-rust-nightly-db/action.yml for why.
+RUN rustup default nightly-2026-08-21
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/

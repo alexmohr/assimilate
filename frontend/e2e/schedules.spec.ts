@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockScheduleOneHealth, test } from './fixtures'
+import { expect, loginAsAdmin, mockScheduleOneHealth, mockScheduleOnePatch, test } from './fixtures'
 import type { Locator, Page } from '@playwright/test'
 
 interface ScheduleListEntry {
@@ -384,41 +384,18 @@ test.describe('Schedules management', () => {
     // The scheduler itself flips these fields after repeated failures to reach
     // the schedule's target agent (see docs/agents.md) - simulated here via a
     // mocked list response rather than waiting out real backoff ticks.
-    const autoDisable = {
+    await loginAsAdmin(page)
+    await mockScheduleOnePatch(page, {
       enabled: false,
       auto_disabled_agent_unreachable: true,
       consecutive_failures: 3,
-    }
-    await loginAsAdmin(page)
-    await page.route(
-      (url) => url.pathname === '/api/schedules' || /^\/api\/schedules\/\d+$/.test(url.pathname),
-      async (route) => {
-        const response = await route.fetch()
-        const body = (await response.json()) as
-          | Array<Record<string, unknown>>
-          | Record<string, unknown>
-        // Schedule 1 is the seeded web-server-01 -> server-daily schedule (see
-        // mockScheduleOneHealth above for the same id/target pairing). It has
-        // no explicit name, so its card falls back to displaying its repo's
-        // name ("server-daily") - matching on id, not name, avoids that.
-        const patched = Array.isArray(body)
-          ? body.map((s) => (s.id === 1 ? { ...s, ...autoDisable } : s))
-          : body.id === 1
-            ? { ...body, ...autoDisable }
-            : body
-        return route.fulfill({
-          status: response.status(),
-          contentType: 'application/json',
-          body: JSON.stringify(patched),
-        })
-      },
-    )
+    })
 
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
     // Several other seeded schedules also fall back to displaying the same
-    // "server-daily" repo name (see the id-based match above), so hasText
+    // "server-daily" repo name (schedule 1 has no explicit name), so hasText
     // would match multiple cards - the schedule's own data-schedule-id is
     // the only unambiguous selector.
     const card = page.locator('.entity-card[data-schedule-id="1"]')
@@ -453,31 +430,12 @@ test.describe('Schedules management', () => {
     // corrupted encrypted passphrase) counts toward the same threshold but is
     // never marked auto_disabled_agent_unreachable, since an unrelated agent
     // reconnect says nothing about whether the underlying data problem was fixed.
-    const autoDisableError = {
+    await loginAsAdmin(page)
+    await mockScheduleOnePatch(page, {
       enabled: false,
       auto_disabled_agent_unreachable: false,
       consecutive_failures: 3,
-    }
-    await loginAsAdmin(page)
-    await page.route(
-      (url) => url.pathname === '/api/schedules' || /^\/api\/schedules\/\d+$/.test(url.pathname),
-      async (route) => {
-        const response = await route.fetch()
-        const body = (await response.json()) as
-          | Array<Record<string, unknown>>
-          | Record<string, unknown>
-        const patched = Array.isArray(body)
-          ? body.map((s) => (s.id === 1 ? { ...s, ...autoDisableError } : s))
-          : body.id === 1
-            ? { ...body, ...autoDisableError }
-            : body
-        return route.fulfill({
-          status: response.status(),
-          contentType: 'application/json',
-          body: JSON.stringify(patched),
-        })
-      },
-    )
+    })
 
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')

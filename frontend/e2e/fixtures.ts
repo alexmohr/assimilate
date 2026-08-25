@@ -112,6 +112,37 @@ export async function mockScheduleOneHealth(
   )
 }
 
+// Patches schedule 1 ("server-daily", targeting web-server-01) in both
+// /api/schedules and /api/schedules/:id responses, so tests can force
+// scheduler-driven fields (e.g. the auto-disable bookkeeping) without waiting
+// out real backoff ticks. Used by every surface that reads schedule 1 through
+// these endpoints: the schedules list, its detail page, and the agent-detail
+// schedules tab.
+export async function mockScheduleOnePatch(
+  page: Page,
+  overrides: Record<string, unknown>,
+): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/schedules' || /^\/api\/schedules\/\d+$/.test(url.pathname),
+    async (route) => {
+      const response = await route.fetch()
+      const body = (await response.json()) as
+        | Array<Record<string, unknown>>
+        | Record<string, unknown>
+      const patched = Array.isArray(body)
+        ? body.map((s) => (s.id === 1 ? { ...s, ...overrides } : s))
+        : body.id === 1
+          ? { ...body, ...overrides }
+          : body
+      return route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        body: JSON.stringify(patched),
+      })
+    },
+  )
+}
+
 // Injects a running backup operation for web-server-01 / server-daily (schedule 1,
 // seeded by the demo) into /api/stats/dashboard-overview's running_operations, so
 // tests can force the agent list's "Running" pill to render without waiting for a

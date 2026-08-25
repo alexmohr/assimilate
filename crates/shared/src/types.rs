@@ -309,6 +309,7 @@ impl BorgEncryption {
     strum_macros::Display,
     strum_macros::EnumString,
 )]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum ScheduleType {
@@ -372,6 +373,7 @@ impl FromStr for ExecutionMode {
     strum_macros::Display,
     strum_macros::EnumString,
 )]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum OnFailure {
@@ -593,6 +595,7 @@ impl<'de> Deserialize<'de> for SystemEventType {
 
 /// Severity level of a dashboard finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum FindingSeverity {
     /// A critical issue requiring immediate attention.
@@ -629,6 +632,7 @@ impl FromStr for FindingSeverity {
 
 /// Status value of a dashboard finding or operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingStatus {
     /// The operation is currently running.
@@ -676,6 +680,7 @@ impl FromStr for FindingStatus {
 
 /// Kind/category of a dashboard finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingKind {
     /// Agent host has no backup schedule assigned.

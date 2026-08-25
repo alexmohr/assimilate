@@ -3,6 +3,8 @@
 
 import type {
   DashboardAgentLinkResponse,
+  DashboardDestinationResponse,
+  DashboardFindingResponse,
   DashboardOperationResponse,
   DashboardUpcomingScheduleResponse,
   DashboardRepositoryCapacityResponse,
@@ -10,60 +12,18 @@ import type {
   DashboardProtectionCoverageResponse,
 } from './generated'
 
-export type DashboardStatus =
-  | 'healthy'
-  | 'warning'
-  | 'failed'
-  | 'overdue'
-  | 'never_succeeded'
-  | 'running'
-  | 'disabled'
-  | 'offline_due_soon'
+export type DashboardDestination = DashboardDestinationResponse
 
-export type DashboardSeverity = 'critical' | 'warning' | 'info'
-
-export type DashboardFindingKind =
-  | 'backup_failed'
-  | 'backup_warning'
-  | 'schedule_target_overdue'
-  | 'schedule_target_never_succeeded'
-  | 'host_offline_due_soon'
-  | 'host_unassigned'
-  | 'repository_unscheduled'
-  | 'repository_quota_warning'
-  | 'repository_quota_critical'
-  | 'repository_import_failed'
-
-export type DashboardDestination =
-  | { kind: 'host'; hostname: string }
-  | { kind: 'schedule'; schedule_id: number }
-  | { kind: 'repository'; repo_id: number }
-  | { kind: 'activity'; report_id: number }
-
-export type DashboardFinding = {
-  id: string
-  kind: DashboardFindingKind
-  severity: DashboardSeverity
-  status: DashboardStatus
-  hostname: string | null
-  schedule_id: number | null
-  schedule_name: string | null
-  repo_id: number | null
-  repo_name: string | null
-  reason: string
-  occurred_at: string | null
-  deadline: string | null
-  destination: DashboardDestination
-}
+export type DashboardFinding = DashboardFindingResponse
 
 export type DashboardHostLink = DashboardAgentLinkResponse
 
-export type DashboardOperation = Omit<DashboardOperationResponse, 'destination'> & {
-  destination: DashboardDestination
-}
+export type DashboardOperation = DashboardOperationResponse
 
 export type DashboardUpcomingSchedule = DashboardUpcomingScheduleResponse
 
+// Mirrors `DashboardQuotaStatus` in crates/server/src/api/stats.rs, which isn't part of the
+// ts-rs export surface (only crates/shared exports bindings) and isn't Serialize/TS-derived.
 export type DashboardQuotaStatus = 'unconfigured' | 'healthy' | 'warning' | 'critical'
 
 export type DashboardRepositoryCapacity = Omit<

@@ -509,7 +509,6 @@ pub struct ScheduleResponse {
     pub repo_id: Option<i64>,
     /// Display name.
     pub name: String,
-    #[ts(type = "string")]
     /// Type of schedule.
     pub schedule_type: ScheduleType,
     /// Cron expression defining the schedule.
@@ -549,7 +548,6 @@ pub struct ScheduleResponse {
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
-    #[ts(type = "string")]
     /// Action to take on failure.
     pub on_failure: OnFailure,
     #[ts(type = "number | null")]
@@ -947,7 +945,6 @@ pub struct TunnelResponse {
     pub enabled: bool,
     /// Timestamp of when the created occurred.
     pub created_at: DateTime<Utc>,
-    #[ts(type = "string")]
     /// Current status.
     pub status: TunnelStatus,
 }
@@ -1705,13 +1702,10 @@ pub struct DashboardSummaryCountersResponse {
 pub struct DashboardFindingResponse {
     /// Unique identifier.
     pub id: String,
-    #[ts(type = "string")]
     /// Kind of the finding.
     pub kind: FindingKind,
-    #[ts(type = "string")]
     /// Severity level.
     pub severity: FindingSeverity,
-    #[ts(type = "string")]
     /// Current status.
     pub status: FindingStatus,
     /// Hostname of the machine.
@@ -1811,7 +1805,6 @@ pub struct DashboardOperationResponse {
     #[ts(type = "number")]
     /// Identifier of the associated report.
     pub report_id: i64,
-    #[ts(type = "string")]
     /// Current status.
     pub status: FindingStatus,
     /// Hostname of the machine.

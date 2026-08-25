@@ -3237,16 +3237,22 @@ pub async fn reenable_system_disabled_schedules_for_agent(
     .map_err(ApiError::Database)
 }
 
-/// Schedules currently auto-disabled specifically because `agent_id` is the one whose
-/// call crossed the failure threshold - the candidate set for
-/// [`reenable_specific_schedules`]. Split out as a read so a caller (the reconnect
-/// handler) can filter the candidates before committing to the write - e.g. for a
-/// multi-target schedule, `auto_disabled_by_agent_id` only ever names whichever target
-/// happened to be first-recorded on the disabling tick, not every target that
-/// contributed to the streak (`consecutive_failures` is schedule-wide). Blindly
-/// re-enabling on this agent's reconnect could resume a schedule whose *other* target
-/// is still fully unreachable, reproducing the same unbounded-retry problem this
-/// mechanism exists to prevent, just for that other target.
+/// Schedules currently auto-disabled where `agent_id` is one of the schedule's
+/// targets - the candidate set for [`reenable_specific_schedules`]. Split out as a
+/// read so a caller (the reconnect handler) can filter the candidates before
+/// committing to the write.
+///
+/// Deliberately matches on *any* target of the schedule, not just the one recorded in
+/// `auto_disabled_by_agent_id`: for a multi-target schedule, that column only ever
+/// names whichever target happened to be first-recorded on the disabling tick, not
+/// every target that contributed to the streak (`consecutive_failures` is
+/// schedule-wide). Gating solely on that one credited agent's reconnect would mean a
+/// schedule could stay disabled forever if *that* agent never reconnects again after
+/// the disable (e.g. it already recovered and stayed connected while a different
+/// target was the one still down) - even once every target is actually back.
+/// Reconsidering on any target's reconnect is safe because
+/// [`reenable_specific_schedules`]'s caller only ever includes a schedule here once it
+/// has independently verified every one of its targets is currently connected.
 ///
 /// # Errors
 ///
@@ -3256,8 +3262,8 @@ pub async fn list_auto_disabled_schedule_ids_for_agent(
     agent_id: i64,
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
-        "SELECT id FROM schedules WHERE auto_disabled_agent_unreachable = true AND \
-         auto_disabled_by_agent_id = $1",
+        "SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE \
+         s.auto_disabled_agent_unreachable = true AND st.agent_id = $1",
         agent_id,
     )
     .fetch_all(pool)
@@ -3267,10 +3273,13 @@ pub async fn list_auto_disabled_schedule_ids_for_agent(
 
 /// Re-enables exactly the given `schedule_ids` (a caller-filtered subset of
 /// [`list_auto_disabled_schedule_ids_for_agent`]'s result), the same way
-/// [`reenable_system_disabled_schedules_for_agent`] does. Still re-checks
-/// `auto_disabled_by_agent_id = $2 AND auto_disabled_agent_unreachable = true` so a
-/// schedule whose state changed between the two calls (e.g. a human disabled it for an
-/// unrelated reason in between) is safely skipped rather than blindly overwritten.
+/// [`reenable_system_disabled_schedules_for_agent`] does. Matches only on
+/// `auto_disabled_agent_unreachable = true`, not on which agent is recorded in
+/// `auto_disabled_by_agent_id` - the reconnecting agent that produced `schedule_ids`
+/// may not be the one originally credited with the disable, see
+/// [`list_auto_disabled_schedule_ids_for_agent`] - so a schedule whose state changed
+/// between the two calls (e.g. a human disabled it for an unrelated reason in between)
+/// is safely skipped rather than blindly overwritten.
 ///
 /// # Errors
 ///
@@ -3278,16 +3287,14 @@ pub async fn list_auto_disabled_schedule_ids_for_agent(
 pub async fn reenable_specific_schedules(
     pool: &PgPool,
     schedule_ids: &[i64],
-    agent_id: i64,
     now: DateTime<Utc>,
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
         "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
          auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
-         failure_streak_pure_connectivity = true, next_run_at = $3 WHERE id = ANY($1) AND \
-         auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id = $2 RETURNING id",
+         failure_streak_pure_connectivity = true, next_run_at = $2 WHERE id = ANY($1) AND \
+         auto_disabled_agent_unreachable = true RETURNING id",
         schedule_ids,
-        agent_id,
         now,
     )
     .fetch_all(pool)

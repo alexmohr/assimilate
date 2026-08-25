@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id FROM schedules WHERE auto_disabled_agent_unreachable = true AND auto_disabled_by_agent_id = $1",
+  "query": "SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE s.auto_disabled_agent_unreachable = true AND st.agent_id = $1",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       false
     ]
   },
-  "hash": "4ecdfc91e4e6da6560232c0c4d8a6bdb3c14d83784ba2f6cb2f40c1709a5772b"
+  "hash": "f56c28cadde01c9347ef4a6346d7ef31718f9cf18cfb35fba3aebfa695fd0bef"
 }

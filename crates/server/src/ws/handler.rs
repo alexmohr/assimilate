@@ -335,17 +335,19 @@ async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, 
 }
 
 /// Called on every successful agent connection. If the scheduler had auto-disabled
-/// any of this agent's schedules after repeated unreachable-agent failures (see
-/// `scheduler::record_schedule_failure_once`), re-enables them and makes them due
-/// again immediately, so backups resume on their own instead of staying off until a
-/// human notices and flips the switch back on. Never touches a schedule a human or
-/// quota enforcement disabled for an unrelated reason.
+/// any schedule this agent targets after repeated unreachable-agent failures (see
+/// `scheduler::record_schedule_failure_once`), re-enables it and makes it due again
+/// immediately, so backups resume on their own instead of staying off until a human
+/// notices and flips the switch back on. Never touches a schedule a human or quota
+/// enforcement disabled for an unrelated reason.
 ///
-/// For a multi-target schedule, only actually re-enables a candidate once every one
-/// of its targets is currently connected - `auto_disabled_by_agent_id` alone isn't
-/// enough to know that, since it only names whichever target happened to be
-/// first-recorded on the disabling tick, not every target that contributed to the
-/// (schedule-wide) failure streak.
+/// Considers a candidate schedule on *any* of its targets reconnecting, not just the
+/// one `auto_disabled_by_agent_id` happens to name (see
+/// [`db::list_auto_disabled_schedule_ids_for_agent`]'s doc comment for why), but only
+/// actually re-enables it once every one of its targets is currently connected -
+/// `auto_disabled_by_agent_id` alone isn't enough to know that, since it only names
+/// whichever target happened to be first-recorded on the disabling tick, not every
+/// target that contributed to the (schedule-wide) failure streak.
 async fn reenable_system_disabled_schedules_on_reconnect(
     state: &AppState,
     agent_id: i64,
@@ -367,9 +369,9 @@ async fn reenable_system_disabled_schedules_on_reconnect(
         return;
     }
 
-    // auto_disabled_by_agent_id only ever names whichever target happened to be
-    // first-recorded on the disabling tick, not every target that contributed to a
-    // multi-target schedule's (schedule-wide) failure streak. Re-enabling here
+    // A multi-target schedule's auto_disabled_by_agent_id only ever names whichever
+    // target happened to be first-recorded on the disabling tick, not every target
+    // that contributed to the (schedule-wide) failure streak. Re-enabling here
     // unconditionally could resume a schedule whose *other* target is still fully
     // unreachable, reproducing the same unbounded-retry problem for that target - so
     // only actually re-enable a candidate once every one of its targets is currently
@@ -413,13 +415,7 @@ async fn reenable_system_disabled_schedules_on_reconnect(
         return;
     }
 
-    match db::reenable_specific_schedules(
-        &state.pool,
-        &safe_to_reenable,
-        agent_id,
-        chrono::Utc::now(),
-    )
-    .await
+    match db::reenable_specific_schedules(&state.pool, &safe_to_reenable, chrono::Utc::now()).await
     {
         Ok(schedule_ids) if !schedule_ids.is_empty() => {
             tracing::info!(
@@ -3237,6 +3233,125 @@ exit 0
             .await
             .expect("get schedule");
         assert!(reenabled.enabled);
+        assert!(!reenabled.auto_disabled_agent_unreachable);
+    }
+
+    /// `auto_disabled_by_agent_id` only ever names whichever target happened to be
+    /// first-recorded on the disabling tick - not necessarily the target that's
+    /// actually been down the whole streak. If reconnect handling only reconsidered a
+    /// schedule when *that specific* agent reconnects, a schedule could stay disabled
+    /// forever once the credited agent has already recovered and stopped generating
+    /// new reconnect events, even after the truly-broken target comes back too.
+    /// Reconnect handling must reconsider a candidate schedule on *any* of its
+    /// targets reconnecting - here "broken" reconnects (not "flaky", the one credited
+    /// via `auto_disabled_by_agent_id`), and that alone must be enough to re-enable
+    /// the schedule once every target, including the already-connected "flaky", is up.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn reconnect_from_uncredited_target_reenables_schedule_once_all_connected(pool: PgPool) {
+        let flaky = crate::db::insert_agent(&pool, "flaky-agent-2", None, "hash", None)
+            .await
+            .expect("insert flaky agent");
+        let broken = crate::db::insert_agent(&pool, "broken-agent-2", None, "hash", None)
+            .await
+            .expect("insert broken agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "uncredited-target-repo",
+                repo_path: "/backups/uncredited-target",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "uncredited-target-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                on_failure: "continue",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(flaky.id, 0), (broken.id, 1)])
+            .await
+            .expect("insert schedule targets");
+
+        let next = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+        // Same attribution as the sibling test: the threshold-crossing failure is
+        // recorded against "flaky", so auto_disabled_by_agent_id ends up naming flaky
+        // even though "broken" is the one reconnecting below.
+        crate::db::record_schedule_failure(&pool, schedule.id, broken.id, next, 3, true)
+            .await
+            .expect("record schedule failure 1");
+        crate::db::record_schedule_failure(&pool, schedule.id, broken.id, next, 3, true)
+            .await
+            .expect("record schedule failure 2");
+        crate::db::record_schedule_failure(&pool, schedule.id, flaky.id, next, 3, true)
+            .await
+            .expect("record schedule failure 3");
+        assert_eq!(
+            auto_disabled_by_agent_id(&pool, schedule.id).await,
+            Some(flaky.id)
+        );
+
+        let state = build_test_state(pool.clone());
+
+        // Flaky already recovered and is connected, but generates no new reconnect
+        // event here - only "broken" does.
+        let (flaky_tx, _flaky_rx) = mpsc::channel(1);
+        state
+            .registry
+            .register(flaky.hostname.clone(), flaky_tx, false, None)
+            .await;
+        let (broken_tx, _broken_rx) = mpsc::channel(1);
+        state
+            .registry
+            .register(broken.hostname.clone(), broken_tx, false, None)
+            .await;
+        reenable_system_disabled_schedules_on_reconnect(&state, broken.id, &broken.hostname).await;
+
+        let reenabled = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .expect("get schedule");
+        assert!(
+            reenabled.enabled,
+            "the uncredited target's own reconnect must still re-enable the schedule once every \
+             target is connected"
+        );
         assert!(!reenabled.auto_disabled_agent_unreachable);
     }
 }

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id = NULL, consecutive_failures = 0, failure_streak_pure_connectivity = true, next_run_at = $2 WHERE id = ANY($1) AND auto_disabled_agent_unreachable = true RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3e0f3573ac0b5c0ee8d1e3a20c00df9d2c8f6eedae384c82c4aa1632f390e49e"
+}

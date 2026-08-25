@@ -34,7 +34,7 @@ const open = ref(false)
 <template>
   <button
     type="button"
-    class="filter-toggle"
+    class="btn btn-sm btn-ghost"
     aria-label="Filter syntax"
     title="Filter syntax"
     aria-haspopup="dialog"

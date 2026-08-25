@@ -13,7 +13,7 @@ const mounted: ReturnType<typeof mount>[] = []
 function open(): void {
   const wrapper = mount(FilterSyntaxHelp, { attachTo: document.body })
   mounted.push(wrapper)
-  wrapper.find('button.filter-toggle').trigger('click')
+  wrapper.find('button[aria-label="Filter syntax"]').trigger('click')
 }
 
 afterEach(() => {
@@ -60,7 +60,7 @@ describe('FilterSyntaxHelp', () => {
     expect(document.body.textContent).not.toContain('Filter syntax')
 
     // Re-opens cleanly rather than being stuck closed.
-    document.querySelector<HTMLButtonElement>('button.filter-toggle')?.click()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Filter syntax"]')?.click()
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(document.body.textContent).toContain('Filter syntax')
   })

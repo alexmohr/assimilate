@@ -3,7 +3,11 @@
 
 use std::collections::HashMap;
 
-use shared::{ssh::borg_rsh, types::Compression};
+use shared::{
+    ssh::{borg_rsh, borg_rsh_with_known_hosts},
+    types::Compression,
+};
+use tracing::warn;
 
 use crate::{error::ApiError, ssh};
 
@@ -16,6 +20,12 @@ use crate::{error::ApiError, ssh};
 /// (`BORG_RELOCATED_REPO_ACCESS_IS_OK`) is intentionally *not* part of the base:
 /// it is added only by callers that have a confirmed pending relocation, so that
 /// unrelated operations never silently accept a moved repository.
+///
+/// This uses `StrictHostKeyChecking=accept-new` against the process's own
+/// default `known_hosts` file, so it is only appropriate before a repository
+/// has an accepted host key on record (initial connection tests, `borg init`).
+/// Once a repository has a pinned `ssh_host_key`, use [`borg_env_for_repo`]
+/// instead so the pin is actually enforced.
 #[must_use]
 pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     let mut env = HashMap::from([
@@ -25,6 +35,50 @@ pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         env.insert("SSH_AUTH_SOCK".to_owned(), sock);
     }
+    env
+}
+
+/// Builds the borg environment for an operation against an existing
+/// repository, pinning SSH host key verification to `ssh_host_key` when one
+/// is on record (via a stable, repo-scoped `known_hosts` file - see
+/// [`crate::ssh::write_pinned_known_hosts`]) instead of relying on the
+/// process's own default `known_hosts` file.
+///
+/// Without this, a repo's "Accept SSH key" flow only updates the database and
+/// never actually took effect: every server-side borg call still fell back to
+/// the shared, unpinned `known_hosts` file, which could be left holding a
+/// stale entry for the host, causing every subsequent operation to fail with
+/// the same host-key-changed error the user had just accepted.
+///
+/// If writing the pinned file fails, this falls back to the unpinned
+/// `accept-new` behavior (logging a warning) rather than failing the whole
+/// operation outright, matching the agent's equivalent fallback.
+pub async fn borg_env_for_repo(
+    passphrase: &str,
+    repo_id: i64,
+    ssh_host: &str,
+    ssh_port: u16,
+    ssh_host_key: Option<&str>,
+) -> HashMap<String, String> {
+    let mut env = borg_base_env(passphrase);
+
+    let Some(host_key) = ssh_host_key else {
+        return env;
+    };
+
+    match ssh::write_pinned_known_hosts(repo_id, ssh_host, ssh_port, host_key).await {
+        Ok(path) => {
+            env.insert("BORG_RSH".to_owned(), borg_rsh_with_known_hosts(&path));
+        }
+        Err(e) => {
+            warn!(
+                repo_id,
+                error = %e,
+                "failed to write pinned SSH known_hosts, falling back to unpinned SSH"
+            );
+        }
+    }
+
     env
 }
 
@@ -142,7 +196,38 @@ pub async fn push_config_to_all_agents(state: &crate::AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_compression;
+    use super::{borg_env_for_repo, validate_compression};
+
+    #[tokio::test]
+    async fn borg_env_for_repo_pins_known_hosts_when_host_key_present() {
+        let env = borg_env_for_repo(
+            "hunter2",
+            555_000_001,
+            "repo.example.com",
+            22,
+            Some("ssh-ed25519 AAAA"),
+        )
+        .await;
+
+        let rsh = env.get("BORG_RSH").unwrap();
+        assert!(
+            rsh.contains("StrictHostKeyChecking=yes"),
+            "expected pinned host-key checking, got: {rsh}"
+        );
+        assert!(
+            rsh.contains("UserKnownHostsFile="),
+            "expected a pinned known_hosts file, got: {rsh}"
+        );
+    }
+
+    #[tokio::test]
+    async fn borg_env_for_repo_falls_back_to_accept_new_without_host_key() {
+        let env = borg_env_for_repo("hunter2", 555_000_002, "repo.example.com", 22, None).await;
+
+        let rsh = env.get("BORG_RSH").unwrap();
+        assert!(rsh.contains("StrictHostKeyChecking=accept-new"));
+        assert!(!rsh.contains("UserKnownHostsFile="));
+    }
 
     #[test]
     fn validate_compression_defaults_to_lz4_when_absent() {

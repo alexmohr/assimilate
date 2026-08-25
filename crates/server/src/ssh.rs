@@ -172,6 +172,40 @@ pub async fn scan_host_key(host: &str, port: u16) -> Result<String, SshError> {
         .ok_or_else(|| SshError::Connection(format!("{host}:{port}: no SSH host key received")))
 }
 
+/// Directory where per-repository pinned SSH `known_hosts` files are written,
+/// so server-side borg invocations can pin against a repo's accepted host key
+/// the same way the agent does, instead of relying on the process's own
+/// default `~/.ssh/known_hosts`.
+fn pinned_known_hosts_dir() -> PathBuf {
+    std::env::temp_dir().join("assimilate-known-hosts")
+}
+
+/// Writes (or refreshes) the pinned `known_hosts` entry for `repo_id`, so
+/// borg's SSH transport can be pointed at a stable, repository-scoped file via
+/// [`shared::ssh::borg_rsh_with_known_hosts`]. The file lives at a stable path
+/// (keyed by `repo_id`, not a temp file that gets deleted), so it stays valid
+/// across background tasks that reuse the same `BORG_RSH` value after the
+/// call that wrote it has already returned.
+///
+/// # Errors
+///
+/// Returns [`SshError::Io`] if the directory or file cannot be written.
+pub async fn write_pinned_known_hosts(
+    repo_id: i64,
+    host: &str,
+    port: u16,
+    host_key: &str,
+) -> Result<PathBuf, SshError> {
+    let dir = pinned_known_hosts_dir();
+    tokio::fs::create_dir_all(&dir).await?;
+
+    let path = dir.join(format!("repo-{repo_id}"));
+    let content = format!("{} {host_key}\n", shared::ssh::known_hosts_host(host, port));
+    tokio::fs::write(&path, content).await?;
+
+    Ok(path)
+}
+
 /// # Errors
 ///
 /// Returns [`SshError::PublicKeyNotFound`] if the operation fails.
@@ -1503,5 +1537,74 @@ mod tests {
         assert!(load_server_private_key().await.is_ok());
 
         unsafe { std::env::remove_var("SSH_KEY_DIR") };
+    }
+
+    #[tokio::test]
+    async fn write_pinned_known_hosts_writes_expected_content_for_default_port() {
+        let repo_id = 987_654_321_001;
+        let path = write_pinned_known_hosts(repo_id, "repo.example.com", 22, "ssh-ed25519 AAAA")
+            .await
+            .unwrap();
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content, "repo.example.com ssh-ed25519 AAAA\n");
+
+        tokio::fs::remove_file(&path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_pinned_known_hosts_brackets_nonstandard_port() {
+        let repo_id = 987_654_321_002;
+        let path = write_pinned_known_hosts(repo_id, "repo.example.com", 2222, "ssh-ed25519 AAAA")
+            .await
+            .unwrap();
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content, "[repo.example.com]:2222 ssh-ed25519 AAAA\n");
+
+        tokio::fs::remove_file(&path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_pinned_known_hosts_refreshes_existing_entry() {
+        let repo_id = 987_654_321_003;
+
+        let first = write_pinned_known_hosts(repo_id, "repo.example.com", 22, "ssh-ed25519 OLDKEY")
+            .await
+            .unwrap();
+        let second =
+            write_pinned_known_hosts(repo_id, "repo.example.com", 22, "ssh-ed25519 NEWKEY")
+                .await
+                .unwrap();
+
+        assert_eq!(first, second, "same repo_id must resolve to the same path");
+        let content = tokio::fs::read_to_string(&second).await.unwrap();
+        assert_eq!(content, "repo.example.com ssh-ed25519 NEWKEY\n");
+        assert!(!content.contains("OLDKEY"));
+
+        tokio::fs::remove_file(&second).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_pinned_known_hosts_keeps_different_repos_separate() {
+        let path_a = write_pinned_known_hosts(987_654_321_004, "host-a", 22, "key-a")
+            .await
+            .unwrap();
+        let path_b = write_pinned_known_hosts(987_654_321_005, "host-b", 22, "key-b")
+            .await
+            .unwrap();
+
+        assert_ne!(path_a, path_b);
+        assert_eq!(
+            tokio::fs::read_to_string(&path_a).await.unwrap(),
+            "host-a key-a\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&path_b).await.unwrap(),
+            "host-b key-b\n"
+        );
+
+        tokio::fs::remove_file(&path_a).await.unwrap();
+        tokio::fs::remove_file(&path_b).await.unwrap();
     }
 }

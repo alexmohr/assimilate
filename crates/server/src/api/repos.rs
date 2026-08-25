@@ -1293,7 +1293,14 @@ pub async fn exec_borg(
         &repo.repo_path,
     );
 
-    let mut env = helpers::borg_base_env(&passphrase);
+    let mut env = helpers::borg_env_for_repo(
+        &passphrase,
+        repo_id,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        repo.ssh_host_key.as_deref(),
+    )
+    .await;
     env.insert(BORG_REPO_ENV_KEY.to_owned(), repo_url);
 
     info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");

@@ -105,7 +105,14 @@ pub async fn get_repo_env(
         &repo.repo_path,
     );
 
-    let mut env = super::helpers::borg_base_env(&passphrase);
+    let mut env = super::helpers::borg_env_for_repo(
+        &passphrase,
+        repo_id,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        repo.ssh_host_key.as_deref(),
+    )
+    .await;
 
     if repo.relocation_pending {
         env.insert(

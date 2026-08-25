@@ -332,6 +332,8 @@ pub async fn create_repo(
     let need_borg_info = info_result.is_none();
     let bg_repo_url = repo_url.clone();
     let bg_passphrase = req.passphrase.clone();
+    let bg_ssh_host = req.ssh_host.clone();
+    let bg_ssh_host_key = ssh_host_key.clone();
     let task_state = state.clone();
 
     db::set_repo_importing(&state.pool, repo_id, true).await?;
@@ -350,6 +352,9 @@ pub async fn create_repo(
         need_borg_info,
         bg_repo_url,
         bg_passphrase,
+        bg_ssh_host,
+        bg_ssh_port: ssh_port_u16,
+        bg_ssh_host_key,
     }));
 
     Ok((StatusCode::CREATED, Json(RepoResponse::from(repo))))
@@ -367,6 +372,9 @@ struct InitialImportTask {
     need_borg_info: bool,
     bg_repo_url: String,
     bg_passphrase: String,
+    bg_ssh_host: String,
+    bg_ssh_port: u16,
+    bg_ssh_host_key: String,
 }
 
 /// Arguments for [`run_initial_import_work`], bundled (rather than passed
@@ -382,6 +390,9 @@ struct InitialImportWork<'a> {
     need_borg_info: bool,
     bg_repo_url: &'a str,
     bg_passphrase: &'a str,
+    bg_ssh_host: &'a str,
+    bg_ssh_port: u16,
+    bg_ssh_host_key: &'a str,
 }
 
 /// The actual sync work `run_initial_import_task` races against
@@ -401,6 +412,9 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
         need_borg_info,
         bg_repo_url,
         bg_passphrase,
+        bg_ssh_host,
+        bg_ssh_port,
+        bg_ssh_host_key,
     } = work;
 
     // Detect encryption before syncing rather than concurrently: both borg
@@ -408,13 +422,19 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
     // running them in parallel would force the list into the lock-retry path.
     if need_borg_info {
         let timeout = get_borg_timeout(pool).await;
-        match run_borg_info_with_retry(
-            bg_repo_url,
+        // The repo row (and its ssh_host_key) was already persisted before this
+        // background task was spawned, so - unlike the synchronous attempt in
+        // create_repo, which runs before any repo exists to pin against - this
+        // deferred retry can and should pin against the accepted host key.
+        let env = helpers::borg_env_for_repo(
             bg_passphrase,
-            timeout,
-            &task_state.task_registry,
+            repo_id,
+            bg_ssh_host,
+            bg_ssh_port,
+            Some(bg_ssh_host_key),
         )
-        .await
+        .await;
+        match run_borg_info_with_retry(bg_repo_url, &env, timeout, &task_state.task_registry).await
         {
             Ok(info) => {
                 if let Err(e) =
@@ -506,6 +526,9 @@ async fn run_initial_import_task(task: InitialImportTask) {
         need_borg_info,
         bg_repo_url,
         bg_passphrase,
+        bg_ssh_host,
+        bg_ssh_port,
+        bg_ssh_host_key,
     } = task;
 
     let op_clear_guard = set_server_sync_op(&task_state, repo_id).await;
@@ -524,6 +547,9 @@ async fn run_initial_import_task(task: InitialImportTask) {
             need_borg_info,
             bg_repo_url: &bg_repo_url,
             bg_passphrase: &bg_passphrase,
+            bg_ssh_host: &bg_ssh_host,
+            bg_ssh_port,
+            bg_ssh_host_key: &bg_ssh_host_key,
         }) => {}
     }
 
@@ -634,6 +660,7 @@ pub async fn delete_repo(
     Path(repo_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     db::delete_repo(&state.pool, repo_id).await?;
+    crate::ssh::remove_pinned_known_hosts(repo_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -692,6 +719,7 @@ pub async fn destroy_repo(
     })?;
 
     db::delete_repo(&state.pool, repo_id).await?;
+    crate::ssh::remove_pinned_known_hosts(repo_id).await;
 
     info!(repo_id, "repository destroyed successfully");
     Ok(StatusCode::NO_CONTENT)
@@ -961,13 +989,8 @@ pub async fn init_repo(
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
-    let borg_output = run_borg_init(
-        &repo_url,
-        &req.passphrase,
-        req.encryption,
-        &state.task_registry,
-    )
-    .await?;
+    let env = helpers::borg_base_env(&req.passphrase);
+    let borg_output = run_borg_init(&repo_url, &env, req.encryption, &state.task_registry).await?;
 
     let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
     let compression = helpers::validate_compression(req.compression.as_deref())?;
@@ -1293,7 +1316,14 @@ pub async fn exec_borg(
         &repo.repo_path,
     );
 
-    let mut env = helpers::borg_base_env(&passphrase);
+    let mut env = helpers::borg_env_for_repo(
+        &passphrase,
+        repo_id,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        repo.ssh_host_key.as_deref(),
+    )
+    .await;
     env.insert(BORG_REPO_ENV_KEY.to_owned(), repo_url);
 
     info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
@@ -1393,55 +1423,15 @@ pub async fn migrate_encryption(
     // precedes it already mutates the repository a concurrent operation could be using.
     let _repo_lock_guard = state.repo_lock.acquire(repo_id).await;
 
-    let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
-
-    let ssh_rename_result = run_ssh_command(
-        &repo.ssh_user,
-        &repo.ssh_host,
-        repo.ssh_port,
-        &format!(
-            "mv {} {}",
-            shell_escape(&repo.repo_path),
-            shell_escape(&migrated_path)
-        ),
-        repo.ssh_host_key.clone(),
-    )
-    .await;
-
-    if let Err(e) = ssh_rename_result {
-        return Err(ApiError::BadGateway(format!(
-            "failed to rename old repository: {e}"
-        )));
-    }
-
-    info!(repo_id, %migrated_path, "renamed old repo for migration");
-
-    let init_result = run_borg_init(
-        &repo_url,
-        &passphrase,
-        req.target_encryption,
-        &state.task_registry,
-    )
-    .await;
-    if let Err(e) = init_result {
-        warn!(repo_id, %e, "borg init failed during migration, rolling back");
-        let _ = run_ssh_command(
-            &repo.ssh_user,
-            &repo.ssh_host,
-            repo.ssh_port,
-            &format!(
-                "mv {} {}",
-                shell_escape(&migrated_path),
-                shell_escape(&repo.repo_path)
-            ),
-            repo.ssh_host_key.clone(),
-        )
-        .await;
-        return Err(ApiError::BadGateway(format!(
-            "borg init failed during migration (rolled back): {e}"
-        )));
-    }
+    let migrated_path = rename_and_reinit_repo(RenameAndReinitParams {
+        state: &state,
+        repo_id,
+        repo: &repo,
+        repo_url: &repo_url,
+        passphrase: &passphrase,
+        target_encryption: req.target_encryption,
+    })
+    .await?;
 
     db::update_repo_encryption(&state.pool, repo_id, req.target_encryption.as_borg_arg()).await?;
 
@@ -1480,6 +1470,81 @@ pub async fn migrate_encryption(
         ),
         migrated_path: Some(migrated_path),
     }))
+}
+
+/// Arguments for [`rename_and_reinit_repo`], bundled (rather than passed
+/// individually) to stay under clippy's argument-count limit.
+struct RenameAndReinitParams<'a> {
+    state: &'a AppState,
+    repo_id: i64,
+    repo: &'a db::RepoWithPassphraseRow,
+    repo_url: &'a str,
+    passphrase: &'a str,
+    target_encryption: BorgEncryption,
+}
+
+/// Renames the repository's on-disk directory to a `.migrated-<date>` path
+/// and runs `borg init` at the original path with the target encryption,
+/// rolling the rename back if `borg init` fails. Returns the migrated path
+/// on success.
+async fn rename_and_reinit_repo(params: RenameAndReinitParams<'_>) -> Result<String, ApiError> {
+    let RenameAndReinitParams {
+        state,
+        repo_id,
+        repo,
+        repo_url,
+        passphrase,
+        target_encryption,
+    } = params;
+
+    let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
+
+    run_ssh_command(
+        &repo.ssh_user,
+        &repo.ssh_host,
+        repo.ssh_port,
+        &format!(
+            "mv {} {}",
+            shell_escape(&repo.repo_path),
+            shell_escape(&migrated_path)
+        ),
+        repo.ssh_host_key.clone(),
+    )
+    .await
+    .map_err(|e| ApiError::BadGateway(format!("failed to rename old repository: {e}")))?;
+
+    info!(repo_id, %migrated_path, "renamed old repo for migration");
+
+    let env = helpers::borg_env_for_repo(
+        passphrase,
+        repo_id,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        repo.ssh_host_key.as_deref(),
+    )
+    .await;
+
+    if let Err(e) = run_borg_init(repo_url, &env, target_encryption, &state.task_registry).await {
+        warn!(repo_id, %e, "borg init failed during migration, rolling back");
+        let _ = run_ssh_command(
+            &repo.ssh_user,
+            &repo.ssh_host,
+            repo.ssh_port,
+            &format!(
+                "mv {} {}",
+                shell_escape(&migrated_path),
+                shell_escape(&repo.repo_path)
+            ),
+            repo.ssh_host_key.clone(),
+        )
+        .await;
+        return Err(ApiError::BadGateway(format!(
+            "borg init failed during migration (rolled back): {e}"
+        )));
+    }
+
+    Ok(migrated_path)
 }
 
 async fn run_ssh_command(
@@ -1527,7 +1592,8 @@ async fn run_borg_info(
     passphrase: &str,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
-    run_borg_info_once(repo_url, passphrase, task_registry).await
+    let env = helpers::borg_base_env(passphrase);
+    run_borg_info_once(repo_url, &env, task_registry).await
 }
 
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
@@ -1586,23 +1652,21 @@ async fn get_borg_list_stage_timeout(pool: &PgPool) -> Duration {
 
 async fn run_borg_info_with_retry(
     repo_url: &str,
-    passphrase: &str,
+    env: &HashMap<String, String>,
     timeout: Duration,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let attempt_result = match tokio::time::timeout(
-            timeout,
-            run_borg_info_once(repo_url, passphrase, task_registry),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(ApiError::Internal(format!(
-                "borg info timed out after {}s; the repository may be unreachable",
-                timeout.as_secs()
-            ))),
-        };
+        let attempt_result =
+            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry))
+                .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(ApiError::Internal(format!(
+                    "borg info timed out after {}s; the repository may be unreachable",
+                    timeout.as_secs()
+                ))),
+            };
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1627,14 +1691,12 @@ async fn run_borg_info_with_retry(
 
 async fn run_borg_info_once(
     repo_url: &str,
-    passphrase: &str,
+    env: &HashMap<String, String>,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
-
     let output = Borg::new()
         .with_registry(task_registry.clone())
-        .run(&["info", "--json", repo_url], &env)
+        .run(&["info", "--json", repo_url], env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -1857,17 +1919,15 @@ async fn run_borg_break_lock(
 
 async fn run_borg_init(
     repo_url: &str,
-    passphrase: &str,
+    env: &HashMap<String, String>,
     encryption: BorgEncryption,
     task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<String, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
-
     let output = Borg::new()
         .with_registry(task_registry.clone())
         .run(
             &["init", "--encryption", encryption.as_borg_arg(), repo_url],
-            &env,
+            env,
         )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;

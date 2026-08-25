@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, 'webhook', $2, true) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3c3c21fa00feaaf3deb04142e395a858b87b2dd504d3341a011aa6da15ee8cfa"
+}

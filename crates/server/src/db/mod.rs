@@ -3230,24 +3230,29 @@ pub async fn set_schedule_enabled(
 }
 
 /// Resets a schedule's connectivity-failure bookkeeping (`consecutive_failures`,
-/// `auto_disabled_agent_unreachable`, `auto_disabled_by_agent_id`) whenever its
-/// target list drops an agent, whether or not the schedule has already crossed the
-/// auto-disable threshold. Without this, retargeting away from a broken agent -
-/// the realistic way an admin fixes this - either:
-/// - once already auto-disabled: would leave `auto_disabled_by_agent_id` pointing at
-///   an agent that isn't a target anymore, so
+/// `auto_disabled_agent_unreachable`, `auto_disabled_by_agent_id`) when retargeting
+/// drops the specific agent a failure streak is attributable to - never merely
+/// because *some* target changed, which would wrongly forgive a still-targeted,
+/// still-broken agent just because an unrelated sibling target was added or
+/// removed. Two cases, based on whether `auto_disabled_by_agent_id` has attribution
+/// recorded yet (it's only ever set once the schedule fully auto-disables):
+/// - **Already auto-disabled**: resets only if `auto_disabled_by_agent_id` itself is
+///   no longer in the new target list. Without this, retargeting away from the
+///   causing agent - the realistic way an admin fixes this - would leave
+///   `auto_disabled_by_agent_id` pointing at an agent that isn't a target anymore, so
 ///   [`reenable_system_disabled_schedules_for_agent`] could never match it again and
-///   the schedule would stay disabled forever despite the admin's fix; or
-/// - still enabled but partway through a failure streak against the dropped agent
-///   (e.g. `consecutive_failures = 2`, threshold 3): would carry that stale count
-///   onto whatever agent replaces it, so one failure from a brand new agent that has
-///   never failed could immediately cross the threshold and auto-disable the
-///   schedule, wrongly blaming the new agent.
+///   the schedule would stay disabled forever despite the admin's fix.
+/// - **Not yet disabled** (a partial streak, e.g. `consecutive_failures = 2` against
+///   threshold 3): there's no per-agent attribution to check yet, so this only
+///   resets if *every* previously-targeted agent is gone from the new list - the one
+///   case where whichever agent(s) were actually accruing the streak are
+///   unambiguously no longer targeted. If even one old target remains, the streak
+///   might still belong to it, so it's left untouched.
 ///
-/// Deliberately a no-op when the streak contains a local/config failure
+/// Deliberately a no-op either way when the streak contains a local/config failure
 /// (`failure_streak_pure_connectivity = false`): that state must only ever be
 /// cleared by a human fixing the actual cause and re-enabling the schedule
-/// themselves, never implicitly by an unrelated retarget.
+/// themselves, never implicitly by a retarget.
 ///
 /// # Errors
 ///
@@ -3258,14 +3263,14 @@ pub async fn reset_schedule_failure_tracking_if_target_dropped(
     old_agent_ids: &[i64],
     new_agent_ids: &[i64],
 ) -> Result<(), ApiError> {
-    if !old_agent_ids.iter().any(|id| !new_agent_ids.contains(id)) {
-        return Ok(());
-    }
     sqlx::query!(
         "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id \
          = NULL, consecutive_failures = 0 WHERE id = $1 AND failure_streak_pure_connectivity = \
-         true",
+         true AND ((auto_disabled_by_agent_id IS NOT NULL AND NOT (auto_disabled_by_agent_id = \
+         ANY($2))) OR (auto_disabled_by_agent_id IS NULL AND NOT ($3::bigint[] && $2::bigint[])))",
         schedule_id,
+        new_agent_ids,
+        old_agent_ids,
     )
     .execute(pool)
     .await

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET auto_disabled_agent_unreachable = false, auto_disabled_by_agent_id = NULL, consecutive_failures = 0 WHERE id = $1 AND failure_streak_pure_connectivity = true AND ((auto_disabled_by_agent_id IS NOT NULL AND NOT (auto_disabled_by_agent_id = ANY($2))) OR (auto_disabled_by_agent_id IS NULL AND NOT ($3::bigint[] && $2::bigint[])))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5b8c78f887a82d48b1b7235f292ef298930d0bd07b9ce7b5ae573db78f8a6b1f"
+}

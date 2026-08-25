@@ -2467,6 +2467,140 @@ esac
         assert!(enabled);
     }
 
+    /// For a multi-target schedule, editing the target list must not forgive a
+    /// still-targeted, still-broken agent just because an unrelated sibling target
+    /// was dropped in the same edit - only dropping the agent actually recorded as
+    /// the cause (`auto_disabled_by_agent_id`) may reset the bookkeeping.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retargeting_a_multi_target_schedule_does_not_reset_if_causing_agent_still_targeted(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let causing_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let sibling_agent = db::insert_agent(&pool, "multi-drop-sibling", None, "hash", None)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(sibling_agent.id, 1)])
+            .await
+            .unwrap();
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                causing_agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(!enabled && auto_disabled, "setup must auto-disable it");
+
+        // Drop only the unrelated sibling; the causing agent stays a target.
+        db::delete_schedule_targets(&pool, schedule_id)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(causing_agent_id, 0)])
+            .await
+            .unwrap();
+        db::reset_schedule_failure_tracking_if_target_dropped(
+            &pool,
+            schedule_id,
+            &[causing_agent_id, sibling_agent.id],
+            &[causing_agent_id],
+        )
+        .await
+        .unwrap();
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert!(
+            !enabled && auto_disabled,
+            "dropping an unrelated sibling must not clear bookkeeping the causing agent is still \
+             responsible for"
+        );
+        assert_eq!(consecutive_failures, MAX_CONSECUTIVE_FAILURES);
+    }
+
+    /// The inverse of the above: dropping the agent actually recorded as the cause of
+    /// an auto-disable must clear the bookkeeping, even if an unrelated sibling target
+    /// stays on the schedule.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn retargeting_a_multi_target_schedule_resets_when_the_causing_agent_is_dropped(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+        let causing_agent_id = db::get_agent_by_hostname(&pool, TICK_TEST_HOSTNAME)
+            .await
+            .unwrap()
+            .id;
+        let sibling_agent = db::insert_agent(&pool, "multi-drop-causing", None, "hash", None)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(sibling_agent.id, 1)])
+            .await
+            .unwrap();
+        let next = Utc::now()
+            .checked_add_signed(chrono::Duration::days(1))
+            .unwrap();
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            db::record_schedule_failure(
+                &pool,
+                schedule_id,
+                causing_agent_id,
+                next,
+                MAX_CONSECUTIVE_FAILURES,
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let (_, enabled, auto_disabled) = schedule_failure_state(&pool, schedule_id).await;
+        assert!(!enabled && auto_disabled, "setup must auto-disable it");
+
+        // Drop the causing agent; the unrelated sibling stays a target.
+        db::delete_schedule_targets(&pool, schedule_id)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(&pool, schedule_id, &[(sibling_agent.id, 0)])
+            .await
+            .unwrap();
+        db::reset_schedule_failure_tracking_if_target_dropped(
+            &pool,
+            schedule_id,
+            &[causing_agent_id, sibling_agent.id],
+            &[sibling_agent.id],
+        )
+        .await
+        .unwrap();
+
+        let (consecutive_failures, still_enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert!(
+            !still_enabled,
+            "dropping the causing agent alone must not re-enable the schedule"
+        );
+        assert!(
+            !auto_disabled,
+            "dropping the causing agent must clear the stale bookkeeping"
+        );
+        assert_eq!(consecutive_failures, 0);
+    }
+
     /// A schedule the scheduler auto-disabled after repeated unreachable-agent
     /// failures must come back on its own once the agent reconnects - never stay off
     /// until a human notices, and never touch a schedule disabled for another reason.

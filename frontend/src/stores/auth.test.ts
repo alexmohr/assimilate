@@ -96,57 +96,44 @@ describe('auth store - TOTP flow', () => {
     expect(store.tempToken).toBeNull()
   })
 
-  it('verifyTotp with recovery code completes login and fetches the full user', async () => {
-    const { apiClient } = await import('../api/client')
-    vi.mocked(apiClient.post).mockResolvedValueOnce({
-      data: {
-        user: defaultLoginUser,
-        session_expires_at: '2026-07-22T12:00:00Z',
-        remember_me: true,
-      },
-    })
-    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: defaultMeUser })
-
-    const store = useAuthStore()
-    store.tempToken = 'temp-recovery'
-    store.totpRequired = true
-    await store.verifyTotp('recovery-code-123', true)
-
-    expect(apiClient.post).toHaveBeenCalledWith('/auth/totp/recovery', {
+  it.each([
+    {
+      recovery: true,
       code: 'recovery-code-123',
-      temp_token: 'temp-recovery',
-    })
-    expect(apiClient.get).toHaveBeenCalledWith('/auth/me')
-    expect(store.user).toEqual(defaultMeUser)
-    expect(store.totpRequired).toBe(false)
-    expect(store.tempToken).toBeNull()
-  })
-
-  it('verifyTotp with TOTP code completes login and fetches the full user', async () => {
-    const { apiClient } = await import('../api/client')
-    vi.mocked(apiClient.post).mockResolvedValueOnce({
-      data: {
-        user: defaultLoginUser,
-        session_expires_at: '2026-07-22T12:00:00Z',
-        remember_me: true,
-      },
-    })
-    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: defaultMeUser })
-
-    const store = useAuthStore()
-    store.tempToken = 'temp-totp'
-    store.totpRequired = true
-    await store.verifyTotp('123456', false)
-
-    expect(apiClient.post).toHaveBeenCalledWith('/auth/totp/verify-login', {
+      tempToken: 'temp-recovery',
+      endpoint: '/auth/totp/recovery',
+    },
+    {
+      recovery: false,
       code: '123456',
-      temp_token: 'temp-totp',
-    })
-    expect(apiClient.get).toHaveBeenCalledWith('/auth/me')
-    expect(store.user).toEqual(defaultMeUser)
-    expect(store.totpRequired).toBe(false)
-    expect(store.tempToken).toBeNull()
-  })
+      tempToken: 'temp-totp',
+      endpoint: '/auth/totp/verify-login',
+    },
+  ])(
+    'verifyTotp with recovery=$recovery completes login and fetches the full user',
+    async ({ recovery, code, tempToken, endpoint }) => {
+      const { apiClient } = await import('../api/client')
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        data: {
+          user: defaultLoginUser,
+          session_expires_at: '2026-07-22T12:00:00Z',
+          remember_me: true,
+        },
+      })
+      vi.mocked(apiClient.get).mockResolvedValueOnce({ data: defaultMeUser })
+
+      const store = useAuthStore()
+      store.tempToken = tempToken
+      store.totpRequired = true
+      await store.verifyTotp(code, recovery)
+
+      expect(apiClient.post).toHaveBeenCalledWith(endpoint, { code, temp_token: tempToken })
+      expect(apiClient.get).toHaveBeenCalledWith('/auth/me')
+      expect(store.user).toEqual(defaultMeUser)
+      expect(store.totpRequired).toBe(false)
+      expect(store.tempToken).toBeNull()
+    },
+  )
 
   it('logout clears totp state', async () => {
     const { apiClient } = await import('../api/client')

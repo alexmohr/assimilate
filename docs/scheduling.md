@@ -23,7 +23,7 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 
 The Schedules list page shows all configured backup schedules with:
 
-- **Text filter** — search by schedule name, agent, or repository name
+- **Text filter** — search by schedule name, agent, storage host, or repository name, with an optional field syntax (see [Filter syntax](#filter-syntax))
 - **Status filter** — show All, Enabled only, or Disabled only
 - **Type filter** — filter by Backup, Check, or Verify
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
@@ -31,13 +31,40 @@ The Schedules list page shows all configured backup schedules with:
 
 Schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
 
-Above the groups, a 24-hour rail plots every enabled schedule due within the next day along a timeline from now. When two or more of those runs land within 30 minutes of each other on the same storage host, the rail marks them and names the host and time so you can stagger them before they contend for the same SSH connection.
+Above the groups, a 24-hour rail plots every enabled schedule due within the next day along a timeline from now. When two or more of those runs land within 30 minutes of each other **on the same repository**, the rail marks them and names the repository and time so you can stagger them before they contend for the same repository lock. Two runs that share a storage host but write to different repositories are not a collision — they don't block each other — and are not flagged.
+
+Click the warning to expand the runs behind it: each cluster lists its runs with the time each is due, and clicking one opens that schedule so you can move it.
+
+!!! note
+    The rail only ever plots enabled schedules that match the current filters, so filtering the list also narrows the collision check.
 
 Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, a run-history strip, cadence, and next run time, plus a **Run** button for manual triggering. The run-history strip draws up to the ten most recent runs as bars — bar height reflects duration for a completed run, and a failed run always draws at full height so it never reads as the least significant bar in the strip. A run cancelled via the **Cancel** button below draws as a muted bar distinct from a failure, and isn't counted in the strip's failed-run tally. A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention — click it to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue). While a backup for the schedule is currently running, the card also shows a **Running** pill and the **Run** button is replaced with **Cancel**.
 
 Next to the **Run** button, an **Enabled**/**Disabled** switch lets you pause or resume the schedule directly from the list, without opening it. Flipping it saves immediately; enabling a schedule with no repository assigned, or whose repository's SSH connection can't be reached, shows an error toast instead.
 
 Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the Overdue chip to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
+
+### Filter syntax
+
+The text filter searches every field at once, so typing `borg-backup` matches a schedule whose name, agent, storage host, or repository contains it. To search one field only, prefix the term with the field name. The help button beside the filter box shows the same reference in the UI.
+
+| Term | Matches |
+|---|---|
+| `name:nightly` | Schedule name |
+| `agent:k3s` | Agent hostname or display name |
+| `host:borg-backup` | Storage host the repository lives on |
+| `repo:server-daily` | Repository name |
+
+Terms combine:
+
+| Example | Meaning |
+|---|---|
+| `borg-backup` | Bare text matches any of the fields above |
+| `agent:k3s host:borg-backup` | A space means both must match (AND) |
+| `agent:k3s \| agent:nas` | A pipe means either may match (OR) |
+| `agent:"web server"` | Quote a value that contains spaces |
+
+Matching ignores case and matches on part of a value, so `host:borg` finds `borg-backup.example.com`. `agent` and `host` are deliberately separate: the agent is the machine being backed up, the host is the machine the repository lives on. A prefix that names no field — a schedule called `db:primary`, say — is searched as plain text.
 
 ### Schedule Detail Tabs
 

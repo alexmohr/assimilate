@@ -359,6 +359,33 @@ WHERE name = 'Offline agent due soon';
 
 SQL
 
+# Second run into the *same* repository as 'Offline agent due soon', five
+# minutes after it, so the Schedules page's 24-hour rail always has a
+# collision to warn about and to expand (see docs/scheduling.md). It has to be
+# the same repository, not merely the same storage host: every demo repo lives
+# on localhost, so a host-keyed warning would fire for every pair of runs on
+# the page and say nothing.
+api POST "/api/schedules" "{
+    \"name\": \"Colliding daily window\",
+    \"agent_ids\": [$WEB01_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"10 2 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
+}" > /dev/null
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+UPDATE schedules
+SET last_run_at = NULL,
+    next_run_at = NOW() + interval '105 minutes'
+WHERE name = 'Colliding daily window';
+
+SQL
+
 api POST "/api/schedules" "{
     \"agent_ids\": [$DB01_ID],
     \"repo_id\": $REPO_HOURLY_ID,
@@ -799,7 +826,7 @@ FROM (
     JOIN schedule_targets st ON st.schedule_id = s.id AND st.agent_id = br2.agent_id
     WHERE br2.schedule_id IS NULL
       AND s.enabled = true
-      AND s.name <> 'Offline agent due soon'
+      AND s.name NOT IN ('Offline agent due soon', 'Colliding daily window')
     ORDER BY br2.id, s.id
 ) matched
 WHERE br.id = matched.report_id;

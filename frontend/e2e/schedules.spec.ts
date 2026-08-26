@@ -77,6 +77,86 @@ test.describe('Schedules management', () => {
     await expect(rail.locator('.timeline-tick').first()).toBeVisible()
   })
 
+  test('the rail collision note expands to the colliding runs and opens one', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // Seeded by seed-demo.sh: 'Colliding daily window' runs into the same
+    // repository as 'Offline agent due soon', five minutes apart.
+    const note = page.locator('.timeline-note')
+    await expect(note).toBeVisible()
+    await expect(note).toContainText('collide on server-daily')
+
+    await note.click()
+    // Asserted by name rather than by a count of the whole list: the expanded
+    // note covers every cluster, so a count would also be asserting that no
+    // other pair in the demo ever collides.
+    const runs = page.locator('.timeline-collision-run')
+    const collidingRun = runs.filter({ hasText: 'Colliding daily window' })
+    await expect(collidingRun).toHaveCount(1)
+    await expect(runs.filter({ hasText: 'Offline agent due soon' })).toHaveCount(1)
+
+    await collidingRun.click()
+    await expect(page).toHaveURL(/\/schedules\/\d+$/)
+  })
+
+  test('the text filter scopes agent: and host: terms and combines them with a pipe', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const search = page.locator('input.search-input')
+    // `.first()` for every presence assertion, for the reason scheduleCard()
+    // documents above: earlier specs in the run add schedules of their own to
+    // the shared demo, so more than one card can carry a given repo name and a
+    // bare locator is one extra schedule away from a strict-mode violation.
+    const cards = page.locator('.entity-card')
+
+    await search.fill('agent:media-store-01')
+    await expect(cards.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
+    // database-hourly is db-server-01's alone, so scoping to another agent
+    // drops it entirely.
+    await expect(cards.filter({ hasText: 'database-hourly' })).toHaveCount(0)
+
+    await search.fill('agent:media-store-01 | agent:db-server-01')
+    await expect(cards.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
+    await expect(cards.filter({ hasText: 'database-hourly' }).first()).toBeVisible()
+
+    // Every demo repository lives on localhost, so a host: term keeps the list
+    // whole - and an agent hostname scoped to host: matches nothing, which is
+    // what makes the two fields distinct.
+    await search.fill('host:localhost')
+    await expect(cards.first()).toBeVisible()
+
+    await search.fill('host:media-store-01')
+    await expect(cards).toHaveCount(0)
+
+    // Both terms have to match: the agent keeps media-store-01's schedules, the
+    // unknown host then rules every one of them out.
+    await search.fill('agent:media-store-01 host:localhost')
+    await expect(cards.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
+
+    await search.fill('agent:media-store-01 host:no-such-host')
+    await expect(cards).toHaveCount(0)
+  })
+
+  test('the toolbar explains the filter syntax, including the pipe', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'Filter syntax' }).click()
+
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('agent:k3s | agent:nas')
+    await expect(dialog).toContainText('either may match')
+    await expect(dialog).toContainText('Storage host the repository lives on')
+  })
+
   test('overdue schedule card shows an Overdue chip with a per-host detail tooltip', async ({
     page,
   }) => {
@@ -173,7 +253,11 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    await page.getByText('server-daily').first().click()
+    // The card, not the first 'server-daily' on the page: the collision rail
+    // above the groups names the repository its colliding runs write to, so a
+    // bare text locator now picks up the rail's note (a button that expands
+    // the runs) instead of a schedule card.
+    await page.locator('.entity-card', { hasText: 'server-daily' }).first().click()
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/schedules\/\d+/)

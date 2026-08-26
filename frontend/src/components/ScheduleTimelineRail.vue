@@ -4,7 +4,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { AlertTriangle, ChevronDown, ChevronRight } from '@lucide/vue'
 import { formatDateShort } from '../utils/format'
 
 export interface TimelineEntry {
@@ -12,25 +13,41 @@ export interface TimelineEntry {
   label: string
   /** ISO timestamp of the upcoming run. */
   atIso: string
-  /** Storage host the run writes to, or null when unknown. */
+  /** Storage host the run writes to, or null when unknown. Counted in the summary. */
   host: string | null
+  /**
+   * Repository the run writes to, or null when unknown. Collisions are keyed on
+   * this and not on the host: two runs sharing a host but writing to different
+   * repositories do not contend for a repository lock, so warning about them
+   * would be noise.
+   */
+  repoId: number | null
+  /** Repository name, for the collision note. */
+  repoName: string | null
 }
 
 const props = withDefaults(
   defineProps<{
     entries: TimelineEntry[]
     windowHours?: number
-    /** Two runs on the same host within this many minutes count as a collision. */
+    /** Two runs on the same repository within this many minutes count as a collision. */
     collisionMinutes?: number
   }>(),
   { windowHours: 24, collisionMinutes: 30 },
 )
+
+const emit = defineEmits<{
+  /** A colliding run was clicked in the expanded list. */
+  select: [entry: TimelineEntry]
+}>()
 
 interface PositionedEntry extends TimelineEntry {
   ts: number
   percent: number
   colliding: boolean
 }
+
+const expanded = ref(false)
 
 const positioned = computed<PositionedEntry[]>(() => {
   const now = Date.now()
@@ -45,7 +62,7 @@ const positioned = computed<PositionedEntry[]>(() => {
   return withinWindow.map((entry, index) => {
     const colliding = withinWindow.some((other, otherIndex) => {
       if (otherIndex === index) return false
-      if (!entry.host || entry.host !== other.host) return false
+      if (entry.repoId === null || entry.repoId !== other.repoId) return false
       return Math.abs(other.ts - entry.ts) <= collisionMs
     })
     return {
@@ -58,8 +75,8 @@ const positioned = computed<PositionedEntry[]>(() => {
 
 /**
  * Colliding entries clustered into connected components of the same
- * pairwise same-host/within-collisionMs relation `colliding` above uses, so
- * the note always covers exactly the entries rendered with the colliding
+ * pairwise same-repository/within-collisionMs relation `colliding` above uses,
+ * so the note always covers exactly the entries rendered with the colliding
  * tick style. Independently bucketing each entry by its own rounded
  * distance from "now" (an earlier approach) could split two entries mere
  * seconds apart into different buckets whenever their gap straddled a
@@ -67,7 +84,7 @@ const positioned = computed<PositionedEntry[]>(() => {
  */
 const collisionGroups = computed<PositionedEntry[][]>(() => {
   const collisionMs = props.collisionMinutes * 60_000
-  const candidates = positioned.value.filter((entry) => entry.colliding && entry.host)
+  const candidates = positioned.value.filter((entry) => entry.colliding && entry.repoId !== null)
   const visited = new Set<PositionedEntry>()
   const groups: PositionedEntry[][] = []
 
@@ -81,7 +98,7 @@ const collisionGroups = computed<PositionedEntry[][]>(() => {
       cluster.push(current)
       for (const other of candidates) {
         if (visited.has(other)) continue
-        if (other.host !== current.host) continue
+        if (other.repoId !== current.repoId) continue
         if (Math.abs(other.ts - current.ts) > collisionMs) continue
         visited.add(other)
         queue.push(other)
@@ -101,11 +118,16 @@ const summary = computed(() => {
   return `${count} run${count === 1 ? '' : 's'} · ${hosts.size} host${hosts.size === 1 ? '' : 's'}`
 })
 
+/** "3 runs collide on server-daily around 26 Aug, 15:00". */
+function groupTitle(group: PositionedEntry[]): string {
+  const repo = group[0].repoName ?? `repository #${group[0].repoId}`
+  return `${group.length} runs collide on ${repo} around ${formatDateShort(group[0].atIso)}`
+}
+
 const collisionNote = computed(() => {
   if (collisionGroups.value.length === 0) return null
   const [first, ...rest] = collisionGroups.value
-  const time = formatDateShort(first[0].atIso)
-  const note = `${first.length} runs collide on ${first[0].host} around ${time}`
+  const note = groupTitle(first)
   return rest.length > 0 ? `${note} (+${rest.length} more)` : note
 })
 </script>
@@ -131,11 +153,45 @@ const collisionNote = computed(() => {
         :title="`${entry.label} · ${formatDateShort(entry.atIso)}`"
       ></span>
     </div>
-    <div
+    <button
       v-if="collisionNote"
+      type="button"
       class="timeline-note"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
     >
-      {{ collisionNote }}
+      <AlertTriangle :size="12" />
+      <span class="timeline-note-text">{{ collisionNote }}</span>
+      <ChevronDown
+        v-if="expanded"
+        :size="12"
+      />
+      <ChevronRight
+        v-else
+        :size="12"
+      />
+    </button>
+    <div
+      v-if="expanded && collisionGroups.length > 0"
+      class="timeline-collisions"
+    >
+      <div
+        v-for="group in collisionGroups"
+        :key="`${group[0].repoId}-${group[0].atIso}`"
+        class="timeline-collision-group"
+      >
+        <span class="timeline-collision-title">{{ groupTitle(group) }}</span>
+        <button
+          v-for="entry in group"
+          :key="entry.id"
+          type="button"
+          class="timeline-collision-run"
+          @click="emit('select', entry)"
+        >
+          <span class="timeline-collision-when">{{ formatDateShort(entry.atIso) }}</span>
+          <span class="timeline-collision-label">{{ entry.label }}</span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -212,8 +268,77 @@ const collisionNote = computed(() => {
   background: var(--warning);
 }
 
+/* The note opens the list of runs it is about, so it is a control, not a line
+   of text: a bare warning naming a time the user then has to hunt for in the
+   groups below is exactly what this replaces. */
 .timeline-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
   font-size: var(--fs-xs);
   color: var(--warning);
+  cursor: pointer;
+  text-align: left;
+}
+
+.timeline-note-text {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.timeline-collisions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+}
+
+.timeline-collision-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.timeline-collision-title {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.timeline-collision-run {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-base);
+}
+
+.timeline-collision-run:hover {
+  background: var(--bg-hover);
+}
+
+.timeline-collision-when {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.timeline-collision-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

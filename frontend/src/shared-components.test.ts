@@ -235,11 +235,11 @@ const OWNED = [
   'section-head',
   'section-title',
   'section-link',
-  // 'attention-row' is deliberately not enforced: DashboardView declares the
-  // same name for an unrelated two-column grid, and it overlaps this one on
-  // display/gap/align-items. The shared definition still lives in style.css
-  // and both overview tabs use it - only the cross-file enforcement is
-  // skipped, so DashboardView's own layout isn't flagged as a violation.
+  // DashboardView used to declare 'attention-row' for an unrelated two-column
+  // grid, which forced this one out of the list. Its layout classes are named
+  // for what they are now ('dashboard-columns'), so the shared definition is
+  // enforceable again.
+  'attention-row',
 ]
 
 /**

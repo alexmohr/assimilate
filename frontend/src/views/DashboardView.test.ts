@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { apiClient } from '../api/client'
 import { renderWithPlugins } from '../test-utils'
 import DashboardView from './DashboardView.vue'
@@ -217,22 +217,29 @@ describe('DashboardView attention panel', () => {
     expect(wrapper.find('#needs-attention').exists()).toBe(true)
   })
 
-  it('applies attention-sidebar-wide class when findings are empty', async () => {
-    const wrapper = renderWithPlugins(DashboardView)
+  it('keeps both dashboard columns whether or not there are findings', async () => {
+    // The two columns are independent stacks, so a missing NeedsAttention just
+    // shortens the left one - it no longer reshapes the grid around it, which
+    // is what left a panel-sized hole beside the taller column.
+    const empty = renderWithPlugins(DashboardView)
     await flushPromises()
+    expect(empty.findAll('.dashboard-column')).toHaveLength(2)
 
-    const sidebar = wrapper.find('.attention-sidebar')
-    expect(sidebar.classes()).toContain('attention-sidebar-wide')
+    vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
+    const withFindings = renderWithPlugins(DashboardView)
+    await flushPromises()
+    expect(withFindings.findAll('.dashboard-column')).toHaveLength(2)
   })
 
-  it('does not apply attention-sidebar-wide class when findings exist', async () => {
-    vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
-
+  it('gives the calendar a half-width column rather than a third of the row', async () => {
+    // Three panels across left the calendar too narrow for seven day columns,
+    // and the last of them was clipped away entirely.
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
 
-    const sidebar = wrapper.find('.attention-sidebar')
-    expect(sidebar.classes()).not.toContain('attention-sidebar-wide')
+    expect(wrapper.find('.summary-row').exists()).toBe(true)
+    const column = wrapper.findComponent({ name: 'BackupCalendar' }).element.parentElement
+    expect(column?.classList.contains('dashboard-column')).toBe(true)
   })
 
   it('re-fetches overview when findings are dismissed', async () => {
@@ -267,22 +274,16 @@ describe('DashboardView attention panel', () => {
     expect(dashPlaceholder).toContain('\u2014')
   })
 
-  it('applies attention-row-full class when findings are empty', async () => {
-    const wrapper = renderWithPlugins(DashboardView)
-    await flushPromises()
-
-    const row = wrapper.find('.attention-row')
-    expect(row.classes()).toContain('attention-row-full')
-  })
-
-  it('removes attention-row-full class when findings exist', async () => {
+  it('stacks the calendar under NeedsAttention in the same column', async () => {
     vi.mocked(apiClient.get).mockImplementation(overviewWithFindingsHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
 
-    const row = wrapper.find('.attention-row')
-    expect(row.classes()).not.toContain('attention-row-full')
+    const column = wrapper.findAll('.dashboard-column')[0]
+    expect(column.find('#needs-attention').exists()).toBe(true)
+    expect(column.findComponent({ name: 'BackupCalendar' }).exists()).toBe(true)
+    expect(column.findComponent({ name: 'RepositoryCapacity' }).exists()).toBe(true)
   })
 
   it('hides NeedsAttention after dismiss when fetchOverview returns empty findings', async () => {
@@ -312,9 +313,9 @@ describe('DashboardView attention panel', () => {
     // After dismiss and fetchOverview with empty findings, NeedsAttention should hide
     expect(wrapper.find('#needs-attention').exists()).toBe(false)
 
-    // The attention row should now be full width
-    const row = wrapper.find('.attention-row')
-    expect(row.classes()).toContain('attention-row-full')
+    // The column it lived in stays, now led by the calendar.
+    const column = wrapper.findAll('.dashboard-column')[0]
+    expect(column.findComponent({ name: 'BackupCalendar' }).exists()).toBe(true)
   })
 })
 
@@ -703,5 +704,134 @@ describe('DashboardView success ring', () => {
     expect(clearIntervalSpy).toHaveBeenCalled()
     clearIntervalSpy.mockRestore()
     vi.useRealTimers()
+  })
+})
+
+describe('DashboardView chart legends', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.mocked(apiClient.get).mockImplementation(defaultApiHandler)
+  })
+
+  const STORAGE_BY_REPO = [
+    {
+      name: 'server-daily',
+      compressed_size: 700,
+      deduplicated_size: 600,
+      percentage: 60,
+    },
+    {
+      name: 'db-nightly',
+      compressed_size: 300,
+      deduplicated_size: 250,
+      percentage: 40,
+    },
+  ]
+
+  /** Circles in the storage donut, excluding the success ring's own two. */
+  function donutCircles(wrapper: ReturnType<typeof renderWithPlugins>): DOMWrapper<Element>[] {
+    return wrapper.findAll('.rings-row .panel')[1].findAll('circle')
+  }
+
+  function legendHandler(): (url: string) => Promise<{ data: unknown }> {
+    return (url: string) => {
+      if (url.startsWith('/stats/summary')) {
+        return Promise.resolve({
+          data: {
+            total_hosts: 0,
+            online_hosts: 0,
+            total_repos: 2,
+            total_size_bytes: 850,
+            total_backups: 0,
+            recent_failures: 0,
+            total_storage_bytes: 850,
+            storage_by_repo: STORAGE_BY_REPO,
+          },
+        })
+      }
+      if (url.startsWith('/stats/activity')) {
+        return Promise.resolve({
+          data: [
+            { id: 1, hostname: 'a', target_name: 't', status: 'success', duration_secs: 1 },
+            { id: 2, hostname: 'a', target_name: 't', status: 'warning', duration_secs: 1 },
+            { id: 3, hostname: 'a', target_name: 't', status: 'failed', duration_secs: 1 },
+          ],
+        })
+      }
+      return defaultApiHandler(url)
+    }
+  }
+
+  it.each([
+    ['legend-pass', 'success'],
+    ['legend-warn', 'warning'],
+    ['legend-fail', 'failed'],
+  ])('routes to the %s schedules filter from the success ring legend', async (cls, filter) => {
+    vi.mocked(apiClient.get).mockImplementation(legendHandler())
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    await wrapper.find(`.${cls}`).trigger('click')
+    await flushPromises()
+
+    const route = wrapper.vm.$router.currentRoute.value
+    expect(route.path).toBe('/schedules')
+    expect(route.query.filter).toBe(filter)
+  })
+
+  it('counts each run status once in the success ring legend', async () => {
+    vi.mocked(apiClient.get).mockImplementation(legendHandler())
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('.legend-pass').text()).toContain('Passed: 1')
+    expect(wrapper.find('.legend-warn').text()).toContain('Warned: 1')
+    expect(wrapper.find('.legend-fail').text()).toContain('Failed: 1')
+  })
+
+  it('toggles a storage segment out of the donut and back', async () => {
+    vi.mocked(apiClient.get).mockImplementation(legendHandler())
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const items = wrapper.findAll('.chart-legend-item--toggle')
+    expect(items).toHaveLength(2)
+    // The donut is one track circle plus one arc per visible segment.
+    expect(donutCircles(wrapper)).toHaveLength(3)
+
+    await items[0].trigger('click')
+    expect(wrapper.findAll('.chart-legend-item--toggle')[0].classes()).toContain(
+      'chart-legend-item--off',
+    )
+    expect(donutCircles(wrapper)).toHaveLength(2)
+
+    await wrapper.findAll('.chart-legend-item--toggle')[0].trigger('click')
+    expect(wrapper.findAll('.chart-legend-item--toggle')[0].classes()).not.toContain(
+      'chart-legend-item--off',
+    )
+    expect(donutCircles(wrapper)).toHaveLength(3)
+  })
+
+  it('empties the donut when every segment is hidden', async () => {
+    vi.mocked(apiClient.get).mockImplementation(legendHandler())
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    for (const name of STORAGE_BY_REPO.map((entry) => entry.name)) {
+      const item = wrapper
+        .findAll('.chart-legend-item--toggle')
+        .find((candidate) => candidate.text().includes(name))
+      await item?.trigger('click')
+    }
+
+    // The track circle remains; no donut arcs are drawn.
+    expect(donutCircles(wrapper)).toHaveLength(1)
   })
 })

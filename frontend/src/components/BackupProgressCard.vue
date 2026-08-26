@@ -81,7 +81,7 @@ const emit = defineEmits<{
         </div>
         <div class="live-stat-row">
           <span class="live-stat-label">Files</span>
-          <span class="live-stat-value">{{ progress.nfiles.toLocaleString() }}</span>
+          <span class="live-stat-value">{{ (progress.nfiles ?? 0).toLocaleString() }}</span>
         </div>
         <div class="live-stat-row">
           <span class="live-stat-label">Data</span>

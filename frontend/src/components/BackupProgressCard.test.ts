@@ -72,4 +72,21 @@ describe('BackupProgressCard', () => {
     const wrapper = mount({ clampPath: true })
     expect(wrapper.find('.progress-path').classes()).toContain('progress-path--clamp')
   })
+
+  it('shows a waiting message when no progress has arrived yet', () => {
+    const wrapper = mount({ progress: null })
+    expect(wrapper.text()).toContain('Waiting for progress')
+  })
+
+  it('falls back to 0 files instead of crashing when nfiles is missing', () => {
+    // Regression test: a malformed progress payload (e.g. borg's final
+    // archive_progress line, which omits nfiles) must not crash rendering.
+    const progress = { originalSize: 1024, currentPath: '' } as unknown as {
+      nfiles: number
+      originalSize: number
+      currentPath: string
+    }
+    const wrapper = mount({ progress })
+    expect(wrapper.text()).toContain('0')
+  })
 })

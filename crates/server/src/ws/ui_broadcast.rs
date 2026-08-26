@@ -167,11 +167,23 @@ impl UiBroadcast {
         schedule_id: Option<i64>,
         line: &str,
     ) {
-        let is_archive_progress =
-            serde_json::from_str::<serde_json::Value>(line).is_ok_and(|value| {
+        // Borg's final progress line before completion (`"finished": true`) omits
+        // nfiles/original_size/path; skip it and keep the last known progress so a
+        // client reconnecting mid-backup gets replayed real data instead of a
+        // snapshot with those fields missing (mirrors the UI's
+        // `parseArchiveProgress`, which applies the same rule when consuming it).
+        let is_complete_archive_progress = serde_json::from_str::<serde_json::Value>(line)
+            .is_ok_and(|value| {
                 value.get("type").and_then(serde_json::Value::as_str) == Some("archive_progress")
+                    && value
+                        .get("nfiles")
+                        .is_some_and(serde_json::Value::is_number)
+                    && value
+                        .get("original_size")
+                        .is_some_and(serde_json::Value::is_number)
+                    && value.get("path").is_some_and(serde_json::Value::is_string)
             });
-        if !is_archive_progress {
+        if !is_complete_archive_progress {
             return;
         }
         if let Ok(mut map) = self.active_backups.write() {
@@ -274,5 +286,43 @@ mod tests {
         });
 
         assert_eq!(broadcast.current_active_backups().len(), 0);
+    }
+
+    #[test]
+    fn finished_archive_progress_line_does_not_clobber_last_known_progress() {
+        let broadcast = UiBroadcast::new();
+        broadcast.set_active_backup(ActiveBackupSnapshot {
+            hostname: "web-server-01".to_string(),
+            target_name: "server-daily".to_string(),
+            archive_name: Some("server-daily-2026-06-27T00:00:00".to_string()),
+            schedule_id: Some(8),
+            repo_id: 20,
+            progress_line: None,
+        });
+        broadcast.send(ServerToUi::BackupLog {
+            hostname: "web-server-01".to_string(),
+            schedule_id: Some(8),
+            repo_id: 20,
+            line: r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#
+                .to_string(),
+        });
+
+        // Borg's final progress line omits nfiles/original_size/path; it must be
+        // ignored rather than overwriting the last complete progress line, or a
+        // client reconnecting after this point would be replayed no usable data.
+        broadcast.send(ServerToUi::BackupLog {
+            hostname: "web-server-01".to_string(),
+            schedule_id: Some(8),
+            repo_id: 20,
+            line: r#"{"type":"archive_progress","finished":true,"time":1750000000}"#.to_string(),
+        });
+
+        let snapshots = broadcast.current_active_backups();
+        assert_eq!(snapshots.len(), 1);
+        let snapshot = snapshots.first().unwrap();
+        assert_eq!(
+            snapshot.progress_line.as_deref(),
+            Some(r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#)
+        );
     }
 }

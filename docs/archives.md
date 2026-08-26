@@ -69,6 +69,8 @@ The browser starts at the repository root (`/`). Each entry shows:
 
 Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
 
+Drag a column's edge to resize it — useful on a narrow window, where the table scrolls horizontally rather than crushing the **Name** column down to a few characters.
+
 The browser header names the archive and carries the actions that apply to the whole of it: **Download**, and for administrators **Restore** and **Delete**. Under it, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
 
 Each table row has its own **Download** and, for administrators, **Restore to host** action. Restore writes the selected file or directory back to its original path on the archive's host. The `.` row is the directory you are currently looking at, so downloading or restoring it takes that whole subtree.

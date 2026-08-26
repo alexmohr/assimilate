@@ -55,9 +55,18 @@ describe('AgentBackupRow', () => {
     expect(wrapper.emitted('open')).toHaveLength(1)
   })
 
-  // A failed run has no archive to open, so its name is plain text.
-  it('offers nothing to open on a failed run', () => {
-    const wrapper = mount({ report: report({ status: 'failed' }) })
+  // A warned run still produced an archive, so it should be just as
+  // browsable as a successful one - the run's status only decides whether
+  // detail is also offered.
+  it('opens the archive list from a warned run that reached an archive', async () => {
+    const wrapper = mount({ report: report({ status: 'warning' }) })
+    await wrapper.find('button.agent-row-name').trigger('click')
+    expect(wrapper.emitted('open')).toHaveLength(1)
+  })
+
+  // A run that never reached the archive step has nothing to open.
+  it('offers nothing to open on a run with no archive', () => {
+    const wrapper = mount({ report: report({ status: 'failed', archive_name: null }) })
     expect(wrapper.find('button.agent-row-name').exists()).toBe(false)
     expect(wrapper.find('span.agent-row-name').text()).toBe('server-daily')
   })

@@ -272,6 +272,8 @@ const parentCrumb = computed(() => {
         :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
         filter-display="row"
         table-class="data-table browser-table"
+        resizable-columns
+        column-resize-mode="expand"
         @row-click="(e: { data: DisplayEntry }) => handleRowClick(e.data)"
       >
         <Column
@@ -279,6 +281,7 @@ const parentCrumb = computed(() => {
           header="Name"
           :sortable="true"
           :show-filter-menu="false"
+          style="min-width: 12rem"
         >
           <template #filter="{ filterModel, filterCallback }">
             <input
@@ -514,6 +517,11 @@ const parentCrumb = computed(() => {
 
 :deep(.data-table) {
   width: 100%;
+  /* Below this the fixed-width Size/Modified/action columns leave the Name
+     column too narrow to read - let the table overflow its container
+     (scrollable via PrimeVue's own tableContainer wrapper) instead of
+     crushing every cell down to a couple of characters. */
+  min-width: 40rem;
   border-collapse: collapse;
   font-size: var(--fs-base);
 }
@@ -546,6 +554,13 @@ const parentCrumb = computed(() => {
 }
 
 @media (max-width: 640px) {
+  /* The mobile layout already drops a column and narrows another, so it
+     does not need the wider desktop/tablet floor that exists to keep the
+     Name column readable. */
+  :deep(.data-table) {
+    min-width: 0;
+  }
+
   :deep(.browser-table th:nth-child(3)),
   :deep(.browser-table td:nth-child(3)) {
     display: none;

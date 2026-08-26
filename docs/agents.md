@@ -215,7 +215,7 @@ When every failure in the window is consecutive, the tile adds an **Incident** c
 
 ### Schedules and Backups
 
-Both tabs render one line per entry: a status stripe, a name, a time, and stats aligned to the right. Schedule rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets. Backup rows link to their archive when the run succeeded, and expand their warning or error output in place when it did not.
+Both tabs render one line per entry: a status stripe, a name, a time, and stats aligned to the right. Schedule rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets. Backup rows link to their archive whenever the run produced one — including a run that finished with warnings — and a warned or failed run also expands its warning or error output in place.
 
 Each tab label carries a count, including zero.
 

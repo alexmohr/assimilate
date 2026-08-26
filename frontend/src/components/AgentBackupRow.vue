@@ -15,8 +15,8 @@ import type { ReportRow } from '../types/report'
  * AgentScheduleRow. Previously each run rendered as a four-line card, so a
  * month of history did not fit on a screen; one line per run does.
  *
- * A successful run links to its archive; a failed or warned one expands its
- * output in place, which is what you came to the page to read.
+ * A run that produced an archive links to it; a warned or failed run also
+ * expands its output in place, which is what you came to the page to read.
  */
 const props = defineProps<{
   report: ReportRow
@@ -63,9 +63,10 @@ const hasDetail = computed(
     />
     <span class="agent-row-when">{{ relativeTime(report.finished_at) }}</span>
     <button
-      v-if="isSuccess"
+      v-if="report.archive_name"
       class="agent-row-name mono"
       type="button"
+      title="Browse this archive"
       @click="emit('open')"
     >
       {{ report.repo_name }}

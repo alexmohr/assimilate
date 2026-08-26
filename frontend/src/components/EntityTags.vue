@@ -21,6 +21,12 @@ const props = defineProps<{
   scope: TagScope
   /** Collection path for this entity's tags, e.g. `/repos/12` or `/agents/web-01`. */
   entityPath: string
+  /**
+   * Extra query params for the entity's own tag requests (e.g. `domain`, to
+   * disambiguate an agent hostname shared by more than one agent). Never
+   * applied to the `/tags` namespace request.
+   */
+  entityParams?: Record<string, string>
 }>()
 
 const DEFAULT_TAG_COLOR = '#6b7280'
@@ -45,7 +51,7 @@ async function load(): Promise<void> {
       listTags(props.scope),
       // A failure here is not fatal: the picker still works, it just starts
       // with nothing assigned rather than blanking the whole panel.
-      listEntityTags(props.entityPath).catch((e: unknown) => {
+      listEntityTags(props.entityPath, props.entityParams).catch((e: unknown) => {
         logger.error('load tags failed', e)
         return [] as TagRow[]
       }),
@@ -58,7 +64,7 @@ async function load(): Promise<void> {
 }
 
 async function save(updated: number[]): Promise<void> {
-  await setEntityTags(props.entityPath, updated)
+  await setEntityTags(props.entityPath, updated, props.entityParams)
   assignedIds.value = updated
 }
 

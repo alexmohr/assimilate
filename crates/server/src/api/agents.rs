@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use super::{
     auth::{AuthUser, RequireAdmin},
-    helpers,
+    helpers::{self, DomainQuery},
     permissions::is_visible_to_user,
 };
 use crate::{
@@ -36,6 +36,9 @@ pub struct CreateAgentRequest {
     pub hostname: String,
     /// Optional display name.
     pub display_name: Option<String>,
+    /// Optional DNS domain, to disambiguate this agent from others that
+    /// report the same hostname.
+    pub domain: Option<String>,
 }
 
 /// Request payload for updating an agent's configuration.
@@ -45,6 +48,9 @@ pub struct UpdateAgentRequest {
     pub hostname: Option<String>,
     /// New display name.
     pub display_name: Option<String>,
+    /// New DNS domain, to disambiguate this agent from others that report
+    /// the same hostname.
+    pub domain: Option<String>,
     /// Default backup source paths.
     #[serde(default)]
     pub default_backup_paths: Vec<String>,
@@ -65,13 +71,14 @@ pub struct UpdateAgentRequest {
 /// Builds an [`AgentResponse`] for `agent`, resolving live connection and
 /// restart capability from the registry by the agent's own hostname.
 async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentResponse {
-    let is_connected = state.registry.is_connected(&agent.hostname).await;
+    let is_connected = state.registry.is_connected(agent.id).await;
     let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&agent.hostname).await;
+        state.registry.restart_capability(agent.id).await;
     AgentResponse {
         id: agent.id,
         hostname: agent.hostname,
         display_name: agent.display_name,
+        domain: agent.domain,
         agent_version: agent.agent_version,
         agent_git_sha: agent.agent_git_sha,
         agent_build_time: agent.agent_build_time,
@@ -128,6 +135,7 @@ pub async fn create_agent(
         req.display_name.as_deref(),
         &token_hash,
         Some(admin.user_id),
+        req.domain.as_deref(),
     )
     .await?;
 
@@ -197,11 +205,13 @@ pub async fn list_agents(
     operation_id = "getAgent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "Agent details", body = AgentResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Get an agent by hostname.
@@ -213,8 +223,9 @@ pub async fn get_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     Ok(Json(build_agent_response(&state, agent).await))
 }
 
@@ -225,12 +236,14 @@ pub async fn get_agent(
     operation_id = "updateAgent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     request_body = UpdateAgentRequest,
     responses(
         (status = 200, description = "Updated agent", body = AgentResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Update an agent.
@@ -242,15 +255,19 @@ pub async fn update_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
+    let existing =
+        db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let new_hostname = req.hostname.as_deref().unwrap_or(&hostname);
     let agent = db::update_agent(
         &state.pool,
-        &hostname,
+        existing.id,
         new_hostname,
         db::AgentDefaults {
             display_name: req.display_name.as_deref(),
+            domain: req.domain.as_deref(),
             default_backup_paths: &req.default_backup_paths,
             default_exclude_patterns: &req.default_exclude_patterns,
             default_pre_backup_commands: &req.default_pre_backup_commands,
@@ -259,7 +276,7 @@ pub async fn update_agent(
         },
     )
     .await?;
-    config_assembler::push_config_to_agent(&state, new_hostname).await;
+    config_assembler::push_config_to_agent(&state, agent.id).await;
     Ok(Json(build_agent_response(&state, agent).await))
 }
 
@@ -270,11 +287,13 @@ pub async fn update_agent(
     operation_id = "deleteAgent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 204, description = "Deleted"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Delete an agent.
@@ -286,14 +305,15 @@ pub async fn delete_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
 
     if let Ok(tunnel) = db::get_tunnel_by_agent_id(&state.pool, agent.id).await {
         state.tunnel_manager.stop_tunnel(tunnel.id).await;
     }
 
-    db::delete_agent(&state.pool, &hostname).await?;
+    db::delete_agent(&state.pool, agent.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -304,11 +324,13 @@ pub async fn delete_agent(
     operation_id = "regenerateAgentToken",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "New token issued", body = CreateAgentResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Regenerate the agent token for an agent.
@@ -320,15 +342,17 @@ pub async fn regenerate_token(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<CreateAgentResponse>, ApiError> {
-    let existing = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let existing =
+        db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let was_imported = existing.agent_token_hash == IMPORTED_TOKEN_HASH;
 
     let token_hex = helpers::generate_random_hex(32);
 
     let token_hash = bcrypt::hash(&token_hex, bcrypt::DEFAULT_COST)?;
 
-    let agent = db::regenerate_agent_token(&state.pool, &hostname, &token_hash).await?;
+    let agent = db::regenerate_agent_token(&state.pool, existing.id, &token_hash).await?;
 
     if was_imported {
         db::mark_agent_reports_matched(&state.pool, agent.id).await?;
@@ -353,12 +377,14 @@ pub async fn regenerate_token(
     operation_id = "restartAgent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 202, description = "Restart accepted"),
         (status = 400, description = "Restart not supported"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Send a restart command to the agent.
@@ -372,8 +398,10 @@ pub async fn restart_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let (supports_restart, reason) = state.registry.restart_capability(&hostname).await;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let (supports_restart, reason) = state.registry.restart_capability(agent.id).await;
 
     if !supports_restart {
         return Err(ApiError::BadRequest(
@@ -383,7 +411,7 @@ pub async fn restart_agent(
 
     state
         .registry
-        .send_to(&hostname, ServerToAgent::RestartAgent)
+        .send_to(agent.id, ServerToAgent::RestartAgent)
         .await
         .map_err(|e| ApiError::Internal(format!("agent not connected: {e}")))?;
 
@@ -397,11 +425,13 @@ pub async fn restart_agent(
     operation_id = "listHostnamePatterns",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "List of patterns", body = Vec<HostnamePatternRow>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// List hostname patterns for an agent.
@@ -413,8 +443,9 @@ pub async fn list_hostname_patterns(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<Vec<HostnamePatternRow>>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let patterns = db::patterns::list_patterns_for_agent(&state.pool, agent.id).await?;
     Ok(Json(patterns))
 }
@@ -433,13 +464,14 @@ pub struct AddPatternRequest {
     operation_id = "addHostnamePattern",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     request_body = AddPatternRequest,
     responses(
         (status = 201, description = "Pattern created", body = HostnamePatternRow),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
-        (status = 409, description = "Duplicate pattern"),
+        (status = 409, description = "Duplicate pattern, or hostname is ambiguous"),
     )
 )]
 /// Add a hostname pattern to an agent.
@@ -451,10 +483,11 @@ pub async fn add_hostname_pattern(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<AddPatternRequest>,
 ) -> Result<(StatusCode, Json<HostnamePatternRow>), ApiError> {
     helpers::validate_non_empty(&req.pattern, "pattern")?;
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let row = db::patterns::add_hostname_pattern(&state.pool, agent.id, &req.pattern).await?;
     Ok((StatusCode::CREATED, Json(row)))
 }
@@ -467,11 +500,13 @@ pub async fn add_hostname_pattern(
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
         ("pattern_id" = i64, Path, description = "Pattern ID"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 204, description = "Deleted"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Delete a hostname pattern.
@@ -483,8 +518,9 @@ pub async fn delete_hostname_pattern(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path((hostname, pattern_id)): Path<(String, i64)>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<StatusCode, ApiError> {
-    db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     db::patterns::delete_hostname_pattern(&state.pool, pattern_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -504,6 +540,7 @@ pub struct MergeAgentRequest {
     params(
         ("hostname" = String, Path, description = "Target agent hostname"),
         ("source_id" = i64, Path, description = "Source placeholder agent ID"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     request_body(content = Option<MergeAgentRequest>, content_type = "application/json"),
     responses(
@@ -511,6 +548,7 @@ pub struct MergeAgentRequest {
         (status = 400, description = "Source is not a placeholder"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Merge a placeholder agent into this agent.
@@ -522,9 +560,10 @@ pub async fn merge_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path((hostname, source_id)): Path<(String, i64)>,
+    Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<MergeAgentRequest>,
 ) -> Result<Json<MergeAgentResponse>, ApiError> {
-    let target = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let target = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     db::merge_agent(&state.pool, source_id, target.id).await?;
 
     if let Some(pattern) = &req.create_pattern
@@ -543,11 +582,13 @@ pub async fn merge_agent(
     operation_id = "hideAgent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "Agent hidden"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Hide an agent from all views.
@@ -559,8 +600,11 @@ pub async fn hide_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let a = db::set_agent_hidden(&state.pool, &hostname, true).await?;
+    let existing =
+        db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let a = db::set_agent_hidden(&state.pool, existing.id, true).await?;
     Ok(Json(build_agent_response(&state, a).await))
 }
 
@@ -571,11 +615,13 @@ pub async fn hide_agent(
     operation_id = "unhideAgent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "Agent unhidden"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Unhide a previously hidden agent.
@@ -587,8 +633,11 @@ pub async fn unhide_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let a = db::set_agent_hidden(&state.pool, &hostname, false).await?;
+    let existing =
+        db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let a = db::set_agent_hidden(&state.pool, existing.id, false).await?;
     Ok(Json(build_agent_response(&state, a).await))
 }
 
@@ -599,11 +648,13 @@ pub async fn unhide_agent(
     operation_id = "deleteAgentArchives",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "Archives deleted", body = DeleteAgentArchivesResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
         (status = 503, description = "Agent offline"),
     )
 )]
@@ -616,8 +667,9 @@ pub async fn delete_agent_archives(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<DeleteAgentArchivesResponse>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
 
     let archives_by_repo = db::get_archives_for_agent_with_patterns(&state.pool, agent.id).await?;
 
@@ -625,17 +677,17 @@ pub async fn delete_agent_archives(
     let mut errors: Vec<String> = Vec::new();
 
     for (repo_id, archive_names) in &archives_by_repo {
-        let targets = db::get_schedule_target_hostnames_for_repo(&state.pool, repo_id.0).await?;
+        let targets = db::get_schedule_target_agents_for_repo(&state.pool, repo_id.0).await?;
 
-        let mut connected_host = None;
-        for h in &targets {
-            if state.registry.is_connected(h).await {
-                connected_host = Some(h.clone());
+        let mut connected_agent_id = None;
+        for t in &targets {
+            if state.registry.is_connected(t.agent_id).await {
+                connected_agent_id = Some(t.agent_id);
                 break;
             }
         }
 
-        let Some(agent_hostname) = connected_host else {
+        let Some(connected_agent_id) = connected_agent_id else {
             errors.push(format!(
                 "no connected agent for repo {} -- skipped {} archives",
                 repo_id.0,
@@ -659,7 +711,12 @@ pub async fn delete_agent_archives(
             archive_names: archive_names.clone(),
         };
 
-        if state.registry.send_to(&agent_hostname, msg).await.is_err() {
+        if state
+            .registry
+            .send_to(connected_agent_id, msg)
+            .await
+            .is_err()
+        {
             state.pending_deletes.lock().await.remove(&request_id);
             errors.push(format!("failed to send to agent for repo {}", repo_id.0));
             continue;
@@ -688,7 +745,7 @@ pub async fn delete_agent_archives(
     }
 
     if errors.is_empty() {
-        db::delete_agent(&state.pool, &hostname).await?;
+        db::delete_agent(&state.pool, agent.id).await?;
     }
 
     Ok(Json(DeleteAgentArchivesResponse {

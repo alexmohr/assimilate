@@ -191,6 +191,7 @@ describe('AgentSettingsTab', () => {
 
     expect(apiClient.get).toHaveBeenCalledWith(
       expect.stringContaining('renamed-host/hostname-patterns'),
+      expect.anything(),
     )
   })
 })

@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
+import { domainParams } from '../utils/agent'
 import EntityTags from './EntityTags.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
@@ -87,6 +88,8 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       <dl class="info-grid">
         <dt>Hostname</dt>
         <dd class="mono">{{ agent.hostname }}</dd>
+        <dt>Domain</dt>
+        <dd class="mono">{{ agent.domain ?? 'Not set' }}</dd>
         <dt>Display name</dt>
         <dd>{{ agent.display_name ?? 'Not set' }}</dd>
         <template v-if="!isImported">
@@ -136,6 +139,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       v-else-if="currentSection === 'aliases'"
       ref="aliases"
       :hostname="agent.hostname"
+      :domain="agent.domain"
       :can-edit="!isImported"
     />
 
@@ -143,6 +147,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       v-else-if="currentSection === 'tags'"
       scope="host"
       :entity-path="`/agents/${agent.hostname}`"
+      :entity-params="domainParams(agent.domain)"
     />
 
     <AgentDangerZone

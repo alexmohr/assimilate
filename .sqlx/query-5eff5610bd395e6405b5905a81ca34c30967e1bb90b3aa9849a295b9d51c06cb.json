@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT a.id AS agent_id, a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedules s ON s.id = st.schedule_id WHERE s.repo_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "5eff5610bd395e6405b5905a81ca34c30967e1bb90b3aa9849a295b9d51c06cb"
+}

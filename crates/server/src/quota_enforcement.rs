@@ -216,7 +216,7 @@ mod tests {
     /// Shared test setup: build test state and insert an agent, a repo, and one schedule.
     async fn setup_one_schedule(pool: &PgPool) -> (AppState, i64, i64) {
         let state = build_test_state(pool.clone());
-        let agent = db::insert_agent(pool, "host-a", None, "hash", None)
+        let agent = db::insert_agent(pool, "host-a", None, "hash", None, None)
             .await
             .unwrap();
         let repo_id = insert_test_repo(pool, "repo-a", "storage.local").await;
@@ -227,7 +227,7 @@ mod tests {
     /// Shared test setup: build test state and insert an agent, a repo, and two schedules.
     async fn setup_two_schedules(pool: &PgPool) -> (AppState, i64, i64, i64) {
         let state = build_test_state(pool.clone());
-        let agent = db::insert_agent(pool, "host-a", None, "hash", None)
+        let agent = db::insert_agent(pool, "host-a", None, "hash", None, None)
             .await
             .unwrap();
         let repo_id = insert_test_repo(pool, "repo-a", "storage.local").await;
@@ -292,7 +292,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn server_block_backups_disables_schedules_across_every_repo_on_host(pool: PgPool) {
         let state = build_test_state(pool.clone());
-        let agent = db::insert_agent(&pool, "host-a", None, "hash", None)
+        let agent = db::insert_agent(&pool, "host-a", None, "hash", None, None)
             .await
             .unwrap();
         let repo_a = insert_test_repo(&pool, "repo-a", "shared.local").await;
@@ -321,7 +321,7 @@ mod tests {
         pool: PgPool,
     ) {
         let state = build_test_state(pool.clone());
-        let agent = db::insert_agent(&pool, "host-a", None, "hash", None)
+        let agent = db::insert_agent(&pool, "host-a", None, "hash", None, None)
             .await
             .unwrap();
         let repo_a = insert_test_repo(&pool, "repo-a", "shared.local").await;

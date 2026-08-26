@@ -23,7 +23,7 @@ use sqlx::PgPool;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_insert_and_get(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "test-host", Some("Test Host"), "hash123", None)
+    let agent = db::insert_agent(&pool, "test-host", Some("Test Host"), "hash123", None, None)
         .await
         .unwrap();
 
@@ -32,7 +32,9 @@ async fn agent_insert_and_get(pool: PgPool) {
     assert!(agent.agent_version.is_none());
     assert!(agent.last_seen_at.is_none());
 
-    let fetched = db::get_agent_by_hostname(&pool, "test-host").await.unwrap();
+    let fetched = db::get_agent_by_hostname(&pool, "test-host", None)
+        .await
+        .unwrap();
     assert_eq!(fetched.id, agent.id);
     assert_eq!(fetched.hostname, "test-host");
 }
@@ -60,40 +62,46 @@ async fn database_storage_lists_application_tables(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_not_found(pool: PgPool) {
-    let result = db::get_agent_by_hostname(&pool, "nonexistent").await;
+    let result = db::get_agent_by_hostname(&pool, "nonexistent", None).await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_token_hash(pool: PgPool) {
-    db::insert_agent(&pool, "token-host", None, "secret_hash", None)
+    db::insert_agent(&pool, "token-host", None, "secret_hash", None, None)
         .await
         .unwrap();
 
-    let (id, hash) = db::get_agent_token_hash(&pool, "token-host").await.unwrap();
-    assert!(id > 0);
-    assert_eq!(hash, "secret_hash");
+    let candidates = db::get_agent_token_hashes(&pool, "token-host")
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    let candidate = candidates.first().unwrap();
+    assert!(candidate.id > 0);
+    assert_eq!(candidate.agent_token_hash, "secret_hash");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_update_last_seen(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "seen-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "seen-host", None, "hash", None, None)
         .await
         .unwrap();
 
     db::update_last_seen(&pool, agent.id).await.unwrap();
 
-    let fetched = db::get_agent_by_hostname(&pool, "seen-host").await.unwrap();
+    let fetched = db::get_agent_by_hostname(&pool, "seen-host", None)
+        .await
+        .unwrap();
     assert!(fetched.last_seen_at.is_some());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_update_last_ssh_user(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "ssh-user-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "ssh-user-host", None, "hash", None, None)
         .await
         .unwrap();
 
-    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host")
+    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host", None)
         .await
         .unwrap();
     assert_eq!(fetched.last_ssh_user, None);
@@ -102,7 +110,7 @@ async fn agent_update_last_ssh_user(pool: PgPool) {
         .await
         .unwrap();
 
-    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host")
+    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host", None)
         .await
         .unwrap();
     assert_eq!(fetched.last_ssh_user.as_deref(), Some("deploy-user"));
@@ -111,7 +119,7 @@ async fn agent_update_last_ssh_user(pool: PgPool) {
         .await
         .unwrap();
 
-    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host")
+    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host", None)
         .await
         .unwrap();
     assert_eq!(fetched.last_ssh_user.as_deref(), Some("root"));
@@ -119,7 +127,7 @@ async fn agent_update_last_ssh_user(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_update_last_seen_and_version(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "ver-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "ver-host", None, "hash", None, None)
         .await
         .unwrap();
 
@@ -127,14 +135,16 @@ async fn agent_update_last_seen_and_version(pool: PgPool) {
         .await
         .unwrap();
 
-    let fetched = db::get_agent_by_hostname(&pool, "ver-host").await.unwrap();
+    let fetched = db::get_agent_by_hostname(&pool, "ver-host", None)
+        .await
+        .unwrap();
     assert_eq!(fetched.agent_version.as_deref(), Some("2.0.0"));
     assert!(fetched.last_seen_at.is_some());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_update_last_seen_by_hostname(pool: PgPool) {
-    db::insert_agent(&pool, "hostname-seen", None, "hash", None)
+    db::insert_agent(&pool, "hostname-seen", None, "hash", None, None)
         .await
         .unwrap();
 
@@ -142,7 +152,7 @@ async fn agent_update_last_seen_by_hostname(pool: PgPool) {
         .await
         .unwrap();
 
-    let fetched = db::get_agent_by_hostname(&pool, "hostname-seen")
+    let fetched = db::get_agent_by_hostname(&pool, "hostname-seen", None)
         .await
         .unwrap();
     assert!(fetched.last_seen_at.is_some());
@@ -150,10 +160,10 @@ async fn agent_update_last_seen_by_hostname(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_list(pool: PgPool) {
-    db::insert_agent(&pool, "alpha", None, "h1", None)
+    db::insert_agent(&pool, "alpha", None, "h1", None, None)
         .await
         .unwrap();
-    db::insert_agent(&pool, "beta", None, "h2", None)
+    db::insert_agent(&pool, "beta", None, "h2", None, None)
         .await
         .unwrap();
 
@@ -165,16 +175,17 @@ async fn agent_list(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_update(pool: PgPool) {
-    db::insert_agent(&pool, "upd-host", Some("Old Name"), "hash", None)
+    let agent = db::insert_agent(&pool, "upd-host", Some("Old Name"), "hash", None, None)
         .await
         .unwrap();
 
     let updated = db::update_agent(
         &pool,
-        "upd-host",
+        agent.id,
         "upd-host",
         db::AgentDefaults {
             display_name: Some("New Name"),
+            domain: None,
             default_backup_paths: &[],
             default_exclude_patterns: &[],
             default_pre_backup_commands: &[],
@@ -190,34 +201,37 @@ async fn agent_update(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_regenerate_token(pool: PgPool) {
-    db::insert_agent(&pool, "regen-host", None, "old_hash", None)
+    let agent = db::insert_agent(&pool, "regen-host", None, "old_hash", None, None)
         .await
         .unwrap();
 
-    let updated = db::regenerate_agent_token(&pool, "regen-host", "new_hash")
+    let updated = db::regenerate_agent_token(&pool, agent.id, "new_hash")
         .await
         .unwrap();
     assert_eq!(updated.hostname, "regen-host");
 
-    let (_, hash) = db::get_agent_token_hash(&pool, "regen-host").await.unwrap();
-    assert_eq!(hash, "new_hash");
+    let candidates = db::get_agent_token_hashes(&pool, "regen-host")
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates.first().unwrap().agent_token_hash, "new_hash");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_delete(pool: PgPool) {
-    db::insert_agent(&pool, "del-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "del-host", None, "hash", None, None)
         .await
         .unwrap();
 
-    db::delete_agent(&pool, "del-host").await.unwrap();
+    db::delete_agent(&pool, agent.id).await.unwrap();
 
-    let result = db::get_agent_by_hostname(&pool, "del-host").await;
+    let result = db::get_agent_by_hostname(&pool, "del-host", None).await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_delete_not_found(pool: PgPool) {
-    let result = db::delete_agent(&pool, "ghost").await;
+    let result = db::delete_agent(&pool, 999_999_999).await;
     assert!(result.is_err());
 }
 
@@ -269,7 +283,7 @@ async fn agent_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: Pg
         schedule_auto_disable_state(&pool, schedule.id).await;
     assert!(!enabled && auto_disabled_agent_unreachable);
 
-    db::delete_agent(&pool, &agent.hostname).await.unwrap();
+    db::delete_agent(&pool, agent.id).await.unwrap();
 
     let (enabled, agent_unreachable, by_agent_id, failures) =
         schedule_auto_disable_state(&pool, schedule.id).await;
@@ -650,7 +664,7 @@ async fn repo_name(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn tunnel_crud(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "tunnel-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "tunnel-host", None, "hash", None, None)
         .await
         .unwrap();
 
@@ -713,7 +727,7 @@ async fn tunnel_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn tunnel_defaults(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "def-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "def-host", None, "hash", None, None)
         .await
         .unwrap();
 
@@ -738,7 +752,7 @@ async fn tunnel_defaults(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn tunnel_ssh_host_key_persist_and_coalesce(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "key-persist-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "key-persist-host", None, "hash", None, None)
         .await
         .unwrap();
 
@@ -851,7 +865,7 @@ async fn excludes_crud(pool: PgPool) {
 
 #[cfg(test)]
 async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow) {
-    let agent = db::insert_agent(pool, "sched-host", None, "hash", None)
+    let agent = db::insert_agent(pool, "sched-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = db::insert_repo(
@@ -1030,7 +1044,7 @@ async fn schedule_list_for_repo(pool: PgPool) {
 async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
     let (agent_a, repo_a, schedule_a) = create_test_schedule(&pool).await;
 
-    let agent_b = db::insert_agent(&pool, "repo-list-host-b", None, "hashb", None)
+    let agent_b = db::insert_agent(&pool, "repo-list-host-b", None, "hashb", None, None)
         .await
         .unwrap();
     let repo_b = db::insert_repo(
@@ -1176,9 +1190,10 @@ async fn schedule_due_and_trigger(pool: PgPool) {
 async fn schedule_agent_hostname(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
 
-    let hostnames = db::get_schedule_target_hostnames(&pool, schedule.id)
+    let targets = db::get_schedule_targets_for_run(&pool, schedule.id)
         .await
         .unwrap();
+    let hostnames: Vec<&str> = targets.iter().map(|t| t.hostname.as_str()).collect();
     assert_eq!(hostnames, vec!["sched-host"]);
 }
 
@@ -1214,7 +1229,7 @@ async fn backup_sources_crud(pool: PgPool) {
 async fn backup_sources_per_agent_crud(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
 
-    let agent2 = db::insert_agent(&pool, "host-two", None, "hash2", None)
+    let agent2 = db::insert_agent(&pool, "host-two", None, "hash2", None, None)
         .await
         .unwrap();
 
@@ -1278,7 +1293,7 @@ async fn backup_sources_per_agent_crud(pool: PgPool) {
 async fn excludes_per_agent_crud(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
 
-    let agent2 = db::insert_agent(&pool, "host-two-exc", None, "hash2exc", None)
+    let agent2 = db::insert_agent(&pool, "host-two-exc", None, "hash2exc", None, None)
         .await
         .unwrap();
 
@@ -1324,7 +1339,7 @@ async fn excludes_per_agent_crud(pool: PgPool) {
 async fn file_change_patterns_per_agent_crud(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
 
-    let agent2 = db::insert_agent(&pool, "host-two-fcp", None, "hash2fcp", None)
+    let agent2 = db::insert_agent(&pool, "host-two-fcp", None, "hash2fcp", None, None)
         .await
         .unwrap();
 
@@ -1557,7 +1572,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
         .await
         .unwrap();
 
-    let config = server::config_assembler::assemble_config(&pool, &encryption_key, &agent.hostname)
+    let config = server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
         .await
         .unwrap();
 
@@ -1626,10 +1641,11 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
 
     db::update_agent(
         &pool,
-        &agent.hostname,
+        agent.id,
         &agent.hostname,
         db::AgentDefaults {
             display_name: agent.display_name.as_deref(),
+            domain: agent.domain.as_deref(),
             default_backup_paths: &agent.default_backup_paths,
             default_exclude_patterns: &agent.default_exclude_patterns,
             default_pre_backup_commands: &agent.default_pre_backup_commands.0,
@@ -1657,7 +1673,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
         .await
         .unwrap();
 
-    let config = server::config_assembler::assemble_config(&pool, &encryption_key, &agent.hostname)
+    let config = server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
         .await
         .unwrap();
 
@@ -1795,7 +1811,7 @@ async fn insert_test_report_for_schedule(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_insert_and_list(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "report-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "report-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1820,7 +1836,7 @@ async fn backup_report_insert_and_list(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_list_with_target(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "target-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "target-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1840,7 +1856,7 @@ async fn backup_report_list_with_target(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_with_warnings(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "warn-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "warn-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1885,7 +1901,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_delete_before(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "del-report-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "del-report-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1901,7 +1917,7 @@ async fn backup_report_delete_before(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_stats_with_sum(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "stats-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "stats-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1926,7 +1942,7 @@ async fn storage_stats_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "act-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "act-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1943,7 +1959,7 @@ async fn activity_feed(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_days(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "days-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "days-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2115,7 +2131,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         .await
         .unwrap();
 
-    let disabled_agent = db::insert_agent(&pool, "disabled-only", None, "hash", None)
+    let disabled_agent = db::insert_agent(&pool, "disabled-only", None, "hash", None, None)
         .await
         .unwrap();
     let disabled_schedule = db::insert_schedule(
@@ -2149,15 +2165,13 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         .await
         .unwrap();
 
-    let unassigned = db::insert_agent(&pool, "unassigned", None, "hash", None)
+    let unassigned = db::insert_agent(&pool, "unassigned", None, "hash", None, None)
         .await
         .unwrap();
-    let hidden = db::insert_agent(&pool, "hidden", None, "hash", None)
+    let hidden = db::insert_agent(&pool, "hidden", None, "hash", None, None)
         .await
         .unwrap();
-    db::set_agent_hidden(&pool, &hidden.hostname, true)
-        .await
-        .unwrap();
+    db::set_agent_hidden(&pool, hidden.id, true).await.unwrap();
     db::get_or_create_agent_by_hostname(&pool, "imported-placeholder")
         .await
         .unwrap();
@@ -2251,7 +2265,7 @@ async fn dashboard_repository_capacity_uses_repo_stats_and_quota(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn repos_with_stats(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "rws-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "rws-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2341,7 +2355,7 @@ async fn repos_with_stats_carries_own_quota_when_configured(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_with_stats_single(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "single-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "single-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2355,7 +2369,7 @@ async fn repo_with_stats_single(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_breakdown(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "brk-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "brk-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2527,7 +2541,7 @@ async fn dashboard_summary(pool: PgPool) {
 /// `repos.info_deduplicated_size` rather than `backup_reports`.
 #[sqlx::test(migrations = "./migrations")]
 async fn dashboard_summary_total_storage_from_repo_info(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "ds-storage-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "ds-storage-host", None, "hash", None, None)
         .await
         .unwrap();
 
@@ -3853,7 +3867,7 @@ async fn repo_tags_assignment(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_tags_assignment(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "tagged-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "tagged-host", None, "hash", None, None)
         .await
         .unwrap();
     let tag = db::insert_tag(&pool, "critical", "#f00", "agent")
@@ -4096,10 +4110,10 @@ async fn backup_sources_for_repo(pool: PgPool) {
 async fn ssh_tunnel_crud(pool: PgPool) {
     use server::error::ApiError;
 
-    let agent = db::insert_agent(&pool, "tun-host-1", None, "tun-token-1", None)
+    let agent = db::insert_agent(&pool, "tun-host-1", None, "tun-token-1", None, None)
         .await
         .unwrap();
-    let agent_2 = db::insert_agent(&pool, "tun-host-2", None, "tun-token-2", None)
+    let agent_2 = db::insert_agent(&pool, "tun-host-2", None, "tun-token-2", None, None)
         .await
         .unwrap();
 
@@ -4181,7 +4195,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
     .await
     .unwrap();
 
-    db::delete_agent(&pool, "tun-host-2").await.unwrap();
+    db::delete_agent(&pool, agent_2.id).await.unwrap();
     assert!(matches!(
         db::get_tunnel_by_id(&pool, tunnel_2.id).await,
         Err(ApiError::NotFound(_))
@@ -4514,7 +4528,7 @@ async fn test_backup_trends_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_backup_trends_with_data(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "trends-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "trends-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4529,7 +4543,7 @@ async fn test_backup_trends_with_data(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "trends-filter-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "trends-filter-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4557,7 +4571,7 @@ async fn test_calendar_events_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_calendar_events_with_data(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "cal-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "cal-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4582,7 +4596,7 @@ async fn test_calendar_events_with_data(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "cal-filter-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "cal-filter-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4685,6 +4699,7 @@ async fn test_hostname_pattern_crud(pool: PgPool) {
         Some("Pattern CRUD"),
         "hash",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4717,6 +4732,7 @@ async fn test_find_agent_by_pattern_glob_match(pool: PgPool) {
         Some("Pattern Glob"),
         "hash",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4742,6 +4758,7 @@ async fn test_find_agent_by_pattern_no_match(pool: PgPool) {
         Some("Pattern No Match"),
         "hash",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4765,6 +4782,7 @@ async fn test_add_duplicate_pattern_returns_error(pool: PgPool) {
         Some("Duplicate One"),
         "hash",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4773,6 +4791,7 @@ async fn test_add_duplicate_pattern_returns_error(pool: PgPool) {
         "duplicate-pattern-two",
         Some("Duplicate Two"),
         "hash",
+        None,
         None,
     )
     .await
@@ -4788,7 +4807,7 @@ async fn test_add_duplicate_pattern_returns_error(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_resolve_agent_exact_match_priority(pool: PgPool) {
-    let exact = db::insert_agent(&pool, "foo", Some("Exact Foo"), "hash", None)
+    let exact = db::insert_agent(&pool, "foo", Some("Exact Foo"), "hash", None, None)
         .await
         .unwrap();
     let patterned = db::insert_agent(
@@ -4796,6 +4815,7 @@ async fn test_resolve_agent_exact_match_priority(pool: PgPool) {
         "pattern-priority-agent",
         Some("Pattern Foo"),
         "hash",
+        None,
         None,
     )
     .await
@@ -4820,12 +4840,20 @@ async fn test_merge_agent_moves_reports(pool: PgPool) {
         Some("Merge Placeholder"),
         "imported:no-auth",
         None,
+        None,
     )
     .await
     .unwrap();
-    let target = db::insert_agent(&pool, "merge-target", Some("Merge Target"), "hash", None)
-        .await
-        .unwrap();
+    let target = db::insert_agent(
+        &pool,
+        "merge-target",
+        Some("Merge Target"),
+        "hash",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let repo = create_test_repo(&pool).await;
 
     insert_test_report(&pool, placeholder.id, repo.id).await;
@@ -4847,20 +4875,28 @@ async fn test_merge_agent_moves_reports(pool: PgPool) {
             .unwrap();
     assert!(matched);
 
-    let source = db::get_agent_by_hostname(&pool, "merge-placeholder").await;
+    let source = db::get_agent_by_hostname(&pool, "merge-placeholder", None).await;
     assert!(source.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_merge_agent_refuses_non_placeholder(pool: PgPool) {
-    let source = db::insert_agent(&pool, "merge-source", Some("Merge Source"), "hash", None)
-        .await
-        .unwrap();
+    let source = db::insert_agent(
+        &pool,
+        "merge-source",
+        Some("Merge Source"),
+        "hash",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let target = db::insert_agent(
         &pool,
         "merge-target-real",
         Some("Merge Target Real"),
         "hash",
+        None,
         None,
     )
     .await
@@ -4883,6 +4919,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
         Some("Merge Placeholder"),
         "imported:no-auth",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -4891,6 +4928,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
         "merge-target-auto-disable",
         Some("Merge Target"),
         "hash",
+        None,
         None,
     )
     .await
@@ -4966,6 +5004,7 @@ async fn test_mark_agent_reports_matched(pool: PgPool) {
         Some("Adopt Host (imported)"),
         "imported:no-auth",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -5022,7 +5061,7 @@ async fn test_mark_agent_reports_matched(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "primary-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "primary-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo1 = db::insert_repo(
@@ -5196,7 +5235,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
 /// merged/reassigned yet (`agent_id` still points to the imported agent).
 #[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "web-server-01", None, "hash", None)
+    let agent = db::insert_agent(&pool, "web-server-01", None, "hash", None, None)
         .await
         .unwrap();
     patterns::add_hostname_pattern(&pool, agent.id, "web-server-*")
@@ -5266,6 +5305,7 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
         None,
         "imported:no-auth",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -5323,7 +5363,7 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
 /// Verifies pattern matching across multiple repos with unrelated agents excluded.
 #[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "db-server-01", None, "hash", None)
+    let agent = db::insert_agent(&pool, "db-server-01", None, "hash", None, None)
         .await
         .unwrap();
     patterns::add_hostname_pattern(&pool, agent.id, "db-server-*")
@@ -5426,6 +5466,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
         None,
         "imported:no-auth",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -5462,6 +5503,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
         None,
         "imported:no-auth",
         None,
+        None,
     )
     .await
     .unwrap();
@@ -5497,6 +5539,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
         "app-server-01 (imported)",
         None,
         "imported:no-auth",
+        None,
         None,
     )
     .await
@@ -5711,7 +5754,7 @@ async fn bulk_insert_backup_reports_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn bulk_insert_backup_reports_basic(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "bulk-host", None, "hash-bulk", None)
+    let agent = db::insert_agent(&pool, "bulk-host", None, "hash-bulk", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -5775,7 +5818,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "bulk-dup-host", None, "hash-dup", None)
+    let agent = db::insert_agent(&pool, "bulk-dup-host", None, "hash-dup", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -5823,7 +5866,7 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
     // Borg reports archive `start` at whole-second precision, so two distinct
     // archives of the same host can share (agent_id, started_at). They must not
     // collapse into a single row on import.
-    let agent = db::insert_agent(&pool, "same-second-host", None, "hash-ss", None)
+    let agent = db::insert_agent(&pool, "same-second-host", None, "hash-ss", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -5907,7 +5950,7 @@ async fn repo_last_synced_at_updates(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_get_by_id(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "byid-host", None, "hash-byid", None)
+    let agent = db::insert_agent(&pool, "byid-host", None, "hash-byid", None, None)
         .await
         .unwrap();
 
@@ -5921,16 +5964,14 @@ async fn agent_get_by_id(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_set_hidden_and_list(pool: PgPool) {
-    db::insert_agent(&pool, "hidden-host", None, "hash-hidden", None)
+    let agent = db::insert_agent(&pool, "hidden-host", None, "hash-hidden", None, None)
         .await
         .unwrap();
 
     let before = db::list_agents(&pool, false).await.unwrap();
     assert!(before.iter().any(|c| c.hostname == "hidden-host"));
 
-    db::set_agent_hidden(&pool, "hidden-host", true)
-        .await
-        .unwrap();
+    db::set_agent_hidden(&pool, agent.id, true).await.unwrap();
 
     let visible = db::list_agents(&pool, false).await.unwrap();
     assert!(!visible.iter().any(|c| c.hostname == "hidden-host"));
@@ -5938,9 +5979,7 @@ async fn agent_set_hidden_and_list(pool: PgPool) {
     let all = db::list_agents(&pool, true).await.unwrap();
     assert!(all.iter().any(|c| c.hostname == "hidden-host"));
 
-    db::set_agent_hidden(&pool, "hidden-host", false)
-        .await
-        .unwrap();
+    db::set_agent_hidden(&pool, agent.id, false).await.unwrap();
 
     let restored = db::list_agents(&pool, false).await.unwrap();
     assert!(restored.iter().any(|c| c.hostname == "hidden-host"));
@@ -5948,21 +5987,25 @@ async fn agent_set_hidden_and_list(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_token_hash_lookup(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "token-host", None, "secret-hash", None)
+    let agent = db::insert_agent(&pool, "token-host", None, "secret-hash", None, None)
         .await
         .unwrap();
 
-    let (id, hash) = db::get_agent_token_hash(&pool, "token-host").await.unwrap();
-    assert_eq!(id, agent.id);
-    assert_eq!(hash, "secret-hash");
+    let candidates = db::get_agent_token_hashes(&pool, "token-host")
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    let candidate = candidates.first().unwrap();
+    assert_eq!(candidate.id, agent.id);
+    assert_eq!(candidate.agent_token_hash, "secret-hash");
 
-    let result = db::get_agent_token_hash(&pool, "nonexistent-host").await;
+    let result = db::get_agent_token_hashes(&pool, "nonexistent-host").await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_last_seen_updates(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "seen-host", None, "hash-seen", None)
+    let agent = db::insert_agent(&pool, "seen-host", None, "hash-seen", None, None)
         .await
         .unwrap();
 
@@ -6009,7 +6052,7 @@ async fn get_or_create_agent_by_hostname_creates_new(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_or_create_agent_by_hostname_returns_existing(pool: PgPool) {
-    let real = db::insert_agent(&pool, "existing-real", None, "realhash", None)
+    let real = db::insert_agent(&pool, "existing-real", None, "realhash", None, None)
         .await
         .unwrap();
 
@@ -6143,10 +6186,10 @@ async fn repo_relocation_per_host_single_agent(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
     // Build a repo used by two agents via separate schedules.
-    let agent_a = db::insert_agent(&pool, "host-a", None, "hash-a", None)
+    let agent_a = db::insert_agent(&pool, "host-a", None, "hash-a", None, None)
         .await
         .unwrap();
-    let agent_b = db::insert_agent(&pool, "host-b", None, "hash-b", None)
+    let agent_b = db::insert_agent(&pool, "host-b", None, "hash-b", None, None)
         .await
         .unwrap();
     let repo = db::insert_repo(
@@ -6293,22 +6336,23 @@ async fn schedule_targets_list_and_delete(pool: PgPool) {
 async fn schedule_target_hostnames_for_repo_test(pool: PgPool) {
     let (_, repo, _) = create_test_schedule(&pool).await;
 
-    let hostnames = db::get_schedule_target_hostnames_for_repo(&pool, repo.id)
+    let targets = db::get_schedule_target_agents_for_repo(&pool, repo.id)
         .await
         .unwrap();
+    let hostnames: Vec<&str> = targets.iter().map(|t| t.hostname.as_str()).collect();
     assert_eq!(hostnames, vec!["sched-host"]);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: PgPool) {
     let (agent_a, _, schedule) = create_test_schedule(&pool).await;
-    let agent_b = db::insert_agent(&pool, "run-target-b", None, "hash-rtb", None)
+    let agent_b = db::insert_agent(&pool, "run-target-b", None, "hash-rtb", None, None)
         .await
         .unwrap();
-    let agent_hidden = db::insert_agent(&pool, "run-target-hidden", None, "hash-rth", None)
+    let agent_hidden = db::insert_agent(&pool, "run-target-hidden", None, "hash-rth", None, None)
         .await
         .unwrap();
-    db::set_agent_hidden(&pool, "run-target-hidden", true)
+    db::set_agent_hidden(&pool, agent_hidden.id, true)
         .await
         .unwrap();
 
@@ -6377,7 +6421,7 @@ async fn reports_for_schedule_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "unnamed-sched-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "unnamed-sched-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6433,7 +6477,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
 
 #[sqlx::test(migrations = "./migrations")]
 async fn reports_for_agent_have_no_schedule_when_not_schedule_triggered(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "no-schedule-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "no-schedule-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6451,7 +6495,7 @@ async fn reports_for_agent_have_no_schedule_when_not_schedule_triggered(pool: Pg
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_repo_filter(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "feed-repo-filter-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "feed-repo-filter-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6483,7 +6527,7 @@ async fn activity_feed_repo_filter(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_hostname_filter(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "hostname-filter-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "hostname-filter-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6503,7 +6547,7 @@ async fn activity_feed_hostname_filter(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_days_test(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "days-feed-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "days-feed-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6534,7 +6578,7 @@ async fn activity_feed_days_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_days_limit(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "days-feed-limit-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "days-feed-limit-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6571,7 +6615,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
         .await;
     }
 
-    let quiet_agent = db::insert_agent(&pool, "quiet-sched-host", None, "hash", None)
+    let quiet_agent = db::insert_agent(&pool, "quiet-sched-host", None, "hash", None, None)
         .await
         .unwrap();
     let quiet_repo = db::insert_repo(
@@ -6669,7 +6713,7 @@ async fn storage_trends_test(pool: PgPool) {
     let empty_trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
     assert!(empty_trends.iter().all(|t| t.deduplicated_size.is_none()));
 
-    let agent = db::insert_agent(&pool, "strend-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "strend-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6703,7 +6747,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     let empty = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
     assert_eq!(empty.len(), 0);
 
-    let agent = db::insert_agent(&pool, "strend-repo-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "strend-repo-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6725,7 +6769,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
 /// archives, which used to be compared against a single archive's per-archive original size.
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_trends_dedup_never_exceeds_original(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "strend-invariant-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "strend-invariant-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6820,7 +6864,7 @@ async fn storage_trends_dedup_never_exceeds_original(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn archive_names_and_delete_test(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "archive-del-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "archive-del-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -6907,7 +6951,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "stats-needing-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "stats-needing-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7008,7 +7052,7 @@ async fn list_indexed_archive_names_returns_only_done(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_before_test(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "del-before-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "del-before-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7058,7 +7102,7 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
     // Imported/synced archives keep their original (old) borg start timestamp.
     // Age-based report retention must not delete them, or archives vanish from
     // the UI even though they still exist in borg.
-    let agent = db::insert_agent(&pool, "retain-archive-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "retain-archive-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7116,7 +7160,7 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "del-arch-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "del-arch-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7195,7 +7239,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "del-arch-null-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "del-arch-null-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7275,7 +7319,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "arch-exact-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "arch-exact-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7322,7 +7366,7 @@ async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) 
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "arch-1s-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "arch-1s-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7378,7 +7422,7 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "fail-exact-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "fail-exact-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7428,7 +7472,7 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "fail-1s-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "fail-1s-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7905,7 +7949,7 @@ async fn recovery_clears_stuck_importing_and_error(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn cancel_backup_report_updates_started_row(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "cancel-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "cancel-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7928,7 +7972,7 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "cancel-done-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "cancel-done-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -7982,6 +8026,7 @@ async fn agent_insert_with_paths(pool: PgPool) {
         "hash",
         db::AgentDefaults {
             display_name: Some("Paths Host"),
+            domain: None,
             default_backup_paths: &paths,
             default_exclude_patterns: &excludes,
             default_pre_backup_commands: &[],
@@ -8004,10 +8049,10 @@ async fn agent_insert_with_paths(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn run_id_update_scoped_to_agent(pool: PgPool) {
-    let agent_a = db::insert_agent(&pool, "run-host-a", None, "hash-a", None)
+    let agent_a = db::insert_agent(&pool, "run-host-a", None, "hash-a", None, None)
         .await
         .unwrap();
-    let agent_b = db::insert_agent(&pool, "run-host-b", None, "hash-b", None)
+    let agent_b = db::insert_agent(&pool, "run-host-b", None, "hash-b", None, None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -8347,7 +8392,7 @@ async fn check_agent_repo_access_assigned_agent_succeeds(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn check_agent_repo_access_unassigned_agent_is_rejected(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "unassigned-agent", None, "hash", None)
+    let agent = db::insert_agent(&pool, "unassigned-agent", None, "hash", None, None)
         .await
         .unwrap();
     let (_, other_repo, _schedule) = create_test_schedule(&pool).await;
@@ -8369,7 +8414,7 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
     let (assigned_agent, assigned_repo, _schedule) = create_test_schedule(&pool).await;
 
     // Create a second agent that is NOT assigned to the repo
-    let rogue_agent = db::insert_agent(&pool, "rogue-agent", None, "rogue-hash", None)
+    let rogue_agent = db::insert_agent(&pool, "rogue-agent", None, "rogue-hash", None, None)
         .await
         .unwrap();
 
@@ -8433,10 +8478,10 @@ async fn repo_tags_use_repo_scope(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "reconnect-host", None, "hash", None)
+    let agent = db::insert_agent(&pool, "reconnect-host", None, "hash", None, None)
         .await
         .unwrap();
-    let other_agent = db::insert_agent(&pool, "other-host", None, "hash", None)
+    let other_agent = db::insert_agent(&pool, "other-host", None, "hash", None, None)
         .await
         .unwrap();
     let repo_a = create_test_repo_with_host(&pool, "reconnect-repo-a", "storage-a.local").await;

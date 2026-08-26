@@ -4089,6 +4089,54 @@ async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
     assert_eq!(body.get("hosts_updated").unwrap(), 1);
 }
 
+/// Regression test: two agents sharing a hostname but distinguished by
+/// domain used to collide during an export/import round trip, because the
+/// import matched existing hosts by hostname alone. Both agents' domains
+/// would drift onto whichever one the hostname-only lookup happened to
+/// return, and the second update then violated the (hostname, domain)
+/// unique index instead of updating its own row.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_round_trip_preserves_hosts_sharing_a_hostname(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query(
+        "INSERT INTO agents (hostname, domain, display_name, agent_token_hash) VALUES \
+         ('dup-host', 'a.example.com', 'Dup Host A', 'token-a'), ('dup-host', 'b.example.com', \
+         'Dup Host B', 'token-b')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let export_resp = oneshot(&mut app, get_request("/api/config/export")).await;
+    assert_eq!(export_resp.status(), StatusCode::OK);
+    let export_body = body_json(export_resp).await;
+
+    let import_resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(export_body)),
+    )
+    .await;
+    assert_eq!(import_resp.status(), StatusCode::OK);
+    let import_result = body_json(import_resp).await;
+    assert_eq!(import_result.get("hosts_created").unwrap(), 0);
+    assert_eq!(import_result.get("hosts_updated").unwrap(), 2);
+
+    let domains: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT domain FROM agents WHERE hostname = 'dup-host' ORDER BY domain")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        domains,
+        vec![
+            Some("a.example.com".to_string()),
+            Some("b.example.com".to_string())
+        ]
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_rejects_wrong_version(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;

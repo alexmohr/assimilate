@@ -93,7 +93,7 @@ For full request/response schemas, use the [interactive explorer](#interactive-a
 
 ### Agents
 
-Agents are keyed by **hostname**.
+Agents are keyed by **hostname**. Hostname alone is not always unique — two hosts on different networks can share an OS hostname — so every hostname-keyed endpoint below also accepts an optional `?domain=` query parameter. It is required only when the hostname is ambiguous (more than one agent shares it); the server returns `409 Conflict` naming the candidate domains if it's needed and omitted. See [Agent Management — Duplicate Hostnames](agents.md#duplicate-hostnames).
 
 | Method | Path | Description |
 |--------|------|-------------|

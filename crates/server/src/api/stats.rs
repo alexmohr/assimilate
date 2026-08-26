@@ -136,7 +136,7 @@ pub async fn dashboard_overview(
         db::dashboard::repositories(&state.pool),
         db::dashboard::dismissed_finding_ids(&state.pool, auth.user_id),
     )?;
-    let connected: HashSet<String> = state
+    let connected: HashSet<i64> = state
         .registry
         .connected_agents()
         .await
@@ -190,7 +190,7 @@ fn dashboard_findings(
     targets: &[db::dashboard::TargetRow],
     hosts: &[db::dashboard::EligibleAgentRow],
     repositories: &[db::dashboard::RepositoryRow],
-    connected: &HashSet<String>,
+    connected: &HashSet<i64>,
     now: chrono::DateTime<Utc>,
     due_soon: chrono::DateTime<Utc>,
     timezone: chrono_tz::Tz,
@@ -353,7 +353,7 @@ fn dashboard_protection_coverage(
 fn dashboard_upcoming_schedules(
     upcoming: Vec<db::dashboard::UpcomingScheduleRow>,
     targets: &[db::dashboard::TargetRow],
-    connected: &HashSet<String>,
+    connected: &HashSet<i64>,
 ) -> Vec<DashboardUpcomingScheduleResponse> {
     upcoming
         .into_iter()
@@ -361,7 +361,7 @@ fn dashboard_upcoming_schedules(
             let offline_target_count = targets
                 .iter()
                 .filter(|target| target.schedule_id == schedule.schedule_id)
-                .filter(|target| !connected.contains(&target.hostname))
+                .filter(|target| !connected.contains(&target.agent_id))
                 .count();
             DashboardUpcomingScheduleResponse {
                 schedule_id: schedule.schedule_id,
@@ -378,7 +378,7 @@ fn dashboard_upcoming_schedules(
 
 fn target_finding(
     target: &db::dashboard::TargetRow,
-    connected: &HashSet<String>,
+    connected: &HashSet<i64>,
     now: chrono::DateTime<Utc>,
     due_soon: chrono::DateTime<Utc>,
     timezone: chrono_tz::Tz,
@@ -448,7 +448,7 @@ fn target_finding(
         } else if target
             .next_run_at
             .is_some_and(|deadline| deadline >= now && deadline <= due_soon)
-            && !connected.contains(&target.hostname)
+            && !connected.contains(&target.agent_id)
         {
             (
                 FindingKind::HostOfflineDueSoon,
@@ -1675,7 +1675,7 @@ mod tests {
         let (now, due_soon) = now_and_due_soon();
         target.next_run_at = now.checked_add_signed(chrono::Duration::hours(1));
         let mut connected = std::collections::HashSet::new();
-        connected.insert("host-a".to_owned());
+        connected.insert(target.agent_id);
 
         let finding = super::target_finding(&target, &connected, now, due_soon, chrono_tz::UTC);
 

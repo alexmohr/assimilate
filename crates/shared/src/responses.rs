@@ -216,6 +216,9 @@ pub struct AgentResponse {
     pub restart_unavailable_reason: Option<String>,
     /// SSH username last used to deploy/upgrade this agent.
     pub last_ssh_user: Option<String>,
+    /// Optional DNS domain, set by an admin to disambiguate agents that
+    /// share an OS hostname across different networks.
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1959,6 +1962,10 @@ pub struct HostExportResponse {
     pub hostname: String,
     /// Human-readable display name.
     pub display_name: Option<String>,
+    /// Optional DNS domain, set by an admin to disambiguate agents that
+    /// share an OS hostname across different networks.
+    #[serde(default)]
+    pub domain: Option<String>,
     /// Default paths to include in backups.
     pub default_backup_paths: Vec<String>,
     /// Default exclude patterns.
@@ -1980,6 +1987,10 @@ pub struct HostExportResponse {
 pub struct ScheduleTargetExportResponse {
     /// Hostname of the target machine.
     pub hostname: String,
+    /// Optional DNS domain, present when the target's hostname is shared by
+    /// more than one agent and must be disambiguated on import.
+    #[serde(default)]
+    pub domain: Option<String>,
     /// Execution order for the target.
     pub execution_order: i32,
     /// Backup source paths for the target.

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT st.schedule_id, st.agent_id FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = ANY($1) AND a.is_hidden = false ORDER BY st.schedule_id, st.execution_order",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "agent_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "330e9c5153d37eca8f5781a09c9b906bd81f5654c63c5ef004452bdda1f2ac6f"
+}

@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use serde::Deserialize;
 use shared::{
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
     types::Compression,
@@ -10,6 +11,17 @@ use shared::{
 use tracing::warn;
 
 use crate::{error::ApiError, ssh};
+
+/// Query parameter for disambiguating a hostname shared by agents in
+/// different domains. An agent never reports its own domain (it has no
+/// reliable way to learn it), so this is only ever supplied by an admin
+/// acting through the UI/API, not by the agent itself.
+#[derive(Debug, Default, Deserialize)]
+pub struct DomainQuery {
+    /// Domain to disambiguate the hostname with, if it is shared by more
+    /// than one agent.
+    pub domain: Option<String>,
+}
 
 /// Builds the base borg environment shared by all server-side borg invocations:
 /// the repository passphrase, the SSH command, and the server's `SSH_AUTH_SOCK`
@@ -189,8 +201,8 @@ pub async fn validate_path_exists(
 
 /// Pushes configuration to all currently connected agents.
 pub async fn push_config_to_all_agents(state: &crate::AppState) {
-    for hostname in state.registry.connected_agents().await {
-        crate::config_assembler::push_config_to_agent(state, &hostname).await;
+    for agent_id in state.registry.connected_agents().await {
+        crate::config_assembler::push_config_to_agent(state, agent_id).await;
     }
 }
 

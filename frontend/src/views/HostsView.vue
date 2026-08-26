@@ -28,6 +28,7 @@ import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { cronIntervalSecs } from '../utils/cadence'
+import { domainParams } from '../utils/agent'
 import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -139,6 +140,7 @@ const filteredAgents = computed(() => {
       (m) =>
         m.hostname.toLowerCase().includes(q) ||
         (m.display_name?.toLowerCase().includes(q) ?? false) ||
+        (m.domain?.toLowerCase().includes(q) ?? false) ||
         (agentTagsMap.value[m.id] ?? []).some((t) => t.name.toLowerCase().includes(q)),
     )
   }
@@ -175,7 +177,7 @@ const filteredAgents = computed(() => {
 })
 
 const showAddDialog = ref(false)
-const addForm = reactive({ hostname: '', display_name: '' })
+const addForm = reactive({ hostname: '', display_name: '', domain: '' })
 const addLoading = ref(false)
 const addError = ref<string | null>(null)
 const newToken = ref<string | null>(null)
@@ -301,7 +303,10 @@ function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue'): void
     kind === 'failed'
       ? { tab: 'backups', status: 'failed' }
       : { tab: 'schedules', health: 'overdue' }
-  router.push({ path: `/agents/${agent.hostname}`, query })
+  router.push({
+    path: `/agents/${agent.hostname}`,
+    query: { ...query, ...domainParams(agent.domain) },
+  })
 }
 
 function toggleTagFilter(tagId: number): void {
@@ -449,6 +454,7 @@ async function loadAgents(): Promise<void> {
 function openAddDialog(): void {
   addForm.hostname = ''
   addForm.display_name = ''
+  addForm.domain = ''
   addError.value = null
   newToken.value = null
   tokenCopied.value = false
@@ -467,6 +473,7 @@ async function submitAdd(): Promise<void> {
     const res = await createAgent({
       hostname,
       display_name: addForm.display_name.trim() || null,
+      domain: addForm.domain.trim() || null,
     })
     agents.value.push({ ...res.agent, id: Number(res.agent.id) })
     newToken.value = res.token
@@ -483,16 +490,18 @@ function closeAddDialog(): void {
 }
 
 function navigateToAgent(agent: AgentRow): void {
-  router.push(`/agents/${agent.hostname}`)
+  router.push({ path: `/agents/${agent.hostname}`, query: domainParams(agent.domain) })
 }
 
 async function adoptAgent(agent: AgentRow): Promise<void> {
   try {
     const cleanDisplayName = agent.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await updateAgent(agent.hostname, {
-      display_name: cleanDisplayName,
-    })
-    const res = await regenerateAgentToken(agent.hostname)
+    await updateAgent(
+      agent.hostname,
+      { display_name: cleanDisplayName, domain: agent.domain },
+      agent.domain,
+    )
+    const res = await regenerateAgentToken(agent.hostname, agent.domain)
     const idx = agents.value.findIndex((m) => m.id === agent.id)
     if (idx !== -1) {
       agents.value[idx] = {
@@ -524,7 +533,7 @@ function openMergeDialog(agent: AgentRow): void {
 
 async function unhideAgent(agent: AgentRow): Promise<void> {
   try {
-    await unhideAgentRequest(agent.hostname)
+    await unhideAgentRequest(agent.hostname, agent.domain)
     await loadAgents()
   } catch (e: unknown) {
     logger.error('Failed to unhide agent', e)
@@ -789,7 +798,15 @@ watch(
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-name">{{ agent.hostname }}</span>
+            <span class="card-name"
+              >{{ agent.hostname
+              }}<span
+                v-if="agent.domain"
+                class="muted"
+              >
+                ({{ agent.domain }})</span
+              ></span
+            >
             <span
               v-if="agent.display_name"
               class="card-display"
@@ -913,6 +930,15 @@ watch(
           >
         </div>
         <div class="field">
+          <label class="field-label">Domain</label>
+          <input
+            v-model="addForm.domain"
+            class="input"
+            placeholder="Optional, e.g. lab.example.com"
+          />
+          <span class="field-hint">Only needed if another host already uses this hostname.</span>
+        </div>
+        <div class="field">
           <label class="field-label">Display name</label>
           <input
             v-model="addForm.display_name"
@@ -1015,6 +1041,7 @@ watch(
     <AgentDeployDialog
       v-if="showDeployDialog && deployTarget"
       :hostname="deployTarget.hostname"
+      :domain="deployTarget.domain"
       :agent-version="deployTarget.agent_version ?? null"
       :available-version="availableAgentVersion"
       :last-ssh-user="deployTarget.last_ssh_user"
@@ -1022,7 +1049,7 @@ watch(
       @deployed="
         (version) => {
           if (version && deployTarget) {
-            const agent = agents.find((a) => a.hostname === deployTarget!.hostname)
+            const agent = agents.find((a) => a.id === deployTarget!.id)
             if (agent) agent.agent_version = version
           }
           showDeployDialog = false

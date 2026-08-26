@@ -20,7 +20,8 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const targetHostname = ref('')
+/** Selected by ID, not hostname - two candidate targets can share a hostname. */
+const targetAgentId = ref<number | ''>('')
 const savePattern = ref(true)
 const patternValue = ref(`${props.source.hostname}*`)
 const mergeLoading = ref(false)
@@ -30,14 +31,30 @@ const realAgents = computed<AgentRow[]>(() =>
   props.allAgents.filter((c) => c.id !== props.source.id && !c.is_imported),
 )
 
+const targetAgent = computed<AgentRow | undefined>(() =>
+  realAgents.value.find((c) => c.id === targetAgentId.value),
+)
+
+/** Distinguishes options that share a hostname; appended only when needed. */
+function targetLabel(c: AgentRow): string {
+  const sharesHostname = realAgents.value.some((o) => o.id !== c.id && o.hostname === c.hostname)
+  const domainSuffix = sharesHostname ? ` (${c.domain ?? 'no domain'})` : ''
+  return `${c.hostname}${domainSuffix}${c.display_name ? ` — ${c.display_name}` : ''}`
+}
+
 async function confirmMerge(): Promise<void> {
-  if (!targetHostname.value) return
+  if (!targetAgent.value) return
   mergeLoading.value = true
   mergeError.value = null
   try {
     const createPattern =
       savePattern.value && patternValue.value.trim() ? patternValue.value.trim() : undefined
-    await mergeAgent(targetHostname.value, props.source.id, createPattern)
+    await mergeAgent(
+      targetAgent.value.hostname,
+      props.source.id,
+      createPattern,
+      targetAgent.value.domain,
+    )
     emit('merged')
   } catch (e: unknown) {
     mergeError.value = extractError(e)
@@ -65,16 +82,16 @@ async function confirmMerge(): Promise<void> {
     <div class="field">
       <label class="field-label">Merge into <span class="required">*</span></label>
       <select
-        v-model="targetHostname"
+        v-model="targetAgentId"
         class="input"
       >
         <option value="">Select target agent...</option>
         <option
           v-for="c in realAgents"
           :key="c.id"
-          :value="c.hostname"
+          :value="c.id"
         >
-          {{ c.hostname }}{{ c.display_name ? ` — ${c.display_name}` : '' }}
+          {{ targetLabel(c) }}
         </option>
       </select>
     </div>
@@ -116,7 +133,7 @@ async function confirmMerge(): Promise<void> {
       </button>
       <button
         class="btn btn-primary"
-        :disabled="mergeLoading || !targetHostname"
+        :disabled="mergeLoading || !targetAgent"
         @click="confirmMerge"
       >
         {{ mergeLoading ? 'Merging...' : 'Merge' }}

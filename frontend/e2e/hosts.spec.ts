@@ -108,6 +108,55 @@ test.describe('Hosts management', () => {
     await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=backups&status=failed/)
   })
 
+  test('two hosts can share a hostname as long as their domains differ', async ({ page }) => {
+    const hostname = 'e2e-dup-host'
+    const domainA = 'site-a.example.com'
+    const domainB = 'site-b.example.com'
+
+    async function addHost(domain: string): Promise<void> {
+      await page.getByRole('button', { name: 'New' }).click()
+      await page.getByPlaceholder('e.g. workstation-01').fill(hostname)
+      await page.getByPlaceholder('Optional, e.g. lab.example.com').fill(domain)
+      await page.getByRole('button', { name: 'Create' }).click()
+      await expect(page.getByRole('heading', { name: 'Agent Created' })).toBeVisible()
+      await page.getByRole('button', { name: 'Done' }).click()
+    }
+
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    await addHost(domainA)
+    await addHost(domainB)
+
+    const cardA = page.locator('.entity-card').filter({ hasText: domainA })
+    const cardB = page.locator('.entity-card').filter({ hasText: domainB })
+    await expect(cardA).toHaveCount(1)
+    await expect(cardB).toHaveCount(1)
+    await expect(cardA.locator('.card-name')).toContainText(hostname)
+    await expect(cardB.locator('.card-name')).toContainText(hostname)
+
+    await cardA.click()
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL(new RegExp(`/agents/${hostname}\\?domain=${domainA}`))
+    await expect(page.locator('.crumb-current')).toHaveText(hostname)
+    await expect(page.locator('.detail-breadcrumb .muted')).toHaveText(`(${domainA})`)
+
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+    await cardB.click()
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL(new RegExp(`/agents/${hostname}\\?domain=${domainB}`))
+    await expect(page.locator('.detail-breadcrumb .muted')).toHaveText(`(${domainB})`)
+
+    // Visiting the shared hostname without a domain is ambiguous - the UI
+    // must offer a picker rather than silently resolving to either host.
+    await page.goto(`/agents/${hostname}`)
+    await page.waitForLoadState('networkidle')
+    await expect(page.getByText(domainA)).toBeVisible()
+    await expect(page.getByText(domainB)).toBeVisible()
+  })
+
   test('agent card shows an Overdue chip that navigates to the schedules tab', async ({ page }) => {
     await page.route('**/api/stats/health', async (route: Route) => {
       await route.fulfill({

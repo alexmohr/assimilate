@@ -11,7 +11,10 @@ use shared::responses::{
     AgentTagEntryResponse, ArchiveTagResponse, RepoTagEntryResponse, TagResponse,
 };
 
-use super::auth::{AuthUser, RequireAdmin};
+use super::{
+    auth::{AuthUser, RequireAdmin},
+    helpers::DomainQuery,
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -266,12 +269,16 @@ pub async fn get_repo_tags(
     path = "/api/agents/{hostname}/tags",
     tag = "Tags",
     operation_id = "setHostTags",
-    params(("hostname" = String, Path, description = "Agent hostname")),
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
     request_body = SetTagsRequest,
     responses(
         (status = 204, description = "Tags set"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Set tags for a host.
@@ -283,9 +290,10 @@ pub async fn set_agent_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<SetTagsRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     db::set_agent_tags(&state.pool, agent.id, &req.tag_ids).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -295,11 +303,15 @@ pub async fn set_agent_tags(
     path = "/api/agents/{hostname}/tags",
     tag = "Tags",
     operation_id = "getHostTags",
-    params(("hostname" = String, Path, description = "Agent hostname")),
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
     responses(
         (status = 200, description = "List of tags", body = Vec<TagResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// Get tags for a host.
@@ -311,8 +323,9 @@ pub async fn get_agent_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<Vec<TagResponse>>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let tags: Vec<TagResponse> = db::list_tags_for_agent(&state.pool, agent.id)
         .await?
         .into_iter()

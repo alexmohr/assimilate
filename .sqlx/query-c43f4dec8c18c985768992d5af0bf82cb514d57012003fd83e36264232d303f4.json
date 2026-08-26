@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain",
   "describe": {
     "columns": [
       {
@@ -97,14 +97,18 @@
         "ordinal": 18,
         "name": "last_ssh_user",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "domain",
+        "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
         "Text",
         "Text",
-        "Text",
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
@@ -126,8 +130,9 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "51685e09dc73e53c9dc48847c5848242f7424437f5099704374585cb08aaf7c3"
+  "hash": "c43f4dec8c18c985768992d5af0bf82cb514d57012003fd83e36264232d303f4"
 }

@@ -26,7 +26,7 @@ const deleteLoading = ref(false)
 async function confirmDeleteHost(): Promise<void> {
   deleteLoading.value = true
   try {
-    await deleteAgent(props.agent.hostname)
+    await deleteAgent(props.agent.hostname, props.agent.domain)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete host', e)
@@ -41,7 +41,7 @@ const hideLoading = ref(false)
 async function hideAgent(): Promise<void> {
   hideLoading.value = true
   try {
-    await hideAgentRequest(props.agent.hostname)
+    await hideAgentRequest(props.agent.hostname, props.agent.domain)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to hide agent', e)
@@ -57,7 +57,7 @@ const deleteArchivesLoading = ref(false)
 async function confirmDeleteArchives(): Promise<void> {
   deleteArchivesLoading.value = true
   try {
-    await deleteAgentArchives(props.agent.hostname)
+    await deleteAgentArchives(props.agent.hostname, props.agent.domain)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete archives', e)

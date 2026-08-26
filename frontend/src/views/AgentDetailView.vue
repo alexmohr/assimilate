@@ -36,6 +36,7 @@ import { normalizeBackupStatus } from '../utils/backupStatus'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
+import { domainParams } from '../utils/agent'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -86,6 +87,15 @@ const settingsSection = computed<SettingsSection>({
 })
 
 const agent = ref<AgentRow | null>(null)
+/**
+ * Set only when `props.hostname` matches more than one agent and the
+ * `domain` query param doesn't pick one out - the page shows a picker
+ * instead of guessing which agent the caller meant.
+ */
+const ambiguousMatches = ref<AgentRow[]>([])
+const routeDomain = computed<string | undefined>(() =>
+  typeof route.query.domain === 'string' ? route.query.domain : undefined,
+)
 const repos = ref<Repo[]>([])
 const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
@@ -207,6 +217,7 @@ function openRedeployDialog(): void {
 // every other form in the app opens through BaseModal.
 const editingIdentity = ref(false)
 const identityHostname = ref('')
+const identityDomain = ref('')
 const identityDisplayName = ref('')
 const identitySaving = ref(false)
 const identityError = ref<string | null>(null)
@@ -214,6 +225,7 @@ const identityError = ref<string | null>(null)
 function startEditIdentity(): void {
   if (!agent.value) return
   identityHostname.value = agent.value.hostname
+  identityDomain.value = agent.value.domain ?? ''
   identityDisplayName.value = agent.value.display_name ?? ''
   identityError.value = null
   editingIdentity.value = true
@@ -230,21 +242,30 @@ async function saveIdentity(): Promise<void> {
   try {
     const oldHostname = agent.value.hostname
     const newHostname = identityHostname.value.trim()
+    const newDomain = identityDomain.value.trim() || null
     const hostnameChanged = newHostname !== oldHostname && newHostname.length > 0
-    const updated = await updateAgent(oldHostname, {
-      hostname: hostnameChanged ? newHostname : undefined,
-      display_name: identityDisplayName.value.trim() || null,
-      default_backup_paths: agent.value.default_backup_paths,
-      default_exclude_patterns: agent.value.default_exclude_patterns,
-      default_pre_backup_commands: agent.value.default_pre_backup_commands,
-      default_post_backup_commands: agent.value.default_post_backup_commands,
-      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
-    })
+    const domainChanged = newDomain !== (agent.value.domain ?? null)
+    const updated = await updateAgent(
+      oldHostname,
+      {
+        hostname: hostnameChanged ? newHostname : undefined,
+        display_name: identityDisplayName.value.trim() || null,
+        domain: newDomain,
+        default_backup_paths: agent.value.default_backup_paths,
+        default_exclude_patterns: agent.value.default_exclude_patterns,
+        default_pre_backup_commands: agent.value.default_pre_backup_commands,
+        default_post_backup_commands: agent.value.default_post_backup_commands,
+        default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
+      },
+      agent.value.domain,
+    )
     if (hostnameChanged) {
       pendingAliasOldHostname.value = oldHostname
       pendingAliasNewHostname.value = newHostname
       showAliasConfirm.value = true
-      router.replace(`/agents/${newHostname}`)
+      router.replace({ path: `/agents/${newHostname}`, query: domainParams(newDomain) })
+    } else if (domainChanged) {
+      router.replace({ path: `/agents/${oldHostname}`, query: domainParams(newDomain) })
     }
     agent.value = { ...agent.value, ...updated }
     editingIdentity.value = false
@@ -266,7 +287,11 @@ useEscapeKey(showAliasConfirm, () => {
 })
 
 async function confirmAddAlias(): Promise<void> {
-  await createAgentHostnamePattern(pendingAliasNewHostname.value, pendingAliasOldHostname.value)
+  await createAgentHostnamePattern(
+    pendingAliasNewHostname.value,
+    pendingAliasOldHostname.value,
+    agent.value?.domain,
+  )
   // Only mounted while the Settings tab is showing its aliases section; when
   // it is not, the list reloads from scratch the next time it is opened.
   await settingsTab.value?.reloadAliases(pendingAliasNewHostname.value)
@@ -282,10 +307,12 @@ async function adoptHost(): Promise<void> {
   try {
     const cleanDisplayName =
       agent.value.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await updateAgent(agent.value.hostname, {
-      display_name: cleanDisplayName,
-    })
-    const res = await regenerateAgentToken(agent.value.hostname)
+    await updateAgent(
+      agent.value.hostname,
+      { display_name: cleanDisplayName, domain: agent.value.domain },
+      agent.value.domain,
+    )
+    const res = await regenerateAgentToken(agent.value.hostname, agent.value.domain)
     agent.value = {
       ...agent.value,
       ...res.agent,
@@ -327,10 +354,21 @@ function toggleReport(r: ReportRow): void {
 }
 
 async function loadAgent(): Promise<void> {
+  ambiguousMatches.value = []
   await run(async () => {
     const agentRows = await listAgents()
     allAgents.value = agentRows
-    agent.value = agentRows.find((m) => m.hostname === props.hostname) ?? null
+    const matches = agentRows.filter((m) => m.hostname === props.hostname)
+    const domain = routeDomain.value
+    if (domain !== undefined) {
+      agent.value = matches.find((m) => (m.domain ?? '') === domain) ?? null
+    } else if (matches.length > 1) {
+      ambiguousMatches.value = matches
+      agent.value = null
+      return
+    } else {
+      agent.value = matches[0] ?? null
+    }
     if (!agent.value) {
       throw new Error(`Agent "${props.hostname}" not found`)
     }
@@ -343,9 +381,9 @@ async function loadTabData(): Promise<void> {
   const hostname = agent.value.hostname
   try {
     const [repoRows, scheduleRows, reportRows, healthRows] = await Promise.all([
-      listAgentRepos(hostname),
+      listAgentRepos(hostname, agent.value.domain),
       listSchedules(),
-      listAgentReports(hostname),
+      listAgentReports(hostname, undefined, agent.value.domain),
       getScheduleHealth(),
     ])
     repos.value = repoRows
@@ -444,7 +482,7 @@ async function regenerateToken(): Promise<void> {
   regenToken.value = null
   tokenCopied.value = false
   try {
-    const res = await regenerateAgentToken(props.hostname)
+    const res = await regenerateAgentToken(props.hostname, agent.value?.domain)
     regenToken.value = res.token
     agent.value = res.agent
     showTokenDialog.value = true
@@ -460,7 +498,7 @@ async function restartAgent(): Promise<void> {
   restartLoading.value = true
   restartError.value = null
   try {
-    await restartAgentApi(props.hostname)
+    await restartAgentApi(props.hostname, agent.value?.domain)
   } catch (e: unknown) {
     restartError.value = extractError(e)
   } finally {
@@ -468,12 +506,9 @@ async function restartAgent(): Promise<void> {
   }
 }
 
-watch(
-  () => props.hostname,
-  () => {
-    loadAgent()
-  },
-)
+watch([() => props.hostname, routeDomain], () => {
+  loadAgent()
+})
 onMounted(() => {
   loadAgent()
   getSystemVersion()
@@ -571,12 +606,42 @@ watch(wsStatus, (newStatus, oldStatus) => {
       </RouterLink>
       <span class="crumb-sep">/</span>
       <span class="crumb-current">{{ props.hostname }}</span>
+      <span
+        v-if="agent?.domain"
+        class="muted"
+        >({{ agent.domain }})</span
+      >
     </nav>
 
     <BaseSpinner
       v-if="loading"
       size="lg"
     />
+    <div v-else-if="ambiguousMatches.length > 0">
+      <p class="pane-lede">
+        More than one host is named <strong>{{ props.hostname }}</strong
+        >. Choose which one:
+      </p>
+      <div class="card-grid">
+        <div
+          v-for="m in ambiguousMatches"
+          :key="m.id"
+          class="entity-card"
+          @click="router.push({ path: `/agents/${props.hostname}`, query: domainParams(m.domain) })"
+        >
+          <div class="card-top">
+            <div class="card-info">
+              <span class="card-name">{{ m.domain ?? 'No domain set' }}</span>
+              <span
+                v-if="m.display_name"
+                class="card-display"
+                >{{ m.display_name }}</span
+              >
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     <div
       v-else-if="error"
       class="error-banner"
@@ -684,6 +749,21 @@ watch(wsStatus, (newStatus, oldStatus) => {
           placeholder="hostname"
           @keyup.enter="saveIdentity"
         />
+      </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="identity-domain"
+          >Domain</label
+        >
+        <input
+          id="identity-domain"
+          v-model="identityDomain"
+          class="input"
+          placeholder="Optional, e.g. lab.example.com"
+          @keyup.enter="saveIdentity"
+        />
+        <span class="field-hint">Only needed if another host already uses this hostname.</span>
       </div>
       <div class="field">
         <label
@@ -825,6 +905,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     <AgentDeployDialog
       v-if="showDeployDialog && agent"
       :hostname="agent.hostname"
+      :domain="agent.domain"
       :agent-version="agent.agent_version ?? null"
       :available-version="availableAgentVersion"
       :last-ssh-user="agent.last_ssh_user"

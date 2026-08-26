@@ -13,6 +13,11 @@ export type HostExportResponse = {
    */
   display_name: string | null;
   /**
+   * Optional DNS domain, set by an admin to disambiguate agents that
+   * share an OS hostname across different networks.
+   */
+  domain: string | null;
+  /**
    * Default paths to include in backups.
    */
   default_backup_paths: Array<string>;

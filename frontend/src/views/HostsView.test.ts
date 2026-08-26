@@ -691,6 +691,40 @@ describe('HostsView issue rows', () => {
     expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
     expect(wrapper.find('.coverage-status-ok').exists()).toBe(false)
   })
+
+  // navigateToAgent has to merge the domain into the query on every card
+  // click, not just when a hostname happens to be unique, or a link into an
+  // agent sharing its hostname with another silently resolves to whichever
+  // one the ambiguous-hostname route happens to pick.
+  it('clicking a host card navigates to its detail page with the domain in the query', async () => {
+    const { wrapper, router } = await mountAgentsList([
+      { ...issueAgent, domain: 'lab.example.com' },
+    ])
+
+    await wrapper.find('.entity-card').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
+    expect(router.currentRoute.value.query).toMatchObject({ domain: 'lab.example.com' })
+  })
+
+  it('unhides an agent, scoped to its domain', async () => {
+    vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
+    const { wrapper } = await mountAgentsList([
+      { ...issueAgent, is_hidden: true, domain: 'lab.example.com' },
+    ])
+
+    const unhideButton = wrapper.findAll('button').find((b) => b.text().trim() === 'Unhide')
+    if (!unhideButton) throw new Error('no Unhide button found')
+    await unhideButton.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/flaky-host/unhide',
+      {},
+      { params: { domain: 'lab.example.com' } },
+    )
+  })
 })
 
 describe('HostsView deploy button label', () => {
@@ -822,6 +856,7 @@ describe('HostsView deploy button label', () => {
       expect(apiClient.post).toHaveBeenCalledWith('/agents', {
         hostname: 'workstation01',
         display_name: null,
+        domain: null,
       })
     })
 
@@ -840,6 +875,26 @@ describe('HostsView deploy button label', () => {
       expect(apiClient.post).toHaveBeenCalledWith('/agents', {
         hostname: 'workstation-01',
         display_name: 'Front desk',
+        domain: null,
+      })
+    })
+
+    it('sends a trimmed domain when one is given', async () => {
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { agent: { id: 7, hostname: 'workstation-01' }, token: 'tok_abc' },
+      } as never)
+
+      const wrapper = await mountWithAgent({}, {})
+      await openAdd(wrapper)
+      await setByPlaceholder('e.g. workstation-01', 'workstation-01')
+      await setByPlaceholder('Optional, e.g. lab.example.com', '  lab.example.com  ')
+      dialogButton('Create').click()
+      await flushPromises()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/agents', {
+        hostname: 'workstation-01',
+        display_name: null,
+        domain: 'lab.example.com',
       })
     })
 
@@ -904,8 +959,16 @@ describe('HostsView deploy button label', () => {
       )
       await adopt(wrapper)
 
-      expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent', { display_name: 'Test' })
-      expect(apiClient.post).toHaveBeenCalledWith('/agents/test-agent/regenerate-token')
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/agents/test-agent',
+        { display_name: 'Test', domain: undefined },
+        { params: {} },
+      )
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/agents/test-agent/regenerate-token',
+        {},
+        { params: {} },
+      )
       expect(document.querySelector('.token-text')?.textContent).toBe('tok_adopted')
       expect(document.body.textContent).toContain('Agent Adopted')
       // The row is no longer imported, so Adopt is gone from it.
@@ -999,6 +1062,6 @@ describe('HostsView deploy button label', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent/unhide')
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent/unhide', {}, { params: {} })
   })
 })

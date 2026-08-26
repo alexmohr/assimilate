@@ -53,7 +53,7 @@ DELETE FROM schedules WHERE name = 'Stale nightly report';
 DELETE FROM schedules WHERE name = 'Auto-disabled demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01');
+DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
@@ -89,6 +89,10 @@ api POST "/api/agents" '{"hostname":"offline-due-01","display_name":"Offline Due
 api POST "/api/agents" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Agent"}' > /dev/null
 api POST "/api/agents" '{"hostname":"stale-report-01","display_name":"Stale Report Demo"}' > /dev/null
 api POST "/api/agents" '{"hostname":"auto-disabled-01","display_name":"Auto-Disabled Demo"}' > /dev/null
+
+echo "==> Registering two hosts sharing a hostname across different domains..."
+api POST "/api/agents" '{"hostname":"edge-proxy","display_name":"Edge Proxy (DC1)","domain":"dc1.example.com"}' > /dev/null
+api POST "/api/agents" '{"hostname":"edge-proxy","display_name":"Edge Proxy (DC2)","domain":"dc2.example.com"}' > /dev/null
 
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"

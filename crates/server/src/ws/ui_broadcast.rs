@@ -207,6 +207,29 @@ impl UiBroadcast {
 mod tests {
     use super::*;
 
+    const RUNNING_PROGRESS_LINE: &str =
+        r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#;
+
+    /// Seeds a running backup snapshot for repo 20 and sends one complete
+    /// `archive_progress` line for it.
+    fn seed_running_backup(broadcast: &UiBroadcast) {
+        broadcast.set_active_backup(ActiveBackupSnapshot {
+            hostname: "web-server-01".to_string(),
+            target_name: "server-daily".to_string(),
+            archive_name: Some("server-daily-2026-06-27T00:00:00".to_string()),
+            schedule_id: Some(8),
+            repo_id: 20,
+            progress_line: None,
+            started_at: Utc::now(),
+        });
+        broadcast.send(ServerToUi::BackupLog {
+            hostname: "web-server-01".to_string(),
+            schedule_id: Some(8),
+            repo_id: 20,
+            line: RUNNING_PROGRESS_LINE.to_string(),
+        });
+    }
+
     #[test]
     fn import_progress_events_update_snapshots() {
         let broadcast = UiBroadcast::new();
@@ -232,22 +255,7 @@ mod tests {
     #[test]
     fn backup_events_update_and_clear_active_snapshots() {
         let broadcast = UiBroadcast::new();
-        broadcast.set_active_backup(ActiveBackupSnapshot {
-            hostname: "web-server-01".to_string(),
-            target_name: "server-daily".to_string(),
-            archive_name: Some("server-daily-2026-06-27T00:00:00".to_string()),
-            schedule_id: Some(8),
-            repo_id: 20,
-            progress_line: None,
-            started_at: Utc::now(),
-        });
-        broadcast.send(ServerToUi::BackupLog {
-            hostname: "web-server-01".to_string(),
-            schedule_id: Some(8),
-            repo_id: 20,
-            line: r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#
-                .to_string(),
-        });
+        seed_running_backup(&broadcast);
 
         let snapshots = broadcast.current_active_backups();
         assert_eq!(snapshots.len(), 1);
@@ -256,7 +264,7 @@ mod tests {
         assert_eq!(snapshot.schedule_id, Some(8));
         assert_eq!(
             snapshot.progress_line.as_deref(),
-            Some(r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#)
+            Some(RUNNING_PROGRESS_LINE)
         );
 
         broadcast.send(ServerToUi::BackupCompleted {
@@ -291,21 +299,7 @@ mod tests {
     #[test]
     fn finished_archive_progress_line_does_not_clobber_last_known_progress() {
         let broadcast = UiBroadcast::new();
-        broadcast.set_active_backup(ActiveBackupSnapshot {
-            hostname: "web-server-01".to_string(),
-            target_name: "server-daily".to_string(),
-            archive_name: Some("server-daily-2026-06-27T00:00:00".to_string()),
-            schedule_id: Some(8),
-            repo_id: 20,
-            progress_line: None,
-        });
-        broadcast.send(ServerToUi::BackupLog {
-            hostname: "web-server-01".to_string(),
-            schedule_id: Some(8),
-            repo_id: 20,
-            line: r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#
-                .to_string(),
-        });
+        seed_running_backup(&broadcast);
 
         // Borg's final progress line omits nfiles/original_size/path; it must be
         // ignored rather than overwriting the last complete progress line, or a
@@ -322,7 +316,7 @@ mod tests {
         let snapshot = snapshots.first().unwrap();
         assert_eq!(
             snapshot.progress_line.as_deref(),
-            Some(r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#)
+            Some(RUNNING_PROGRESS_LINE)
         );
     }
 }

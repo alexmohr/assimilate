@@ -27,6 +27,7 @@ import type { AgentRow } from '../types/agent'
 /** Elapsed seconds are computed by the parent, which owns the clock. */
 export interface LiveBackup {
   targetName: string
+  repoId: number | null
   archiveName: string | null
   elapsedSecs: number
   progress: { nfiles: number; originalSize: number; currentPath: string } | null
@@ -42,6 +43,7 @@ const props = defineProps<{
   health: readonly ScheduleHealthEntry[]
   reports: readonly ReportRow[]
   liveBackups: readonly LiveBackup[]
+  cancellingRepoIds: readonly number[]
   repoNameFor: (schedule: ScheduleRow) => string
 }>()
 
@@ -49,7 +51,12 @@ const emit = defineEmits<{
   openSchedule: [schedule: ScheduleRow]
   openReport: [report: ReportRow]
   showTab: [tab: 'schedules' | 'backups']
+  cancelBackup: [repoId: number]
 }>()
+
+function cancelLive(backup: LiveBackup): void {
+  if (backup.repoId !== null) emit('cancelBackup', backup.repoId)
+}
 
 const settledReports = computed(() => filterSettledReports(props.reports))
 
@@ -152,10 +159,13 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
       v-for="b in liveBackups"
       :key="b.targetName"
       :badge="b.targetName"
+      :repo-id="b.repoId"
       :archive-name="b.archiveName"
       :elapsed-secs="b.elapsedSecs"
       :estimated-remaining-secs="null"
       :progress="b.progress"
+      :cancel-loading="b.repoId !== null && cancellingRepoIds.includes(b.repoId)"
+      @cancel="cancelLive(b)"
     />
 
     <div

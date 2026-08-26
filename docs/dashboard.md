@@ -21,6 +21,8 @@ Eligible agents are registered agents that are not hidden and are not imported p
 
 While at least one backup is running, a **Backups In Progress** panel appears above Needs Attention, styled like the other dashboard cards. Each row shows the schedule name, links to the source agent and target repository, and how long the backup has been running. Once enough historical runs exist for that schedule and repository, the row also shows an estimated time remaining, based on the average duration of the last five successful or warned runs.
 
+As archive progress streams in, each row also shows the files and data processed so far, plus the file currently being backed up. The current-file path is clamped to two lines and ellipsized if it still doesn't fit, so one deeply nested path can't stretch the panel.
+
 ## Needs Attention
 
 Needs Attention contains only actionable findings. Critical findings appear before warnings. For one schedule target, overlapping failed, warning, overdue, never-succeeded, and offline-due-soon symptoms collapse to the highest-priority finding.

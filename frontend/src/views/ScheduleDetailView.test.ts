@@ -178,6 +178,7 @@ async function renderAndStartBackup(): Promise<ReturnType<typeof renderWithPlugi
     target_name: 'server-daily',
     archive_name: null,
     schedule_id: 1,
+    started_at: new Date().toISOString(),
   })
   await nextTick()
   return wrapper
@@ -852,6 +853,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
+      started_at: new Date().toISOString(),
     })
     await nextTick()
     return wrapper
@@ -862,6 +864,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     target_name: 'server-daily',
     archive_name: null,
     schedule_id: 1,
+    started_at: new Date().toISOString(),
   }
 
   it('BackupStarted with matching schedule_id shows the live progress card', async () => {
@@ -871,6 +874,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
       target_name: 'server-daily',
       archive_name: 'server-daily-2026-06-26',
       schedule_id: 1,
+      started_at: new Date().toISOString(),
     })
     await nextTick()
 

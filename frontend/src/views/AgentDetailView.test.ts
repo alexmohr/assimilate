@@ -702,6 +702,7 @@ describe('AgentDetailView — backup progress', () => {
       target_name: 'server-daily',
       archive_name: archiveName,
       schedule_id: 1,
+      started_at: new Date().toISOString(),
     })
     await nextTick()
     return wrapper
@@ -727,6 +728,45 @@ describe('AgentDetailView — backup progress', () => {
     const wrapper = await startBackupOnHost(null, 'other-host')
 
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  // Regression test: a page reload reconnects the WS, and the server replays
+  // a BackupStarted catch-up event for every already-running backup so the
+  // reloaded page knows about it. That event must carry the backup's real
+  // start time - if the frontend defaulted to Date.now() instead, the
+  // elapsed clock would reset to ~0 on every reload instead of showing how
+  // long the backup has actually been running.
+  it('seeds elapsed time from the real backup start carried on BackupStarted, not the reload time', async () => {
+    setupApi([], [{ id: 10, name: 'server-daily' }])
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60_000).toISOString()
+    wsHandlers['BackupStarted']?.({
+      hostname: 'test-host',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+      started_at: tenMinutesAgo,
+    })
+    // The card shows "Waiting for progress..." until progress data arrives.
+    wsHandlers['BackupLog']?.({
+      hostname: 'test-host',
+      schedule_id: 1,
+      repo_id: 10,
+      line: JSON.stringify({ type: 'archive_progress', nfiles: 1, original_size: 1, path: 'x' }),
+    })
+    await nextTick()
+
+    const elapsedRow = wrapper
+      .findAll('.live-stat-row')
+      .find((r) => r.find('.live-stat-label').text() === 'Elapsed')
+    expect(elapsedRow).toBeDefined()
+    // ~10 minutes elapsed, not "0s" - proves it used started_at, not Date.now().
+    expect(elapsedRow!.find('.live-stat-value').text()).toMatch(/^(9|10)m/)
   })
 
   it('BackupCompleted hides the progress card', async () => {

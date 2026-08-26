@@ -21,6 +21,7 @@ import { useElapsedClock } from '../composables/useElapsedTimer'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { parseArchiveProgress } from '../utils/archiveProgress'
 import BaseSkeleton from '../components/BaseSkeleton.vue'
 import TrendsChart from '../components/TrendsChart.vue'
 import BackupCalendar from '../components/BackupCalendar.vue'
@@ -70,6 +71,12 @@ const loading = ref(true)
 
 const router = useRouter()
 
+interface ArchiveProgressData {
+  nfiles: number
+  originalSize: number
+  currentPath: string
+}
+
 interface ActiveBackup {
   hostname: string
   target_name: string
@@ -77,6 +84,7 @@ interface ActiveBackup {
   repo_id: number | null
   schedule_id: number | null
   schedule_name: string | null
+  progress: ArchiveProgressData | null
 }
 
 const activeBackups = ref<ActiveBackup[]>([])
@@ -169,6 +177,7 @@ function mergeActiveBackups(operations: DashboardOperation[]): void {
       repo_id: operation.repo_id,
       schedule_id: operation.schedule_id,
       schedule_name: operation.schedule_name,
+      progress: existing?.progress ?? null,
     }
   })
 }
@@ -226,13 +235,28 @@ onMessage('BackupStarted', (payload) => {
     activeBackups.value.push({
       hostname: payload.hostname,
       target_name: payload.target_name,
-      started_at: Date.now(),
+      started_at: Date.parse(payload.started_at),
       repo_id: null,
       schedule_id: null,
       schedule_name: null,
+      progress: null,
     })
   }
   fetchAll().catch(logger.error)
+})
+onMessage('BackupLog', (payload) => {
+  const backup = activeBackups.value.find(
+    (b) => b.hostname === payload.hostname && b.repo_id === payload.repo_id,
+  )
+  if (!backup) return
+  const progress = parseArchiveProgress(payload.line)
+  if (progress !== null) {
+    backup.progress = {
+      nfiles: progress.nfiles,
+      originalSize: progress.original_size,
+      currentPath: progress.path ?? '',
+    }
+  }
 })
 onMessage('AgentConnected', () => {
   fetchAll().catch(logger.error)
@@ -514,44 +538,62 @@ async function fetchOverview(): Promise<void> {
             :key="`${backup.hostname}-${backup.target_name}`"
             class="active-backup-item"
           >
-            <span class="pulse-dot pulse-dot--accent" />
-            <span
-              v-if="backup.schedule_name"
-              class="active-backup-schedule"
+            <div class="active-backup-summary">
+              <span class="pulse-dot pulse-dot--accent" />
+              <span
+                v-if="backup.schedule_name"
+                class="active-backup-schedule"
+              >
+                {{ backup.schedule_name }}
+              </span>
+              <RouterLink
+                :to="{ name: 'agent-detail', params: { hostname: backup.hostname } }"
+                class="active-backup-link"
+              >
+                {{ backup.hostname }}
+              </RouterLink>
+              <ChevronRight
+                class="active-backup-sep"
+                :size="14"
+              />
+              <RouterLink
+                v-if="backup.repo_id !== null"
+                :to="{ name: 'repo-detail', params: { id: String(backup.repo_id) } }"
+                class="active-backup-link"
+              >
+                {{ backup.target_name }}
+              </RouterLink>
+              <span
+                v-else
+                class="active-backup-target"
+                >{{ backup.target_name }}</span
+              >
+              <span class="active-backup-time">
+                Running for {{ formatDuration(elapsedSecsFor(backup)) }}
+              </span>
+              <span
+                v-if="estimatedRemainingFor(backup) !== null"
+                class="active-backup-time"
+              >
+                &middot; ~{{ formatDuration(estimatedRemainingFor(backup)!) }} left
+              </span>
+            </div>
+            <div
+              v-if="backup.progress"
+              class="active-backup-progress"
             >
-              {{ backup.schedule_name }}
-            </span>
-            <RouterLink
-              :to="{ name: 'agent-detail', params: { hostname: backup.hostname } }"
-              class="active-backup-link"
-            >
-              {{ backup.hostname }}
-            </RouterLink>
-            <ChevronRight
-              class="active-backup-sep"
-              :size="14"
-            />
-            <RouterLink
-              v-if="backup.repo_id !== null"
-              :to="{ name: 'repo-detail', params: { id: String(backup.repo_id) } }"
-              class="active-backup-link"
-            >
-              {{ backup.target_name }}
-            </RouterLink>
-            <span
-              v-else
-              class="active-backup-target"
-              >{{ backup.target_name }}</span
-            >
-            <span class="active-backup-time">
-              Running for {{ formatDuration(elapsedSecsFor(backup)) }}
-            </span>
-            <span
-              v-if="estimatedRemainingFor(backup) !== null"
-              class="active-backup-time"
-            >
-              &middot; ~{{ formatDuration(estimatedRemainingFor(backup)!) }} left
-            </span>
+              <span class="active-backup-progress-stat">
+                {{ backup.progress.nfiles.toLocaleString() }} files
+              </span>
+              <span class="active-backup-progress-stat">
+                {{ formatBytes(backup.progress.originalSize) }}
+              </span>
+              <span
+                v-if="backup.progress.currentPath"
+                class="active-backup-progress-path"
+                >{{ backup.progress.currentPath }}</span
+              >
+            </div>
           </div>
         </div>
       </section>
@@ -979,10 +1021,45 @@ async function fetchOverview(): Promise<void> {
 
 .active-backup-item {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.active-backup-summary {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
   font-size: var(--fs-base);
+}
+
+/* Reserves two lines for the current-file path so a deeply nested path can't
+   grow the panel unboundedly - it's ellipsized instead. */
+.active-backup-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding-left: calc(var(--space-4) + 6px);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.active-backup-progress-stat {
+  flex-shrink: 0;
+}
+
+.active-backup-progress-path {
+  font-family: var(--mono);
+  word-break: break-all;
+  overflow-wrap: break-word;
+  min-width: 0;
+  flex: 1 1 12rem;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .active-backup-schedule {

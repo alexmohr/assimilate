@@ -575,7 +575,7 @@ onMessage('BackupStarted', (payload) => {
   backupHostname.value = agent?.display_name ?? payload.hostname
   backupArchiveName.value = payload.archive_name ?? null
   archiveProgress.value = null
-  backupStartedAt.value = Date.now()
+  backupStartedAt.value = Date.parse(payload.started_at)
 })
 
 onMessage('BackupCompleted', (payload) => {

@@ -499,6 +499,50 @@ describe('DashboardView success ring', () => {
     expect(wrapper.text()).toContain('Active')
   })
 
+  it('renders live progress from a BackupLog stream for the matching backup', async () => {
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
+
+    wsHandlers['BackupLog']({
+      hostname: 'web-server-01',
+      repo_id: 3,
+      schedule_id: 7,
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 29_098,
+        original_size: 370_800_000,
+        path: 'usr/share/locale/en_GB/LC_MESSAGES/plasma_applet_org.kde.plasma.digitalclock.mo',
+      }),
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('29,098 files')
+    expect(wrapper.text()).toContain('370800000B')
+    expect(wrapper.find('.active-backup-progress-path').text()).toBe(
+      'usr/share/locale/en_GB/LC_MESSAGES/plasma_applet_org.kde.plasma.digitalclock.mo',
+    )
+  })
+
+  it('ignores a BackupLog line for a repo with no matching active backup', async () => {
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
+
+    wsHandlers['BackupLog']({
+      hostname: 'web-server-01',
+      repo_id: 999,
+      schedule_id: 7,
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 1,
+        original_size: 1,
+        path: 'unrelated',
+      }),
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.active-backup-progress').exists()).toBe(false)
+  })
+
   it('shows the schedule name and links the host and repo to their detail pages', async () => {
     vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
     const wrapper = await renderDashboard()

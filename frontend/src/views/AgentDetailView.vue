@@ -14,6 +14,7 @@ import {
   listAgentRepos,
   listAgentReports,
   createAgentHostnamePattern,
+  cancelAgentBackup,
 } from '../api/agents'
 import { listSchedules, getScheduleHealth } from '../api/schedules'
 import { getSystemVersion } from '../api/system'
@@ -24,6 +25,7 @@ import { useClipboard } from '../composables/useClipboard'
 import { useElapsedClock } from '../composables/useElapsedTimer'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { useToast } from '../composables/useToast'
 import { logger } from '../utils/logger'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
@@ -363,6 +365,7 @@ async function loadTabData(): Promise<void> {
         ...activeBackups.value,
         {
           targetName: r.repo_name,
+          repoId: r.repo_id,
           archiveName: r.archive_name,
           startedAt,
           progress: null,
@@ -468,6 +471,21 @@ async function restartAgent(): Promise<void> {
   }
 }
 
+const { success: toastSuccess, error: toastError } = useToast()
+const cancellingRepoIds = ref<number[]>([])
+
+async function cancelBackupInProgress(repoId: number): Promise<void> {
+  cancellingRepoIds.value = [...cancellingRepoIds.value, repoId]
+  try {
+    await cancelAgentBackup(props.hostname, repoId)
+    toastSuccess('Cancel request sent.')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    cancellingRepoIds.value = cancellingRepoIds.value.filter((id) => id !== repoId)
+  }
+}
+
 watch(
   () => props.hostname,
   () => {
@@ -497,6 +515,7 @@ interface ArchiveProgressData {
 
 interface ActiveBackup {
   targetName: string
+  repoId: number | null
   archiveName: string | null
   startedAt: number
   progress: ArchiveProgressData | null
@@ -510,6 +529,7 @@ const { now } = useElapsedClock(hasActiveBackups)
 const liveBackups = computed<LiveBackup[]>(() =>
   activeBackups.value.map((b) => ({
     targetName: b.targetName,
+    repoId: b.repoId,
     archiveName: b.archiveName,
     elapsedSecs: Math.max(0, Math.floor((now.value - b.startedAt) / 1000)),
     progress: b.progress,
@@ -523,8 +543,9 @@ onMessage('BackupStarted', (payload) => {
     ...activeBackups.value,
     {
       targetName: payload.target_name,
+      repoId: repos.value.find((r) => r.name === payload.target_name)?.id ?? null,
       archiveName: payload.archive_name ?? null,
-      startedAt: Date.now(),
+      startedAt: Date.parse(payload.started_at),
       progress: null,
     },
   ]
@@ -623,10 +644,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :health="scheduleHealth"
           :reports="reports"
           :live-backups="liveBackups"
+          :cancelling-repo-ids="cancellingRepoIds"
           :repo-name-for="repoNameForSchedule"
           @open-schedule="navigateToSchedule"
           @open-report="openReport"
           @show-tab="activeTab = $event"
+          @cancel-backup="cancelBackupInProgress"
         />
 
         <AgentSchedulesTab

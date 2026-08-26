@@ -122,6 +122,10 @@ export async function deleteAgentArchives(hostname: string): Promise<void> {
   await apiClient.post(`/agents/${hostname}/delete-archives`)
 }
 
+export async function cancelAgentBackup(hostname: string, repoId: number): Promise<void> {
+  await apiClient.post(`/agents/${hostname}/repos/${repoId}/cancel-backup`)
+}
+
 export async function listAgentHostnamePatterns(hostname: string): Promise<AgentHostnamePattern[]> {
   const response = await apiClient.get<AgentHostnamePattern[]>(
     `/agents/${hostname}/hostname-patterns`,

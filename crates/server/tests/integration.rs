@@ -157,6 +157,10 @@ fn test_app_core_routes() -> Router<server::AppState> {
             "/api/agents/{hostname}/reports",
             get(server::api::reports::list_reports),
         )
+        .route(
+            "/api/agents/{hostname}/repos/{repo_id}/cancel-backup",
+            post(server::api::agents::cancel_agent_backup),
+        )
 }
 
 #[cfg(test)]
@@ -5354,6 +5358,76 @@ async fn test_cancel_running_backup_marks_report_cancelled_when_agent_offline() 
         status, "cancelled",
         "offline-agent fallback must cancel the in-progress backup report"
     );
+}
+
+/// Regression test for: the agent-overview "cancel backup in progress" button
+/// has no schedule to key off (a manually-triggered run may have
+/// `schedule_id = NULL`), so it must be able to cancel by hostname + repo id
+/// directly. Mirrors the schedule-scoped offline-agent fallback test above,
+/// but through `cancel_agent_backup`.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_cancel_agent_backup_marks_report_cancelled_when_agent_offline() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "cancel-agent-offline-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('cancel-agent-offline-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let backup_report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status) VALUES \
+         ($1, $2, NOW(), NOW(), 'started') RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = json_request(
+        "POST",
+        &format!("/api/agents/cancel-agent-offline-host/repos/{repo_id}/cancel-backup"),
+        None,
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let status: String = sqlx::query_scalar("SELECT status FROM backup_reports WHERE id = $1")
+        .bind(backup_report_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        status, "cancelled",
+        "offline-agent fallback must cancel the in-progress backup report"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_cancel_agent_backup_unknown_hostname_returns_not_found() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "cancel-agent-404-repo").await;
+
+    let req = json_request(
+        "POST",
+        &format!("/api/agents/no-such-host/repos/{repo_id}/cancel-backup"),
+        None,
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 // -- archive resync reliability --

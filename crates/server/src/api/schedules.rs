@@ -1281,6 +1281,7 @@ async fn broadcast_manual_backup_started(
     schedule_id: i64,
 ) {
     if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
+        let started_at = chrono::Utc::now();
         state.ui_broadcast.set_active_backup(ActiveBackupSnapshot {
             hostname: target.hostname.clone(),
             target_name: target_name.clone(),
@@ -1288,12 +1289,14 @@ async fn broadcast_manual_backup_started(
             schedule_id: Some(schedule_id),
             repo_id: repo_id.0,
             progress_line: None,
+            started_at,
         });
         state.ui_broadcast.send(ServerToUi::BackupStarted {
             hostname: target.hostname.clone(),
             target_name,
             archive_name: None,
             schedule_id: Some(schedule_id),
+            started_at,
         });
     }
     state.ui_broadcast.send(ServerToUi::DataChanged);

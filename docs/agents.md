@@ -197,7 +197,7 @@ Edit identity and Deploy SSH key open dialogs rather than expanding inline, so t
 
 The landing tab answers the questions an agent page is usually opened for — is it up, did the last backup work, when does the next one run, and is anything overdue:
 
-- A **progress card** for each backup currently running on this agent.
+- A **progress card** for each backup currently running on this agent, linking to the target repository and offering a **Cancel backup** action. Files/data processed and the current file are shown as they stream in; the current-file path is clamped to two lines and ellipsized if it still doesn't fit, so the card stays a fixed size.
 - A **needs-attention** strip, shown only when there is something to report: an overdue schedule, a failed last run, or an offline agent.
 - Four tiles: **Last backup** with its outcome, **Next run** across every enabled schedule, **Repositories**, and **Recent runs**.
 - Previews of this agent's schedules and its most recent backups, each linking through to the full tab.

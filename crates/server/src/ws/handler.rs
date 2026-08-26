@@ -1118,12 +1118,14 @@ async fn handle_backup_started(args: BackupStartedArgs<'_>) {
             schedule_id,
             repo_id: repo_id.0,
             progress_line: None,
+            started_at,
         });
         state.ui_broadcast.send(ServerToUi::BackupStarted {
             hostname: hostname.to_owned(),
             target_name,
             archive_name,
             schedule_id,
+            started_at,
         });
     }
     state.ui_broadcast.send(ServerToUi::DataChanged);

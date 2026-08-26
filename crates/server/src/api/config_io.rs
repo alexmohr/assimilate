@@ -211,6 +211,7 @@ async fn build_schedule_export(
         rate_limit_kbps: sched.rate_limit_kbps,
         pre_backup_commands,
         post_backup_commands,
+        hook_timeout_seconds: sched.hook_timeout_seconds,
         repo_name,
         backup_sources,
         targets,
@@ -556,6 +557,7 @@ async fn import_schedule(
         rate_limit_kbps: sched.rate_limit_kbps,
         pre_backup_commands: &sched.pre_backup_commands,
         post_backup_commands: &sched.post_backup_commands,
+        hook_timeout_seconds: sched.hook_timeout_seconds,
         on_failure: &on_failure_str,
     };
 

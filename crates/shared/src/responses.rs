@@ -13,6 +13,12 @@ use crate::{
     },
 };
 
+/// Default hook timeout for schedule exports predating the
+/// `hook_timeout_seconds` field, matching the DB column's default.
+fn default_hook_timeout_seconds() -> i32 {
+    60
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing health check.
@@ -545,6 +551,8 @@ pub struct ScheduleResponse {
     pub pre_backup_commands: Vec<String>,
     /// Commands to run after the backup.
     pub post_backup_commands: Vec<String>,
+    /// Timeout in seconds applied to each pre/post-backup hook command.
+    pub hook_timeout_seconds: i32,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
@@ -2043,6 +2051,9 @@ pub struct ScheduleExportResponse {
     pub pre_backup_commands: Vec<String>,
     /// Commands to run after the backup.
     pub post_backup_commands: Vec<String>,
+    /// Timeout in seconds applied to each pre/post-backup hook command.
+    #[serde(default = "default_hook_timeout_seconds")]
+    pub hook_timeout_seconds: i32,
     /// Backup source paths.
     pub backup_sources: Vec<String>,
     /// Per-target overrides.

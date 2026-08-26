@@ -82,6 +82,10 @@ export type ScheduleExportResponse = {
    */
   post_backup_commands: Array<string>;
   /**
+   * Timeout in seconds applied to each pre/post-backup hook command.
+   */
+  hook_timeout_seconds: number;
+  /**
    * Backup source paths.
    */
   backup_sources: Array<string>;

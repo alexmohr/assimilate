@@ -3523,6 +3523,81 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
     schedule_id
 }
 
+/// The `hook_timeout_seconds` field (the timeout applied to each pre/post-backup
+/// hook command on the agent) must be persisted through the actual `PUT
+/// /api/schedules/{id}` handler and reflected back in the response body.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_persists_hook_timeout_seconds(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('hook-timeout-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "hook-timeout-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "hook_timeout_seconds": 300,
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("hook_timeout_seconds").unwrap(), 300);
+
+    let persisted: i32 =
+        sqlx::query_scalar("SELECT hook_timeout_seconds FROM schedules WHERE id = $1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted, 300);
+}
+
+/// A `hook_timeout_seconds` outside the allowed range must be rejected with a
+/// 400, not silently clamped or accepted into the DB (which would only be
+/// caught later, less clearly, by the `hook_timeout_seconds > 0` CHECK
+/// constraint).
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_rejects_invalid_hook_timeout_seconds(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('bad-hook-timeout-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "bad-hook-timeout-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "hook_timeout_seconds": 0,
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 /// Retargeting an auto-disabled schedule away from the agent that caused the disable,
 /// through the actual `PUT /api/schedules/{id}` handler (not just the DB function it
 /// delegates to), must clear the stale auto-disable bookkeeping so the dropped agent

@@ -892,6 +892,7 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             rate_limit_kbps: Some(5000),
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -913,6 +914,7 @@ async fn schedule_insert_and_list(pool: PgPool) {
     assert!(schedule.enabled);
     assert_eq!(schedule.keep_daily, 7);
     assert_eq!(schedule.rate_limit_kbps, Some(5000));
+    assert_eq!(schedule.hook_timeout_seconds, 60);
 
     let all = db::list_schedules(&pool).await.unwrap();
     assert_eq!(all.len(), 1);
@@ -943,6 +945,7 @@ async fn schedule_update(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: &["echo pre".to_string()],
             post_backup_commands: &["echo post".to_string()],
+            hook_timeout_seconds: 120,
             on_failure: "continue",
         },
     )
@@ -962,6 +965,7 @@ async fn schedule_update(pool: PgPool) {
         updated.post_backup_commands.0,
         vec!["echo post".to_string()]
     );
+    assert_eq!(updated.hook_timeout_seconds, 120);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1071,6 +1075,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -1103,6 +1108,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -1450,6 +1456,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
     )
@@ -1528,6 +1535,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
     )
@@ -1618,6 +1626,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
     )
@@ -2005,6 +2014,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -2105,6 +2115,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -2139,6 +2150,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -4917,6 +4929,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -6187,6 +6200,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -6402,6 +6416,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,
@@ -6612,6 +6627,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: &[],
             post_backup_commands: &[],
+            hook_timeout_seconds: 60,
             on_failure: "stop",
         },
         None,

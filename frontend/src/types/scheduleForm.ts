@@ -22,6 +22,7 @@ export interface ScheduleFormState {
   rate_limit_kbps: number
   pre_backup_commands: string
   post_backup_commands: string
+  hook_timeout_seconds: number
   backup_sources: string
 }
 
@@ -48,6 +49,7 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   rate_limit_kbps: 0,
   pre_backup_commands: '',
   post_backup_commands: '',
+  hook_timeout_seconds: 60,
   backup_sources: '',
 }
 

@@ -295,6 +295,52 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('Weekly', { exact: true })).toBeVisible()
   })
 
+  test('schedule detail Advanced section edits and saves the hook command timeout', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Advanced' }).click()
+
+    const timeoutField = page.locator('.field', { hasText: 'Hook command timeout' })
+    const timeoutInput = timeoutField.locator('input[type="number"]')
+    await expect(timeoutInput).toBeVisible()
+
+    let savedBody: Record<string, unknown> | null = null
+    await page.route(
+      (url) => url.pathname === '/api/schedules/1',
+      async (route) => {
+        if (route.request().method() === 'PUT') {
+          savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+          const response = await route.fetch()
+          const body = (await response.json()) as Record<string, unknown>
+          return route.fulfill({
+            status: response.status(),
+            contentType: 'application/json',
+            body: JSON.stringify({
+              ...body,
+              hook_timeout_seconds: savedBody.hook_timeout_seconds,
+            }),
+          })
+        }
+        return route.continue()
+      },
+    )
+
+    await timeoutInput.fill('180')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    await expect(async () => {
+      expect(savedBody).not.toBeNull()
+      expect((savedBody as Record<string, unknown>).hook_timeout_seconds).toBe(180)
+    }).toPass({ timeout: 5_000 })
+
+    await expect(timeoutInput).toHaveValue('180')
+  })
+
   test('schedule detail shows host and repository assignment', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')

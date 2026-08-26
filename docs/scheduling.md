@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Scheduling & Retention
 
-Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, optional pre/post commands, and optional Borg bandwidth cap.
+Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, optional pre/post commands (each bounded by a configurable timeout), and optional Borg bandwidth cap.
 
 When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 

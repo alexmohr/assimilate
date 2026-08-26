@@ -13,6 +13,10 @@ fn default_keep_hourly() -> u32 {
     24
 }
 
+fn default_hook_timeout_seconds() -> u32 {
+    60
+}
+
 /// Name of the environment variable borg reads the repository URL from.
 pub const BORG_REPO_ENV_KEY: &str = "BORG_REPO";
 
@@ -1051,6 +1055,9 @@ pub struct ScheduleConfig {
     /// Shell commands to run on the agent after the backup finishes.
     #[serde(default)]
     pub post_backup_commands: Vec<String>,
+    /// Timeout in seconds applied to each pre/post-backup hook command.
+    #[serde(default = "default_hook_timeout_seconds")]
+    pub hook_timeout_seconds: u32,
     /// Patterns used to flag unusually large file-change volumes as a possible incident.
     #[serde(default)]
     pub file_change_patterns: Vec<FileChangePattern>,

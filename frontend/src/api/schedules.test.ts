@@ -39,6 +39,7 @@ const CREATE_REQUEST: CreateScheduleRequest = {
   rate_limit_kbps: 0,
   pre_backup_commands: [],
   post_backup_commands: [],
+  hook_timeout_seconds: 60,
   backup_sources: ['/data'],
   agent_ids: [1, 2],
   repo_id: 5,

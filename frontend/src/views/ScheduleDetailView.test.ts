@@ -95,6 +95,7 @@ const mockSchedule = {
   compact_enabled: true,
   pre_backup_commands: ['docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'],
   post_backup_commands: [],
+  hook_timeout_seconds: 60,
 }
 
 const mockCheckSchedule = {

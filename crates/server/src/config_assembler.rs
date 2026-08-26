@@ -210,6 +210,12 @@ async fn build_schedule_config(
         effective_pre_backup_commands(agent, &schedule, per_agent_cmds.as_ref());
     let post_backup_commands =
         effective_post_backup_commands(agent, &schedule, per_agent_cmds.as_ref());
+    let hook_timeout_seconds = u32::try_from(schedule.hook_timeout_seconds).map_err(|_| {
+        ApiError::Internal(format!(
+            "hook_timeout_seconds {} out of u32 range",
+            schedule.hook_timeout_seconds
+        ))
+    })?;
 
     Ok(ScheduleConfig {
         id: schedule.id,
@@ -230,6 +236,7 @@ async fn build_schedule_config(
         file_change_patterns,
         pre_backup_commands,
         post_backup_commands,
+        hook_timeout_seconds,
     })
 }
 

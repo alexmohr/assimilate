@@ -397,7 +397,8 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 12,
     \"pre_backup_commands\": [\"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\"],
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
-    \"rate_limit_kbps\": 5000
+    \"rate_limit_kbps\": 5000,
+    \"hook_timeout_seconds\": 120
 }" > /dev/null
 
 api POST "/api/schedules" "{

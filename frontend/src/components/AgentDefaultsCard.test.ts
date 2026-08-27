@@ -128,14 +128,19 @@ describe('AgentDefaultsCard', () => {
     await clickButton(wrapper, 'Save')
 
     expect(apiClient.put).toHaveBeenCalledTimes(1)
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/web-01', {
-      display_name: 'Web 01',
-      default_backup_paths: ['/var', '/opt'],
-      default_exclude_patterns: ['*.cache'],
-      default_pre_backup_commands: ['systemctl stop app'],
-      default_post_backup_commands: ['systemctl start app'],
-      default_file_change_patterns_raw: '/data/wal/** ignore',
-    })
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01',
+      {
+        display_name: 'Web 01',
+        domain: undefined,
+        default_backup_paths: ['/var', '/opt'],
+        default_exclude_patterns: ['*.cache'],
+        default_pre_backup_commands: ['systemctl stop app'],
+        default_post_backup_commands: ['systemctl start app'],
+        default_file_change_patterns_raw: '/data/wal/** ignore',
+      },
+      { params: {} },
+    )
   })
 
   it('sends both hook command lists together', async () => {
@@ -199,6 +204,7 @@ describe('AgentDefaultsCard', () => {
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/web-01',
       expect.objectContaining({ default_exclude_patterns: ['*.cache', '/var/tmp'] }),
+      { params: {} },
     )
   })
 
@@ -219,6 +225,7 @@ describe('AgentDefaultsCard', () => {
       expect.objectContaining({
         default_file_change_patterns_raw: '/data/wal/** ignore\n/srv/** watch',
       }),
+      { params: {} },
     )
   })
 

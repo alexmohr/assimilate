@@ -5,12 +5,15 @@ use std::path::PathBuf;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use super::{auth::AuthUser, helpers};
+use super::{
+    auth::AuthUser,
+    helpers::{self, DomainQuery},
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -127,6 +130,7 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
     operation_id = "deployAgent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     request_body = DeployAgentRequest,
     responses(
@@ -135,6 +139,7 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- upgrade agent permission required"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
         (status = 500, description = "Agent binary not found or internal error"),
     )
 )]
@@ -147,6 +152,7 @@ pub async fn deploy_agent(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
     require_upgrade_agent(&state.pool, auth.user_id).await?;
@@ -156,7 +162,7 @@ pub async fn deploy_agent(
 
     let binary_dir = agent_binary_dir().await;
 
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let tunnel_server_url = db::get_tunnel_by_agent_id(&state.pool, agent.id)
         .await
         .ok()
@@ -196,7 +202,7 @@ pub async fn deploy_agent(
     let token_hex = helpers::generate_random_hex(32);
     let token_hash = bcrypt::hash(&token_hex, bcrypt::DEFAULT_COST)?;
 
-    db::regenerate_agent_token(&state.pool, &hostname, &token_hash).await?;
+    db::regenerate_agent_token(&state.pool, agent.id, &token_hash).await?;
 
     let install_path = req
         .install_path

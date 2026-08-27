@@ -92,4 +92,9 @@ export type AgentResponse = {
    * SSH username last used to deploy/upgrade this agent.
    */
   last_ssh_user: string | null;
+  /**
+   * Optional DNS domain, set by an admin to disambiguate agents that
+   * share an OS hostname across different networks.
+   */
+  domain: string | null;
 };

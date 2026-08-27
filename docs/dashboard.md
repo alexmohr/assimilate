@@ -4,6 +4,12 @@ The Dashboard is an operational summary of current backup risk, fleet protection
 
 ![Dashboard](assets/screenshots/dashboard-full.png)
 
+## Layout
+
+Below the counter tiles, Backup Stats and Protection Coverage sit side by side. The panels under them are arranged in two columns: Needs Attention, Backup Calendar, and Repository Capacity on the left; Upcoming Work and Recent Activity on the right. Each column is an independent stack, so a hidden or short panel is followed by the next panel in its column rather than leaving a gap beside a taller neighbour.
+
+The Backup Calendar needs the full width of a half-page column to render a seven-day month grid, so below 1024px the two columns fold into a single full-width column.
+
 ## Summary
 
 The top row uses explicit entity counts:
@@ -40,7 +46,7 @@ Findings include the affected agent, schedule, or repository, the reason, an age
 
 A finding reason that comes from an agent or a repository import (Borg output can run to kilobytes of stderr) is normalized to a single line and capped at 200 characters, with an ellipsis marking the cut. Each row additionally clamps the reason to two lines, so one verbose failure cannot stretch the panel. Hovering the reason shows it in full, and the finding's link opens the activity record that carries the untruncated message.
 
-When no findings exist, the Needs Attention panel is hidden entirely and the sidebar panels span the full row side by side.
+When no findings exist, the Needs Attention panel is hidden entirely and the panels below it move up to take its place.
 
 ## Protection Coverage
 
@@ -64,7 +70,7 @@ The current repository schema does not provide enough authoritative historical s
 
 ## Other Visualizations
 
-Success rate, storage breakdown, activity timeline, backup statistics, storage trends, backup size trends, calendar, recent activity, and next scheduled visualizations remain available below the operational sections. These support historical analysis without replacing the Schedules, Agents, Repositories, or Activity pages.
+Success rate, storage breakdown, activity timeline, storage trends, and backup size trends remain available below the operational sections. The Backup Calendar and Recent Activity sit alongside them in the two-column block described under Layout. These support historical analysis without replacing the Schedules, Agents, Repositories, or Activity pages.
 
 ## Real-Time Updates
 

@@ -114,6 +114,26 @@ test.describe('Agent detail', () => {
     }
   })
 
+  // A warned run still reached the archive step, so it should be reachable
+  // from the agent view like a successful one - not stuck behind "Show
+  // detail" with no way out to the archive browser.
+  test('a warned run still links through to its archive', async ({ page }) => {
+    await openAgent(page)
+    await page.getByRole('tab', { name: /Backups/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    const warning = page.locator('.segmented-option', { hasText: /^Warning/ })
+    await expect(warning).toBeVisible()
+    await warning.click()
+
+    const openLink = page.locator('button.agent-row-name').first()
+    await expect(openLink).toBeVisible()
+    await openLink.click()
+
+    await expect(page).toHaveURL(/\/repos\/\d+\?.*tab=archives/)
+    await expect(page.locator('.archive-file-browser')).toBeVisible()
+  })
+
   test('settings is a fourth tab with its own sub-nav', async ({ page }) => {
     await openAgent(page)
     await page.getByRole('tab', { name: 'Settings' }).click()

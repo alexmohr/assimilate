@@ -20,6 +20,8 @@ import type { AgentHostnamePattern } from '../types/agent'
  */
 const props = defineProps<{
   hostname: string
+  /** Disambiguates `hostname` when it is shared by more than one agent. */
+  domain?: string | null
   /** False for imported hosts, whose patterns are read-only. */
   canEdit: boolean
 }>()
@@ -33,7 +35,7 @@ async function load(hostname?: string): Promise<void> {
   const h = hostname ?? props.hostname
   if (!h) return
   try {
-    patterns.value = await listAgentHostnamePatterns(h)
+    patterns.value = await listAgentHostnamePatterns(h, props.domain)
   } catch (e: unknown) {
     logger.error('loadHostnamePatterns failed', e)
   }
@@ -44,7 +46,11 @@ async function addPattern(): Promise<void> {
   addLoading.value = true
   error.value = null
   try {
-    const res = await createAgentHostnamePattern(props.hostname, newPattern.value.trim())
+    const res = await createAgentHostnamePattern(
+      props.hostname,
+      newPattern.value.trim(),
+      props.domain,
+    )
     patterns.value = [...patterns.value, res]
     newPattern.value = ''
   } catch (e: unknown) {
@@ -56,7 +62,7 @@ async function addPattern(): Promise<void> {
 
 async function deletePattern(id: number): Promise<void> {
   try {
-    await deleteAgentHostnamePattern(props.hostname, id)
+    await deleteAgentHostnamePattern(props.hostname, id, props.domain)
     patterns.value = patterns.value.filter((p) => p.id !== id)
   } catch (e: unknown) {
     error.value = extractError(e)

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
+  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain FROM agents ORDER BY hostname",
   "describe": {
     "columns": [
       {
@@ -97,19 +97,15 @@
         "ordinal": 18,
         "name": "last_ssh_user",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "domain",
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "TextArray",
-        "TextArray",
-        "Jsonb",
-        "Jsonb",
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -130,8 +126,9 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "77b2a5d6dba3d548d892173071675070173a98b273d5ce5e0437beca64a807e8"
+  "hash": "c18f58ce81e9b645e44cc86d9739d52efc73eb7f12f19d078480eb10e8d1a546"
 }

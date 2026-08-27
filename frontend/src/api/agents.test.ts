@@ -86,7 +86,11 @@ describe('agents api', () => {
       hostname: 'web-01',
     })
 
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/web-01', { display_name: 'New name' })
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01',
+      { display_name: 'New name' },
+      { params: {} },
+    )
   })
 
   it('deletes an agent', async () => {
@@ -94,7 +98,7 @@ describe('agents api', () => {
 
     await deleteAgent('web-01')
 
-    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01')
+    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01', { params: {} })
   })
 
   it('hides an agent', async () => {
@@ -102,7 +106,7 @@ describe('agents api', () => {
 
     await hideAgent('legacy-01')
 
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/legacy-01/hide')
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/legacy-01/hide', {}, { params: {} })
   })
 
   it('unhides an agent', async () => {
@@ -110,7 +114,7 @@ describe('agents api', () => {
 
     await unhideAgent('legacy-01')
 
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/legacy-01/unhide')
+    expect(apiClient.put).toHaveBeenCalledWith('/agents/legacy-01/unhide', {}, { params: {} })
   })
 
   it('regenerates an agent token', async () => {
@@ -118,7 +122,11 @@ describe('agents api', () => {
 
     await expect(regenerateAgentToken('web-01')).resolves.toEqual({ agent: {}, token: 'tok' })
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-01/regenerate-token')
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-01/regenerate-token',
+      {},
+      { params: {} },
+    )
   })
 
   it('restarts an agent', async () => {
@@ -126,7 +134,7 @@ describe('agents api', () => {
 
     await restartAgent('web-01')
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-01/restart')
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-01/restart', {}, { params: {} })
   })
 
   it('deletes agent archives', async () => {
@@ -134,7 +142,11 @@ describe('agents api', () => {
 
     await deleteAgentArchives('legacy-01')
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/legacy-01/delete-archives')
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/legacy-01/delete-archives',
+      {},
+      { params: {} },
+    )
   })
 
   it('lists hostname patterns', async () => {
@@ -142,7 +154,9 @@ describe('agents api', () => {
 
     await expect(listAgentHostnamePatterns('web-01')).resolves.toEqual([{ id: 1, pattern: 'web*' }])
 
-    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/hostname-patterns')
+    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/hostname-patterns', {
+      params: {},
+    })
   })
 
   it('creates a hostname pattern', async () => {
@@ -153,9 +167,11 @@ describe('agents api', () => {
       pattern: 'web*',
     })
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-01/hostname-patterns', {
-      pattern: 'web*',
-    })
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-01/hostname-patterns',
+      { pattern: 'web*' },
+      { params: {} },
+    )
   })
 
   it('deletes a hostname pattern', async () => {
@@ -163,7 +179,9 @@ describe('agents api', () => {
 
     await deleteAgentHostnamePattern('web-01', 1)
 
-    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01/hostname-patterns/1')
+    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01/hostname-patterns/1', {
+      params: {},
+    })
   })
 
   it('merges an agent with a pattern', async () => {
@@ -171,9 +189,11 @@ describe('agents api', () => {
 
     await expect(mergeAgent('web-server-01', 10, 'legacy*')).resolves.toEqual({ merged: true })
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-server-01/merge-from/10', {
-      create_pattern: 'legacy*',
-    })
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-server-01/merge-from/10',
+      { create_pattern: 'legacy*' },
+      { params: {} },
+    )
   })
 
   it('merges an agent without a pattern', async () => {
@@ -181,7 +201,11 @@ describe('agents api', () => {
 
     await expect(mergeAgent('web-server-01', 10)).resolves.toEqual({ merged: true })
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-server-01/merge-from/10', {})
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-server-01/merge-from/10',
+      {},
+      { params: {} },
+    )
   })
 
   it('previews the service unit', async () => {
@@ -221,15 +245,19 @@ describe('agents api', () => {
       }),
     ).resolves.toEqual({ success: true, skipped: false, token: 'tok' })
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-01/deploy', {
-      ssh_host: '10.0.0.1',
-      ssh_user: 'root',
-      ssh_port: 22,
-      ssh_password: 'secret',
-      server_url: 'http://server:8080',
-      install_path: '/usr/local/bin/assimilate-agent',
-      systemd_service_content: '[Unit]',
-    })
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-01/deploy',
+      {
+        ssh_host: '10.0.0.1',
+        ssh_user: 'root',
+        ssh_port: 22,
+        ssh_password: 'secret',
+        server_url: 'http://server:8080',
+        install_path: '/usr/local/bin/assimilate-agent',
+        systemd_service_content: '[Unit]',
+      },
+      { params: {} },
+    )
   })
 
   it('deploys the ssh key', async () => {
@@ -261,7 +289,7 @@ describe('agents api', () => {
 
     await expect(listAgentRepos('web-01')).resolves.toEqual([{ id: 1, name: 'server-daily' }])
 
-    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/repos')
+    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/repos', { params: {} })
   })
 
   it('lists agent reports with and without params', async () => {
@@ -271,7 +299,7 @@ describe('agents api', () => {
     await listAgentReports('web-01', { limit: 100, target: 'home' })
 
     expect(apiClient.get).toHaveBeenNthCalledWith(1, '/agents/web-01/reports', {
-      params: undefined,
+      params: {},
     })
     expect(apiClient.get).toHaveBeenNthCalledWith(2, '/agents/web-01/reports', {
       params: { limit: 100, target: 'home' },

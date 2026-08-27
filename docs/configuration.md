@@ -65,7 +65,7 @@ migrating between servers or creating backups of the configuration.
 
 | Entity | Included | Notes |
 |--------|----------|-------|
-| **Hosts** | Connection details, display name, default backup paths, exclude patterns, pre/post-backup commands, file change patterns, hostname patterns | Agent authentication tokens are **not** exported; imported hosts receive a placeholder token. |
+| **Hosts** | Connection details, display name, domain, default backup paths, exclude patterns, pre/post-backup commands, file change patterns, hostname patterns | Agent authentication tokens are **not** exported; imported hosts receive a placeholder token. Import matches existing hosts by hostname *and* domain, so two hosts sharing a hostname import as distinct agents. |
 | **Schedules** | Name, cron expression, enabled state, retention settings, backup sources, targets, exclude patterns, per-agent overrides | Only schedules with at least one valid target are imported. |
 | **Repositories** | SSH connection details, compression, encryption mode, enabled state, sync schedule, SSH host key, quota (warn/critical thresholds and actions), tags | **Passphrases are never exported** (see below). |
 

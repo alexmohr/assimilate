@@ -43,8 +43,10 @@ pub async fn export_config(
     _admin: RequireAdmin,
 ) -> Result<Json<ConfigExport>, ApiError> {
     let agents = db::list_agents(&state.pool, false).await?;
-    let agent_id_to_hostname: HashMap<i64, &str> =
-        agents.iter().map(|c| (c.id, c.hostname.as_str())).collect();
+    let agent_id_to_hostname: HashMap<i64, (&str, Option<&str>)> = agents
+        .iter()
+        .map(|c| (c.id, (c.hostname.as_str(), c.domain.as_deref())))
+        .collect();
 
     let mut hosts = Vec::new();
     for agent in &agents {
@@ -55,6 +57,7 @@ pub async fn export_config(
         hosts.push(HostExport {
             hostname: agent.hostname.clone(),
             display_name: agent.display_name.clone(),
+            domain: agent.domain.clone(),
             default_backup_paths: agent.default_backup_paths.clone(),
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
             default_pre_backup_commands: agent.default_pre_backup_commands.0.clone(),
@@ -135,7 +138,7 @@ async fn build_schedule_export(
     pool: &sqlx::PgPool,
     sched: &db::ScheduleRow,
     repo_id_to_name: &HashMap<i64, &str>,
-    agent_id_to_hostname: &HashMap<i64, &str>,
+    agent_id_to_hostname: &HashMap<i64, (&str, Option<&str>)>,
 ) -> Result<ScheduleExport, ApiError> {
     let repo_name = sched
         .repo_id
@@ -166,9 +169,10 @@ async fn build_schedule_export(
     let targets = target_rows
         .iter()
         .filter_map(|t| {
-            let hostname = agent_id_to_hostname.get(&t.agent_id).copied()?.to_owned();
+            let (hostname, domain) = agent_id_to_hostname.get(&t.agent_id).copied()?;
             Some(ScheduleTargetExport {
-                hostname,
+                hostname: hostname.to_owned(),
+                domain: domain.map(str::to_owned),
                 execution_order: t.execution_order,
                 backup_sources: per_agent_sources_map
                     .get(&t.agent_id)
@@ -267,9 +271,9 @@ pub async fn import_config(
 
     // Phase 2: Import hosts
     let existing_agents = db::list_agents(&state.pool, true).await?;
-    let mut hostname_to_id: HashMap<String, i64> = existing_agents
+    let mut hostname_to_id: HashMap<(String, Option<String>), i64> = existing_agents
         .iter()
-        .map(|a| (a.hostname.clone(), a.id))
+        .map(|a| ((a.hostname.clone(), a.domain.clone()), a.id))
         .collect();
 
     for host in &payload.hosts {
@@ -448,16 +452,18 @@ async fn upsert_repo_quota(
 async fn import_host(
     pool: &sqlx::PgPool,
     host: &HostExport,
-    hostname_to_id: &mut HashMap<String, i64>,
+    hostname_to_id: &mut HashMap<(String, Option<String>), i64>,
     result: &mut ImportResult,
 ) -> Result<(), ApiError> {
-    if let Some(&existing_id) = hostname_to_id.get(&host.hostname) {
+    let key = (host.hostname.clone(), host.domain.clone());
+    if let Some(&existing_id) = hostname_to_id.get(&key) {
         db::update_agent(
             pool,
-            &host.hostname,
+            existing_id,
             &host.hostname,
             db::AgentDefaults {
                 display_name: host.display_name.as_deref(),
+                domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
                 default_pre_backup_commands: &host.default_pre_backup_commands,
@@ -486,6 +492,7 @@ async fn import_host(
             IMPORTED_TOKEN_HASH,
             db::AgentDefaults {
                 display_name: host.display_name.as_deref(),
+                domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
                 default_pre_backup_commands: &host.default_pre_backup_commands,
@@ -497,7 +504,7 @@ async fn import_host(
         for pattern in &host.hostname_patterns {
             db::patterns::add_hostname_pattern(pool, agent.id, pattern).await?;
         }
-        hostname_to_id.insert(host.hostname.clone(), agent.id);
+        hostname_to_id.insert(key, agent.id);
         result.hosts_created = result.hosts_created.saturating_add(1);
     }
     Ok(())
@@ -506,7 +513,7 @@ async fn import_host(
 async fn import_schedule(
     pool: &sqlx::PgPool,
     sched: &ScheduleExport,
-    hostname_to_id: &mut HashMap<String, i64>,
+    hostname_to_id: &mut HashMap<(String, Option<String>), i64>,
     repo_name_to_id: &HashMap<&str, i64>,
     result: &mut ImportResult,
 ) -> Result<(), ApiError> {
@@ -578,21 +585,29 @@ async fn import_schedule(
 async fn resolve_schedule_target_agent_ids(
     pool: &sqlx::PgPool,
     sched: &ScheduleExport,
-    hostname_to_id: &mut HashMap<String, i64>,
+    hostname_to_id: &mut HashMap<(String, Option<String>), i64>,
     result: &mut ImportResult,
 ) -> Result<Vec<(i64, i32)>, ApiError> {
     let mut target_ids: Vec<(i64, i32)> = Vec::new();
     for target in &sched.targets {
-        let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
+        let key = (target.hostname.clone(), target.domain.clone());
+        let agent_id = if let Some(&cid) = hostname_to_id.get(&key) {
             cid
         } else {
-            let agent =
-                db::insert_agent(pool, &target.hostname, None, IMPORTED_TOKEN_HASH, None).await?;
+            let agent = db::insert_agent(
+                pool,
+                &target.hostname,
+                None,
+                IMPORTED_TOKEN_HASH,
+                None,
+                target.domain.as_deref(),
+            )
+            .await?;
             result.warnings.push(format!(
                 "created placeholder agent {:?} referenced by schedule {:?}",
                 target.hostname, sched.name
             ));
-            hostname_to_id.insert(target.hostname.clone(), agent.id);
+            hostname_to_id.insert(key, agent.id);
             agent.id
         };
         target_ids.push((agent_id, target.execution_order));
@@ -609,10 +624,11 @@ async fn insert_schedule_target_overrides(
     pool: &sqlx::PgPool,
     new_schedule_id: i64,
     sched: &ScheduleExport,
-    hostname_to_id: &HashMap<String, i64>,
+    hostname_to_id: &HashMap<(String, Option<String>), i64>,
 ) -> Result<(), ApiError> {
     for target in &sched.targets {
-        let Some(&agent_id) = hostname_to_id.get(&target.hostname) else {
+        let key = (target.hostname.clone(), target.domain.clone());
+        let Some(&agent_id) = hostname_to_id.get(&key) else {
             continue;
         };
         for (i, path) in target.backup_sources.iter().enumerate() {

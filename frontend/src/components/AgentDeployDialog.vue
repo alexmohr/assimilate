@@ -17,6 +17,8 @@ const DEFAULT_INSTALL_PATH = '/usr/local/bin/assimilate-agent'
 
 const props = defineProps<{
   hostname: string
+  /** Disambiguates `hostname` when it is shared by more than one agent. */
+  domain?: string | null
   agentVersion: string | null
   /** The version installable from the server, when known - drives the version-transition summary. */
   availableVersion?: string | null
@@ -144,16 +146,20 @@ async function submitDeploy(): Promise<void> {
   deployError.value = null
   deployResult.value = null
   try {
-    const res = await deployAgent(props.hostname, {
-      ssh_host: deployForm.ssh_host.trim(),
-      ssh_user: deployForm.ssh_user.trim(),
-      ssh_port: deployForm.ssh_port,
-      ssh_password: deployForm.ssh_password || undefined,
-      server_url: deployForm.server_url.trim(),
-      install_path: deployForm.install_path.trim() || undefined,
-      systemd_service_content: deployForm.systemd_service_content.trim() || undefined,
-      force: isRedeploy.value || undefined,
-    })
+    const res = await deployAgent(
+      props.hostname,
+      {
+        ssh_host: deployForm.ssh_host.trim(),
+        ssh_user: deployForm.ssh_user.trim(),
+        ssh_port: deployForm.ssh_port,
+        ssh_password: deployForm.ssh_password || undefined,
+        server_url: deployForm.server_url.trim(),
+        install_path: deployForm.install_path.trim() || undefined,
+        systemd_service_content: deployForm.systemd_service_content.trim() || undefined,
+        force: isRedeploy.value || undefined,
+      },
+      props.domain,
+    )
     deployResult.value = res
     if (res.success) {
       emit('deployed', res.available_version)

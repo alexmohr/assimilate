@@ -103,6 +103,7 @@ struct PatternAgentJoinRow {
     pub agent_token_hash: String,
     pub is_hidden: bool,
     pub last_ssh_user: Option<String>,
+    pub domain: Option<String>,
 }
 
 /// Looks up an agent whose registered hostname pattern glob-matches the
@@ -124,8 +125,9 @@ pub async fn find_agent_by_pattern(
          a.default_pre_backup_commands AS \"default_pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", a.default_post_backup_commands AS \
          \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         a.default_file_change_patterns_raw, a.agent_token_hash, a.is_hidden, a.last_ssh_user \
-         FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY p.pattern",
+         a.default_file_change_patterns_raw, a.agent_token_hash, a.is_hidden, a.last_ssh_user, \
+         a.domain FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY \
+         p.pattern",
     )
     .fetch_all(pool)
     .await
@@ -155,5 +157,6 @@ pub async fn find_agent_by_pattern(
         agent_token_hash: row.agent_token_hash.clone(),
         is_hidden: row.is_hidden,
         last_ssh_user: row.last_ssh_user.clone(),
+        domain: row.domain.clone(),
     }))
 }

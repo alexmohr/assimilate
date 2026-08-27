@@ -904,6 +904,7 @@ describe('AgentDetailView — default file change patterns', () => {
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/test-host',
       expect.objectContaining({ default_file_change_patterns_raw: '*/var/log* ignore' }),
+      { params: {} },
     )
   })
 })
@@ -1069,7 +1070,11 @@ describe('AgentDetailView - identity, token and merge', () => {
 
     await clickMenuAction(wrapper, 'Regenerate token')
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/regenerate-token')
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/test-host/regenerate-token',
+      {},
+      { params: {} },
+    )
     expect(wrapper.find('.token-text').text()).toBe('tok_regenerated')
 
     await clickButton(wrapper, 'Copy')
@@ -1120,9 +1125,11 @@ describe('AgentDetailView - identity, token and merge', () => {
 
     await clickDialogButton(wrapper, 'Add pattern')
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/renamed-host/hostname-patterns', {
-      pattern: 'test-host',
-    })
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/renamed-host/hostname-patterns',
+      { pattern: 'test-host' },
+      { params: {} },
+    )
     expect(openModals(wrapper)).toHaveLength(0)
   })
 
@@ -1150,6 +1157,24 @@ describe('AgentDetailView - identity, token and merge', () => {
     await clickButton(wrapper, 'Save')
 
     expect(wrapper.text()).not.toContain('Hostname changed from')
+  })
+
+  // Changing only the domain must not trigger the hostname-rename alias
+  // offer, but it does need to land in the URL so a bookmarked/shared link
+  // to this agent keeps resolving to it once its domain is set.
+  it('updates the URL domain query when only the domain changed', async () => {
+    const wrapper = await render({ domain: null })
+    vi.mocked(apiClient.put).mockResolvedValue({
+      data: { ...mockAgent, domain: 'lab.example.com' },
+    } as never)
+
+    await clickMenuAction(wrapper, 'Edit identity')
+    await wrapper.find('#identity-domain').setValue('lab.example.com')
+    await clickButton(wrapper, 'Save')
+
+    expect(wrapper.text()).not.toContain('Hostname changed from')
+    const route = (wrapper.vm as unknown as { $route: { query: Record<string, unknown> } }).$route
+    expect(route.query.domain).toBe('lab.example.com')
   })
 
   it('closes the merge dialog for an imported agent on cancel', async () => {
@@ -1595,10 +1620,16 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
     await clickAction(wrapper, 'Adopt')
 
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-host', {
-      display_name: 'old-web',
-    })
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/regenerate-token')
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/test-host',
+      { display_name: 'old-web', domain: undefined },
+      { params: {} },
+    )
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/test-host/regenerate-token',
+      {},
+      { params: {} },
+    )
     expect(wrapper.find('.token-text').text()).toBe('tok_adopted')
   })
 
@@ -1636,7 +1667,7 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/restart')
+    expect(apiClient.post).toHaveBeenCalledWith('/agents/test-host/restart', {}, { params: {} })
   })
 
   it('reports a restart that could not be delivered', async () => {
@@ -1711,5 +1742,78 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     await flushPromises()
 
     expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
+  })
+})
+
+// Two agents can share an OS hostname if they're in different domains; the
+// page must not silently show one when the caller didn't say which.
+describe('AgentDetailView — duplicate hostnames', () => {
+  const AGENT_A = { ...mockAgent, id: 1, domain: 'a.example.com', display_name: 'Host A' }
+  const AGENT_B = { ...mockAgent, id: 2, domain: 'b.example.com', display_name: 'Host B' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [AGENT_A, AGENT_B] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+  })
+
+  it('shows a picker instead of guessing which agent is meant', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('a.example.com')
+    expect(wrapper.text()).toContain('b.example.com')
+    expect(wrapper.find('.detail-name').exists()).toBe(false)
+  })
+
+  const AMBIGUOUS_TEXT = 'More than one host is named'
+
+  it('re-resolves when the domain query changes without the hostname changing', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+    await router.push({ query: { domain: 'a.example.com' } })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.text()).toContain('Host A')
+    expect(wrapper.text()).not.toContain('Host B')
+
+    await router.push({ query: { domain: 'b.example.com' } })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.text()).toContain('Host B')
+    expect(wrapper.text()).not.toContain('Host A')
+  })
+
+  it('clicking a candidate in the picker resolves to that agent', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    const candidate = wrapper.findAll('.entity-card').find((c) => c.text().includes('Host B'))
+    if (!candidate) throw new Error('no candidate card for Host B')
+    await candidate.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.text()).toContain('Host B')
+    expect(wrapper.text()).not.toContain('Host A')
   })
 })

@@ -3,13 +3,13 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use shared::protocol::TunnelStatus;
 
-use super::auth::RequireAdmin;
+use super::{auth::RequireAdmin, helpers::DomainQuery};
 use crate::{
     AppState,
     db::{self, NewSshTunnel, SshTunnel, UpdateSshTunnel},
@@ -121,8 +121,9 @@ pub async fn get_agent_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<TunnelResponse>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let tunnel = db::get_tunnel_by_agent_id(&state.pool, agent.id).await?;
     let status = state
         .tunnel_manager

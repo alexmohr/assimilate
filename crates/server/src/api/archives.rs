@@ -626,6 +626,7 @@ async fn run_archive_deletion(
             repo_id,
             shared::protocol::RepoOpKind::DeleteArchive,
             username.clone(),
+            None,
         )
         .await;
     state
@@ -671,6 +672,7 @@ async fn run_archive_deletion(
             repo_id,
             shared::protocol::RepoOpKind::CompactRepo,
             username.clone(),
+            None,
         )
         .await;
     state

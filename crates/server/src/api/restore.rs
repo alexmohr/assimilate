@@ -127,6 +127,9 @@ pub struct RestoreFilesRequest {
     pub target_path: String,
     /// Hostname of the agent to restore to.
     pub hostname: String,
+    /// Domain of the target agent, required if `hostname` is shared by
+    /// multiple agents.
+    pub domain: Option<String>,
 }
 
 /// Result of a remote restore operation.
@@ -180,7 +183,10 @@ pub async fn restore_files(
         ));
     }
 
-    if !state.registry.is_connected(&body.hostname).await {
+    let agent =
+        db::get_agent_by_hostname(&state.pool, &body.hostname, body.domain.as_deref()).await?;
+
+    if !state.registry.is_connected(agent.id).await {
         return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
@@ -201,7 +207,7 @@ pub async fn restore_files(
         target_path: body.target_path.clone(),
     };
 
-    if state.registry.send_to(&body.hostname, msg).await.is_err() {
+    if state.registry.send_to(agent.id, msg).await.is_err() {
         state.pending_restores.lock().await.remove(&request_id);
         return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }

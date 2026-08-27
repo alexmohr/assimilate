@@ -37,7 +37,9 @@ describe('AgentHostnameAliases', () => {
 
   it('loads the host patterns on mount', async () => {
     const wrapper = await mount()
-    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/hostname-patterns')
+    expect(apiClient.get).toHaveBeenCalledWith('/agents/web-01/hostname-patterns', {
+      params: {},
+    })
     expect(wrapper.text()).toContain('web-*')
     expect(wrapper.text()).toContain('web-??')
   })
@@ -46,7 +48,9 @@ describe('AgentHostnameAliases', () => {
     const wrapper = await mount()
     await wrapper.setProps({ hostname: 'db-01' })
     await flushPromises()
-    expect(apiClient.get).toHaveBeenLastCalledWith('/agents/db-01/hostname-patterns')
+    expect(apiClient.get).toHaveBeenLastCalledWith('/agents/db-01/hostname-patterns', {
+      params: {},
+    })
   })
 
   it('says so when no patterns are configured', async () => {
@@ -65,9 +69,11 @@ describe('AgentHostnameAliases', () => {
     await wrapper.find('.pattern-add-row button').trigger('click')
     await flushPromises()
 
-    expect(apiClient.post).toHaveBeenCalledWith('/agents/web-01/hostname-patterns', {
-      pattern: 'app-*',
-    })
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-01/hostname-patterns',
+      { pattern: 'app-*' },
+      { params: {} },
+    )
     expect(wrapper.text()).toContain('app-*')
     expect(apiClient.get).toHaveBeenCalledOnce()
     // The field is cleared so the next pattern starts fresh.
@@ -96,7 +102,9 @@ describe('AgentHostnameAliases', () => {
     await wrapper.find('.pattern-delete').trigger('click')
     await flushPromises()
 
-    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01/hostname-patterns/1')
+    expect(apiClient.delete).toHaveBeenCalledWith('/agents/web-01/hostname-patterns/1', {
+      params: {},
+    })
     expect(wrapper.text()).not.toContain('web-*')
   })
 
@@ -109,7 +117,9 @@ describe('AgentHostnameAliases', () => {
   it('exposes a reload for the rename flow that adds the old name as an alias', async () => {
     const wrapper = await mount()
     await (wrapper.vm as unknown as { reload: (h?: string) => Promise<void> }).reload('renamed-01')
-    expect(apiClient.get).toHaveBeenLastCalledWith('/agents/renamed-01/hostname-patterns')
+    expect(apiClient.get).toHaveBeenLastCalledWith('/agents/renamed-01/hostname-patterns', {
+      params: {},
+    })
   })
 
   // The alias list is a side panel on the agent page. A failed load is logged

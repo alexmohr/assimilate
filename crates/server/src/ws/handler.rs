@@ -111,6 +111,29 @@ async fn send_close(ws_sink: &mut SplitSink<WebSocket, Message>, reason: &'stati
     }
 }
 
+/// Verifies `token` against every agent registered under `hostname` and
+/// returns the ID of the one it matches, if any.
+///
+/// More than one agent can share a hostname (agents in different domains),
+/// and a connecting agent only ever reports its OS hostname -- never which
+/// domain it belongs to -- so the presented token, not the hostname alone,
+/// is what identifies which specific agent this connection is for.
+pub(crate) async fn verify_agent_token(pool: &PgPool, hostname: &str, token: &str) -> Option<i64> {
+    let candidates = db::get_agent_token_hashes(pool, hostname).await.ok()?;
+    for candidate in candidates {
+        let token = token.to_owned();
+        let hash = candidate.agent_token_hash;
+        let verified = tokio::task::spawn_blocking(move || bcrypt::verify(&token, &hash))
+            .await
+            .unwrap_or(Ok(false))
+            .unwrap_or(false);
+        if verified {
+            return Some(candidate.id);
+        }
+    }
+    None
+}
+
 /// Looks up the agent's token hash and verifies the presented token.
 /// Sends a close frame and logs a system event on any failure. Returns the
 /// agent ID on success.
@@ -120,46 +143,8 @@ async fn authenticate_agent(
     hostname: &str,
     token: String,
 ) -> Option<i64> {
-    let (agent_id, token_hash) = match db::get_agent_token_hash(pool, hostname).await {
-        Ok(row) => row,
-        Err(e) => {
-            tracing::warn!(hostname = %hostname, error = %e, "unknown agent attempted connection");
-            if let Err(e) = db::insert_system_event(
-                pool,
-                SystemEventType::AuthFailed,
-                Some(hostname),
-                &format!("Unknown agent '{hostname}' attempted connection"),
-            )
-            .await
-            {
-                tracing::error!(error = %e, "failed to insert system event");
-            }
-            send_close(ws_sink, "authentication failed").await;
-            return None;
-        }
-    };
-
-    let hostname_owned = hostname.to_owned();
-    let verify_result = tokio::task::spawn_blocking(move || bcrypt::verify(&token, &token_hash))
-        .await
-        .map_err(|e| {
-            tracing::error!(hostname = %hostname_owned, error = %e, "bcrypt task panicked");
-        });
-    let token_valid = match verify_result {
-        Ok(Ok(valid)) => valid,
-        Ok(Err(e)) => {
-            tracing::error!(hostname = %hostname, error = %e, "bcrypt verification failed");
-            send_close(ws_sink, "authentication failed").await;
-            return None;
-        }
-        Err(()) => {
-            send_close(ws_sink, "authentication failed").await;
-            return None;
-        }
-    };
-
-    if !token_valid {
-        tracing::warn!(hostname = %hostname, "invalid agent token");
+    let Some(agent_id) = verify_agent_token(pool, hostname, &token).await else {
+        tracing::warn!(hostname = %hostname, "invalid agent token or unknown agent");
         if let Err(e) = db::insert_system_event(
             pool,
             SystemEventType::AuthFailed,
@@ -172,7 +157,7 @@ async fn authenticate_agent(
         }
         send_close(ws_sink, "authentication failed").await;
         return None;
-    }
+    };
 
     Some(agent_id)
 }
@@ -224,7 +209,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let replaced_connection = state
         .registry
         .register(
-            hostname.clone(),
+            agent_id,
             outbound_tx,
             supports_restart,
             restart_unavailable_reason,
@@ -276,8 +261,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    state.registry.unregister(&hostname).await;
-    let cleared = state.repo_op_tracker.clear_for_agent(&hostname).await;
+    state.registry.unregister(agent_id).await;
+    let cleared = state.repo_op_tracker.clear_for_agent(agent_id).await;
     for repo_id in cleared {
         state.ui_broadcast.send(ServerToUi::RepoOpChanged {
             repo_id,
@@ -318,7 +303,7 @@ async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, 
                      abandoning it"
                 );
                 state.completion_bus.publish(OperationOutcome {
-                    hostname: hostname.to_owned(),
+                    agent_id,
                     repo_id,
                     success: false,
                 });
@@ -377,13 +362,13 @@ async fn reenable_system_disabled_schedules_on_reconnect(
     // only actually re-enable a candidate once every one of its targets is currently
     // connected, not just this reconnecting one.
     let targets_by_schedule =
-        match db::get_schedule_target_hostnames_by_schedule(&state.pool, &candidates).await {
+        match db::get_schedule_target_agent_ids_by_schedule(&state.pool, &candidates).await {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!(
                     hostname = %hostname,
                     error = %e,
-                    "failed to look up target hostnames for auto-disabled schedules"
+                    "failed to look up target agents for auto-disabled schedules"
                 );
                 return;
             }
@@ -394,8 +379,8 @@ async fn reenable_system_disabled_schedules_on_reconnect(
             .get(&schedule_id)
             .map_or(&[][..], |v| v.as_slice());
         let mut all_connected = true;
-        for target_hostname in targets {
-            if !state.registry.is_connected(target_hostname).await {
+        for target_agent_id in targets {
+            if !state.registry.is_connected(*target_agent_id).await {
                 all_connected = false;
                 break;
             }
@@ -473,7 +458,7 @@ async fn send_reconnect_catchup(
     hostname: &str,
     agent_id: i64,
 ) {
-    match config_assembler::assemble_config(&state.pool, &state.encryption_key, hostname).await {
+    match config_assembler::assemble_config(&state.pool, &state.encryption_key, agent_id).await {
         Ok(config) => {
             if !send_ws_message(ws_sink, &ServerToAgent::ConfigUpdate(config)).await {
                 tracing::debug!(hostname = %hostname, "ws send failed");
@@ -1103,6 +1088,7 @@ async fn handle_backup_started(args: BackupStartedArgs<'_>) {
             repo_id.0,
             shared::protocol::RepoOpKind::AgentBackup,
             hostname.to_owned(),
+            Some(agent_id),
         )
         .await;
     state.ui_broadcast.send(ServerToUi::RepoOpChanged {
@@ -1554,7 +1540,7 @@ async fn handle_backup_completed(
 
     let outcome_success = !matches!(report_status, shared::types::BackupStatus::Failed);
     state.completion_bus.publish(OperationOutcome {
-        hostname: hostname.to_owned(),
+        agent_id,
         repo_id,
         success: outcome_success,
     });
@@ -1646,7 +1632,7 @@ async fn handle_backup_rejected(
         return;
     }
     state.completion_bus.publish(OperationOutcome {
-        hostname: hostname.to_owned(),
+        agent_id,
         repo_id: repo_id.0,
         success: false,
     });
@@ -1684,7 +1670,7 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         return;
     }
     state.completion_bus.publish(OperationOutcome {
-        hostname: hostname.to_owned(),
+        agent_id,
         repo_id: repo_id.0,
         success,
     });
@@ -1777,7 +1763,7 @@ async fn handle_verify_completed(args: VerifyCompletedArgs<'_>) {
         return;
     }
     state.completion_bus.publish(OperationOutcome {
-        hostname: hostname.to_owned(),
+        agent_id,
         repo_id: repo_id.0,
         success,
     });
@@ -1897,7 +1883,7 @@ async fn handle_backup_cancelled(
         return;
     }
     state.completion_bus.publish(OperationOutcome {
-        hostname: hostname.to_owned(),
+        agent_id,
         repo_id: repo_id.0,
         success: false,
     });
@@ -2136,7 +2122,7 @@ exit 0
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_completed_queues_archive_indexing(pool: PgPool) {
-        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None, None)
             .await
             .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -2260,7 +2246,7 @@ exit 0
         crate::db::RepoRow,
         crate::db::ScheduleRow,
     ) {
-        let agent = crate::db::insert_agent(pool, "test-handler-host", None, "hash", None)
+        let agent = crate::db::insert_agent(pool, "test-handler-host", None, "hash", None, None)
             .await
             .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -2322,9 +2308,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     async fn validate_agent_repo_rejects_rogue_agent(pool: PgPool) {
         let (assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        let rogue_agent = crate::db::insert_agent(&pool, "rogue-agent", None, "rogue-hash", None)
-            .await
-            .expect("insert rogue agent");
+        let rogue_agent =
+            crate::db::insert_agent(&pool, "rogue-agent", None, "rogue-hash", None, None)
+                .await
+                .expect("insert rogue agent");
 
         // Assigned agent passes
         assert!(
@@ -2372,9 +2359,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_started_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        let rogue_agent = crate::db::insert_agent(&pool, "rogue-backup-agent", None, "hash", None)
-            .await
-            .expect("insert rogue agent");
+        let rogue_agent =
+            crate::db::insert_agent(&pool, "rogue-backup-agent", None, "hash", None, None)
+                .await
+                .expect("insert rogue agent");
 
         let state = build_test_state(pool.clone());
 
@@ -2404,9 +2392,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_log_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        let rogue_agent = crate::db::insert_agent(&pool, "rogue-log-agent", None, "hash", None)
-            .await
-            .expect("insert rogue agent");
+        let rogue_agent =
+            crate::db::insert_agent(&pool, "rogue-log-agent", None, "hash", None, None)
+                .await
+                .expect("insert rogue agent");
 
         let state = build_test_state(pool.clone());
 
@@ -2434,9 +2423,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_cancelled_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        let rogue_agent = crate::db::insert_agent(&pool, "rogue-cancel-agent", None, "hash", None)
-            .await
-            .expect("insert rogue agent");
+        let rogue_agent =
+            crate::db::insert_agent(&pool, "rogue-cancel-agent", None, "hash", None, None)
+                .await
+                .expect("insert rogue agent");
 
         let state = build_test_state(pool.clone());
 
@@ -2461,9 +2451,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_rejected_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        let rogue_agent = crate::db::insert_agent(&pool, "rogue-reject-agent", None, "hash", None)
-            .await
-            .expect("insert rogue agent");
+        let rogue_agent =
+            crate::db::insert_agent(&pool, "rogue-reject-agent", None, "hash", None, None)
+                .await
+                .expect("insert rogue agent");
 
         let state = build_test_state(pool.clone());
 
@@ -2538,7 +2529,7 @@ exit 0
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_completed_disables_schedule_on_repo_quota_breach(pool: PgPool) {
-        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None, None)
             .await
             .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -2629,7 +2620,7 @@ exit 0
     async fn backup_completed_uses_repo_unique_csize_not_archive_delta_for_repo_quota(
         pool: PgPool,
     ) {
-        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None, None)
             .await
             .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -2717,7 +2708,7 @@ exit 0
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_completed_disables_schedule_on_server_quota_breach(pool: PgPool) {
-        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None, None)
             .await
             .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -2858,7 +2849,7 @@ exit 0
     async fn backup_completed_uses_repo_unique_csize_not_archive_delta_for_server_quota(
         pool: PgPool,
     ) {
-        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None, None)
             .await
             .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -2978,9 +2969,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn reconnect_reenables_schedule_and_records_system_event(pool: PgPool) {
-        let agent = crate::db::insert_agent(&pool, "reconnect-event-agent", None, "hash", None)
-            .await
-            .expect("insert agent");
+        let agent =
+            crate::db::insert_agent(&pool, "reconnect-event-agent", None, "hash", None, None)
+                .await
+                .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
             "test-passphrase",
             &derive_key(b"handler-test-secret-key").unwrap(),
@@ -3054,10 +3046,7 @@ exit 0
         // currently connected, which for this single-target schedule means just the
         // reconnecting agent itself.
         let (tx, _rx) = mpsc::channel(1);
-        state
-            .registry
-            .register(agent.hostname.clone(), tx, false, None)
-            .await;
+        state.registry.register(agent.id, tx, false, None).await;
         reenable_system_disabled_schedules_on_reconnect(&state, agent.id, &agent.hostname).await;
 
         let reenabled = crate::db::get_schedule_by_id(&pool, schedule.id)
@@ -3119,10 +3108,10 @@ exit 0
     async fn reconnect_only_reenables_multi_target_schedule_once_every_target_is_connected(
         pool: PgPool,
     ) {
-        let flaky = crate::db::insert_agent(&pool, "flaky-agent", None, "hash", None)
+        let flaky = crate::db::insert_agent(&pool, "flaky-agent", None, "hash", None, None)
             .await
             .expect("insert flaky agent");
-        let broken = crate::db::insert_agent(&pool, "broken-agent", None, "hash", None)
+        let broken = crate::db::insert_agent(&pool, "broken-agent", None, "hash", None, None)
             .await
             .expect("insert broken agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -3208,7 +3197,7 @@ exit 0
         let (flaky_tx, _flaky_rx) = mpsc::channel(1);
         state
             .registry
-            .register(flaky.hostname.clone(), flaky_tx, false, None)
+            .register(flaky.id, flaky_tx, false, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, flaky.id, &flaky.hostname).await;
 
@@ -3227,7 +3216,7 @@ exit 0
         let (broken_tx, _broken_rx) = mpsc::channel(1);
         state
             .registry
-            .register(broken.hostname.clone(), broken_tx, false, None)
+            .register(broken.id, broken_tx, false, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, flaky.id, &flaky.hostname).await;
 
@@ -3251,10 +3240,10 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn reconnect_from_uncredited_target_reenables_schedule_once_all_connected(pool: PgPool) {
-        let flaky = crate::db::insert_agent(&pool, "flaky-agent-2", None, "hash", None)
+        let flaky = crate::db::insert_agent(&pool, "flaky-agent-2", None, "hash", None, None)
             .await
             .expect("insert flaky agent");
-        let broken = crate::db::insert_agent(&pool, "broken-agent-2", None, "hash", None)
+        let broken = crate::db::insert_agent(&pool, "broken-agent-2", None, "hash", None, None)
             .await
             .expect("insert broken agent");
         let passphrase_encrypted = encrypt_passphrase(
@@ -3337,12 +3326,12 @@ exit 0
         let (flaky_tx, _flaky_rx) = mpsc::channel(1);
         state
             .registry
-            .register(flaky.hostname.clone(), flaky_tx, false, None)
+            .register(flaky.id, flaky_tx, false, None)
             .await;
         let (broken_tx, _broken_rx) = mpsc::channel(1);
         state
             .registry
-            .register(broken.hostname.clone(), broken_tx, false, None)
+            .register(broken.id, broken_tx, false, None)
             .await;
         reenable_system_disabled_schedules_on_reconnect(&state, broken.id, &broken.hostname).await;
 

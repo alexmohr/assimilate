@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user FROM agents WHERE is_hidden = false ORDER BY hostname",
+  "query": "UPDATE agents SET agent_token_hash = $2 WHERE id = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain",
   "describe": {
     "columns": [
       {
@@ -97,10 +97,18 @@
         "ordinal": 18,
         "name": "last_ssh_user",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "domain",
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8",
+        "Text"
+      ]
     },
     "nullable": [
       false,
@@ -121,8 +129,9 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "9131c0482995e70bfd338dfe02ed4cd3739c4d73cb95319f066977be1356ec01"
+  "hash": "cdc868f6f6a7bad73faa06b6b0f7f0523531b0a17532c30592e5a91acb7f3743"
 }

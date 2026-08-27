@@ -110,6 +110,8 @@ pub struct ListReportsQuery {
     pub target: Option<String>,
     /// Maximum number of reports to return.
     pub limit: Option<i64>,
+    /// Domain, required if the hostname is shared by multiple agents.
+    pub domain: Option<String>,
 }
 
 #[utoipa::path(
@@ -121,11 +123,13 @@ pub struct ListReportsQuery {
         ("hostname" = String, Path, description = "Agent hostname"),
         ("target" = Option<String>, Query, description = "Filter by target repo name"),
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "List of backup reports", body = Vec<ReportResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Agent not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// List backup reports for an agent.
@@ -139,7 +143,7 @@ pub async fn list_reports(
     Path(hostname): Path<String>,
     Query(query): Query<ListReportsQuery>,
 ) -> Result<Json<Vec<ReportResponse>>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let limit = query.limit.unwrap_or(50);
     let hostname_clone = hostname.clone();
     let reports: Vec<ReportResponse> =

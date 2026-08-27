@@ -28,7 +28,7 @@ use tracing::{error, info, warn};
 use super::{
     archives::LOCK_WAIT_SECS,
     auth::{AuthUser, RequireAdmin},
-    helpers,
+    helpers::{self, DomainQuery},
     permissions::is_visible_to_user,
 };
 use crate::{
@@ -180,11 +180,13 @@ pub async fn list_repos(
     operation_id = "getAgentRepos",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
         (status = 200, description = "List of repositories", body = Vec<RepoResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
 /// List repositories for a specific host.
@@ -196,8 +198,9 @@ pub async fn get_agent_repos(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
 ) -> Result<Json<Vec<RepoResponse>>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let repos = db::list_repos_for_agent_public(&state.pool, agent.id).await?;
     Ok(Json(repos.into_iter().map(RepoResponse::from).collect()))
 }
@@ -828,9 +831,9 @@ pub async fn accept_repo_host_key(
     let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
     db::update_repo_ssh_host_key(&state.pool, repo_id, &req.ssh_host_key).await?;
 
-    let hostnames = db::get_schedule_target_hostnames_for_repo(&state.pool, repo_id).await?;
-    for hostname in &hostnames {
-        config_assembler::push_config_to_agent(&state, hostname).await;
+    let targets = db::get_schedule_target_agents_for_repo(&state.pool, repo_id).await?;
+    for target in &targets {
+        config_assembler::push_config_to_agent(&state, target.agent_id).await;
     }
 
     state
@@ -1055,9 +1058,9 @@ pub async fn confirm_relocation(
     db::set_relocation_pending(&state.pool, repo_id).await?;
     info!(repo_id, name = %repo.name, "relocation confirmation set");
 
-    let hostnames = db::get_schedule_target_hostnames_for_repo(&state.pool, repo_id).await?;
-    for hostname in &hostnames {
-        config_assembler::push_config_to_agent(&state, hostname).await;
+    let targets = db::get_schedule_target_agents_for_repo(&state.pool, repo_id).await?;
+    for target in &targets {
+        config_assembler::push_config_to_agent(&state, target.agent_id).await;
     }
 
     Ok(Json(ConfirmRelocationResponse {
@@ -1156,6 +1159,7 @@ pub async fn break_lock(
             repo_id,
             shared::protocol::RepoOpKind::BreakLock,
             "server".to_owned(),
+            None,
         )
         .await;
     state

@@ -1,6 +1,6 @@
 # Agent Management
 
-An *agent* is a machine running the Assimilate agent binary. The server tracks each agent by its hostname, issues it a cryptographically random token, and communicates with it over a persistent WebSocket connection.
+An *agent* is a machine running the Assimilate agent binary. The server tracks each agent by its hostname (and, when two hosts share a hostname, its domain — see [Duplicate Hostnames](#duplicate-hostnames)), issues it a cryptographically random token, and communicates with it over a persistent WebSocket connection.
 
 See [Getting Started](getting-started.md) for initial setup instructions.
 
@@ -8,10 +8,11 @@ See [Getting Started](getting-started.md) for initial setup instructions.
 
 1. Navigate to **Agents** in the sidebar.
 2. Click **New agent**.
-3. Enter the machine's hostname (must be unique).
-4. Optionally set a display name.
-5. Click **Create** — the server generates a 32-byte random token and shows it once.
-6. Copy the token immediately; it is not shown again.
+3. Enter the machine's hostname.
+4. Optionally set a domain — only needed if another host already uses this hostname (see [Duplicate Hostnames](#duplicate-hostnames) below).
+5. Optionally set a display name.
+6. Click **Create** — the server generates a 32-byte random token and shows it once.
+7. Copy the token immediately; it is not shown again.
 
 Pass the token to the agent via the `BORG_AGENT_TOKEN` environment variable:
 
@@ -33,6 +34,23 @@ The Agents list page provides:
 A fleet summary band above the list rolls up the whole fleet: total agent count, how many are online, total schedule count, and a breakdown of agent versions in use, with the version matching the server's available binary marked current.
 
 Each agent card shows the hostname, display name, a coverage meter, schedule count, last seen time, and agent version. The coverage meter compares how long it has been since the agent's most recent completed backup against the shortest cadence among its own enabled backup schedules, so a card reads **On time**, **Due soon**, or **Overdue** without needing to open it; an agent with no enabled backup schedule shows **No cadence** instead. An offline agent tints the card and adds an **Offline** pill; a **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
+
+## Duplicate Hostnames
+
+An OS hostname is not always globally unique — the same short hostname (e.g. `web-01`) can exist on two different networks or sites, each in its own DNS domain. Assimilate normally identifies an agent by hostname alone, so a second host reusing an already-registered hostname needs a **domain** to tell them apart. When a hostname resolves to more than one agent, the UI never guesses which one you mean — following a link that only carries a hostname (e.g. from search, or an old bookmark) shows a picker instead of a detail page:
+
+![Duplicate hostname picker](assets/screenshots/host-domain-picker.png)
+
+Selecting a candidate adds `?domain=` to the URL so the link becomes unambiguous from then on. Every hostname-keyed API call the UI makes on that page — settings, hostname aliases, tags, danger-zone actions — carries the same `domain` query parameter, so it always affects the correct agent even when its hostname is shared.
+
+The domain isn't detected automatically: it's a DNS-level fact about where a host sits on the network, not something the agent process running on the machine can determine about itself. Set it by hand instead, either when adding the agent or later:
+
+1. Open the agent detail page.
+2. Open **Settings > Identity** and click **Edit**.
+3. Enter the **Domain** field (e.g. `dc1.example.com`).
+4. Save.
+
+Leave the domain unset for the common case — a single host with that hostname. Two agents are only required to have different domains when they share a hostname; uniqueness is enforced on the *(hostname, domain)* pair, not on hostname alone.
 
 ## Agent Deployment
 
@@ -215,7 +233,7 @@ When every failure in the window is consecutive, the tile adds an **Incident** c
 
 ### Schedules and Backups
 
-Both tabs render one line per entry: a status stripe, a name, a time, and stats aligned to the right. Schedule rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets. Backup rows link to their archive when the run succeeded, and expand their warning or error output in place when it did not.
+Both tabs render one line per entry: a status stripe, a name, a time, and stats aligned to the right. Schedule rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets. Backup rows link to their archive whenever the run produced one — including a run that finished with warnings — and a warned or failed run also expands its warning or error output in place.
 
 Each tab label carries a count, including zero.
 
@@ -225,7 +243,7 @@ Everything that configures the agent lives here, behind a sub-nav:
 
 | Section | Contents |
 |---------|----------|
-| **Identity** | Hostname, display name, agent build details, registration and last-seen times, and token regeneration |
+| **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, and token regeneration |
 | **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request |
 | **Hostname aliases** | Glob patterns for archive matching (see below) |
 | **Tags** | Agent tags, for filtering the Agents list |
@@ -277,7 +295,7 @@ When a repository is imported, placeholder agents are created for archive hostna
 To merge a placeholder into a real agent:
 
 1. On the **Agents** list, click the **Merge** button on the imported agent row.
-2. Select the target agent from the dropdown.
+2. Select the target agent from the dropdown. If more than one candidate shares a hostname, each is labeled with its domain (or "no domain") so you can tell them apart.
 3. Optionally check **Save as hostname alias** to automatically create a glob pattern (pre-filled with the placeholder's hostname followed by `*`).
 4. Click **Merge**.
 

@@ -125,6 +125,18 @@ function makeArchiveProgressLine(nfiles: number, originalSize: number, path: str
   return JSON.stringify({ type: 'archive_progress', nfiles, original_size: originalSize, path })
 }
 
+// Starts a backup for REPO_NAME and waits for the card's "waiting for
+// progress" placeholder, the state both filtered-BackupLog tests start from.
+async function startBackupAndAwaitPlaceholder(page: Page, ws: WebSocketRoute): Promise<void> {
+  sendWsMsg(ws, 'BackupStarted', {
+    hostname: 'web-server-01',
+    target_name: REPO_NAME,
+    started_at: new Date().toISOString(),
+  })
+  await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
+  await expect(page.locator('.live-log-empty')).toBeVisible()
+}
+
 test.describe('backup progress card', () => {
   let ws: WebSocketRoute | null = null
 
@@ -215,13 +227,7 @@ test.describe('backup progress card', () => {
   })
 
   test('BackupLog for a different schedule is ignored', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', {
-      hostname: 'web-server-01',
-      target_name: REPO_NAME,
-      started_at: new Date().toISOString(),
-    })
-    await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
-    await expect(page.locator('.live-log-empty')).toBeVisible()
+    await startBackupAndAwaitPlaceholder(page, ws!)
 
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',
@@ -236,13 +242,7 @@ test.describe('backup progress card', () => {
   })
 
   test('BackupLog with null schedule_id and different repo is ignored', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', {
-      hostname: 'web-server-01',
-      target_name: REPO_NAME,
-      started_at: new Date().toISOString(),
-    })
-    await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
-    await expect(page.locator('.live-log-empty')).toBeVisible()
+    await startBackupAndAwaitPlaceholder(page, ws!)
 
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',

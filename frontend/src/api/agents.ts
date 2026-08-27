@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { apiClient } from './client'
+import { domainParams } from '../utils/agent'
 import type { AgentHostnamePattern, AgentRow } from '../types/agent'
 import type {
   AgentTagEntryResponse,
@@ -15,11 +16,13 @@ import type { ReportRow } from '../types/report'
 export interface CreateAgentRequest {
   hostname: string
   display_name: string | null
+  domain?: string | null
 }
 
 export interface UpdateAgentRequest {
   hostname?: string
   display_name?: string | null
+  domain?: string | null
   default_backup_paths?: string[]
   default_exclude_patterns?: string[]
   default_pre_backup_commands?: string[]
@@ -92,43 +95,73 @@ export async function createAgent(data: CreateAgentRequest): Promise<CreateAgent
   return response.data
 }
 
-export async function updateAgent(hostname: string, data: UpdateAgentRequest): Promise<AgentRow> {
-  const response = await apiClient.put<AgentRow>(`/agents/${hostname}`, data)
+/**
+ * @param domain Disambiguates `hostname` when it is shared by more than one
+ *   agent. This identifies which existing agent to update, distinct from
+ *   `data.domain`, which is the (possibly new) domain value to save.
+ */
+export async function updateAgent(
+  hostname: string,
+  data: UpdateAgentRequest,
+  domain?: string | null,
+): Promise<AgentRow> {
+  const response = await apiClient.put<AgentRow>(`/agents/${hostname}`, data, {
+    params: domainParams(domain),
+  })
   return response.data
 }
 
-export async function deleteAgent(hostname: string): Promise<void> {
-  await apiClient.delete(`/agents/${hostname}`)
+export async function deleteAgent(hostname: string, domain?: string | null): Promise<void> {
+  await apiClient.delete(`/agents/${hostname}`, { params: domainParams(domain) })
 }
 
-export async function hideAgent(hostname: string): Promise<void> {
-  await apiClient.put(`/agents/${hostname}/hide`)
+export async function hideAgent(hostname: string, domain?: string | null): Promise<void> {
+  await apiClient.put(`/agents/${hostname}/hide`, {}, { params: domainParams(domain) })
 }
 
-export async function unhideAgent(hostname: string): Promise<void> {
-  await apiClient.put(`/agents/${hostname}/unhide`)
+export async function unhideAgent(hostname: string, domain?: string | null): Promise<void> {
+  await apiClient.put(`/agents/${hostname}/unhide`, {}, { params: domainParams(domain) })
 }
 
-export async function regenerateAgentToken(hostname: string): Promise<CreateAgentResponse> {
-  const response = await apiClient.post<CreateAgentResponse>(`/agents/${hostname}/regenerate-token`)
+export async function regenerateAgentToken(
+  hostname: string,
+  domain?: string | null,
+): Promise<CreateAgentResponse> {
+  const response = await apiClient.post<CreateAgentResponse>(
+    `/agents/${hostname}/regenerate-token`,
+    {},
+    { params: domainParams(domain) },
+  )
   return response.data
 }
 
-export async function restartAgent(hostname: string): Promise<void> {
-  await apiClient.post(`/agents/${hostname}/restart`)
+export async function restartAgent(hostname: string, domain?: string | null): Promise<void> {
+  await apiClient.post(`/agents/${hostname}/restart`, {}, { params: domainParams(domain) })
 }
 
-export async function deleteAgentArchives(hostname: string): Promise<void> {
-  await apiClient.post(`/agents/${hostname}/delete-archives`)
+export async function deleteAgentArchives(hostname: string, domain?: string | null): Promise<void> {
+  await apiClient.post(`/agents/${hostname}/delete-archives`, {}, { params: domainParams(domain) })
 }
 
-export async function cancelAgentBackup(hostname: string, repoId: number): Promise<void> {
-  await apiClient.post(`/agents/${hostname}/repos/${repoId}/cancel-backup`)
+export async function cancelAgentBackup(
+  hostname: string,
+  repoId: number,
+  domain?: string | null,
+): Promise<void> {
+  await apiClient.post(
+    `/agents/${hostname}/repos/${repoId}/cancel-backup`,
+    {},
+    { params: domainParams(domain) },
+  )
 }
 
-export async function listAgentHostnamePatterns(hostname: string): Promise<AgentHostnamePattern[]> {
+export async function listAgentHostnamePatterns(
+  hostname: string,
+  domain?: string | null,
+): Promise<AgentHostnamePattern[]> {
   const response = await apiClient.get<AgentHostnamePattern[]>(
     `/agents/${hostname}/hostname-patterns`,
+    { params: domainParams(domain) },
   )
   return response.data
 }
@@ -136,22 +169,31 @@ export async function listAgentHostnamePatterns(hostname: string): Promise<Agent
 export async function createAgentHostnamePattern(
   hostname: string,
   pattern: string,
+  domain?: string | null,
 ): Promise<AgentHostnamePattern> {
   const response = await apiClient.post<AgentHostnamePattern>(
     `/agents/${hostname}/hostname-patterns`,
     { pattern },
+    { params: domainParams(domain) },
   )
   return response.data
 }
 
-export async function deleteAgentHostnamePattern(hostname: string, id: number): Promise<void> {
-  await apiClient.delete(`/agents/${hostname}/hostname-patterns/${id}`)
+export async function deleteAgentHostnamePattern(
+  hostname: string,
+  id: number,
+  domain?: string | null,
+): Promise<void> {
+  await apiClient.delete(`/agents/${hostname}/hostname-patterns/${id}`, {
+    params: domainParams(domain),
+  })
 }
 
 export async function mergeAgent(
   targetHostname: string,
   sourceAgentId: number,
   createPattern?: string,
+  targetDomain?: string | null,
 ): Promise<MergeAgentResult> {
   const body: { create_pattern?: string } = {}
   if (createPattern) {
@@ -160,6 +202,7 @@ export async function mergeAgent(
   const response = await apiClient.post<MergeAgentResult>(
     `/agents/${targetHostname}/merge-from/${sourceAgentId}`,
     body,
+    { params: domainParams(targetDomain) },
   )
   return response.data
 }
@@ -178,8 +221,11 @@ export async function previewAgentServiceUnit(
 export async function deployAgent(
   hostname: string,
   data: DeployAgentRequest,
+  domain?: string | null,
 ): Promise<DeployAgentResult> {
-  const response = await apiClient.post<DeployAgentResult>(`/agents/${hostname}/deploy`, data)
+  const response = await apiClient.post<DeployAgentResult>(`/agents/${hostname}/deploy`, data, {
+    params: domainParams(domain),
+  })
   return response.data
 }
 
@@ -188,15 +234,20 @@ export async function deployAgentSshKey(data: DeploySshKeyRequest): Promise<Depl
   return response.data
 }
 
-export async function listAgentRepos(hostname: string): Promise<Repo[]> {
-  const response = await apiClient.get<Repo[]>(`/agents/${hostname}/repos`)
+export async function listAgentRepos(hostname: string, domain?: string | null): Promise<Repo[]> {
+  const response = await apiClient.get<Repo[]>(`/agents/${hostname}/repos`, {
+    params: domainParams(domain),
+  })
   return response.data
 }
 
 export async function listAgentReports(
   hostname: string,
   params?: ListAgentReportsParams,
+  domain?: string | null,
 ): Promise<ReportRow[]> {
-  const response = await apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`, { params })
+  const response = await apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`, {
+    params: { ...params, ...domainParams(domain) },
+  })
   return response.data
 }

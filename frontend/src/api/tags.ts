@@ -15,13 +15,20 @@ export async function listTags(scope: TagScope, options?: { timeout?: number }):
   return response.data
 }
 
-export async function listEntityTags(entityPath: string): Promise<TagRow[]> {
-  const response = await apiClient.get<TagRow[]>(`${entityPath}/tags`)
+export async function listEntityTags(
+  entityPath: string,
+  params?: Record<string, string>,
+): Promise<TagRow[]> {
+  const response = await apiClient.get<TagRow[]>(`${entityPath}/tags`, { params })
   return response.data
 }
 
-export async function setEntityTags(entityPath: string, tagIds: number[]): Promise<void> {
-  await apiClient.put(`${entityPath}/tags`, { tag_ids: tagIds })
+export async function setEntityTags(
+  entityPath: string,
+  tagIds: number[],
+  params?: Record<string, string>,
+): Promise<void> {
+  await apiClient.put(`${entityPath}/tags`, { tag_ids: tagIds }, { params })
 }
 
 export async function createTag(name: string, color: string, scope: TagScope): Promise<TagRow> {

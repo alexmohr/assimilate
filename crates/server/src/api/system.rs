@@ -538,14 +538,14 @@ pub async fn reset_system(
     let agents = state.registry.connected_agents().await;
     let notified_agents = agents.len();
 
-    for hostname in &agents {
+    for agent_id in &agents {
         for repo in &repos {
             let msg = ServerToAgent::CancelBackup {
                 repo_id: RepoId(repo.id),
             };
-            if let Err(e) = state.registry.send_to(hostname, msg).await {
+            if let Err(e) = state.registry.send_to(*agent_id, msg).await {
                 tracing::warn!(
-                    hostname = %hostname,
+                    agent_id = *agent_id,
                     repo_id = repo.id,
                     error = %e,
                     "failed to send CancelBackup during system reset"

@@ -129,6 +129,51 @@ test.describe('Dashboard widgets', () => {
 
     await expect(page.getByRole('heading', { name: 'Backup stats' })).toBeVisible()
   })
+
+  test('backup calendar renders all seven day columns without clipping', async ({ page }) => {
+    // The calendar used to share a three-column row, which left it narrower
+    // than its own month grid: the grid overflowed and the panel's clip took
+    // Saturday off the dashboard entirely.
+    await loginAsAdmin(page)
+    for (const width of [1280, 1600]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto('/')
+      await page.waitForLoadState('networkidle')
+
+      const grid = page.locator('.cal-grid')
+      await expect(grid).toBeVisible()
+
+      // `offsetLeft` is relative to the offset parent, not the grid, so the day
+      // cells are measured against the grid's own box instead.
+      const layout = await grid.evaluate((el) => {
+        const gridRight = el.getBoundingClientRect().right
+        return {
+          overflow: el.scrollWidth - el.clientWidth,
+          headers: [...el.querySelectorAll('.cal-header-cell')].map((cell) => ({
+            day: cell.textContent?.trim() ?? '',
+            overhang: cell.getBoundingClientRect().right - gridRight,
+          })),
+        }
+      })
+
+      expect(
+        layout.overflow,
+        `calendar grid overflows its panel at ${width}px`,
+      ).toBeLessThanOrEqual(1)
+      expect(layout.headers.map((h) => h.day)).toEqual([
+        'Sun',
+        'Mon',
+        'Tue',
+        'Wed',
+        'Thu',
+        'Fri',
+        'Sat',
+      ])
+      for (const header of layout.headers) {
+        expect(header.overhang, `${header.day} is clipped at ${width}px`).toBeLessThanOrEqual(1)
+      }
+    }
+  })
 })
 
 test.describe('Navigation sidebar', () => {

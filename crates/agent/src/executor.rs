@@ -1201,6 +1201,7 @@ pub fn backup_target_from_repo(
         compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
         pre_backup_commands: schedule.map_or_else(Vec::new, |s| s.pre_backup_commands.clone()),
         post_backup_commands: schedule.map_or_else(Vec::new, |s| s.post_backup_commands.clone()),
+        hook_timeout_seconds: schedule.map_or(60, |s| s.hook_timeout_seconds),
         skip_targets: Vec::new(),
         exclude_patterns: schedule.map_or_else(Vec::new, |s| s.exclude_patterns.clone()),
         file_change_patterns: schedule.map_or_else(Vec::new, |s| s.file_change_patterns.clone()),
@@ -1809,6 +1810,7 @@ mod tests {
             compact_enabled: true,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
+            hook_timeout_seconds: 60,
             file_change_patterns: Vec::new(),
         }
     }

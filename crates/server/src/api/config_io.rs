@@ -215,6 +215,7 @@ async fn build_schedule_export(
         rate_limit_kbps: sched.rate_limit_kbps,
         pre_backup_commands,
         post_backup_commands,
+        hook_timeout_seconds: sched.hook_timeout_seconds,
         repo_name,
         backup_sources,
         targets,
@@ -563,6 +564,15 @@ async fn import_schedule(
         rate_limit_kbps: sched.rate_limit_kbps,
         pre_backup_commands: &sched.pre_backup_commands,
         post_backup_commands: &sched.post_backup_commands,
+        // Clamped, not just passed through: an uploaded export is untrusted
+        // input, and unlike the REST create/update paths (which reject an
+        // out-of-range value with a 400 via validate_hook_timeout_seconds)
+        // import is designed to be best-effort across many schedules, so a
+        // bad value here shouldn't abort the whole import - it should still
+        // land inside the same bound.
+        hook_timeout_seconds: sched
+            .hook_timeout_seconds
+            .clamp(1, super::schedules::MAX_HOOK_TIMEOUT_SECONDS),
         on_failure: &on_failure_str,
     };
 

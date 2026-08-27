@@ -155,6 +155,8 @@ pub struct CreateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     /// Commands to run after the backup.
     pub post_backup_commands: Option<Vec<String>>,
+    /// Timeout in seconds applied to each pre/post-backup hook command.
+    pub hook_timeout_seconds: Option<i32>,
     /// Backup sources (schedule-level).
     pub backup_sources: Option<Vec<String>>,
     /// Per-agent backup sources.
@@ -207,6 +209,8 @@ pub struct UpdateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     /// Commands to run after the backup.
     pub post_backup_commands: Option<Vec<String>>,
+    /// Timeout in seconds applied to each pre/post-backup hook command.
+    pub hook_timeout_seconds: Option<i32>,
     /// Backup sources (schedule-level, replaces all).
     pub backup_sources: Option<Vec<String>>,
     /// Per-agent backup sources (replaces all).
@@ -330,6 +334,8 @@ pub async fn create_schedule(
     let on_failure_str = on_failure.to_string();
     let pre_backup_commands = req.pre_backup_commands.unwrap_or_default();
     let post_backup_commands = req.post_backup_commands.unwrap_or_default();
+    let hook_timeout_seconds =
+        validate_hook_timeout_seconds(req.hook_timeout_seconds.unwrap_or(60))?;
 
     let params = ScheduleParams {
         name: req.name.as_deref().unwrap_or(""),
@@ -349,6 +355,7 @@ pub async fn create_schedule(
         file_change_patterns_raw: req.file_change_patterns_raw.as_deref().unwrap_or(""),
         pre_backup_commands: &pre_backup_commands,
         post_backup_commands: &post_backup_commands,
+        hook_timeout_seconds,
         on_failure: &on_failure_str,
     };
 
@@ -488,6 +495,10 @@ pub async fn update_schedule(
         .post_backup_commands
         .clone()
         .unwrap_or_else(|| existing.post_backup_commands.0.clone());
+    let hook_timeout_seconds = validate_hook_timeout_seconds(
+        req.hook_timeout_seconds
+            .unwrap_or(existing.hook_timeout_seconds),
+    )?;
 
     let on_failure = req
         .on_failure
@@ -516,6 +527,7 @@ pub async fn update_schedule(
         file_change_patterns_raw: req.file_change_patterns_raw.as_deref().unwrap_or(""),
         pre_backup_commands: &pre_backup_commands,
         post_backup_commands: &post_backup_commands,
+        hook_timeout_seconds,
         on_failure: &on_failure,
     };
 
@@ -700,6 +712,24 @@ fn convert_rate_limit(rate_limit_kbps: Option<u32>) -> Result<Option<i32>, ApiEr
                 .map_err(|_| ApiError::BadRequest("rate_limit_kbps is too large".into()))
         })
         .transpose()
+}
+
+/// Upper bound on a pre/post-backup hook command's timeout. Generous enough for
+/// a slow disk-snapshot commit or database dump, but still short enough that a
+/// stuck hook can't stall a schedule indefinitely.
+///
+/// `pub(crate)`: also used by `config_io::import_schedule` to clamp an
+/// imported config's value into the same bound the REST create/update paths
+/// enforce, rather than letting an uploaded export bypass it entirely.
+pub(crate) const MAX_HOOK_TIMEOUT_SECONDS: i32 = 3600;
+
+fn validate_hook_timeout_seconds(seconds: i32) -> Result<i32, ApiError> {
+    if seconds <= 0 || seconds > MAX_HOOK_TIMEOUT_SECONDS {
+        return Err(ApiError::BadRequest(format!(
+            "hook_timeout_seconds must be between 1 and {MAX_HOOK_TIMEOUT_SECONDS}"
+        )));
+    }
+    Ok(seconds)
 }
 
 async fn insert_schedule_sources(

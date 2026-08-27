@@ -43,6 +43,7 @@ export interface CreateScheduleRequest {
   rate_limit_kbps: number
   pre_backup_commands: string[]
   post_backup_commands: string[]
+  hook_timeout_seconds: number
   backup_sources: string[]
   backup_sources_per_agent?: ScheduleAgentBackupSourcesOverride[]
   exclude_patterns_per_agent?: ScheduleAgentTextOverride[]

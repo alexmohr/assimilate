@@ -24,6 +24,7 @@ function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
     rate_limit_kbps: 0,
     pre_backup_commands: '',
     post_backup_commands: '',
+    hook_timeout_seconds: 60,
     backup_sources: '/srv',
     ...overrides,
   }
@@ -75,6 +76,16 @@ describe('ScheduleAdvancedTab', () => {
     const input = wrapper.find('input[type="number"]')
     await input.setValue('512')
     expect(wrapper.props('form')).toMatchObject({ rate_limit_kbps: 512 })
+  })
+
+  it('renders the current hook timeout and writes an edit back through the form model', async () => {
+    const wrapper = mount({ form: form({ hook_timeout_seconds: 90 }) })
+    const inputs = wrapper.findAll('input[type="number"]')
+    const timeoutInput = inputs[1]
+    expect((timeoutInput.element as HTMLInputElement).value).toBe('90')
+
+    await timeoutInput.setValue('300')
+    expect(wrapper.props('form')).toMatchObject({ hook_timeout_seconds: 300 })
   })
 
   // Each switch is bound to a different form key. Flipping them one at a

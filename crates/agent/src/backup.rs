@@ -66,6 +66,7 @@ pub struct BackupTarget {
     pub compact_enabled: bool,
     pub pre_backup_commands: Vec<String>,
     pub post_backup_commands: Vec<String>,
+    pub hook_timeout_seconds: u32,
     pub skip_targets: Vec<String>,
     pub exclude_patterns: Vec<String>,
     pub rate_limit_kbps: Option<u32>,
@@ -98,6 +99,7 @@ impl Default for BackupTarget {
             compact_enabled: false,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
+            hook_timeout_seconds: 60,
             skip_targets: Vec::new(),
             exclude_patterns: Vec::new(),
             rate_limit_kbps: None,
@@ -208,8 +210,10 @@ impl BackupEngine {
             )));
         }
 
+        let hook_timeout = Duration::from_secs(target.hook_timeout_seconds.into());
         for cmd in &target.pre_backup_commands {
-            self.run_hook_command(cmd, "pre-backup").await?;
+            self.run_hook_command(cmd, "pre-backup", hook_timeout)
+                .await?;
         }
 
         let exclude_file = Self::write_exclude_file(&target.exclude_patterns)?;
@@ -234,7 +238,8 @@ impl BackupEngine {
         }
 
         for cmd in &target.post_backup_commands {
-            self.run_hook_command(cmd, "post-backup").await?;
+            self.run_hook_command(cmd, "post-backup", hook_timeout)
+                .await?;
         }
 
         let duration_secs = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
@@ -255,17 +260,22 @@ impl BackupEngine {
         })
     }
 
-    async fn run_hook_command(&self, cmd: &str, label: &str) -> Result<(), BackupError> {
+    async fn run_hook_command(
+        &self,
+        cmd: &str,
+        label: &str,
+        timeout: Duration,
+    ) -> Result<(), BackupError> {
         info!("Running {label} hook command");
 
-        let output = tokio::time::timeout(
-            Duration::from_mins(1),
-            Command::new("sh").arg("-c").arg(cmd).output(),
-        )
-        .await
-        .map_err(|_| {
-            BackupError::BorgFailed(format!("{label} hook command timed out after 60 seconds"))
-        })??;
+        let output = tokio::time::timeout(timeout, Command::new("sh").arg("-c").arg(cmd).output())
+            .await
+            .map_err(|_| {
+                BackupError::BorgFailed(format!(
+                    "{label} hook command timed out after {} seconds",
+                    timeout.as_secs()
+                ))
+            })??;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1117,6 +1127,7 @@ mod tests {
             compact_enabled: true,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
+            hook_timeout_seconds: 60,
             skip_targets: Vec::new(),
             exclude_patterns: vec!["*.tmp".to_owned(), "/proc/*".to_owned()],
             rate_limit_kbps: None,
@@ -1344,6 +1355,35 @@ mod tests {
             msg.contains("connection refused"),
             "error message should include stderr: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_pre_backup_command_respects_configured_timeout() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.hook_timeout_seconds = 1;
+        target.pre_backup_commands = vec!["sleep 5".to_owned()];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("timed out after 1 seconds"),
+            "error message should reflect the configured timeout: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pre_backup_command_allows_longer_configured_timeout() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.hook_timeout_seconds = 5;
+        target.pre_backup_commands = vec!["sleep 1".to_owned()];
+
+        let result = engine.run_backup(&target, None, None).await.unwrap();
+        assert_eq!(result.status, BackupStatus::Success);
     }
 
     #[tokio::test]

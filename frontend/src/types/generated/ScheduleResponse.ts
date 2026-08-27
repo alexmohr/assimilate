@@ -91,6 +91,10 @@ export type ScheduleResponse = {
    */
   post_backup_commands: Array<string>;
   /**
+   * Timeout in seconds applied to each pre/post-backup hook command.
+   */
+  hook_timeout_seconds: number;
+  /**
    * Execution mode for the schedule.
    */
   execution_mode: string;

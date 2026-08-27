@@ -194,6 +194,7 @@ mod tests {
                 rate_limit_kbps: None,
                 pre_backup_commands: &[],
                 post_backup_commands: &[],
+                hook_timeout_seconds: 60,
                 on_failure: "stop",
             },
             None,

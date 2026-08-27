@@ -170,6 +170,20 @@ const refOpen = ref(false)
         <label class="field-label">Configure per agent</label>
         <ToggleSwitch v-model="overrides.usePerAgentCmds" />
       </div>
+      <div class="field">
+        <label class="field-label">Hook command timeout (seconds)</label>
+        <input
+          v-model.number="form.hook_timeout_seconds"
+          type="number"
+          min="1"
+          max="3600"
+          class="input"
+        />
+        <span class="field-hint">
+          Applied to each pre- and post-backup command. A command still running past this is killed
+          and the backup fails.
+        </span>
+      </div>
       <template v-if="!overrides.usePerAgentCmds">
         <div class="field">
           <label class="field-label">Pre-backup commands</label>

@@ -25,10 +25,55 @@ use crate::{
     },
 };
 
-const TICK_INTERVAL: Duration = Duration::from_secs(30);
-const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
-const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
-const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
+const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(30);
+const DEFAULT_RETENTION_INTERVAL: Duration = Duration::from_hours(1);
+const DEFAULT_SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
+const DEFAULT_SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
+
+/// Reads `var` as a whole number of seconds, falling back to `default` when unset or
+/// unparsable - mirrors [`shared::borg::kill_escalation_delay`]'s override pattern.
+fn duration_from_env_secs(var: &str, default: Duration) -> Duration {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map_or(default, Duration::from_secs)
+}
+
+/// Overridable via `SCHEDULER_TICK_INTERVAL_SECS`. Coverage-instrumented e2e runs set
+/// this (and `SCHEDULER_SYNC_CHECK_INTERVAL_SECS`) to a value longer than any test run
+/// so only `tokio::time::interval`'s guaranteed-immediate first tick ever fires -
+/// without this, the number of real ticks completed during a live e2e session depends
+/// on how long that session happens to run, and every line each tick's call graph
+/// touches shows up in the coverage report with a hit count that swings by exactly one
+/// tick's worth between CI runs, which `coverage-diff-check.yml` reports as a
+/// regression even though nothing about the code changed.
+fn tick_interval() -> Duration {
+    duration_from_env_secs("SCHEDULER_TICK_INTERVAL_SECS", DEFAULT_TICK_INTERVAL)
+}
+
+/// Overridable via `SCHEDULER_RETENTION_INTERVAL_SECS`.
+fn retention_interval() -> Duration {
+    duration_from_env_secs(
+        "SCHEDULER_RETENTION_INTERVAL_SECS",
+        DEFAULT_RETENTION_INTERVAL,
+    )
+}
+
+/// Overridable via `SCHEDULER_SYNC_CHECK_INTERVAL_SECS` - see [`tick_interval`].
+fn sync_check_interval() -> Duration {
+    duration_from_env_secs(
+        "SCHEDULER_SYNC_CHECK_INTERVAL_SECS",
+        DEFAULT_SYNC_CHECK_INTERVAL,
+    )
+}
+
+/// Overridable via `SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS`.
+fn session_cleanup_interval() -> Duration {
+    duration_from_env_secs(
+        "SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS",
+        DEFAULT_SESSION_CLEANUP_INTERVAL,
+    )
+}
 const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 /// Default number of consecutive failures to reach a schedule's agent (offline or
 /// unreachable at trigger time) tolerated before the schedule is disabled rather than
@@ -50,11 +95,11 @@ const MAX_CONSECUTIVE_FAILURES: i32 = 3;
 /// exists to prevent.
 const CRON_EVAL_FAILURE_BACKOFF_HOURS: i64 = 1;
 
-/// Ticks due schedules on `TICK_INTERVAL` until `shutdown_token` fires. Split out of
+/// Ticks due schedules on [`tick_interval`] until `shutdown_token` fires. Split out of
 /// `run()` (rather than an inline closure) purely to keep `run()` itself under the
 /// line-count limit now that `TickDeps` carries the notification fields too.
 async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::CancellationToken) {
-    let mut interval = tokio::time::interval(TICK_INTERVAL);
+    let mut interval = tokio::time::interval(tick_interval());
     loop {
         tokio::select! {
             biased;
@@ -99,7 +144,7 @@ pub async fn run(state: AppState) {
     let retention_task = {
         let shutdown_token = shutdown_token.clone();
         async move {
-            let mut interval = tokio::time::interval(RETENTION_INTERVAL);
+            let mut interval = tokio::time::interval(retention_interval());
             loop {
                 tokio::select! {
                     biased;
@@ -116,7 +161,7 @@ pub async fn run(state: AppState) {
     let sync_task = {
         let shutdown_token = shutdown_token.clone();
         async move {
-            let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
+            let mut interval = tokio::time::interval(sync_check_interval());
             loop {
                 tokio::select! {
                     biased;
@@ -138,7 +183,7 @@ pub async fn run(state: AppState) {
     };
 
     let session_cleanup_task = async move {
-        let mut interval = tokio::time::interval(SESSION_CLEANUP_INTERVAL);
+        let mut interval = tokio::time::interval(session_cleanup_interval());
         loop {
             tokio::select! {
                 biased;
@@ -1374,6 +1419,46 @@ mod tests {
         tunnel::TunnelManager,
         ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
+
+    // Combined into one test: all four cases mutate process-wide env vars, causing
+    // races when run in parallel with each other (mirrors
+    // `shared::borg::kill_escalation_delay_reads_env_override_and_falls_back_to_default`).
+    #[test]
+    fn interval_overrides_read_env_and_fall_back_to_defaults() {
+        for (var, default, get) in [
+            (
+                "SCHEDULER_TICK_INTERVAL_SECS",
+                DEFAULT_TICK_INTERVAL,
+                tick_interval as fn() -> Duration,
+            ),
+            (
+                "SCHEDULER_RETENTION_INTERVAL_SECS",
+                DEFAULT_RETENTION_INTERVAL,
+                retention_interval,
+            ),
+            (
+                "SCHEDULER_SYNC_CHECK_INTERVAL_SECS",
+                DEFAULT_SYNC_CHECK_INTERVAL,
+                sync_check_interval,
+            ),
+            (
+                "SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS",
+                DEFAULT_SESSION_CLEANUP_INTERVAL,
+                session_cleanup_interval,
+            ),
+        ] {
+            unsafe { std::env::set_var(var, "2") };
+            assert_eq!(get(), Duration::from_secs(2), "{var} override");
+
+            unsafe { std::env::remove_var(var) };
+            assert_eq!(get(), default, "{var} default");
+
+            unsafe { std::env::set_var(var, "not-a-number") };
+            assert_eq!(get(), default, "{var} invalid falls back to default");
+
+            unsafe { std::env::remove_var(var) };
+        }
+    }
 
     /// `run()`'s four inner loops each race their interval tick against
     /// `shutdown_token.cancelled()` with `biased;` ordering the cancellation arm

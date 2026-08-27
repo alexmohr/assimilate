@@ -52,6 +52,18 @@ vi.mock('../utils/error', () => ({
     fallback ?? 'Unknown error',
 }))
 
+const mockToastSuccess = vi.fn()
+const mockToastError = vi.fn()
+vi.mock('../composables/useToast', () => ({
+  useToast: (): {
+    success: ReturnType<typeof vi.fn>
+    error: ReturnType<typeof vi.fn>
+  } => ({
+    success: mockToastSuccess,
+    error: mockToastError,
+  }),
+}))
+
 vi.mock('../components/MergeAgentDialog.vue', () => ({
   default: {
     name: 'MergeAgentDialog',
@@ -818,6 +830,35 @@ describe('AgentDetailView — backup progress', () => {
     await flushPromises()
 
     expect(wrapper.find('.live-log-card').exists()).toBe(true)
+  })
+
+  it('cancels a running backup and shows a success toast', async () => {
+    const wrapper = await startBackupOnHost()
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {} } as never)
+
+    const cancelBtn = wrapper.find('.live-log-header-actions button')
+    expect(cancelBtn.text()).toBe('Cancel backup')
+    await cancelBtn.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/test-host/repos/10/cancel-backup',
+      {},
+      { params: {} },
+    )
+    expect(mockToastSuccess).toHaveBeenCalledWith('Cancel request sent.')
+  })
+
+  it('shows an error toast and re-enables the button when cancelling fails', async () => {
+    const wrapper = await startBackupOnHost()
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('agent offline'))
+
+    const cancelBtn = wrapper.find('.live-log-header-actions button')
+    await cancelBtn.trigger('click')
+    await flushPromises()
+
+    expect(mockToastError).toHaveBeenCalledWith('Unknown error')
+    expect(wrapper.find('.live-log-header-actions button').attributes('disabled')).toBeUndefined()
   })
 })
 

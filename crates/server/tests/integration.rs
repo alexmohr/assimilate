@@ -4354,7 +4354,7 @@ async fn test_import_config_clamps_out_of_range_hook_timeout_seconds(pool: sqlx:
                 "rate_limit_kbps": null,
                 "pre_backup_commands": [],
                 "post_backup_commands": [],
-                "hook_timeout_seconds": 999999999,
+                "hook_timeout_seconds": 999_999_999,
                 "repo_name": "import-repo-clamp",
                 "backup_sources": ["/home"],
                 "targets": [

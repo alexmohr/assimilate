@@ -792,6 +792,26 @@ VALUES (
 );
 SQL
 
+echo "==> Seeding an in-progress run on web-server-01..."
+# Feeds the agent overview's and dashboard's "Backups in progress" cards
+# (see docs/agents.md, docs/dashboard.md): both derive an in-progress backup
+# from a persisted backup_reports row with status = 'started', not only from
+# a live WS event, so the scenario needs to exist even when nobody is
+# actively watching the page when a backup happens to start.
+# finished_at mirrors started_at as a placeholder, matching how
+# db::insert_backup_started's own INSERT sets both to the same timestamp for
+# a row that has not actually finished yet - status is what's authoritative.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status)
+VALUES (
+    $WEB01_ID, $REPO_DAILY_ID, $WEB01_DAILY_SCHEDULE_ID,
+    NOW() - interval '90 seconds',
+    NOW() - interval '90 seconds',
+    'started'
+);
+SQL
+
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null
 

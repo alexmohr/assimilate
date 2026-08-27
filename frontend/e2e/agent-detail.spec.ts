@@ -206,7 +206,9 @@ test.describe('Agent detail', () => {
     await expect(page.locator('.empty-description')).toContainText('reconstructed from archives')
   })
 
-  test('running backup links its repository and offers Cancel backup', async ({ page }) => {
+  test('running backup links its repository and Cancel backup sends the request', async ({
+    page,
+  }) => {
     await openAgent(page)
 
     await page.route('**/api/agents/web-server-01/reports**', (route) =>
@@ -221,25 +223,9 @@ test.describe('Agent detail', () => {
     const badge = page.locator('.live-log-host-badge')
     await expect(badge).toBeVisible({ timeout: 10_000 })
     await expect(badge).toHaveAttribute('href', '/repos/1')
-    await expect(page.getByRole('button', { name: 'Cancel backup' })).toBeVisible()
-  })
-
-  test('clicking Cancel backup on the agent overview sends the request and shows a toast', async ({
-    page,
-  }) => {
-    await openAgent(page)
-
-    await page.route('**/api/agents/web-server-01/reports**', (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify([makeRunningReport(9997)]),
-      }),
-    )
-    await page.reload()
 
     const cancelBtn = page.getByRole('button', { name: 'Cancel backup' })
-    await expect(cancelBtn).toBeVisible({ timeout: 10_000 })
+    await expect(cancelBtn).toBeVisible()
     await cancelBtn.click()
 
     await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })

@@ -51,15 +51,25 @@ describe('BackupProgressCard', () => {
     expect(button.text()).toBe('Cancelling...')
   })
 
-  // The scoped `.progress-path` CSS clamps this to two lines and ellipsizes
-  // any overflow visually; the full path still reaches the DOM so it stays
-  // copy-pasteable and readable by assistive tech.
-  it('keeps the full current-file path in the DOM for the CSS clamp to bound visually', () => {
+  // Whether or not clampPath is set, the full path always reaches the DOM -
+  // clamping is a visual (CSS) bound, not truncated text - so it stays
+  // copy-pasteable and readable by assistive tech either way.
+  it('keeps the full current-file path in the DOM regardless of clampPath', () => {
     const longPath =
       'usr/share/locale/en_GB/LC_MESSAGES/plasma_applet_org.kde.plasma.digitalclock.mo'
     const wrapper = mount({
       progress: { nfiles: 1, originalSize: 0, currentPath: longPath },
     })
     expect(wrapper.find('.progress-path').text()).toBe(longPath)
+  })
+
+  it('does not clamp the current-file path by default', () => {
+    const wrapper = mount()
+    expect(wrapper.find('.progress-path').classes()).not.toContain('progress-path--clamp')
+  })
+
+  it('clamps the current-file path to two lines when clampPath is set', () => {
+    const wrapper = mount({ clampPath: true })
+    expect(wrapper.find('.progress-path').classes()).toContain('progress-path--clamp')
   })
 })

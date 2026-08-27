@@ -165,6 +165,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
       :estimated-remaining-secs="null"
       :progress="b.progress"
       :cancel-loading="b.repoId !== null && cancellingRepoIds.includes(b.repoId)"
+      clamp-path
       @cancel="cancelLive(b)"
     />
 

@@ -21,8 +21,10 @@ withDefaults(
     estimatedRemainingSecs: number | null
     progress: ArchiveProgressData | null
     cancelLoading?: boolean
+    /** Clamp the current-file path to two lines instead of wrapping it in full. */
+    clampPath?: boolean
   }>(),
-  { repoId: null, cancelLoading: false },
+  { repoId: null, cancelLoading: false, clampPath: false },
 )
 
 const emit = defineEmits<{
@@ -97,7 +99,11 @@ const emit = defineEmits<{
           class="live-stat-row live-stat-row-wrap"
         >
           <span class="live-stat-label">Current file</span>
-          <span class="live-stat-value progress-path">{{ progress.currentPath }}</span>
+          <span
+            class="live-stat-value progress-path"
+            :class="{ 'progress-path--clamp': clampPath }"
+            >{{ progress.currentPath }}</span
+          >
         </div>
       </template>
     </div>
@@ -182,7 +188,15 @@ const emit = defineEmits<{
   font-size: var(--fs-xs);
   word-break: break-all;
   overflow-wrap: break-word;
+  white-space: pre-wrap;
   min-width: 0;
+}
+
+/* Reserves exactly two lines for the path and ellipsizes the rest, instead
+   of letting it wrap in full - used where the card's overall size must stay
+   fixed (the agent overview), not where it's the only thing on the page. */
+.progress-path--clamp {
+  white-space: normal;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;

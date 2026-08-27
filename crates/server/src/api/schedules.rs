@@ -719,7 +719,11 @@ fn convert_rate_limit(rate_limit_kbps: Option<u32>) -> Result<Option<i32>, ApiEr
 /// Upper bound on a pre/post-backup hook command's timeout. Generous enough for
 /// a slow disk-snapshot commit or database dump, but still short enough that a
 /// stuck hook can't stall a schedule indefinitely.
-const MAX_HOOK_TIMEOUT_SECONDS: i32 = 3600;
+///
+/// `pub(crate)`: also used by `config_io::import_schedule` to clamp an
+/// imported config's value into the same bound the REST create/update paths
+/// enforce, rather than letting an uploaded export bypass it entirely.
+pub(crate) const MAX_HOOK_TIMEOUT_SECONDS: i32 = 3600;
 
 fn validate_hook_timeout_seconds(seconds: i32) -> Result<i32, ApiError> {
     if seconds <= 0 || seconds > MAX_HOOK_TIMEOUT_SECONDS {

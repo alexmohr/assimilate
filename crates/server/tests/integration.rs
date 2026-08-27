@@ -4310,6 +4310,116 @@ async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPo
     assert_eq!(body.get("warnings").unwrap().as_array().unwrap().len(), 0);
 }
 
+/// A config import is untrusted input (an uploaded file, not a value that
+/// already passed through the `POST`/`PUT /api/schedules` handlers' own
+/// `validate_hook_timeout_seconds` check) - an out-of-range value must be
+/// clamped into the same 1..=3600 bound those handlers enforce, not inserted
+/// verbatim.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_clamps_out_of_range_hook_timeout_seconds(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    insert_test_repo(&pool, "import-repo-clamp").await;
+
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('import-clamp-target', \
+         'real-token')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [
+            {
+                "name": "import-schedule-too-high",
+                "schedule_type": "backup",
+                "cron_expression": "0 3 * * *",
+                "enabled": true,
+                "canary_enabled": false,
+                "execution_mode": "parallel",
+                "on_failure": "stop",
+                "exclude_patterns_raw": "",
+                "ignore_global_excludes": false,
+                "keep_hourly": 0,
+                "keep_daily": 7,
+                "keep_weekly": 4,
+                "keep_monthly": 6,
+                "keep_yearly": 0,
+                "compact_enabled": true,
+                "rate_limit_kbps": null,
+                "pre_backup_commands": [],
+                "post_backup_commands": [],
+                "hook_timeout_seconds": 999999999,
+                "repo_name": "import-repo-clamp",
+                "backup_sources": ["/home"],
+                "targets": [
+                    {
+                        "hostname": "import-clamp-target",
+                        "execution_order": 0,
+                        "backup_sources": ["/etc"],
+                        "exclude_patterns": ""
+                    }
+                ]
+            },
+            {
+                "name": "import-schedule-too-low",
+                "schedule_type": "backup",
+                "cron_expression": "0 4 * * *",
+                "enabled": true,
+                "canary_enabled": false,
+                "execution_mode": "parallel",
+                "on_failure": "stop",
+                "exclude_patterns_raw": "",
+                "ignore_global_excludes": false,
+                "keep_hourly": 0,
+                "keep_daily": 7,
+                "keep_weekly": 4,
+                "keep_monthly": 6,
+                "keep_yearly": 0,
+                "compact_enabled": true,
+                "rate_limit_kbps": null,
+                "pre_backup_commands": [],
+                "post_backup_commands": [],
+                "hook_timeout_seconds": -5,
+                "repo_name": "import-repo-clamp",
+                "backup_sources": ["/home"],
+                "targets": [
+                    {
+                        "hostname": "import-clamp-target",
+                        "execution_order": 0,
+                        "backup_sources": ["/etc"],
+                        "exclude_patterns": ""
+                    }
+                ]
+            }
+        ]
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("schedules_created").unwrap(), 2);
+
+    let timeouts: Vec<i32> = sqlx::query_scalar(
+        "SELECT hook_timeout_seconds FROM schedules WHERE name IN ('import-schedule-too-high', \
+         'import-schedule-too-low') ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    // Alphabetical: "import-schedule-too-high" sorts before "import-schedule-too-low".
+    assert_eq!(timeouts, vec![3600, 1]);
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;

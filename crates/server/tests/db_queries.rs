@@ -7751,6 +7751,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             pre_backup_commands: &[],
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
             on_failure: "stop",
         },
         None,

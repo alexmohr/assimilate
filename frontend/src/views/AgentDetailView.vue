@@ -16,6 +16,7 @@ import {
   createAgentHostnamePattern,
   cancelAgentBackup,
   deleteFailedReports,
+  countFailedReports,
 } from '../api/agents'
 import { listSchedules, getScheduleHealth } from '../api/schedules'
 import { getSystemVersion } from '../api/system'
@@ -383,16 +384,18 @@ async function loadTabData(): Promise<void> {
   if (!agent.value) return
   const hostname = agent.value.hostname
   try {
-    const [repoRows, scheduleRows, reportRows, healthRows] = await Promise.all([
+    const [repoRows, scheduleRows, reportRows, healthRows, failedCount] = await Promise.all([
       listAgentRepos(hostname, agent.value.domain),
       listSchedules(),
       listAgentReports(hostname, undefined, agent.value.domain),
       getScheduleHealth(),
+      countFailedReports(hostname, agent.value.domain),
     ])
     repos.value = repoRows
     schedules.value = scheduleRows
     reports.value = reportRows
     scheduleHealth.value = healthRows.filter((h) => h.hostname === hostname)
+    failedReportCount.value = failedCount
     const runningReports = reportRows.filter((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'
@@ -525,10 +528,11 @@ async function cancelBackupInProgress(repoId: number): Promise<void> {
   }
 }
 
-// Clean up failed backup reports (overflow menu)
-const failedReportCount = computed(
-  () => reports.value.filter((r) => normalizeBackupStatus(r.status) === 'failed').length,
-)
+// Clean up failed backup reports (overflow menu). Counted separately from
+// `reports.value` (which the report list's own `limit` bounds) so the menu
+// label and confirmation dialog never understate how many records the
+// unbounded delete is actually about to remove.
+const failedReportCount = ref(0)
 const showCleanFailedDialog = ref(false)
 const cleaningFailedReports = ref(false)
 

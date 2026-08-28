@@ -10,9 +10,9 @@ use serde::Deserialize;
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     responses::{
-        DeleteFailedReportsResponse, PerAgentBackupSourcesResponse, PerAgentCommandsResponse,
-        PerAgentExcludePatternsResponse, PerAgentFileChangePatternsResponse,
-        ScheduleBackupSourcesResponse, ScheduleTargetResponse,
+        DeleteFailedReportsResponse, FailedReportCountResponse, PerAgentBackupSourcesResponse,
+        PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
+        PerAgentFileChangePatternsResponse, ScheduleBackupSourcesResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType},
@@ -1102,6 +1102,36 @@ pub async fn delete_failed_schedule_reports(
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let deleted = db::delete_failed_backup_reports_for_schedule(&state.pool, id).await?;
     Ok(Json(DeleteFailedReportsResponse { deleted }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/schedules/{id}/reports/failed/count",
+    tag = "Schedules",
+    operation_id = "countFailedScheduleReports",
+    params(("id" = i64, Path, description = "Schedule ID")),
+    responses(
+        (status = 200, description = "Failed report count", body = FailedReportCountResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// Count a schedule's failed backup reports, unbounded by the report list's
+/// own pagination window - the true number a "clean up failed backups"
+/// confirmation is about to delete.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn count_failed_schedule_reports(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<FailedReportCountResponse>, ApiError> {
+    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let count = db::count_failed_backup_reports_for_schedule(&state.pool, id).await?;
+    let count = u64::try_from(count).unwrap_or(0);
+    Ok(Json(FailedReportCountResponse { count }))
 }
 
 #[utoipa::path(

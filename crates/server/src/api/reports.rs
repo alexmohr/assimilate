@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use serde::Deserialize;
-use shared::responses::{DeleteFailedReportsResponse, ReportResponse};
+use shared::responses::{DeleteFailedReportsResponse, FailedReportCountResponse, ReportResponse};
 use tracing::warn;
 
 use super::{
@@ -189,4 +189,39 @@ pub async fn delete_failed_reports(
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let deleted = db::delete_failed_backup_reports_for_agent(&state.pool, agent.id).await?;
     Ok(Json(DeleteFailedReportsResponse { deleted }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/agents/{hostname}/reports/failed/count",
+    tag = "Reports",
+    operation_id = "countFailedReports",
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
+    responses(
+        (status = 200, description = "Failed report count", body = FailedReportCountResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Agent not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
+    )
+)]
+/// Count an agent's failed backup reports, unbounded by the report list's own
+/// pagination window - the true number a "clean up failed backups"
+/// confirmation is about to delete.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn count_failed_reports(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
+) -> Result<Json<FailedReportCountResponse>, ApiError> {
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let count = db::count_failed_backup_reports_for_agent(&state.pool, agent.id).await?;
+    let count = u64::try_from(count).unwrap_or(0);
+    Ok(Json(FailedReportCountResponse { count }))
 }

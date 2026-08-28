@@ -6,6 +6,7 @@ import type { ScheduleFailureAction, ScheduleRow, ScheduleType } from '../types/
 import type { ReportRow } from '../types/report'
 import type {
   DeleteFailedReportsResponse,
+  FailedReportCountResponse,
   ScheduleBackupSourcesResponse,
   ScheduleTargetResponse,
   HealthSummaryResponse,
@@ -142,6 +143,17 @@ export async function deleteFailedScheduleReports(
     `/schedules/${id}/reports/failed`,
   )
   return response.data
+}
+
+/**
+ * Unbounded by the report list's own pagination window - the true count a
+ * "clean up failed backups" confirmation is about to delete.
+ */
+export async function countFailedScheduleReports(id: number | string): Promise<number> {
+  const response = await apiClient.get<FailedReportCountResponse>(
+    `/schedules/${id}/reports/failed/count`,
+  )
+  return response.data.count
 }
 
 export async function listRepoSchedules(repoId: number | string): Promise<ScheduleRow[]> {

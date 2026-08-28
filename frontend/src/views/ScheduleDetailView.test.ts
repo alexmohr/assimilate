@@ -164,6 +164,10 @@ function setupEditModeWithReport(report: Record<string, unknown>): void {
     if (url === '/schedules/1/sources')
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
     if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
+    if (url === '/schedules/1/reports/failed/count') {
+      const count = report.status === 'failed' ? 1 : 0
+      return Promise.resolve({ data: { count } })
+    }
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
@@ -1286,7 +1290,9 @@ describe('ScheduleDetailView - Backups tab', () => {
     const after = mockApiClient.get.mock.calls.filter((c) =>
       String(c[0]).includes('/reports'),
     ).length
-    expect(after).toBe(before + 1)
+    // loadReports() now fetches the report list and the unbounded failed
+    // count in parallel, so one refetch is two "/reports"-matching calls.
+    expect(after).toBe(before + 2)
   })
 
   it('releases the row the server names as finished deleting', async () => {

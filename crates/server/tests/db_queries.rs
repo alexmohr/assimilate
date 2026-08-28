@@ -7706,10 +7706,25 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
     .await
     .unwrap();
 
+    assert_eq!(
+        db::count_failed_backup_reports_for_agent(&pool, agent.id)
+            .await
+            .unwrap(),
+        2
+    );
+
     let deleted = db::delete_failed_backup_reports_for_agent(&pool, agent.id)
         .await
         .unwrap();
     assert_eq!(deleted, 2);
+
+    assert_eq!(
+        db::count_failed_backup_reports_for_agent(&pool, agent.id)
+            .await
+            .unwrap(),
+        0,
+        "count must reflect the delete, not the report list's own pagination window"
+    );
 
     let remaining = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
@@ -7825,10 +7840,25 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
     .await
     .unwrap();
 
+    assert_eq!(
+        db::count_failed_backup_reports_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap(),
+        2
+    );
+
     let deleted = db::delete_failed_backup_reports_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
     assert_eq!(deleted, 2);
+
+    assert_eq!(
+        db::count_failed_backup_reports_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap(),
+        0,
+        "count must reflect the delete, not the report list's own pagination window"
+    );
 
     let remaining = db::list_reports_for_schedule(&pool, schedule.id, 10)
         .await

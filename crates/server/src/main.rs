@@ -526,6 +526,10 @@ fn agent_routes() -> Router<AppState> {
             delete(api::reports::delete_failed_reports),
         )
         .route(
+            "/api/agents/{hostname}/reports/failed/count",
+            get(api::reports::count_failed_reports),
+        )
+        .route(
             "/api/agents/{hostname}/tags",
             get(api::tags::get_agent_tags).put(api::tags::set_agent_tags),
         )
@@ -651,6 +655,10 @@ fn schedule_and_config_routes() -> Router<AppState> {
         .route(
             "/api/schedules/{id}/reports/failed",
             delete(api::schedules::delete_failed_schedule_reports),
+        )
+        .route(
+            "/api/schedules/{id}/reports/failed/count",
+            get(api::schedules::count_failed_schedule_reports),
         )
         .route(
             "/api/schedules/{id}/targets",

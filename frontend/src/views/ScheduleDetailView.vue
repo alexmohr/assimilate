@@ -19,6 +19,7 @@ import {
   getScheduleBackupSources,
   listScheduleReports,
   deleteFailedScheduleReports,
+  countFailedScheduleReports,
   getScheduleHealth,
   type CreateScheduleRequest,
 } from '../api/schedules'
@@ -308,6 +309,7 @@ async function loadData(): Promise<void> {
         sourcesResponse,
         recentReports,
         healthRows,
+        failedCount,
       ] = await Promise.all([
         getSchedule(props.id),
         listAgents(),
@@ -316,6 +318,7 @@ async function loadData(): Promise<void> {
         getScheduleBackupSources(props.id),
         listScheduleReports(props.id, 20),
         getScheduleHealth(),
+        countFailedScheduleReports(props.id),
       ])
       schedule.value = scheduleRow
       agents.value = agentRows
@@ -324,6 +327,7 @@ async function loadData(): Promise<void> {
       selectedRepoId.value = scheduleRow.repo_id ?? null
       reports.value = recentReports
       health.value = healthRows
+      failedReportCount.value = failedCount
       const runningReport = recentReports.find((r) => {
         const status = normalizeBackupStatus(r.status)
         return status === 'pending' || status === 'started'
@@ -515,9 +519,11 @@ async function confirmDeleteSchedule(): Promise<void> {
   }
 }
 
-const failedReportCount = computed(
-  () => reports.value.filter((r) => normalizeBackupStatus(r.status) === 'failed').length,
-)
+// Counted separately from `reports.value` (which the report list's own
+// `limit` bounds) so the menu label and confirmation dialog never
+// understate how many records the unbounded delete is actually about to
+// remove.
+const failedReportCount = ref(0)
 const showCleanFailedDialog = ref(false)
 const cleaningFailedReports = ref(false)
 
@@ -567,8 +573,12 @@ async function loadReports(): Promise<void> {
   reportsLoading.value = true
   reportsError.value = null
   try {
-    const reportRows = await listScheduleReports(props.id, 100)
+    const [reportRows, failedCount] = await Promise.all([
+      listScheduleReports(props.id, 100),
+      countFailedScheduleReports(props.id),
+    ])
     reports.value = reportRows
+    failedReportCount.value = failedCount
     backupRunning.value = reportRows.some((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'

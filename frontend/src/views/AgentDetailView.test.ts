@@ -172,6 +172,10 @@ function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unkno
     if (url === '/agents/test-host/repos') return Promise.resolve({ data: repos })
     if (url === '/schedules') return Promise.resolve({ data: schedules })
     if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
+    if (url === '/agents/test-host/reports/failed/count') {
+      const count = reports.filter((r) => r.status === 'failed').length
+      return Promise.resolve({ data: { count } })
+    }
     if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
     if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
     return Promise.resolve({ data: [] })

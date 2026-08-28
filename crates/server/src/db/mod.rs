@@ -6213,6 +6213,62 @@ pub async fn delete_failed_backup_reports_for_schedule(
     Ok(result.rows_affected())
 }
 
+/// Counts an agent's failed backup-run history, unbounded by the report-list
+/// pagination `limit` a page's own display uses. A "clean up failed backups"
+/// confirmation must state how many records [`delete_failed_backup_reports_for_agent`]
+/// is actually about to remove, not how many happen to fall within the most
+/// recently displayed page of reports.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_failed_backup_reports_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1 AND status = 'failed'",
+        agent_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Counts a schedule's failed backup-run history. See
+/// [`count_failed_backup_reports_for_agent`] - same rationale, scoped to a
+/// schedule instead of an agent.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_failed_backup_reports_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM backup_reports WHERE schedule_id = $1 AND status = 'failed'",
+        schedule_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
 /// Looks up the repository a backup report belongs to, so the caller can run
 /// a repo-scoped permission check before acknowledging it.
 ///

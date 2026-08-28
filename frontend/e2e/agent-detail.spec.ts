@@ -275,14 +275,27 @@ test.describe('Agent detail', () => {
         body: JSON.stringify([makeFailedReport(9997)]),
       }),
     )
+    // The menu label and dialog count come from a separate, unbounded count
+    // endpoint (not from the report list above, which a page-size `limit`
+    // bounds) - registered after the broader route above so it wins for
+    // this more specific URL.
+    await page.route('**/api/agents/web-server-01/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
     // networkidle doesn't reliably gate on this fetch resolving, and the
     // menu item's count comes from it - wait for the response itself so the
     // menu isn't opened before the count has a chance to update.
-    const reportsLoaded = page.waitForResponse(
-      (res) => res.url().includes('/api/agents/web-server-01/reports') && res.status() === 200,
+    const countLoaded = page.waitForResponse(
+      (res) =>
+        res.url().includes('/api/agents/web-server-01/reports/failed/count') &&
+        res.status() === 200,
     )
     await page.reload()
-    await reportsLoaded
+    await countLoaded
 
     await page.locator('.overflow-toggle').click()
     // getByRole's accessible name is whitespace-normalized; a plain

@@ -162,6 +162,10 @@ fn test_app_core_routes() -> Router<server::AppState> {
             delete(server::api::reports::delete_failed_reports),
         )
         .route(
+            "/api/agents/{hostname}/reports/failed/count",
+            get(server::api::reports::count_failed_reports),
+        )
+        .route(
             "/api/agents/{hostname}/repos/{repo_id}/cancel-backup",
             post(server::api::agents::cancel_agent_backup),
         )
@@ -226,6 +230,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
         .route(
             "/api/schedules/{id}/reports/failed",
             delete(server::api::schedules::delete_failed_schedule_reports),
+        )
+        .route(
+            "/api/schedules/{id}/reports/failed/count",
+            get(server::api::schedules::count_failed_schedule_reports),
         )
         .route(
             "/api/schedules/{id}/sources",
@@ -5823,12 +5831,25 @@ async fn test_delete_failed_reports_removes_only_failed_agent_reports() {
         .unwrap();
     }
 
+    let req = get_request("/api/agents/delete-failed-host/reports/failed/count");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 1);
+
     let req = delete_request("/api/agents/delete-failed-host/reports/failed");
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value =
         serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(body.get("deleted").unwrap(), 1);
+
+    let req = get_request("/api/agents/delete-failed-host/reports/failed/count");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 0);
 
     let req = get_request("/api/agents/delete-failed-host/reports");
     let resp = oneshot(&mut app, req).await;
@@ -5875,12 +5896,29 @@ async fn test_delete_failed_schedule_reports_removes_only_failed_schedule_report
         .unwrap();
     }
 
+    let req = get_request(&format!(
+        "/api/schedules/{schedule_id}/reports/failed/count"
+    ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 1);
+
     let req = delete_request(&format!("/api/schedules/{schedule_id}/reports/failed"));
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value =
         serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(body.get("deleted").unwrap(), 1);
+
+    let req = get_request(&format!(
+        "/api/schedules/{schedule_id}/reports/failed/count"
+    ));
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 0);
 
     let remaining: Vec<(String,)> =
         sqlx::query_as("SELECT status FROM backup_reports WHERE schedule_id = $1")
@@ -5889,6 +5927,57 @@ async fn test_delete_failed_schedule_reports_removes_only_failed_schedule_report
             .await
             .unwrap();
     assert_eq!(remaining, vec![("success".to_string(),)]);
+}
+
+/// Regression test for: the "clean up failed backups" confirmation dialog's
+/// count came from `reports.value`, which the report-list endpoint's own
+/// `limit` bounds - so it could understate how many records the unbounded
+/// delete was actually about to remove. The count endpoint must report the
+/// true total regardless of what a small list `limit` returns.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_failed_report_count_is_not_bounded_by_the_report_list_limit() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "count-unbounded-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('count-unbounded-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for _ in 0..3 {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), 'failed', true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = get_request("/api/agents/count-unbounded-host/reports?limit=1");
+    let resp = oneshot(&mut app, req).await;
+    let list: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+
+    let req = get_request("/api/agents/count-unbounded-host/reports/failed/count");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body.get("count").unwrap(),
+        3,
+        "count must not shrink to match the report list's own limit"
+    );
 }
 
 // -- activity acknowledgement --

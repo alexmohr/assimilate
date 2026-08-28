@@ -290,5 +290,21 @@ describe('ScheduleAdvancedTab', () => {
         'Post-backup commands',
       ])
     })
+
+    // The per-agent instances used to fall through to CommandListEditor's
+    // generic default hint, losing the "(optional)" cue that used to tell
+    // the required-feeling pre-backup field apart from the optional
+    // post-backup one - same example commands as the shared-mode instances.
+    it('gives each per-agent command list editor the same example placeholder as shared mode', () => {
+      const perAgent = mount({
+        overrides: agentOverrides({ usePerAgentCmds: true }),
+      }).findAllComponents({ name: 'CommandListEditor' })
+      expect(perAgent.map((e) => e.props('placeholder'))).toEqual([
+        'e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql',
+        'e.g. rm /tmp/dump.sql (optional)',
+        'e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql',
+        'e.g. rm /tmp/dump.sql (optional)',
+      ])
+    })
   })
 })

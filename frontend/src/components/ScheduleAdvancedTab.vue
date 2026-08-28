@@ -212,12 +212,14 @@ const refOpen = ref(false)
           <label class="form-sublabel">Pre-backup</label>
           <CommandListEditor
             :model-value="overrides.perAgentPreCmds[agentId] ?? []"
+            placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
             aria-label="Pre-backup commands"
             @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
           />
           <label class="form-sublabel">Post-backup</label>
           <CommandListEditor
             :model-value="overrides.perAgentPostCmds[agentId] ?? []"
+            placeholder="e.g. rm /tmp/dump.sql (optional)"
             aria-label="Post-backup commands"
             @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
           />

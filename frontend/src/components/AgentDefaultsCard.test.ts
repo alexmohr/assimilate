@@ -103,6 +103,21 @@ describe('AgentDefaultsCard', () => {
     expect(mount({ canEdit: false }).findAll('button')).toHaveLength(0)
   })
 
+  // Older/imported agent rows may have never had these fields set, unlike
+  // the fixture's always-present arrays - editing must still start cleanly
+  // rather than seeding the command lists with undefined.
+  it('starts editing with empty command lists when the fields are missing entirely', async () => {
+    const agent = { ...AGENT }
+    delete (agent as { default_pre_backup_commands?: string[] }).default_pre_backup_commands
+    delete (agent as { default_post_backup_commands?: string[] }).default_post_backup_commands
+    const wrapper = mount({ agent })
+    await startEditing(wrapper)
+
+    const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
+    expect(editors[0].props('modelValue')).toEqual([])
+    expect(editors[1].props('modelValue')).toEqual([])
+  })
+
   it('seeds every field from the current value when editing starts', async () => {
     const wrapper = mount()
     await startEditing(wrapper)

@@ -163,11 +163,11 @@ async function save(): Promise<void> {
         <div class="defaults-group">
           <span class="group-label group-label--lg">Pre-backup commands</span>
           <div
-            v-if="agent.default_pre_backup_commands.length > 0"
+            v-if="(agent.default_pre_backup_commands ?? []).length > 0"
             class="paths-list"
           >
             <code
-              v-for="(cmd, idx) in agent.default_pre_backup_commands"
+              v-for="(cmd, idx) in agent.default_pre_backup_commands ?? []"
               :key="idx"
               class="path-item mono"
             >
@@ -184,11 +184,11 @@ async function save(): Promise<void> {
         <div class="defaults-group">
           <span class="group-label group-label--lg">Post-backup commands</span>
           <div
-            v-if="agent.default_post_backup_commands.length > 0"
+            v-if="(agent.default_post_backup_commands ?? []).length > 0"
             class="paths-list"
           >
             <code
-              v-for="(cmd, idx) in agent.default_post_backup_commands"
+              v-for="(cmd, idx) in agent.default_post_backup_commands ?? []"
               :key="idx"
               class="path-item mono"
             >

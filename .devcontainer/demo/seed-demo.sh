@@ -637,7 +637,8 @@ INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES
 INSERT INTO notification_rules (channel_id, event_type, enabled)
 SELECT c.id, e.event_type, true
 FROM notification_channels c,
-     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected')) AS e(event_type)
+     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'))
+         AS e(event_type)
 WHERE c.name = 'Ops Webhook';
 
 INSERT INTO notification_rules (channel_id, event_type, enabled)
@@ -663,6 +664,14 @@ SELECT c.id, 'backup_warning',
     'sent',
     NULL,
     NOW() - interval '1 day'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'schedule_auto_disabled',
+    '{"event_type":"schedule_auto_disabled","hostname":"auto-disabled-01","repo_name":"server-daily","schedule_name":"Auto-disabled demo","status":"auto_disabled","error_message":"agent ''auto-disabled-01'' stayed unreachable","timestamp":"2026-01-13T06:00:00Z"}',
+    'sent',
+    NULL,
+    NOW() - interval '2 days'
 FROM notification_channels c WHERE c.name = 'Ops Webhook';
 SQL
 

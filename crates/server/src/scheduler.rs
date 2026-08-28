@@ -50,6 +50,37 @@ const MAX_CONSECUTIVE_FAILURES: i32 = 3;
 /// exists to prevent.
 const CRON_EVAL_FAILURE_BACKOFF_HOURS: i64 = 1;
 
+/// Ticks due schedules on `TICK_INTERVAL` until `shutdown_token` fires. Split out of
+/// `run()` (rather than an inline closure) purely to keep `run()` itself under the
+/// line-count limit now that `TickDeps` carries the notification fields too.
+async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::CancellationToken) {
+    let mut interval = tokio::time::interval(TICK_INTERVAL);
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        if let Err(e) = tick(&TickDeps {
+            pool: &state.pool,
+            registry: &state.registry,
+            encryption_key: &state.encryption_key,
+            tunnel_manager: &state.tunnel_manager,
+            completion_bus: &state.completion_bus,
+            repo_lock: &state.repo_lock,
+            repo_op_tracker: &state.repo_op_tracker,
+            ui_broadcast: &state.ui_broadcast,
+            background_task_tracker: &state.background_task_tracker,
+            notification_service: &state.notification_service,
+            task_registry: &state.task_registry,
+        })
+        .await
+        {
+            tracing::error!(error = %e, "scheduler tick failed");
+        }
+    }
+}
+
 /// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 /// Every inner loop races its interval tick against `state.shutdown_token`, so the whole
 /// function returns promptly once shutdown starts instead of keeping the process alive
@@ -63,34 +94,7 @@ pub async fn run(state: AppState) {
     let session_pool = state.pool.clone();
     let shutdown_token = state.shutdown_token.clone();
 
-    let schedule_task = {
-        let shutdown_token = shutdown_token.clone();
-        async move {
-            let mut interval = tokio::time::interval(TICK_INTERVAL);
-            loop {
-                tokio::select! {
-                    biased;
-                    () = shutdown_token.cancelled() => return,
-                    _ = interval.tick() => {}
-                }
-                if let Err(e) = tick(&TickDeps {
-                    pool: &schedule_state.pool,
-                    registry: &schedule_state.registry,
-                    encryption_key: &schedule_state.encryption_key,
-                    tunnel_manager: &schedule_state.tunnel_manager,
-                    completion_bus: &schedule_state.completion_bus,
-                    repo_lock: &schedule_state.repo_lock,
-                    repo_op_tracker: &schedule_state.repo_op_tracker,
-                    ui_broadcast: &schedule_state.ui_broadcast,
-                    background_task_tracker: &schedule_state.background_task_tracker,
-                })
-                .await
-                {
-                    tracing::error!(error = %e, "scheduler tick failed");
-                }
-            }
-        }
-    };
+    let schedule_task = run_schedule_ticks(schedule_state, shutdown_token.clone());
 
     let retention_task = {
         let shutdown_token = shutdown_token.clone();
@@ -588,6 +592,8 @@ struct TickDeps<'a> {
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
     background_task_tracker: &'a crate::background_tasks::BackgroundTaskTracker,
+    notification_service: &'a crate::notifications::NotificationService,
+    task_registry: &'a shared::task_registry::TaskRegistry,
 }
 
 async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
@@ -601,6 +607,8 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
         repo_op_tracker,
         ui_broadcast,
         background_task_tracker,
+        notification_service,
+        task_registry,
     } = *deps;
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
@@ -679,6 +687,8 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
             repo_lock: repo_lock.clone(),
             repo_op_tracker: repo_op_tracker.clone(),
             ui_broadcast: ui_broadcast.clone(),
+            notification_service: notification_service.clone(),
+            task_registry: task_registry.clone(),
             schedule_id,
             cron,
             targets,
@@ -752,6 +762,8 @@ struct SequentialExecution {
     repo_lock: RepoLock,
     repo_op_tracker: RepoOpTracker,
     ui_broadcast: UiBroadcast,
+    notification_service: crate::notifications::NotificationService,
+    task_registry: shared::task_registry::TaskRegistry,
     schedule_id: i64,
     cron: String,
     targets: Vec<DueScheduleRow>,
@@ -777,6 +789,8 @@ struct SequentialTargetCtx<'a> {
     repo_lock: &'a RepoLock,
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
+    notification_service: &'a crate::notifications::NotificationService,
+    task_registry: &'a shared::task_registry::TaskRegistry,
     schedule_id: i64,
     schedule_name: &'a str,
     cron: &'a str,
@@ -802,6 +816,8 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         repo_lock,
         repo_op_tracker,
         ui_broadcast,
+        notification_service,
+        task_registry,
         schedule_id,
         cron,
         targets,
@@ -829,6 +845,8 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         repo_lock: &repo_lock,
         repo_op_tracker: &repo_op_tracker,
         ui_broadcast: &ui_broadcast,
+        notification_service: &notification_service,
+        task_registry: &task_registry,
         schedule_id,
         schedule_name,
         cron: &cron,
@@ -884,13 +902,21 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
 async fn fail_target(
     ctx: &SequentialTargetCtx<'_>,
     agent_id: i64,
+    repo_id: i64,
     hostname: &str,
     agent_unreachable: bool,
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> TargetControl {
-    record_schedule_failure_once(ctx, agent_id, hostname, agent_unreachable, recorded_failure)
-        .await;
+    record_schedule_failure_once(
+        ctx,
+        agent_id,
+        repo_id,
+        hostname,
+        agent_unreachable,
+        recorded_failure,
+    )
+    .await;
     signal_first_target_attempted(triggered_tx);
     match ctx.on_failure {
         OnFailure::Stop => TargetControl::Stop,
@@ -939,6 +965,7 @@ async fn run_sequential_target(
             return fail_target(
                 ctx,
                 target.agent_id,
+                target.repo_id,
                 &target.hostname,
                 true,
                 recorded_failure,
@@ -957,6 +984,7 @@ async fn run_sequential_target(
             return fail_target(
                 ctx,
                 target.agent_id,
+                target.repo_id,
                 &target.hostname,
                 false,
                 recorded_failure,
@@ -1017,6 +1045,7 @@ async fn run_sequential_target(
             return fail_target(
                 ctx,
                 target.agent_id,
+                target.repo_id,
                 &target.hostname,
                 true,
                 recorded_failure,
@@ -1144,6 +1173,7 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 async fn record_schedule_failure_once(
     ctx: &SequentialTargetCtx<'_>,
     agent_id: i64,
+    repo_id: i64,
     hostname: &str,
     agent_unreachable: bool,
     recorded_failure: &mut bool,
@@ -1209,6 +1239,15 @@ async fn record_schedule_failure_once(
                         "sequential: failed to record schedule-auto-disabled system event"
                     );
                 }
+                dispatch_schedule_auto_disabled_notification(
+                    ctx,
+                    agent_id,
+                    repo_id,
+                    hostname,
+                    schedule_id,
+                    &reason,
+                )
+                .await;
                 ctx.ui_broadcast.send(ServerToUi::DataChanged);
             } else {
                 tracing::warn!(
@@ -1227,6 +1266,48 @@ async fn record_schedule_failure_once(
                 "sequential: failed to record schedule failure"
             );
         }
+    }
+}
+
+/// Dispatches a [`notifications::EventType::ScheduleAutoDisabled`] event so a
+/// configured channel (email/webhook/push) can alert on this the same way it
+/// already can for a failed/warning backup - `record_schedule_failure_once`
+/// only ever wrote a system event before, which never leaves the Activity page.
+/// Looks up the repo name for the event payload rather than threading it all
+/// the way through `SequentialTargetCtx`/`DueScheduleRow`, since this is the
+/// only place along the sequential-execution path that needs it.
+async fn dispatch_schedule_auto_disabled_notification(
+    ctx: &SequentialTargetCtx<'_>,
+    agent_id: i64,
+    repo_id: i64,
+    hostname: &str,
+    schedule_id: i64,
+    reason: &str,
+) {
+    let repo_name = db::get_repo_name(ctx.pool, repo_id)
+        .await
+        .unwrap_or_default();
+    let event = crate::notifications::NotificationEvent {
+        event_type: crate::notifications::EventType::ScheduleAutoDisabled,
+        hostname: hostname.to_owned(),
+        repo_name,
+        status: "auto_disabled".to_owned(),
+        error_message: Some(reason.to_owned()),
+        timestamp: ctx.now,
+        repo_id: Some(repo_id),
+        agent_id: Some(agent_id),
+        schedule_id: Some(schedule_id),
+        schedule_name: Some(ctx.schedule_name.to_owned()),
+        archive_name: None,
+    };
+    if let Err(e) =
+        crate::notifications::dispatch(ctx.notification_service, event, ctx.task_registry).await
+    {
+        tracing::error!(
+            schedule_id,
+            error = %e,
+            "sequential: failed to dispatch schedule-auto-disabled notification"
+        );
     }
 }
 
@@ -1796,6 +1877,8 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
         .unwrap();
@@ -1845,6 +1928,8 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
         .unwrap();
@@ -1913,6 +1998,8 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
         .unwrap();
@@ -1966,6 +2053,8 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
         .unwrap();
@@ -2019,6 +2108,8 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
             .unwrap();
@@ -2065,6 +2156,87 @@ esac
         );
     }
 
+    /// Auto-disabling a schedule must not be visible only via a system event
+    /// (which never leaves the Activity page) - a configured notification
+    /// channel with a `schedule_auto_disabled` rule must actually be dispatched
+    /// to, the same way a failed/warning backup already notifies.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_auto_disable_dispatches_a_schedule_auto_disabled_notification(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'schedule_auto_disabled', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let notification_service = crate::notifications::NotificationService::new(pool.clone());
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            let past = Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap();
+            db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+
+            tick(&TickDeps {
+                pool: &pool,
+                registry: &registry,
+                encryption_key: &key,
+                tunnel_manager: &tunnel,
+                completion_bus: &bus,
+                repo_lock: &RepoLock::default(),
+                repo_op_tracker: &RepoOpTracker::default(),
+                ui_broadcast: &UiBroadcast::new(),
+                background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                notification_service: &notification_service,
+                task_registry: &task_registry,
+            })
+            .await
+            .unwrap();
+        }
+
+        let outstanding = task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+        assert_eq!(
+            outstanding, 0,
+            "task_registry.shutdown must join the notification delivery task"
+        );
+
+        let delivery_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            delivery_event_types,
+            vec!["schedule_auto_disabled".to_owned()],
+            "auto-disabling the schedule must dispatch a schedule_auto_disabled notification"
+        );
+    }
+
     /// A schedule's own `missed_backup_threshold` - not the `MAX_CONSECUTIVE_FAILURES`
     /// default - must govern when the scheduler gives up and disables it. Below that
     /// custom threshold, misses must keep accumulating with the schedule still enabled
@@ -2105,6 +2277,8 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
             .unwrap();
@@ -2190,6 +2364,8 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
         .unwrap();
@@ -2269,6 +2445,8 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
             .unwrap();
@@ -2542,6 +2720,8 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &ui_broadcast,
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
         .unwrap();
@@ -2560,6 +2740,8 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
             .unwrap();
@@ -3194,6 +3376,8 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &background_task_tracker,
+                notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+                task_registry: &shared::task_registry::TaskRegistry::default(),
             })
             .await
             .unwrap();
@@ -3595,6 +3779,8 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
         })
         .await
         .unwrap();

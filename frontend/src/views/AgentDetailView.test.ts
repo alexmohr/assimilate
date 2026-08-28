@@ -7,6 +7,7 @@ import { ref, nextTick, type ComponentPublicInstance } from 'vue'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import AgentDetailView from './AgentDetailView.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
+import { logger } from '../utils/logger'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -1919,6 +1920,34 @@ describe('AgentDetailView - clean up failed backups', () => {
     await flushPromises()
     await openMenu(wrapper)
 
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  // The count backs a menu badge, not the page itself - a failure fetching
+  // it must not break the rest of the tab data (regression: it used to sit
+  // inside the same Promise.all as the report list, so a rejection there
+  // took the whole page down with it).
+  it('logs and omits the item when the count fetch fails, without breaking the rest of the page', async () => {
+    setupApi()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents/test-host/reports/failed/count') {
+        return Promise.reject(new Error('boom'))
+      }
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/agents/test-host/reports') return Promise.resolve({ data: mockReports })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.detail-name').text()).toBe('test-host')
+    expect(logger.error).toHaveBeenCalledWith('countFailedReports failed', expect.any(Error))
+    await openMenu(wrapper)
     expect(
       wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
     ).toBe(false)

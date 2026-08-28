@@ -51,6 +51,10 @@ vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
 }))
 
+vi.mock('../utils/logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}))
+
 // Captured WebSocket message handlers - populated during component setup().
 // Accessing wsHandlers here is safe because onMessage is only CALLED during
 // component setup(), which happens inside test functions after module evaluation.
@@ -67,6 +71,7 @@ vi.mock('../composables/useWebSocket', () => ({
 import { apiClient } from '../api/client'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import ScheduleDetailView from './ScheduleDetailView.vue'
+import { logger } from '../utils/logger'
 
 const mockApiClient = apiClient as {
   get: ReturnType<typeof vi.fn>
@@ -1293,6 +1298,39 @@ describe('ScheduleDetailView - Backups tab', () => {
     // loadReports() now fetches the report list and the unbounded failed
     // count in parallel, so one refetch is two "/reports"-matching calls.
     expect(after).toBe(before + 2)
+  })
+
+  // The count backs a menu badge, not the page itself - a failure fetching
+  // it during a refresh must not break the report list refresh alongside it
+  // (regression: it used to sit inside the same Promise.all as the report
+  // list, so a rejection there took the whole refresh down with it).
+  it('logs and keeps the report list refresh working when the count fetch fails', async () => {
+    const report = {
+      id: 1,
+      status: 'success',
+      archive_name: 'test-archive-2026-06-01',
+      started_at: '2026-06-01T02:00:00Z',
+      original_size: 500,
+      agent_id: 10,
+      hostname: 'web-server-01',
+    }
+    const wrapper = await createBackupsWrapper([report])
+    await goToBackups(wrapper)
+
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/reports/failed/count') return Promise.reject(new Error('boom'))
+      if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'countFailedScheduleReports failed',
+      expect.any(Error),
+    )
+    expect(wrapper.text()).toContain('test-archive-2026-06-01')
   })
 
   it('releases the row the server names as finished deleting', async () => {

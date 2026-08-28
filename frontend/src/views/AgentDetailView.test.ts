@@ -1933,6 +1933,40 @@ describe('AgentDetailView - clean up failed backups', () => {
     expect(wrapper.text()).toContain('This action cannot be undone.')
   })
 
+  it('closes the dialog without deleting when Cancel is clicked', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Cancel')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('closes the dialog without deleting on dismissal', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await dismissModal(wrapper)
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
   it('deletes the failed reports on confirmation and shows a toast', async () => {
     const wrapper = await renderAsAdmin()
     vi.mocked(apiClient.delete).mockResolvedValue({ data: { deleted: 1 } } as never)

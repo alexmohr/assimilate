@@ -275,11 +275,22 @@ test.describe('Agent detail', () => {
         body: JSON.stringify([makeFailedReport(9997)]),
       }),
     )
+    // networkidle doesn't reliably gate on this fetch resolving, and the
+    // menu item's count comes from it - wait for the response itself so the
+    // menu isn't opened before the count has a chance to update.
+    const reportsLoaded = page.waitForResponse(
+      (res) => res.url().includes('/api/agents/web-server-01/reports') && res.status() === 200,
+    )
     await page.reload()
-    await page.waitForLoadState('networkidle')
+    await reportsLoaded
 
     await page.locator('.overflow-toggle').click()
-    const cleanItem = page.locator('.overflow-menu-item', { hasText: /^Clean up failed/ })
+    // getByRole's accessible name is whitespace-normalized; a plain
+    // `.overflow-menu-item` locator with a `hasText` regex tests the raw
+    // (unnormalized) textContent instead, so the template's leading space
+    // before "Clean" breaks a `^`-anchored pattern - see the identical,
+    // working locator in schedules.spec.ts's equivalent test.
+    const cleanItem = page.getByRole('menuitem', { name: /^Clean up failed/ })
     await expect(cleanItem).toBeVisible()
 
     let deleteRequested = false

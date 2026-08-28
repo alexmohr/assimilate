@@ -26,8 +26,10 @@ describe('runs api', () => {
     ]
     vi.mocked(apiClient.get).mockResolvedValue({ data: events })
 
-    await expect(getRunEvents('run-1')).resolves.toEqual(events)
+    await expect(getRunEvents('run-1', 5, 10)).resolves.toEqual(events)
 
-    expect(apiClient.get).toHaveBeenCalledWith('/runs/run-1/events')
+    expect(apiClient.get).toHaveBeenCalledWith('/runs/run-1/events', {
+      params: { agent_id: 5, repo_id: 10 },
+    })
   })
 })

@@ -69,7 +69,7 @@ watch(
     const runId = props.report.run_id
     if (!expanded || !runId || runEvents.value.length > 0 || loadingEvents.value) return
     loadingEvents.value = true
-    getRunEvents(runId)
+    getRunEvents(runId, props.report.agent_id, props.report.repo_id)
       .then((events) => {
         runEvents.value = events
       })

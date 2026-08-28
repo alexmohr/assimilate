@@ -15,6 +15,7 @@ vi.mock('../api/runs', () => ({
 function report(over: Record<string, unknown> = {}): ReportRow {
   return {
     id: 7,
+    agent_id: 5,
     repo_id: 10,
     repo_name: 'server-daily',
     schedule_id: 100,
@@ -195,7 +196,7 @@ describe('AgentBackupRow', () => {
       })
       await flushPromises()
 
-      expect(getRunEvents).toHaveBeenCalledWith('run-123')
+      expect(getRunEvents).toHaveBeenCalledWith('run-123', 5, 10)
       expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
     })
 
@@ -208,7 +209,7 @@ describe('AgentBackupRow', () => {
       })
       await flushPromises()
 
-      expect(getRunEvents).toHaveBeenCalledWith('run-123')
+      expect(getRunEvents).toHaveBeenCalledWith('run-123', 5, 10)
       expect(wrapper.text()).not.toContain('Power management')
       expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
     })

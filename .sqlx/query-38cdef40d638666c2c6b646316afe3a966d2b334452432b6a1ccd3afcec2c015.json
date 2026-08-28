@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, run_id, target, event_type, message, occurred_at FROM backup_run_events WHERE run_id = $1 ORDER BY occurred_at, id",
+  "query": "INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, run_id, agent_id, repo_id, target, event_type, message, occurred_at",
   "describe": {
     "columns": [
       {
@@ -15,27 +15,42 @@
       },
       {
         "ordinal": 2,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
         "name": "target",
         "type_info": "Text"
       },
       {
-        "ordinal": 3,
+        "ordinal": 5,
         "name": "event_type",
         "type_info": "Text"
       },
       {
-        "ordinal": 4,
+        "ordinal": 6,
         "name": "message",
         "type_info": "Text"
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "occurred_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
+        "Text",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
         "Text"
       ]
     },
@@ -45,8 +60,10 @@
       false,
       false,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "9f3a68352a97314f25109bdc0d1b5fecd90322531664dcea5df843824e504646"
+  "hash": "38cdef40d638666c2c6b646316afe3a966d2b334452432b6a1ccd3afcec2c015"
 }

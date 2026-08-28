@@ -177,19 +177,34 @@ fn row_to_run_event_response(row: db::run_events::RunEventRow) -> RunEventRespon
     }
 }
 
+/// Query parameters for listing a run's power-management timeline.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ListRunEventsQuery {
+    /// The target pairing's agent ID -- `run_id` alone spans every target of
+    /// a multi-target schedule, so this plus `repo_id` narrows to one.
+    pub agent_id: i64,
+    /// The target pairing's repository ID.
+    pub repo_id: i64,
+}
+
 #[utoipa::path(
     get,
     path = "/api/runs/{run_id}/events",
     tag = "Reports",
     operation_id = "listRunEvents",
-    params(("run_id" = String, Path, description = "Run ID, shared across one fan-out")),
+    params(
+        ("run_id" = String, Path, description = "Run ID, shared across one fan-out"),
+        ("agent_id" = i64, Query, description = "The target pairing's agent ID"),
+        ("repo_id" = i64, Query, description = "The target pairing's repository ID"),
+    ),
     responses(
         (status = 200, description = "The run's power timeline", body = Vec<RunEventResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
 /// List a run's power-management timeline (reachability checks, wakes,
-/// agent start/stop, shutdowns), in chronological order.
+/// agent start/stop, shutdowns) for one target pairing, in chronological
+/// order.
 ///
 /// # Errors
 ///
@@ -198,11 +213,13 @@ pub async fn list_run_events(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(run_id): Path<String>,
+    Query(query): Query<ListRunEventsQuery>,
 ) -> Result<Json<Vec<RunEventResponse>>, ApiError> {
-    let events = db::run_events::list_run_events(&state.pool, &run_id)
-        .await?
-        .into_iter()
-        .map(row_to_run_event_response)
-        .collect();
+    let events =
+        db::run_events::list_run_events(&state.pool, &run_id, query.agent_id, query.repo_id)
+            .await?
+            .into_iter()
+            .map(row_to_run_event_response)
+            .collect();
     Ok(Json(events))
 }

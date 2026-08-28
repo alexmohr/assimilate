@@ -20,6 +20,12 @@ pub struct RunEventRow {
     pub id: i64,
     /// Correlates to the run's `backup_reports.run_id`.
     pub run_id: String,
+    /// Which target pairing (within a possibly multi-target schedule
+    /// sharing this `run_id`) this event belongs to.
+    pub agent_id: i64,
+    /// Which target pairing (within a possibly multi-target schedule
+    /// sharing this `run_id`) this event belongs to.
+    pub repo_id: i64,
     /// Which host this event happened to, as stored (`"source"` /
     /// `"repository"`).
     pub target: String,
@@ -39,15 +45,20 @@ pub struct RunEventRow {
 pub async fn insert_run_event(
     pool: &PgPool,
     run_id: &str,
+    agent_id: i64,
+    repo_id: i64,
     target: RunEventTarget,
     event_type: RunEventType,
     message: &str,
 ) -> Result<RunEventRow, ApiError> {
     sqlx::query_as!(
         RunEventRow,
-        "INSERT INTO backup_run_events (run_id, target, event_type, message) VALUES ($1, $2, $3, \
-         $4) RETURNING id, run_id, target, event_type, message, occurred_at",
+        "INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message) \
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, run_id, agent_id, repo_id, target, \
+         event_type, message, occurred_at",
         run_id,
+        agent_id,
+        repo_id,
         target.to_string(),
         event_type.to_string(),
         message,
@@ -57,17 +68,27 @@ pub async fn insert_run_event(
     .map_err(ApiError::Database)
 }
 
-/// Lists a run's power-management timeline in chronological order.
+/// Lists a run's power-management timeline in chronological order, scoped
+/// to one target pairing -- `run_id` alone spans every target of a
+/// multi-target schedule.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn list_run_events(pool: &PgPool, run_id: &str) -> Result<Vec<RunEventRow>, ApiError> {
+pub async fn list_run_events(
+    pool: &PgPool,
+    run_id: &str,
+    agent_id: i64,
+    repo_id: i64,
+) -> Result<Vec<RunEventRow>, ApiError> {
     sqlx::query_as!(
         RunEventRow,
-        "SELECT id, run_id, target, event_type, message, occurred_at FROM backup_run_events WHERE \
-         run_id = $1 ORDER BY occurred_at, id",
+        "SELECT id, run_id, agent_id, repo_id, target, event_type, message, occurred_at FROM \
+         backup_run_events WHERE run_id = $1 AND agent_id = $2 AND repo_id = $3 ORDER BY \
+         occurred_at, id",
         run_id,
+        agent_id,
+        repo_id,
     )
     .fetch_all(pool)
     .await

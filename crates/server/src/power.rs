@@ -153,13 +153,38 @@ pub struct PowerSessionTracker {
 
 impl PowerSessionTracker {
     /// Registers a target as relying on `key` staying up for the duration of
-    /// its run.
-    pub async fn begin(&self, key: PowerHostKey, woke: bool, started_agent: bool) {
+    /// its run, *before* attempting to reach/wake it. Reserving up front
+    /// (rather than only once the wake attempt has resolved) is what makes
+    /// the reference count correct while two targets are concurrently
+    /// waking the same host: without it, a target whose wake resolves
+    /// quickly could tear the host down via [`end`](Self::end) while a
+    /// slower sibling is still mid-wait, because the tracker wouldn't know
+    /// the sibling exists yet.
+    pub async fn reserve(&self, key: PowerHostKey) {
         let mut sessions = self.sessions.write().await;
         let session = sessions.entry(key).or_default();
         session.count = session.count.saturating_add(1);
-        session.woke |= woke;
-        session.started_agent |= started_agent;
+    }
+
+    /// Records what a reserved target's wake attempt actually did, `ORed`
+    /// into the session's accumulated flags. Call after
+    /// [`reserve`](Self::reserve); a call for a key with no active
+    /// reservation is a no-op.
+    pub async fn record_outcome(&self, key: PowerHostKey, woke: bool, started_agent: bool) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(&key) {
+            session.woke |= woke;
+            session.started_agent |= started_agent;
+        }
+    }
+
+    /// Convenience for callers that already know the outcome up front (e.g.
+    /// tests): [`reserve`](Self::reserve) immediately followed by
+    /// [`record_outcome`](Self::record_outcome).
+    #[cfg(test)]
+    async fn begin(&self, key: PowerHostKey, woke: bool, started_agent: bool) {
+        self.reserve(key).await;
+        self.record_outcome(key, woke, started_agent).await;
     }
 
     /// Ends this target's participation in `key`'s session. Returns the
@@ -205,23 +230,42 @@ pub struct RepoPowerOutcome {
 /// Records one step of a run's power-management timeline: both persists it
 /// (for the run detail history) and pushes it live over the UI WebSocket (so
 /// an open run detail view updates without polling).
+/// Identifies which of a multi-target schedule's target pairings a run
+/// event belongs to -- `run_id` alone can't, since every target in the
+/// schedule shares it. See the `backup_run_events` migration.
+#[derive(Debug, Clone, Copy)]
+struct TargetIds {
+    agent_id: i64,
+    repo_id: i64,
+}
+
 async fn record_event(
     ctx: PowerCtx<'_>,
     run_id: &str,
+    target_ids: TargetIds,
     target: RunEventTarget,
     event_type: RunEventType,
     message: impl Into<String>,
     hostname: &str,
 ) {
     let message = message.into();
-    let occurred_at =
-        match run_events::insert_run_event(ctx.pool, run_id, target, event_type, &message).await {
-            Ok(row) => row.occurred_at,
-            Err(e) => {
-                warn!(error = %e, run_id, "failed to record run event");
-                chrono::Utc::now()
-            }
-        };
+    let occurred_at = match run_events::insert_run_event(
+        ctx.pool,
+        run_id,
+        target_ids.agent_id,
+        target_ids.repo_id,
+        target,
+        event_type,
+        &message,
+    )
+    .await
+    {
+        Ok(row) => row.occurred_at,
+        Err(e) => {
+            warn!(error = %e, run_id, "failed to record run event");
+            chrono::Utc::now()
+        }
+    };
     ctx.ui_broadcast.send(ServerToUi::RunEvent {
         run_id: run_id.to_owned(),
         target,
@@ -317,9 +361,14 @@ async fn repo_reachable(repo: &RepoRow) -> bool {
 pub async fn ensure_agent_online(
     ctx: PowerCtx<'_>,
     agent: &AgentRow,
+    repo_id: i64,
     run_id: &str,
 ) -> AgentPowerOutcome {
     let mut outcome = AgentPowerOutcome::default();
+    let target_ids = TargetIds {
+        agent_id: agent.id,
+        repo_id,
+    };
 
     if !agent.wake_enabled && !agent.start_agent_enabled {
         return outcome;
@@ -331,6 +380,7 @@ pub async fn ensure_agent_online(
     record_event(
         ctx,
         run_id,
+        target_ids,
         RunEventTarget::Source,
         RunEventType::ReachabilityCheck,
         "Checked agent -- no response",
@@ -339,11 +389,12 @@ pub async fn ensure_agent_online(
     .await;
 
     if agent.wake_enabled {
-        outcome.woke = wake_agent_host(ctx, agent, run_id).await;
+        outcome.woke = wake_agent_host(ctx, agent, target_ids, run_id).await;
         if outcome.woke {
             record_event(
                 ctx,
                 run_id,
+                target_ids,
                 RunEventTarget::Source,
                 RunEventType::HostOnline,
                 "Host came online",
@@ -354,11 +405,12 @@ pub async fn ensure_agent_online(
     }
 
     if !ctx.registry.is_connected(agent.id).await && agent.start_agent_enabled {
-        outcome.started_agent = start_agent_process(ctx, agent, run_id).await;
+        outcome.started_agent = start_agent_process(ctx, agent, target_ids, run_id).await;
         if outcome.started_agent {
             record_event(
                 ctx,
                 run_id,
+                target_ids,
                 RunEventTarget::Source,
                 RunEventType::AgentConnected,
                 "Agent connected",
@@ -374,7 +426,12 @@ pub async fn ensure_agent_online(
 /// Sends the Wake-on-LAN packet for `agent` and waits for it to connect,
 /// logging and returning `false` on any failure along the way (invalid MAC,
 /// send failure) rather than aborting the run.
-async fn wake_agent_host(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &str) -> bool {
+async fn wake_agent_host(
+    ctx: PowerCtx<'_>,
+    agent: &AgentRow,
+    target_ids: TargetIds,
+    run_id: &str,
+) -> bool {
     let Some(mac) = agent
         .wake_mac_address
         .as_deref()
@@ -398,6 +455,7 @@ async fn wake_agent_host(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &str) -> b
     record_event(
         ctx,
         run_id,
+        target_ids,
         RunEventTarget::Source,
         RunEventType::WakeSent,
         format!("Sent Wake-on-LAN packet to {mac}"),
@@ -414,7 +472,12 @@ async fn wake_agent_host(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &str) -> b
 /// Starts `agent`'s systemd unit over SSH and waits for it to connect,
 /// logging and returning `false` on any failure along the way rather than
 /// aborting the run.
-async fn start_agent_process(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &str) -> bool {
+async fn start_agent_process(
+    ctx: PowerCtx<'_>,
+    agent: &AgentRow,
+    target_ids: TargetIds,
+    run_id: &str,
+) -> bool {
     let Some(ssh_host) = agent.ssh_host.as_deref() else {
         warn!(
             agent_id = agent.id,
@@ -439,6 +502,7 @@ async fn start_agent_process(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &str) 
     record_event(
         ctx,
         run_id,
+        target_ids,
         RunEventTarget::Source,
         RunEventType::AgentStartSent,
         format!("Started {} over SSH", agent.agent_service_name),
@@ -460,10 +524,15 @@ async fn start_agent_process(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &str) 
 pub async fn ensure_repo_online(
     ctx: PowerCtx<'_>,
     repo: &RepoRow,
+    agent_id: i64,
     run_id: &str,
     hostname: &str,
 ) -> RepoPowerOutcome {
     let mut outcome = RepoPowerOutcome::default();
+    let target_ids = TargetIds {
+        agent_id,
+        repo_id: repo.id,
+    };
 
     if !repo.wake_enabled || repo_reachable(repo).await {
         return outcome;
@@ -472,6 +541,7 @@ pub async fn ensure_repo_online(
     record_event(
         ctx,
         run_id,
+        target_ids,
         RunEventTarget::Repository,
         RunEventType::ReachabilityCheck,
         "Checked SSH -- no response",
@@ -502,6 +572,7 @@ pub async fn ensure_repo_online(
     record_event(
         ctx,
         run_id,
+        target_ids,
         RunEventTarget::Repository,
         RunEventType::WakeSent,
         format!("Sent Wake-on-LAN packet to {mac}"),
@@ -518,6 +589,7 @@ pub async fn ensure_repo_online(
         record_event(
             ctx,
             run_id,
+            target_ids,
             RunEventTarget::Repository,
             RunEventType::HostOnline,
             "Host online -- SSH reachable",
@@ -534,7 +606,7 @@ pub async fn ensure_repo_online(
 /// -- but only once every concurrently-running target relying on this host
 /// has finished, per [`PowerSessionTracker`]. Best-effort: logs failures
 /// rather than failing the run, since the backup itself already completed.
-pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &str) {
+pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: i64, run_id: &str) {
     let Some((woke, started_agent)) = ctx.power_sessions.end(PowerHostKey::Agent(agent.id)).await
     else {
         return;
@@ -547,11 +619,16 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &
     };
     let ssh_user = agent.last_ssh_user.as_deref().unwrap_or(FALLBACK_SSH_USER);
     let port = port_u16(agent.ssh_port);
+    let target_ids = TargetIds {
+        agent_id: agent.id,
+        repo_id,
+    };
 
     if woke && agent.shutdown_after_backup {
         record_event(
             ctx,
             run_id,
+            target_ids,
             RunEventTarget::Source,
             RunEventType::ShutdownSent,
             "Shutting down host",
@@ -563,6 +640,7 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &
                 record_event(
                     ctx,
                     run_id,
+                    target_ids,
                     RunEventTarget::Source,
                     RunEventType::HostOffline,
                     "Host offline",
@@ -576,6 +654,7 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &
         record_event(
             ctx,
             run_id,
+            target_ids,
             RunEventTarget::Source,
             RunEventType::AgentStopSent,
             "Stopping agent",
@@ -599,17 +678,28 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, run_id: &
 /// Shuts a repository's host down, if this session woke it and every
 /// concurrently-running target relying on it has finished. Best-effort: logs
 /// failures rather than failing the run.
-pub async fn teardown_repo_power(ctx: PowerCtx<'_>, repo: &RepoRow, run_id: &str, hostname: &str) {
+pub async fn teardown_repo_power(
+    ctx: PowerCtx<'_>,
+    repo: &RepoRow,
+    agent_id: i64,
+    run_id: &str,
+    hostname: &str,
+) {
     let Some((woke, _)) = ctx.power_sessions.end(PowerHostKey::Repo(repo.id)).await else {
         return;
     };
     if !woke || !repo.shutdown_after_backup {
         return;
     }
+    let target_ids = TargetIds {
+        agent_id,
+        repo_id: repo.id,
+    };
 
     record_event(
         ctx,
         run_id,
+        target_ids,
         RunEventTarget::Repository,
         RunEventType::ShutdownSent,
         "Shutting down host",
@@ -621,6 +711,7 @@ pub async fn teardown_repo_power(ctx: PowerCtx<'_>, repo: &RepoRow, run_id: &str
             record_event(
                 ctx,
                 run_id,
+                target_ids,
                 RunEventTarget::Repository,
                 RunEventType::HostOffline,
                 "Host offline",
@@ -736,17 +827,23 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let agent = test_agent(&pool).await;
+        let repo = test_repo(&pool).await;
         let registry = AgentRegistry::new();
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
 
-        let outcome =
-            ensure_agent_online(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+        let outcome = ensure_agent_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+        )
+        .await;
 
         assert!(!outcome.woke);
         assert!(!outcome.started_agent);
         assert!(
-            db::run_events::list_run_events(&pool, "run-1")
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
                 .await
                 .unwrap()
                 .is_empty()
@@ -756,6 +853,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn ensure_agent_online_is_a_noop_when_already_connected(pool: sqlx::PgPool) {
+        let repo = test_repo(&pool).await;
         let agent = db::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
@@ -781,12 +879,17 @@ mod tests {
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
 
-        let outcome =
-            ensure_agent_online(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+        let outcome = ensure_agent_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+        )
+        .await;
 
         assert!(!outcome.woke);
         assert!(
-            db::run_events::list_run_events(&pool, "run-1")
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
                 .await
                 .unwrap()
                 .is_empty()
@@ -798,6 +901,7 @@ mod tests {
     async fn ensure_agent_online_records_events_and_gives_up_when_host_never_comes_up(
         pool: sqlx::PgPool,
     ) {
+        let repo = test_repo(&pool).await;
         let agent = db::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
@@ -821,8 +925,13 @@ mod tests {
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
 
-        let outcome =
-            ensure_agent_online(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+        let outcome = ensure_agent_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+        )
+        .await;
 
         assert!(!outcome.woke, "the agent never connects in this test");
         assert!(
@@ -830,7 +939,7 @@ mod tests {
             "the SSH host refuses the connection"
         );
 
-        let events = db::run_events::list_run_events(&pool, "run-1")
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
@@ -840,6 +949,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn ensure_repo_online_is_a_noop_when_wake_disabled(pool: sqlx::PgPool) {
+        let agent = test_agent(&pool).await;
         let repo = test_repo(&pool).await;
         let registry = AgentRegistry::new();
         let sessions = PowerSessionTracker::default();
@@ -848,6 +958,7 @@ mod tests {
         let outcome = ensure_repo_online(
             ctx(&pool, &registry, &bus, &sessions),
             &repo,
+            agent.id,
             "run-1",
             "repo-host",
         )
@@ -855,7 +966,7 @@ mod tests {
 
         assert!(!outcome.woke);
         assert!(
-            db::run_events::list_run_events(&pool, "run-1")
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
                 .await
                 .unwrap()
                 .is_empty()
@@ -867,6 +978,7 @@ mod tests {
     async fn ensure_repo_online_records_events_and_gives_up_when_host_never_comes_up(
         pool: sqlx::PgPool,
     ) {
+        let agent = test_agent(&pool).await;
         let repo = db::update_repo_power(
             &pool,
             test_repo(&pool).await.id,
@@ -888,6 +1000,7 @@ mod tests {
         let outcome = ensure_repo_online(
             ctx(&pool, &registry, &bus, &sessions),
             &repo,
+            agent.id,
             "run-1",
             "repo-host",
         )
@@ -895,7 +1008,7 @@ mod tests {
 
         assert!(!outcome.woke, "the unreachable host never answers SSH");
 
-        let events = db::run_events::list_run_events(&pool, "run-1")
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
@@ -920,6 +1033,7 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let agent = test_agent(&pool).await;
+        let repo = test_repo(&pool).await;
         let registry = AgentRegistry::new();
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
@@ -927,10 +1041,16 @@ mod tests {
             .begin(PowerHostKey::Agent(agent.id), false, false)
             .await;
 
-        teardown_agent_power(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+        teardown_agent_power(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+        )
+        .await;
 
         assert!(
-            db::run_events::list_run_events(&pool, "run-1")
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
                 .await
                 .unwrap()
                 .is_empty()
@@ -942,6 +1062,7 @@ mod tests {
     async fn teardown_agent_power_attempts_shutdown_when_this_run_woke_the_host(
         pool: sqlx::PgPool,
     ) {
+        let repo = test_repo(&pool).await;
         let agent = db::update_agent_power(
             &pool,
             test_agent(&pool).await.id,
@@ -967,11 +1088,17 @@ mod tests {
             .begin(PowerHostKey::Agent(agent.id), true, false)
             .await;
 
-        teardown_agent_power(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+        teardown_agent_power(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+        )
+        .await;
 
         // The SSH shutdown attempt fails (nothing listens on the port), so
         // only the attempt itself is recorded, not a HostOffline event.
-        let events = db::run_events::list_run_events(&pool, "run-1")
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
@@ -981,6 +1108,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn teardown_repo_power_does_nothing_when_this_run_did_not_wake_it(pool: sqlx::PgPool) {
+        let agent = test_agent(&pool).await;
         let repo = test_repo(&pool).await;
         let registry = AgentRegistry::new();
         let sessions = PowerSessionTracker::default();
@@ -992,13 +1120,14 @@ mod tests {
         teardown_repo_power(
             ctx(&pool, &registry, &bus, &sessions),
             &repo,
+            agent.id,
             "run-1",
             "repo-host",
         )
         .await;
 
         assert!(
-            db::run_events::list_run_events(&pool, "run-1")
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
                 .await
                 .unwrap()
                 .is_empty()
@@ -1008,6 +1137,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn teardown_repo_power_attempts_shutdown_when_this_run_woke_it(pool: sqlx::PgPool) {
+        let agent = test_agent(&pool).await;
         let repo = db::update_repo_power(
             &pool,
             test_repo(&pool).await.id,
@@ -1031,12 +1161,13 @@ mod tests {
         teardown_repo_power(
             ctx(&pool, &registry, &bus, &sessions),
             &repo,
+            agent.id,
             "run-1",
             "repo-host",
         )
         .await;
 
-        let events = db::run_events::list_run_events(&pool, "run-1")
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();

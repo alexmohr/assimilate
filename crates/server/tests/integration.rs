@@ -1072,9 +1072,16 @@ async fn test_list_run_events_returns_chronological_order() {
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
+    let agent = server::db::insert_agent(&pool, "run-events-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "run-events-repo").await;
+
     server::db::run_events::insert_run_event(
         &pool,
         "run-xyz",
+        agent.id,
+        repo_id,
         shared::types::RunEventTarget::Source,
         shared::types::RunEventType::ReachabilityCheck,
         "Checked agent -- no response",
@@ -1084,6 +1091,8 @@ async fn test_list_run_events_returns_chronological_order() {
     server::db::run_events::insert_run_event(
         &pool,
         "run-xyz",
+        agent.id,
+        repo_id,
         shared::types::RunEventTarget::Source,
         shared::types::RunEventType::WakeSent,
         "Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44",
@@ -1091,7 +1100,10 @@ async fn test_list_run_events_returns_chronological_order() {
     .await
     .unwrap();
 
-    let req = get_request("/api/runs/run-xyz/events");
+    let req = get_request(&format!(
+        "/api/runs/run-xyz/events?agent_id={}&repo_id={repo_id}",
+        agent.id
+    ));
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
@@ -1115,7 +1127,15 @@ async fn test_list_run_events_for_unknown_run_returns_empty_array() {
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
-    let req = get_request("/api/runs/does-not-exist/events");
+    let agent = server::db::insert_agent(&pool, "run-events-host-2", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "run-events-repo-2").await;
+
+    let req = get_request(&format!(
+        "/api/runs/does-not-exist/events?agent_id={}&repo_id={repo_id}",
+        agent.id
+    ));
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;

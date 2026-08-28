@@ -9478,11 +9478,17 @@ async fn get_repo_by_id_includes_power_fields(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn run_events_list_in_chronological_order(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
     let run_id = "test-run-123";
 
     db::run_events::insert_run_event(
         &pool,
         run_id,
+        agent.id,
+        repo.id,
         shared::types::RunEventTarget::Source,
         shared::types::RunEventType::ReachabilityCheck,
         "Checked agent -- no response",
@@ -9492,6 +9498,8 @@ async fn run_events_list_in_chronological_order(pool: PgPool) {
     db::run_events::insert_run_event(
         &pool,
         run_id,
+        agent.id,
+        repo.id,
         shared::types::RunEventTarget::Source,
         shared::types::RunEventType::WakeSent,
         "Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44",
@@ -9501,6 +9509,8 @@ async fn run_events_list_in_chronological_order(pool: PgPool) {
     db::run_events::insert_run_event(
         &pool,
         run_id,
+        agent.id,
+        repo.id,
         shared::types::RunEventTarget::Repository,
         shared::types::RunEventType::WakeSent,
         "Sent Wake-on-LAN packet to 9C:B6:D0:1A:44:7F",
@@ -9508,7 +9518,7 @@ async fn run_events_list_in_chronological_order(pool: PgPool) {
     .await
     .unwrap();
 
-    let events = db::run_events::list_run_events(&pool, run_id)
+    let events = db::run_events::list_run_events(&pool, run_id, agent.id, repo.id)
         .await
         .unwrap();
 
@@ -9521,9 +9531,15 @@ async fn run_events_list_in_chronological_order(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn run_events_for_unrelated_run_id_are_not_returned(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-host-a", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
     db::run_events::insert_run_event(
         &pool,
         "run-a",
+        agent.id,
+        repo.id,
         shared::types::RunEventTarget::Source,
         shared::types::RunEventType::WakeSent,
         "message for run a",
@@ -9531,8 +9547,66 @@ async fn run_events_for_unrelated_run_id_are_not_returned(pool: PgPool) {
     .await
     .unwrap();
 
-    let events = db::run_events::list_run_events(&pool, "run-b")
+    let events = db::run_events::list_run_events(&pool, "run-b", agent.id, repo.id)
         .await
         .unwrap();
     assert!(events.is_empty());
+}
+
+// A multi-target schedule shares one run_id across every target pairing it
+// fans out to (see the backup_run_events migration), so run_id alone can't
+// scope a query to one pairing's events - list_run_events must also filter
+// by agent_id/repo_id, or a run detail view for one target would show
+// another target's power-management timeline mixed in with its own.
+#[sqlx::test(migrations = "./migrations")]
+async fn run_events_are_scoped_to_their_own_target_pairing_within_a_shared_run_id(pool: PgPool) {
+    let agent_a = db::insert_agent(&pool, "run-events-target-a", None, "hash", None, None)
+        .await
+        .unwrap();
+    let agent_b = db::insert_agent(&pool, "run-events-target-b", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let run_id = "shared-run-id";
+
+    db::run_events::insert_run_event(
+        &pool,
+        run_id,
+        agent_a.id,
+        repo.id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::WakeSent,
+        "message for target a",
+    )
+    .await
+    .unwrap();
+    db::run_events::insert_run_event(
+        &pool,
+        run_id,
+        agent_b.id,
+        repo.id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::WakeSent,
+        "message for target b",
+    )
+    .await
+    .unwrap();
+
+    let events_for_a = db::run_events::list_run_events(&pool, run_id, agent_a.id, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(events_for_a.len(), 1);
+    assert_eq!(
+        events_for_a.first().unwrap().message,
+        "message for target a"
+    );
+
+    let events_for_b = db::run_events::list_run_events(&pool, run_id, agent_b.id, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(events_for_b.len(), 1);
+    assert_eq!(
+        events_for_b.first().unwrap().message,
+        "message for target b"
+    );
 }

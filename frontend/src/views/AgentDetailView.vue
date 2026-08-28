@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   listAgents,
@@ -556,6 +556,25 @@ onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
  * belongs to the same run but says nothing about this page's host.
  */
 const powerPhase = ref<AgentPowerPhase | null>(null)
+
+// Safety net for a phase that never resolves - e.g. a shutdown/agent-stop
+// attempt whose SSH command fails partway (the host never goes offline, the
+// agent never disconnects, so neither a `host_offline` RunEvent nor an
+// `AgentConnected` message ever arrives to clear it). Generous relative to
+// the server's own wake/shutdown timeouts so it never fires during a normal
+// wait, just as a last resort against a badge stuck forever.
+const POWER_PHASE_TIMEOUT_MS = 5 * 60 * 1000
+let powerPhaseTimeout: ReturnType<typeof setTimeout> | undefined
+watch(powerPhase, (phase) => {
+  clearTimeout(powerPhaseTimeout)
+  if (phase) {
+    powerPhaseTimeout = setTimeout(() => {
+      powerPhase.value = null
+    }, POWER_PHASE_TIMEOUT_MS)
+  }
+})
+onUnmounted(() => clearTimeout(powerPhaseTimeout))
+
 onMessage('RunEvent', (payload) => {
   if (payload.hostname !== props.hostname || payload.target !== 'source') return
   powerPhase.value = agentPowerPhase(payload.event_type)

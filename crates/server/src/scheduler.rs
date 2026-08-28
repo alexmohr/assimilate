@@ -967,23 +967,28 @@ async fn run_sequential_target(
     // Subscribe before sending so we don't miss the completion event.
     let rx = ctx.completion_bus.subscribe();
 
-    // Acquire the per-repo lock to prevent concurrent backups across schedules.
-    let _repo_guard = ctx.repo_lock.acquire(target.repo_id).await;
-
     // Make sure the source and repository hosts are reachable before anything
     // else that assumes they are, waking each independently and concurrently
     // (one being slow doesn't hold up the other). Every target that reaches
     // here is matched by exactly one `teardown_power_for_target` call on
     // every exit path below, so a host this run wakes is never left running
-    // because of an early return.
+    // because of an early return. Done before acquiring the repo lock below,
+    // since waking doesn't touch the repo itself - a slow wake (up to
+    // wake_timeout_seconds) must not hold the lock and block an unrelated,
+    // already-reachable target from starting.
     let (agent_row, repo_row) = ensure_target_power(ctx, target).await;
     let power = TargetPowerState {
         ctx: ctx.power_ctx(),
         agent: agent_row.as_ref(),
         repo: repo_row.as_ref(),
+        agent_id: target.agent_id,
+        repo_id: target.repo_id,
         run_id: ctx.run_id,
         hostname: &target.hostname,
     };
+
+    // Acquire the per-repo lock to prevent concurrent backups across schedules.
+    let _repo_guard = ctx.repo_lock.acquire(target.repo_id).await;
 
     ctx.tunnel_manager
         .ensure_agent_tunnel_connected(target.agent_id)
@@ -1107,6 +1112,11 @@ struct TargetPowerState<'a> {
     ctx: power::PowerCtx<'a>,
     agent: Option<&'a db::AgentRow>,
     repo: Option<&'a db::RepoRow>,
+    /// This target's pairing, independent of whether `agent`/`repo` above
+    /// were actually fetched -- teardown needs the sibling ID even when its
+    /// own row lookup failed.
+    agent_id: i64,
+    repo_id: i64,
     run_id: &'a str,
     hostname: &'a str,
 }
@@ -1148,27 +1158,74 @@ async fn ensure_target_power(
     target: &DueScheduleRow,
 ) -> (Option<db::AgentRow>, Option<db::RepoRow>) {
     let power_ctx = ctx.power_ctx();
-    let agent_row = db::get_agent_by_id(ctx.pool, target.agent_id).await.ok();
-    let repo_row = db::get_repo_by_id(ctx.pool, target.repo_id).await.ok();
+    let agent_row = match db::get_agent_by_id(ctx.pool, target.agent_id).await {
+        Ok(row) => Some(row),
+        Err(e) => {
+            tracing::warn!(
+                agent_id = target.agent_id,
+                error = %e,
+                "sequential: failed to load agent for power management, skipping wake"
+            );
+            None
+        }
+    };
+    let repo_row = match db::get_repo_by_id(ctx.pool, target.repo_id).await {
+        Ok(row) => Some(row),
+        Err(e) => {
+            tracing::warn!(
+                repo_id = target.repo_id,
+                error = %e,
+                "sequential: failed to load repo for power management, skipping wake"
+            );
+            None
+        }
+    };
+
+    // Reserve both hosts *before* attempting to reach them, not once the
+    // attempt resolves: two targets concurrently waking the same host must
+    // both be counted for the whole waking window, or the one that resolves
+    // first can tear the host down (see teardown_power_for_target) while the
+    // other is still relying on it being up.
+    if agent_row.is_some() {
+        ctx.power_sessions
+            .reserve(power::PowerHostKey::Agent(target.agent_id))
+            .await;
+    }
+    if repo_row.is_some() {
+        ctx.power_sessions
+            .reserve(power::PowerHostKey::Repo(target.repo_id))
+            .await;
+    }
+
     let (agent_outcome, repo_outcome) = tokio::join!(
         async {
             match &agent_row {
-                Some(agent) => power::ensure_agent_online(power_ctx, agent, ctx.run_id).await,
+                Some(agent) => {
+                    power::ensure_agent_online(power_ctx, agent, target.repo_id, ctx.run_id).await
+                }
                 None => power::AgentPowerOutcome::default(),
             }
         },
         async {
             match &repo_row {
                 Some(repo) => {
-                    power::ensure_repo_online(power_ctx, repo, ctx.run_id, &target.hostname).await
+                    power::ensure_repo_online(
+                        power_ctx,
+                        repo,
+                        target.agent_id,
+                        ctx.run_id,
+                        &target.hostname,
+                    )
+                    .await
                 }
                 None => power::RepoPowerOutcome::default(),
             }
         },
     );
+
     if agent_row.is_some() {
         ctx.power_sessions
-            .begin(
+            .record_outcome(
                 power::PowerHostKey::Agent(target.agent_id),
                 agent_outcome.woke,
                 agent_outcome.started_agent,
@@ -1177,7 +1234,7 @@ async fn ensure_target_power(
     }
     if repo_row.is_some() {
         ctx.power_sessions
-            .begin(
+            .record_outcome(
                 power::PowerHostKey::Repo(target.repo_id),
                 repo_outcome.woke,
                 false,
@@ -1195,10 +1252,17 @@ async fn ensure_target_power(
 /// matching `begin()` calls in [`run_sequential_target`].
 async fn teardown_power_for_target(power: TargetPowerState<'_>) {
     if let Some(agent) = power.agent {
-        power::teardown_agent_power(power.ctx, agent, power.run_id).await;
+        power::teardown_agent_power(power.ctx, agent, power.repo_id, power.run_id).await;
     }
     if let Some(repo) = power.repo {
-        power::teardown_repo_power(power.ctx, repo, power.run_id, power.hostname).await;
+        power::teardown_repo_power(
+            power.ctx,
+            repo,
+            power.agent_id,
+            power.run_id,
+            power.hostname,
+        )
+        .await;
     }
 }
 

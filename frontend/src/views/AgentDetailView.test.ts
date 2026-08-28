@@ -945,6 +945,34 @@ describe('AgentDetailView — power phase badge', () => {
 
     expect(wrapper.find('.badge--info').exists()).toBe(false)
   })
+
+  // If the SSH command behind a shutdown/agent-stop attempt fails partway,
+  // the agent never disconnects and never reconnects, so neither a
+  // `host_offline` RunEvent nor an `AgentConnected` message ever arrives to
+  // clear the phase - it would otherwise stay stuck forever.
+  it('clears a stuck phase on its own after the safety-net timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = await mountAgent()
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-1',
+        target: 'source',
+        event_type: 'shutdown_sent',
+        message: 'Shutting down host',
+        occurred_at: '2026-06-01T03:00:00Z',
+        hostname: 'test-host',
+      })
+      await nextTick()
+      expect(wrapper.text()).toContain('Shutting down...')
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+      expect(wrapper.text()).not.toContain('Shutting down...')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 async function openDefaultsSettings(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {

@@ -22,6 +22,49 @@ function scheduleCard(page: Page, id: number): Locator {
   return page.locator(`.entity-card[data-schedule-id="${id}"]`)
 }
 
+// Fills a numeric settings field, intercepts the PUT so the response echoes
+// back the value the request actually sent (a real save round-trips through
+// the seeded schedule's other fields untouched), and waits for the save to
+// land. Returns the field's input so the caller can assert its final value.
+async function saveNumericScheduleField(
+  page: Page,
+  fieldLabel: string,
+  jsonKey: string,
+  newValue: number,
+): Promise<Locator> {
+  const field = page.locator('.field', { hasText: fieldLabel })
+  const input = field.locator('input[type="number"]')
+  await expect(input).toBeVisible()
+
+  let savedBody: Record<string, unknown> | null = null
+  await page.route(
+    (url) => url.pathname === '/api/schedules/1',
+    async (route) => {
+      if (route.request().method() === 'PUT') {
+        savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+        const response = await route.fetch()
+        const body = (await response.json()) as Record<string, unknown>
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify({ ...body, [jsonKey]: savedBody[jsonKey] }),
+        })
+      }
+      return route.continue()
+    },
+  )
+
+  await input.fill(String(newValue))
+  await page.getByRole('button', { name: 'Save changes' }).click()
+
+  await expect(async () => {
+    expect(savedBody).not.toBeNull()
+    expect((savedBody as Record<string, unknown>)[jsonKey]).toBe(newValue)
+  }).toPass({ timeout: 5_000 })
+
+  return input
+}
+
 // Navigates to the schedules list with schedule 1 forced overdue, and returns
 // its card and Overdue chip locators.
 async function openOverdueScheduleCard(
@@ -342,39 +385,12 @@ test.describe('Schedules management', () => {
     await page.getByRole('tab', { name: 'Settings' }).click()
     await page.getByRole('button', { name: 'Advanced' }).click()
 
-    const timeoutField = page.locator('.field', { hasText: 'Hook command timeout' })
-    const timeoutInput = timeoutField.locator('input[type="number"]')
-    await expect(timeoutInput).toBeVisible()
-
-    let savedBody: Record<string, unknown> | null = null
-    await page.route(
-      (url) => url.pathname === '/api/schedules/1',
-      async (route) => {
-        if (route.request().method() === 'PUT') {
-          savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
-          const response = await route.fetch()
-          const body = (await response.json()) as Record<string, unknown>
-          return route.fulfill({
-            status: response.status(),
-            contentType: 'application/json',
-            body: JSON.stringify({
-              ...body,
-              hook_timeout_seconds: savedBody.hook_timeout_seconds,
-            }),
-          })
-        }
-        return route.continue()
-      },
+    const timeoutInput = await saveNumericScheduleField(
+      page,
+      'Hook command timeout',
+      'hook_timeout_seconds',
+      180,
     )
-
-    await timeoutInput.fill('180')
-    await page.getByRole('button', { name: 'Save changes' }).click()
-
-    await expect(async () => {
-      expect(savedBody).not.toBeNull()
-      expect((savedBody as Record<string, unknown>).hook_timeout_seconds).toBe(180)
-    }).toPass({ timeout: 5_000 })
-
     await expect(timeoutInput).toHaveValue('180')
   })
 
@@ -387,39 +403,12 @@ test.describe('Schedules management', () => {
 
     await page.getByRole('tab', { name: 'Settings' }).click()
 
-    const thresholdField = page.locator('.field', { hasText: 'Mark as failed after' })
-    const thresholdInput = thresholdField.locator('input[type="number"]')
-    await expect(thresholdInput).toBeVisible()
-
-    let savedBody: Record<string, unknown> | null = null
-    await page.route(
-      (url) => url.pathname === '/api/schedules/1',
-      async (route) => {
-        if (route.request().method() === 'PUT') {
-          savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
-          const response = await route.fetch()
-          const body = (await response.json()) as Record<string, unknown>
-          return route.fulfill({
-            status: response.status(),
-            contentType: 'application/json',
-            body: JSON.stringify({
-              ...body,
-              missed_backup_threshold: savedBody.missed_backup_threshold,
-            }),
-          })
-        }
-        return route.continue()
-      },
+    const thresholdInput = await saveNumericScheduleField(
+      page,
+      'Mark as failed after',
+      'missed_backup_threshold',
+      5,
     )
-
-    await thresholdInput.fill('5')
-    await page.getByRole('button', { name: 'Save changes' }).click()
-
-    await expect(async () => {
-      expect(savedBody).not.toBeNull()
-      expect((savedBody as Record<string, unknown>).missed_backup_threshold).toBe(5)
-    }).toPass({ timeout: 5_000 })
-
     await expect(thresholdInput).toHaveValue('5')
   })
 

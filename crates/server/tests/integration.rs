@@ -158,6 +158,10 @@ fn test_app_core_routes() -> Router<server::AppState> {
             get(server::api::reports::list_reports),
         )
         .route(
+            "/api/agents/{hostname}/reports/failed",
+            delete(server::api::reports::delete_failed_reports),
+        )
+        .route(
             "/api/agents/{hostname}/repos/{repo_id}/cancel-backup",
             post(server::api::agents::cancel_agent_backup),
         )
@@ -220,6 +224,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
                 .delete(server::api::schedules::delete_schedule),
         )
         .route(
+            "/api/schedules/{id}/reports/failed",
+            delete(server::api::schedules::delete_failed_schedule_reports),
+        )
+        .route(
             "/api/schedules/{id}/sources",
             get(server::api::schedules::list_schedule_backup_sources),
         )
@@ -251,6 +259,11 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
         .route(
             "/api/stats/storage-breakdown",
             get(server::api::stats::storage_breakdown),
+        )
+        .route(
+            "/api/stats/activity/{id}/acknowledge",
+            post(server::api::stats::acknowledge_activity_entry)
+                .delete(server::api::stats::unacknowledge_activity_entry),
         )
         .route("/api/stats/calendar", get(server::api::stats::calendar))
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
@@ -5776,6 +5789,171 @@ async fn test_cancel_agent_backup_unknown_hostname_returns_not_found() {
     );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// -- failed report cleanup --
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_failed_reports_removes_only_failed_agent_reports() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "delete-failed-agent-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('delete-failed-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for status in ["failed", "success"] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), $3, true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = delete_request("/api/agents/delete-failed-host/reports/failed");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("deleted").unwrap(), 1);
+
+    let req = get_request("/api/agents/delete-failed-host/reports");
+    let resp = oneshot(&mut app, req).await;
+    let remaining: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let statuses: Vec<&str> = remaining
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(statuses, vec!["success"]);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_failed_schedule_reports_removes_only_failed_schedule_reports() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "delete-failed-schedule-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('delete-failed-sched-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    for status in ["failed", "success"] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, matched) VALUES ($1, $2, $3, NOW(), NOW(), $4, true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(schedule_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = delete_request(&format!("/api/schedules/{schedule_id}/reports/failed"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("deleted").unwrap(), 1);
+
+    let remaining: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM backup_reports WHERE schedule_id = $1")
+            .bind(schedule_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, vec![("success".to_string(),)]);
+}
+
+// -- activity acknowledgement --
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_acknowledge_and_unacknowledge_activity_entry() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "acknowledge-activity-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('acknowledge-activity-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let req = get_request("/api/stats/activity?hostname=acknowledge-activity-host");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        rows.as_array()
+            .unwrap()
+            .first()
+            .unwrap()
+            .get("acknowledged")
+            .unwrap(),
+        true
+    );
+
+    let req = delete_request(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let req = get_request("/api/stats/activity?hostname=acknowledge-activity-host");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        rows.as_array()
+            .unwrap()
+            .first()
+            .unwrap()
+            .get("acknowledged")
+            .unwrap(),
+        false
+    );
 }
 
 // -- archive resync reliability --

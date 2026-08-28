@@ -22,10 +22,44 @@ function scheduleCard(page: Page, id: number): Locator {
   return page.locator(`.entity-card[data-schedule-id="${id}"]`)
 }
 
+// Intercepts a PUT to /api/schedules/:id, capturing the request body and
+// handing both it and the real response body to `buildResponseBody` to shape
+// what's echoed back - a real save round-trips through the schedule's other
+// fields untouched, so a caller that only cares about one field merges its
+// write into the original response rather than replacing it outright.
+// Returns a getter for the most recently captured request body, since the
+// route handler itself runs on Playwright's side and can't be awaited here.
+async function interceptScheduleSave(
+  page: Page,
+  scheduleId: number,
+  buildResponseBody: (
+    requestBody: Record<string, unknown>,
+    originalResponseBody: Record<string, unknown>,
+  ) => Record<string, unknown>,
+): Promise<() => Record<string, unknown> | null> {
+  let savedBody: Record<string, unknown> | null = null
+  await page.route(
+    (url) => url.pathname === `/api/schedules/${scheduleId}`,
+    async (route) => {
+      if (route.request().method() === 'PUT') {
+        savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+        const response = await route.fetch()
+        const body = (await response.json()) as Record<string, unknown>
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify(buildResponseBody(savedBody, body)),
+        })
+      }
+      return route.continue()
+    },
+  )
+  return () => savedBody
+}
+
 // Fills a numeric settings field, intercepts the PUT so the response echoes
-// back the value the request actually sent (a real save round-trips through
-// the seeded schedule's other fields untouched), and waits for the save to
-// land. Returns the field's input so the caller can assert its final value.
+// back the value the request actually sent, and waits for the save to land.
+// Returns the field's input so the caller can assert its final value.
 async function saveNumericScheduleField(
   page: Page,
   fieldLabel: string,
@@ -36,28 +70,16 @@ async function saveNumericScheduleField(
   const input = field.locator('input[type="number"]')
   await expect(input).toBeVisible()
 
-  let savedBody: Record<string, unknown> | null = null
-  await page.route(
-    (url) => url.pathname === '/api/schedules/1',
-    async (route) => {
-      if (route.request().method() === 'PUT') {
-        savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
-        const response = await route.fetch()
-        const body = (await response.json()) as Record<string, unknown>
-        return route.fulfill({
-          status: response.status(),
-          contentType: 'application/json',
-          body: JSON.stringify({ ...body, [jsonKey]: savedBody[jsonKey] }),
-        })
-      }
-      return route.continue()
-    },
-  )
+  const getSavedBody = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+    ...responseBody,
+    [jsonKey]: requestBody[jsonKey],
+  }))
 
   await input.fill(String(newValue))
   await page.getByRole('button', { name: 'Save changes' }).click()
 
   await expect(async () => {
+    const savedBody = getSavedBody()
     expect(savedBody).not.toBeNull()
     expect((savedBody as Record<string, unknown>)[jsonKey]).toBe(newValue)
   }).toPass({ timeout: 5_000 })
@@ -412,27 +434,16 @@ test.describe('Schedules management', () => {
       'umount -l /mnt/pve/truenas-backup\npvesm status --storage truenas-backup || exit 1'
     await newRow.fill(script)
 
-    let savedBody: Record<string, unknown> | null = null
-    await page.route(
-      (url) => url.pathname === '/api/schedules/1',
-      async (route) => {
-        if (route.request().method() === 'PUT') {
-          savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
-          const response = await route.fetch()
-          const body = (await response.json()) as Record<string, unknown>
-          return route.fulfill({
-            status: response.status(),
-            contentType: 'application/json',
-            body: JSON.stringify(body),
-          })
-        }
-        return route.continue()
-      },
+    const getSavedBody = await interceptScheduleSave(
+      page,
+      1,
+      (_requestBody, responseBody) => responseBody,
     )
 
     await page.getByRole('button', { name: 'Save changes' }).click()
 
     await expect(async () => {
+      const savedBody = getSavedBody()
       expect(savedBody).not.toBeNull()
       const commands = (savedBody as Record<string, unknown>).pre_backup_commands as string[]
       expect(commands).toContain(script)

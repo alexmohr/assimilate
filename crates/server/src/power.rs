@@ -680,4 +680,366 @@ mod tests {
         let tracker = PowerSessionTracker::default();
         assert!(tracker.end(PowerHostKey::Agent(99)).await.is_none());
     }
+
+    use crate::db;
+
+    /// A host guaranteed to refuse the connection immediately (nothing
+    /// listens on port 1), rather than actually being reachable or hanging
+    /// until a TCP timeout -- lets the wake/teardown tests exercise the SSH
+    /// failure path deterministically and fast.
+    const UNREACHABLE_HOST: &str = "127.0.0.1";
+    const UNREACHABLE_PORT: i32 = 1;
+
+    async fn test_agent(pool: &sqlx::PgPool) -> AgentRow {
+        db::insert_agent(pool, "power-test-agent", None, "hash", None, None)
+            .await
+            .unwrap()
+    }
+
+    async fn test_repo(pool: &sqlx::PgPool) -> RepoRow {
+        db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name: "power-test-repo",
+                repo_path: "/backup/power-test",
+                ssh_user: "borg",
+                ssh_host: UNREACHABLE_HOST,
+                ssh_port: UNREACHABLE_PORT,
+                passphrase_encrypted: b"irrelevant",
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    fn ctx<'a>(
+        pool: &'a sqlx::PgPool,
+        registry: &'a AgentRegistry,
+        ui_broadcast: &'a UiBroadcast,
+        power_sessions: &'a PowerSessionTracker,
+    ) -> PowerCtx<'a> {
+        PowerCtx {
+            pool,
+            registry,
+            ui_broadcast,
+            power_sessions,
+        }
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_agent_online_is_a_noop_when_wake_and_start_are_both_disabled(
+        pool: sqlx::PgPool,
+    ) {
+        let agent = test_agent(&pool).await;
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome =
+            ensure_agent_online(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+
+        assert!(!outcome.woke);
+        assert!(!outcome.started_agent);
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_agent_online_is_a_noop_when_already_connected(pool: sqlx::PgPool) {
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                ssh_host: None,
+                ssh_port: 22,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        registry.register(agent.id, tx, false, None).await;
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome =
+            ensure_agent_online(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+
+        assert!(!outcome.woke);
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_agent_online_records_events_and_gives_up_when_host_never_comes_up(
+        pool: sqlx::PgPool,
+    ) {
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+                start_agent_enabled: true,
+                stop_agent_after_backup: false,
+                ssh_host: Some(UNREACHABLE_HOST),
+                ssh_port: UNREACHABLE_PORT,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new(); // never actually connects
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome =
+            ensure_agent_online(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+
+        assert!(!outcome.woke, "the agent never connects in this test");
+        assert!(
+            !outcome.started_agent,
+            "the SSH host refuses the connection"
+        );
+
+        let events = db::run_events::list_run_events(&pool, "run-1")
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_repo_online_is_a_noop_when_wake_disabled(pool: sqlx::PgPool) {
+        let repo = test_repo(&pool).await;
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_repo_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            "run-1",
+            "repo-host",
+        )
+        .await;
+
+        assert!(!outcome.woke);
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_repo_online_records_events_and_gives_up_when_host_never_comes_up(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = db::update_repo_power(
+            &pool,
+            test_repo(&pool).await.id,
+            db::RepoPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_repo_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            "run-1",
+            "repo-host",
+        )
+        .await;
+
+        assert!(!outcome.woke, "the unreachable host never answers SSH");
+
+        let events = db::run_events::list_run_events(&pool, "run-1")
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+    }
+
+    #[tokio::test]
+    async fn teardown_agent_power_does_nothing_while_a_sibling_run_still_needs_the_host() {
+        let sessions = PowerSessionTracker::default();
+        let key = PowerHostKey::Agent(1);
+        sessions.begin(key, true, false).await;
+        sessions.begin(key, true, false).await; // a sibling schedule still running
+
+        // Ending only this run's participation must not shut anything down
+        // while the sibling is still relying on the host.
+        assert!(sessions.end(key).await.is_none());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_agent_power_does_nothing_when_this_run_neither_woke_nor_started_it(
+        pool: sqlx::PgPool,
+    ) {
+        let agent = test_agent(&pool).await;
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        sessions
+            .begin(PowerHostKey::Agent(agent.id), false, false)
+            .await;
+
+        teardown_agent_power(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_agent_power_attempts_shutdown_when_this_run_woke_the_host(
+        pool: sqlx::PgPool,
+    ) {
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                ssh_host: Some(UNREACHABLE_HOST),
+                ssh_port: UNREACHABLE_PORT,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        sessions
+            .begin(PowerHostKey::Agent(agent.id), true, false)
+            .await;
+
+        teardown_agent_power(ctx(&pool, &registry, &bus, &sessions), &agent, "run-1").await;
+
+        // The SSH shutdown attempt fails (nothing listens on the port), so
+        // only the attempt itself is recorded, not a HostOffline event.
+        let events = db::run_events::list_run_events(&pool, "run-1")
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["shutdown_sent"]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_repo_power_does_nothing_when_this_run_did_not_wake_it(pool: sqlx::PgPool) {
+        let repo = test_repo(&pool).await;
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        sessions
+            .begin(PowerHostKey::Repo(repo.id), false, false)
+            .await;
+
+        teardown_repo_power(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            "run-1",
+            "repo-host",
+        )
+        .await;
+
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_repo_power_attempts_shutdown_when_this_run_woke_it(pool: sqlx::PgPool) {
+        let repo = db::update_repo_power(
+            &pool,
+            test_repo(&pool).await.id,
+            db::RepoPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        sessions
+            .begin(PowerHostKey::Repo(repo.id), true, false)
+            .await;
+
+        teardown_repo_power(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            "run-1",
+            "repo-host",
+        )
+        .await;
+
+        let events = db::run_events::list_run_events(&pool, "run-1")
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["shutdown_sent"]);
+    }
 }

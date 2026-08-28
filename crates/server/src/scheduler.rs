@@ -32,11 +32,16 @@ const DEFAULT_SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
 
 /// Reads `var` as a whole number of seconds, falling back to `default` when unset or
 /// unparsable - mirrors [`shared::borg::kill_escalation_delay`]'s override pattern.
+/// Clamped to a 1s minimum: unlike `kill_escalation_delay`'s `Duration` (which only ever
+/// feeds `tokio::time::sleep`), these feed `tokio::time::interval`, which *panics* on a
+/// zero period - an operator setting e.g. `SCHEDULER_TICK_INTERVAL_SECS=0` would otherwise
+/// panic the whole `run()` future on first poll and silently kill scheduled backups,
+/// retention cleanup, disk sync, and session cleanup together.
 fn duration_from_env_secs(var: &str, default: Duration) -> Duration {
     std::env::var(var)
         .ok()
-        .and_then(|v| v.parse().ok())
-        .map_or(default, Duration::from_secs)
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(default, |secs| Duration::from_secs(secs.max(1)))
 }
 
 /// Overridable via `SCHEDULER_TICK_INTERVAL_SECS`. Coverage-instrumented e2e runs set
@@ -1423,8 +1428,12 @@ mod tests {
     // Combined into one test: all four cases mutate process-wide env vars, causing
     // races when run in parallel with each other (mirrors
     // `shared::borg::kill_escalation_delay_reads_env_override_and_falls_back_to_default`).
-    #[test]
-    fn interval_overrides_read_env_and_fall_back_to_defaults() {
+    // Also races `run_returns_promptly_when_shutdown_token_is_cancelled`, which reads
+    // these same four vars from a concurrently-scheduled task - guarded by
+    // `scheduler_env_lock()`, same pattern as `BORG_BINARY_LOCK` below.
+    #[tokio::test]
+    async fn interval_overrides_read_env_and_fall_back_to_defaults() {
+        let _guard = scheduler_env_lock().await;
         for (var, default, get) in [
             (
                 "SCHEDULER_TICK_INTERVAL_SECS",
@@ -1456,6 +1465,13 @@ mod tests {
             unsafe { std::env::set_var(var, "not-a-number") };
             assert_eq!(get(), default, "{var} invalid falls back to default");
 
+            unsafe { std::env::set_var(var, "0") };
+            assert_eq!(
+                get(),
+                Duration::from_secs(1),
+                "{var} zero clamps to 1s (tokio::time::interval panics on a zero period)"
+            );
+
             unsafe { std::env::remove_var(var) };
         }
     }
@@ -1470,6 +1486,7 @@ mod tests {
     /// touching the DB, so a lazily-connected, never-reachable pool is fine here.
     #[tokio::test]
     async fn run_returns_promptly_when_shutdown_token_is_cancelled() {
+        let _guard = scheduler_env_lock().await;
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
         let ui_broadcast = UiBroadcast::new();
         let state = AppState {
@@ -1514,6 +1531,19 @@ mod tests {
             result.is_ok(),
             "scheduler::run did not exit within 5s after shutdown_token cancellation"
         );
+    }
+
+    static SCHEDULER_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// Serializes tests that mutate the process-wide `SCHEDULER_*_INTERVAL_SECS` env
+    /// vars against each other and against `run()` reading them from a concurrently-
+    /// scheduled task - same hazard class `BORG_BINARY_LOCK` below guards against for
+    /// `BORG_BINARY`.
+    async fn scheduler_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        SCHEDULER_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .await
     }
 
     static BORG_BINARY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

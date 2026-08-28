@@ -235,9 +235,7 @@ test.describe('Agent detail', () => {
   // to clear it out on demand rather than wait on the age-based retention
   // setting under System. Reachable from the header overflow menu, like every
   // other rare/destructive agent action.
-  test('clean up failed backups deletes failed report history for the agent', async ({
-    page,
-  }) => {
+  test('clean up failed backups deletes failed report history for the agent', async ({ page }) => {
     await openAgent(page)
 
     await page.locator('.overflow-toggle').click()

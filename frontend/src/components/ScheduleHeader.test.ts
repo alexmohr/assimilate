@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
-import { menuLabels, openMenu } from '../test-utils/overflowMenu'
+import { clickMenuItemStartingWith, menuLabels, openMenu } from '../test-utils/overflowMenu'
 import ScheduleHeader from './ScheduleHeader.vue'
 import type { ScheduleRow } from '../types/schedule'
 
@@ -134,10 +134,7 @@ describe('ScheduleHeader', () => {
     it('emits cleanFailedReports from the menu and closes it', async () => {
       const wrapper = mount({}, { failedReportCount: 4 })
       await openMenu(wrapper)
-      await wrapper
-        .findAll('.overflow-menu-item')
-        .find((i) => i.text().trim().startsWith('Clean up failed'))!
-        .trigger('click')
+      await clickMenuItemStartingWith(wrapper, 'Clean up failed')
 
       expect(wrapper.emitted('cleanFailedReports')).toHaveLength(1)
       expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)

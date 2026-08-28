@@ -1888,7 +1888,9 @@ describe('AgentDetailView - clean up failed backups', () => {
     await openMenu(wrapper)
 
     expect(
-      wrapper.findAll('.overflow-menu-item').some((i) => i.text() === 'Clean up failed backups (1)'),
+      wrapper
+        .findAll('.overflow-menu-item')
+        .some((i) => i.text() === 'Clean up failed backups (1)'),
     ).toBe(true)
   })
 

@@ -140,7 +140,7 @@ function removeCommand(index: number): void {
     <button
       type="button"
       class="btn btn-sm btn-ghost"
-      :aria-label="`Add ${props.ariaLabel ?? 'command'}`"
+      :aria-label="props.ariaLabel ? `+ Add command (${props.ariaLabel})` : undefined"
       @click="addCommand()"
     >
       + Add command

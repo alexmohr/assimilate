@@ -161,7 +161,10 @@ describe('CommandListEditor', () => {
   // caller of this component) would otherwise have two buttons both named
   // "Remove command 1" - the given accessible name needs to fold into the
   // remove/add buttons too, not just the row fields, to actually disambiguate
-  // them for a screen reader or voice-control user.
+  // them for a screen reader or voice-control user. The add button's label
+  // keeps "+ Add command" as an exact substring (WCAG 2.5.3 Label in Name) -
+  // an aria-label that replaced the visible text outright broke the e2e test
+  // that clicks it by its visible name.
   it('folds the given accessible name into the remove and add buttons', () => {
     const wrapper = renderWithPlugins(CommandListEditor, {
       props: {
@@ -173,6 +176,13 @@ describe('CommandListEditor', () => {
     const buttons = wrapper.findAll('.btn-danger')
     expect(buttons[0].attributes('aria-label')).toBe('Remove Pre-backup commands 1')
     expect(buttons[1].attributes('aria-label')).toBe('Remove Pre-backup commands 2')
-    expect(wrapper.find('.btn-ghost').attributes('aria-label')).toBe('Add Pre-backup commands')
+    expect(wrapper.find('.btn-ghost').attributes('aria-label')).toBe(
+      '+ Add command (Pre-backup commands)',
+    )
+  })
+
+  it('leaves the add button unlabeled when no accessible name is given', () => {
+    const wrapper = mount(['first'])
+    expect(wrapper.find('.btn-ghost').attributes('aria-label')).toBeUndefined()
   })
 })

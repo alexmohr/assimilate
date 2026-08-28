@@ -30,10 +30,15 @@ const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
 const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
-/// After this many consecutive failures to reach a schedule's agent (offline or
-/// unreachable at trigger time), the schedule is disabled rather than retried again -
-/// see [`db::record_schedule_failure`]. It's re-enabled automatically once every one of
-/// its targets reconnects (see
+/// Default number of consecutive failures to reach a schedule's agent (offline or
+/// unreachable at trigger time) tolerated before the schedule is disabled rather than
+/// retried again - see [`db::record_schedule_failure`]. Matches the `schedules
+/// .missed_backup_threshold` column's DB default; each schedule's own configured
+/// value (`DueScheduleRow::missed_backup_threshold`) is used at the actual call site
+/// in [`record_schedule_failure_once`], so this constant only backs schedules with no
+/// targets (never actually reached) and tests exercising `db::record_schedule_failure`
+/// directly. A disabled schedule is re-enabled automatically once every one of its
+/// targets reconnects (see
 /// `ws::handler::reenable_system_disabled_schedules_on_reconnect`).
 const MAX_CONSECUTIVE_FAILURES: i32 = 3;
 /// Fallback backoff (hours), applied by [`record_schedule_failure_once`] when the
@@ -779,6 +784,7 @@ struct SequentialTargetCtx<'a> {
     now: DateTime<Utc>,
     tz: chrono_tz::Tz,
     run_id: &'a str,
+    missed_backup_threshold: i32,
 }
 
 enum TargetControl {
@@ -811,6 +817,9 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     let mut triggered_tx = Some(triggered_tx);
 
     let schedule_name = targets.first().map_or("", |t| t.schedule_name.as_str());
+    let missed_backup_threshold = targets
+        .first()
+        .map_or(MAX_CONSECUTIVE_FAILURES, |t| t.missed_backup_threshold);
     let target_ctx = SequentialTargetCtx {
         pool: &pool,
         registry: &registry,
@@ -827,6 +836,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         now,
         tz,
         run_id: &run_id,
+        missed_backup_threshold,
     };
 
     for target in &targets {
@@ -1101,8 +1111,9 @@ async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_trig
 
 /// Records that this schedule failed to reach `agent_id`, backing off `next_run_at`
 /// to the next scheduled occurrence (instead of the every-30s tick cadence) and
-/// auto-disabling the schedule once [`MAX_CONSECUTIVE_FAILURES`] is reached. Only the
-/// first target failure of a tick counts, mirroring [`mark_schedule_triggered_once`],
+/// auto-disabling the schedule once its configured `missed_backup_threshold`
+/// (`ctx.missed_backup_threshold`) is reached. Only the first target failure of a
+/// tick counts, mirroring [`mark_schedule_triggered_once`],
 /// since a schedule with multiple targets shouldn't be double-counted for one tick -
 /// callers don't need to guard this themselves, it early-returns if `recorded_failure`
 /// is already `true`.
@@ -1152,7 +1163,7 @@ async fn record_schedule_failure_once(
         schedule_id,
         agent_id,
         next,
-        MAX_CONSECUTIVE_FAILURES,
+        ctx.missed_backup_threshold,
         agent_unreachable,
     )
     .await
@@ -1203,7 +1214,7 @@ async fn record_schedule_failure_once(
                 tracing::warn!(
                     schedule_id,
                     consecutive_failures = outcome.consecutive_failures,
-                    max = MAX_CONSECUTIVE_FAILURES,
+                    max = ctx.missed_backup_threshold,
                     agent_unreachable,
                     "sequential: target failed, backing off to next scheduled run"
                 );
@@ -1736,6 +1747,7 @@ esac
                 pre_backup_commands: &[],
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
                 on_failure: "stop",
             },
             None,
@@ -2051,6 +2063,75 @@ esac
             saw_data_changed,
             "auto-disabling a schedule must broadcast DataChanged so it shows up live in the UI"
         );
+    }
+
+    /// A schedule's own `missed_backup_threshold` - not the `MAX_CONSECUTIVE_FAILURES`
+    /// default - must govern when the scheduler gives up and disables it. Below that
+    /// custom threshold, misses must keep accumulating with the schedule still enabled
+    /// (the "warning" zone the UI surfaces); at it, the schedule must be disabled, even
+    /// though that count is well past the old hardcoded default of 3.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_honors_a_custom_missed_backup_threshold(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+        let custom_threshold = MAX_CONSECUTIVE_FAILURES + 2;
+        sqlx::query!(
+            "UPDATE schedules SET missed_backup_threshold = $2 WHERE id = $1",
+            schedule_id,
+            custom_threshold,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+
+        for attempt in 1..=custom_threshold {
+            let past = Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap();
+            db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+
+            tick(&TickDeps {
+                pool: &pool,
+                registry: &registry,
+                encryption_key: &key,
+                tunnel_manager: &tunnel,
+                completion_bus: &bus,
+                repo_lock: &RepoLock::default(),
+                repo_op_tracker: &RepoOpTracker::default(),
+                ui_broadcast: &UiBroadcast::new(),
+                background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            })
+            .await
+            .unwrap();
+
+            let (consecutive_failures, enabled, _) =
+                schedule_failure_state(&pool, schedule_id).await;
+            assert_eq!(consecutive_failures, attempt);
+            if attempt <= MAX_CONSECUTIVE_FAILURES {
+                assert!(
+                    enabled,
+                    "must stay enabled past the old hardcoded default of \
+                     {MAX_CONSECUTIVE_FAILURES} misses, since this schedule's own threshold is \
+                     higher"
+                );
+            }
+            if attempt < custom_threshold {
+                assert!(
+                    enabled,
+                    "must stay enabled before this schedule's own threshold is reached"
+                );
+            } else {
+                assert!(
+                    !enabled,
+                    "must auto-disable once this schedule's own threshold is reached"
+                );
+            }
+        }
     }
 
     /// `db::reset_schedule_consecutive_failures` (called from the post-loop `if
@@ -2912,6 +2993,7 @@ esac
                 pre_backup_commands: &[],
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
                 on_failure: "stop",
             },
             None,
@@ -3073,6 +3155,7 @@ esac
                 pre_backup_commands: &[],
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
                 on_failure: "continue",
             },
             None,
@@ -3232,6 +3315,7 @@ esac
                 pre_backup_commands: &[],
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
                 on_failure: "continue",
             },
             None,
@@ -3334,6 +3418,7 @@ esac
             pre_backup_commands: &[],
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
             on_failure: "stop",
         };
 
@@ -3462,6 +3547,7 @@ esac
                 pre_backup_commands: &[],
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
                 on_failure: "stop",
             },
             None,

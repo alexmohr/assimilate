@@ -51,6 +51,7 @@ DELETE FROM backup_reports WHERE agent_id IN (SELECT id FROM agents WHERE hostna
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN agents c ON c.id = st.agent_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM schedules WHERE name = 'Stale nightly report';
 DELETE FROM schedules WHERE name = 'Auto-disabled demo';
+DELETE FROM schedules WHERE name = 'Missed backups warning demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy');
@@ -346,6 +347,32 @@ INSERT INTO system_events (event_type, hostname, message)
 SELECT 'schedule_auto_disabled', 'auto-disabled-01',
        'Schedule ''Auto-disabled demo'' auto-disabled after 3 consecutive failures: agent ''auto-disabled-01'' stayed unreachable'
 WHERE EXISTS (SELECT 1 FROM schedules WHERE name = 'Auto-disabled demo');
+SQL
+
+api POST "/api/schedules" "{
+    \"name\": \"Missed backups warning demo\",
+    \"agent_ids\": [$AUTO_DISABLED_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 7 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"missed_backup_threshold\": 3,
+    \"backup_sources\": [\"/srv/missed-backups-demo\"]
+}" > /dev/null
+
+# Demonstrates the "N/threshold missed" warning chip (see
+# docs/scheduling.md#missed-backup-threshold) by directly writing a below-threshold
+# consecutive_failures count, the same way the fully auto-disabled schedule above
+# simulates 3 consecutive failures. One miss short of this schedule's own threshold
+# of 3, so it stays enabled with a warning instead of Auto-disabled.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE schedules
+SET consecutive_failures = 2,
+    failure_streak_pure_connectivity = true
+WHERE name = 'Missed backups warning demo';
 SQL
 
 # next_run_at must stay within the dashboard's 2-hour "due soon" window (now..now+2h) at

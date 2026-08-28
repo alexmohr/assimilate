@@ -19,6 +19,12 @@ fn default_hook_timeout_seconds() -> i32 {
     60
 }
 
+/// Default missed-backup threshold for schedule exports predating the
+/// `missed_backup_threshold` field, matching the DB column's default.
+fn default_missed_backup_threshold() -> i32 {
+    3
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing health check.
@@ -556,6 +562,11 @@ pub struct ScheduleResponse {
     pub post_backup_commands: Vec<String>,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     pub hook_timeout_seconds: i32,
+    /// How many consecutive missed backups (agent unreachable, target/config
+    /// error at trigger time, ...) this schedule tolerates before it is marked
+    /// failed and auto-disabled. Below this count, a miss only shows as a
+    /// warning.
+    pub missed_backup_threshold: i32,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
@@ -1488,6 +1499,13 @@ pub struct HealthSummaryResponse {
     pub cron_expression: Option<String>,
     /// Whether the schedule is enabled.
     pub schedule_enabled: Option<bool>,
+    /// How many consecutive scheduled runs this schedule has missed (agent
+    /// unreachable, target/config error at trigger time, ...) since its last
+    /// success.
+    pub consecutive_missed_backups: i32,
+    /// The schedule's configured threshold: at or above this many consecutive
+    /// missed backups, the schedule is failed rather than merely warned.
+    pub missed_backup_threshold: i32,
 }
 
 /// Alias so that API handlers can use `HealthResponse` while sharing
@@ -2065,6 +2083,10 @@ pub struct ScheduleExportResponse {
     /// Timeout in seconds applied to each pre/post-backup hook command.
     #[serde(default = "default_hook_timeout_seconds")]
     pub hook_timeout_seconds: i32,
+    /// How many consecutive missed backups this schedule tolerates before it
+    /// is marked failed and auto-disabled.
+    #[serde(default = "default_missed_backup_threshold")]
+    pub missed_backup_threshold: i32,
     /// Backup source paths.
     pub backup_sources: Vec<String>,
     /// Per-target overrides.

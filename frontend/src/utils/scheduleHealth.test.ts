@@ -26,6 +26,8 @@ function makeEntry(overrides: Partial<ScheduleHealthEntry> = {}): ScheduleHealth
     last_error_message: null,
     cron_expression: '0 2 * * *',
     schedule_enabled: true,
+    consecutive_missed_backups: 0,
+    missed_backup_threshold: 3,
     ...overrides,
   }
 }
@@ -106,6 +108,65 @@ describe('scheduleIssuesFromEntries', () => {
       makeRouter(),
     )
     expect(issues.map((i) => i.key)).toEqual(['overdue', 'failed'])
+  })
+
+  it('returns a missed-backups warning chip below the threshold', () => {
+    const issues = scheduleIssuesFromEntries(
+      [makeEntry({ consecutive_missed_backups: 1, missed_backup_threshold: 3 })],
+      1,
+      makeRouter(),
+    )
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({
+      key: 'missed-backups',
+      label: '1/3 missed',
+      severity: 'warning',
+    })
+  })
+
+  it('does not return a missed-backups chip once the threshold is reached', () => {
+    const issues = scheduleIssuesFromEntries(
+      [makeEntry({ consecutive_missed_backups: 3, missed_backup_threshold: 3 })],
+      1,
+      makeRouter(),
+    )
+    expect(issues).toEqual([])
+  })
+
+  it('does not return a missed-backups chip with zero misses', () => {
+    const issues = scheduleIssuesFromEntries(
+      [makeEntry({ consecutive_missed_backups: 0, missed_backup_threshold: 3 })],
+      1,
+      makeRouter(),
+    )
+    expect(issues).toEqual([])
+  })
+
+  it('navigates a missed-backups chip to the schedule detail page', () => {
+    const router = makeRouter()
+    const issues = scheduleIssuesFromEntries(
+      [makeEntry({ consecutive_missed_backups: 2, missed_backup_threshold: 3 })],
+      9,
+      router,
+    )
+    issues[0].onClick()
+    expect(router.push).toHaveBeenCalledWith('/schedules/9')
+  })
+
+  it('combines a missed-backups warning alongside Overdue and Failed chips', () => {
+    const issues = scheduleIssuesFromEntries(
+      [
+        makeEntry({
+          is_overdue: true,
+          last_status: 'failed',
+          consecutive_missed_backups: 1,
+          missed_backup_threshold: 3,
+        }),
+      ],
+      1,
+      makeRouter(),
+    )
+    expect(issues.map((i) => i.key)).toEqual(['overdue', 'failed', 'missed-backups'])
   })
 
   it('wires each chip to navigate for the right schedule id and kind', () => {

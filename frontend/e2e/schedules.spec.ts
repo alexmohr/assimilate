@@ -248,6 +248,43 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=warning/)
   })
 
+  test("schedule card shows a missed-backups warning chip below the schedule's threshold", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      consecutive_missed_backups: 1,
+      missed_backup_threshold: 3,
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
+    const missedChip = card.locator('.entity-issue-chip', { hasText: '1/3 missed' })
+    await expect(missedChip).toBeVisible()
+
+    await missedChip.click()
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL(/\/schedules\/1$/)
+  })
+
+  test('schedule card shows no missed-backups chip once the threshold is reached', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      consecutive_missed_backups: 3,
+      missed_backup_threshold: 3,
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
+    await expect(card.locator('.entity-issue-chip', { hasText: 'missed' })).toHaveCount(0)
+  })
+
   test('clicking a schedule navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')
@@ -339,6 +376,51 @@ test.describe('Schedules management', () => {
     }).toPass({ timeout: 5_000 })
 
     await expect(timeoutInput).toHaveValue('180')
+  })
+
+  test('schedule detail General section edits and saves the missed backup threshold', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+
+    const thresholdField = page.locator('.field', { hasText: 'Mark as failed after' })
+    const thresholdInput = thresholdField.locator('input[type="number"]')
+    await expect(thresholdInput).toBeVisible()
+
+    let savedBody: Record<string, unknown> | null = null
+    await page.route(
+      (url) => url.pathname === '/api/schedules/1',
+      async (route) => {
+        if (route.request().method() === 'PUT') {
+          savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+          const response = await route.fetch()
+          const body = (await response.json()) as Record<string, unknown>
+          return route.fulfill({
+            status: response.status(),
+            contentType: 'application/json',
+            body: JSON.stringify({
+              ...body,
+              missed_backup_threshold: savedBody.missed_backup_threshold,
+            }),
+          })
+        }
+        return route.continue()
+      },
+    )
+
+    await thresholdInput.fill('5')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    await expect(async () => {
+      expect(savedBody).not.toBeNull()
+      expect((savedBody as Record<string, unknown>).missed_backup_threshold).toBe(5)
+    }).toPass({ timeout: 5_000 })
+
+    await expect(thresholdInput).toHaveValue('5')
   })
 
   test('schedule detail shows host and repository assignment', async ({ page }) => {

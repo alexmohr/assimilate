@@ -40,6 +40,7 @@ const CREATE_REQUEST: CreateScheduleRequest = {
   pre_backup_commands: [],
   post_backup_commands: [],
   hook_timeout_seconds: 60,
+  missed_backup_threshold: 3,
   backup_sources: ['/data'],
   agent_ids: [1, 2],
   repo_id: 5,

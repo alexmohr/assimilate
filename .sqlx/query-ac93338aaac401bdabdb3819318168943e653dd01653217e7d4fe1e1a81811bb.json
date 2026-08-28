@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, exclude_patterns_raw = $6, file_change_patterns_raw = $7, ignore_global_excludes = $8, keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, hook_timeout_seconds = $19, auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END, failure_streak_pure_connectivity = CASE WHEN enabled IS DISTINCT FROM $4 THEN true ELSE failure_streak_pure_connectivity END WHERE id = $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", hook_timeout_seconds, execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+  "query": "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, hook_timeout_seconds, missed_backup_threshold) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, $21, $22) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
   "describe": {
     "columns": [
       {
@@ -115,36 +115,41 @@
       },
       {
         "ordinal": 22,
+        "name": "missed_backup_threshold",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 23,
         "name": "execution_mode",
         "type_info": "Text"
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "on_failure",
         "type_info": "Text"
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 25,
+        "ordinal": 26,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 26,
+        "ordinal": 27,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       }
@@ -154,6 +159,7 @@
         "Int8",
         "Text",
         "Text",
+        "Text",
         "Bool",
         "Bool",
         "Text",
@@ -169,6 +175,8 @@
         "Jsonb",
         "Jsonb",
         "Text",
+        "Int8",
+        "Int4",
         "Int4"
       ]
     },
@@ -197,6 +205,7 @@
       false,
       false,
       false,
+      false,
       true,
       false,
       false,
@@ -204,5 +213,5 @@
       null
     ]
   },
-  "hash": "a8414104ce54eaeb470dc3353510e876db22ab06b87e77991d25eb58e9338e21"
+  "hash": "ac93338aaac401bdabdb3819318168943e653dd01653217e7d4fe1e1a81811bb"
 }

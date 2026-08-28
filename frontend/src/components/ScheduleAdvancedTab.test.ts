@@ -272,5 +272,23 @@ describe('ScheduleAdvancedTab', () => {
         .vm.$emit('update:modelValue', ['systemctl start app'])
       expect(state.post_backup_commands).toEqual(['systemctl start app'])
     })
+
+    it('gives each command list editor an accessible name, in both shared and per-agent mode', () => {
+      const shared = mount().findAllComponents({ name: 'CommandListEditor' })
+      expect(shared.map((e) => e.props('ariaLabel'))).toEqual([
+        'Pre-backup commands',
+        'Post-backup commands',
+      ])
+
+      const perAgent = mount({
+        overrides: agentOverrides({ usePerAgentCmds: true }),
+      }).findAllComponents({ name: 'CommandListEditor' })
+      expect(perAgent.map((e) => e.props('ariaLabel'))).toEqual([
+        'Pre-backup commands',
+        'Post-backup commands',
+        'Pre-backup commands',
+        'Post-backup commands',
+      ])
+    })
   })
 })

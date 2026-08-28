@@ -191,6 +191,7 @@ const refOpen = ref(false)
           <CommandListEditor
             v-model="form.pre_backup_commands"
             placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+            aria-label="Pre-backup commands"
           />
         </div>
         <div class="field">
@@ -198,6 +199,7 @@ const refOpen = ref(false)
           <CommandListEditor
             v-model="form.post_backup_commands"
             placeholder="e.g. rm /tmp/dump.sql (optional)"
+            aria-label="Post-backup commands"
           />
         </div>
       </template>
@@ -210,11 +212,13 @@ const refOpen = ref(false)
           <label class="form-sublabel">Pre-backup</label>
           <CommandListEditor
             :model-value="overrides.perAgentPreCmds[agentId] ?? []"
+            aria-label="Pre-backup commands"
             @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
           />
           <label class="form-sublabel">Post-backup</label>
           <CommandListEditor
             :model-value="overrides.perAgentPostCmds[agentId] ?? []"
+            aria-label="Post-backup commands"
             @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
           />
         </template>

@@ -63,7 +63,37 @@ export function scheduleIssuesFromEntries(
       onClick: () => navigateToScheduleIssue(router, scheduleId, 'warning'),
     })
   }
+  const missedIssue = missedBackupsIssue(entries[0], scheduleId, router)
+  if (missedIssue) {
+    issues.push(missedIssue)
+  }
   return issues
+}
+
+/**
+ * A schedule that keeps missing its scheduled runs (agent or target
+ * unreachable at trigger time) shows a warning as soon as it misses one, below
+ * the schedule's own `missed_backup_threshold` - once it reaches that count the
+ * scheduler auto-disables the schedule, which already surfaces via
+ * `scheduleDisabledLabel()`'s "Auto-disabled" pill, so this chip only covers
+ * the "still retrying" range.
+ */
+function missedBackupsIssue(
+  entry: ScheduleHealthEntry | undefined,
+  scheduleId: number,
+  router: Router,
+): EntityIssue | null {
+  if (entry == null) return null
+  const { consecutive_missed_backups: missed, missed_backup_threshold: threshold } = entry
+  if (!Number.isFinite(missed) || !Number.isFinite(threshold)) return null
+  if (missed <= 0 || missed >= threshold) return null
+  return {
+    key: 'missed-backups',
+    label: `${missed}/${threshold} missed`,
+    severity: 'warning',
+    title: `${missed} consecutive missed backup${missed === 1 ? '' : 's'} (agent or target unreachable) - will be marked failed at ${threshold}`,
+    onClick: () => router.push(`/schedules/${scheduleId}`),
+  }
 }
 
 /**

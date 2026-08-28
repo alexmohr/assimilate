@@ -142,6 +142,20 @@ onBeforeUnmount(() => {
         <label class="field-label">Enabled</label>
         <ToggleSwitch v-model="form.enabled" />
       </div>
+      <div class="field">
+        <label class="field-label">Mark as failed after</label>
+        <input
+          v-model.number="form.missed_backup_threshold"
+          type="number"
+          min="1"
+          class="input"
+        />
+        <span class="field-hint">
+          Consecutive missed backups (agent or target unreachable at trigger time) tolerated before
+          this schedule is marked failed and disabled. Below this count, a miss only shows as a
+          warning.
+        </span>
+      </div>
       <div
         v-if="isCreate"
         class="field"

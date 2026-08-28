@@ -181,6 +181,8 @@ const mockHealth = [
     last_error_message: null,
     cron_expression: '0 2 * * *',
     schedule_enabled: true,
+    consecutive_missed_backups: 0,
+    missed_backup_threshold: 3,
   },
   {
     repo_id: 21,
@@ -193,6 +195,8 @@ const mockHealth = [
     last_error_message: 'Connection refused',
     cron_expression: '0 * * * *',
     schedule_enabled: true,
+    consecutive_missed_backups: 0,
+    missed_backup_threshold: 3,
   },
 ]
 
@@ -208,6 +212,8 @@ const overdueWebServerHealth = [
     last_error_message: null,
     cron_expression: '0 2 * * *',
     schedule_enabled: true,
+    consecutive_missed_backups: 0,
+    missed_backup_threshold: 3,
   },
 ]
 

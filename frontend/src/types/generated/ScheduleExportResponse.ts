@@ -86,6 +86,11 @@ export type ScheduleExportResponse = {
    */
   hook_timeout_seconds: number;
   /**
+   * How many consecutive missed backups this schedule tolerates before it
+   * is marked failed and auto-disabled.
+   */
+  missed_backup_threshold: number;
+  /**
    * Backup source paths.
    */
   backup_sources: Array<string>;

@@ -280,6 +280,7 @@ function populateForm(s: ScheduleRow): void {
     pre_backup_commands: s.pre_backup_commands,
     post_backup_commands: s.post_backup_commands,
     hook_timeout_seconds: s.hook_timeout_seconds,
+    missed_backup_threshold: s.missed_backup_threshold,
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
@@ -407,6 +408,7 @@ async function save(): Promise<void> {
       pre_backup_commands: form.value.pre_backup_commands.filter((c) => c.trim().length > 0),
       post_backup_commands: form.value.post_backup_commands.filter((c) => c.trim().length > 0),
       hook_timeout_seconds: form.value.hook_timeout_seconds,
+      missed_backup_threshold: form.value.missed_backup_threshold,
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
     }
 

@@ -95,6 +95,13 @@ export type ScheduleResponse = {
    */
   hook_timeout_seconds: number;
   /**
+   * How many consecutive missed backups (agent unreachable, target/config
+   * error at trigger time, ...) this schedule tolerates before it is marked
+   * failed and auto-disabled. Below this count, a miss only shows as a
+   * warning.
+   */
+  missed_backup_threshold: number;
+  /**
    * Execution mode for the schedule.
    */
   execution_mode: string;

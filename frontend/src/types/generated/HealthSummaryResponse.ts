@@ -44,4 +44,15 @@ export type HealthSummaryResponse = {
    * Whether the schedule is enabled.
    */
   schedule_enabled: boolean | null;
+  /**
+   * How many consecutive scheduled runs this schedule has missed (agent
+   * unreachable, target/config error at trigger time, ...) since its last
+   * success.
+   */
+  consecutive_missed_backups: number;
+  /**
+   * The schedule's configured threshold: at or above this many consecutive
+   * missed backups, the schedule is failed rather than merely warned.
+   */
+  missed_backup_threshold: number;
 };

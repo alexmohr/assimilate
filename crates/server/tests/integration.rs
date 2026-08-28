@@ -3602,6 +3602,121 @@ async fn test_schedule_update_rejects_invalid_hook_timeout_seconds(pool: sqlx::P
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// The `missed_backup_threshold` field (how many consecutive missed backups a
+/// schedule tolerates before it is marked failed and auto-disabled) must be
+/// persisted through the actual `PUT /api/schedules/{id}` handler and reflected
+/// back in the response body.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_persists_missed_backup_threshold(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('missed-threshold-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "missed-threshold-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "missed_backup_threshold": 7,
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("missed_backup_threshold").unwrap(), 7);
+
+    let persisted: i32 =
+        sqlx::query_scalar("SELECT missed_backup_threshold FROM schedules WHERE id = $1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted, 7);
+}
+
+/// A `missed_backup_threshold` outside the allowed range must be rejected with a
+/// 400, not silently accepted into the DB (which would only be caught later,
+/// less clearly, by the `missed_backup_threshold > 0` CHECK constraint).
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_rejects_invalid_missed_backup_threshold(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('bad-missed-threshold-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "bad-missed-threshold-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "missed_backup_threshold": 0,
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// `GET /api/stats/health` must expose a schedule's live miss count and its
+/// configured threshold, not just the boolean `is_overdue` - the frontend needs
+/// both to tell a "still under threshold" warning apart from a schedule that has
+/// actually crossed it and been auto-disabled.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_health_summary_exposes_missed_backup_counters(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('health-missed-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "health-missed-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+    sqlx::query(
+        "UPDATE schedules SET consecutive_failures = 2, missed_backup_threshold = 5 WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = json_request("GET", "/api/stats/health", None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let entry = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e.get("schedule_id").unwrap() == schedule_id)
+        .expect("health summary must include the schedule");
+    assert_eq!(entry.get("consecutive_missed_backups").unwrap(), 2);
+    assert_eq!(entry.get("missed_backup_threshold").unwrap(), 5);
+}
+
 /// Retargeting an auto-disabled schedule away from the agent that caused the disable,
 /// through the actual `PUT /api/schedules/{id}` handler (not just the DB function it
 /// delegates to), must clear the stale auto-disable bookkeeping so the dropped agent

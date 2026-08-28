@@ -162,6 +162,9 @@ pub enum EventType {
     AgentConnected,
     /// Agent disconnected from the server.
     AgentDisconnected,
+    /// The scheduler auto-disabled a schedule after it reached its
+    /// `missed_backup_threshold` of consecutive missed backups.
+    ScheduleAutoDisabled,
 }
 
 impl EventType {
@@ -174,6 +177,7 @@ impl EventType {
         "check_failed",
         "agent_connected",
         "agent_disconnected",
+        "schedule_auto_disabled",
     ];
 }
 
@@ -557,7 +561,7 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
         .filter(|_| {
             matches!(
                 event_type_str,
-                "backup_warning" | "backup_failed" | "check_failed"
+                "backup_warning" | "backup_failed" | "check_failed" | "schedule_auto_disabled"
             )
         }) {
         Some(msg) => {
@@ -861,6 +865,10 @@ mod tests {
             EventType::from_str("agent_disconnected"),
             Ok(EventType::AgentDisconnected)
         );
+        assert_eq!(
+            EventType::from_str("schedule_auto_disabled"),
+            Ok(EventType::ScheduleAutoDisabled)
+        );
         assert!(EventType::from_str("unknown_event").is_err());
     }
 
@@ -876,6 +884,20 @@ mod tests {
             EventType::AgentDisconnected.to_string(),
             "agent_disconnected"
         );
+        assert_eq!(
+            EventType::ScheduleAutoDisabled.to_string(),
+            "schedule_auto_disabled"
+        );
+    }
+
+    #[test]
+    fn all_db_strs_matches_every_event_type_variant() {
+        for s in EventType::ALL_DB_STRS {
+            assert!(
+                s.parse::<EventType>().is_ok(),
+                "ALL_DB_STRS entry {s:?} does not parse back into an EventType"
+            );
+        }
     }
 
     #[test]
@@ -930,6 +952,16 @@ mod tests {
             "archive_name": "myhost-2026-06-03T08:00:00.000000",
         }));
         assert_eq!(build_push_url(&p), "/agents/myhost");
+    }
+
+    #[test]
+    fn schedule_auto_disabled_goes_to_the_schedule_detail_page() {
+        let p = payload(serde_json::json!({
+            "event_type": "schedule_auto_disabled",
+            "hostname": "myhost",
+            "schedule_id": 3,
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/3");
     }
 
     #[test]
@@ -1003,6 +1035,20 @@ mod tests {
         assert_eq!(
             build_push_body(&p),
             "myhost - failed: integrity check failed"
+        );
+    }
+
+    #[test]
+    fn push_body_schedule_auto_disabled_includes_reason() {
+        let p = payload(serde_json::json!({
+            "event_type": "schedule_auto_disabled",
+            "hostname": "myhost",
+            "status": "auto_disabled",
+            "error_message": "agent 'myhost' stayed unreachable",
+        }));
+        assert_eq!(
+            build_push_body(&p),
+            "myhost - auto_disabled: agent 'myhost' stayed unreachable"
         );
     }
 

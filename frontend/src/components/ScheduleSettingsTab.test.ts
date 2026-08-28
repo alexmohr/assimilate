@@ -219,6 +219,13 @@ describe('ScheduleSettingsTab', () => {
     expect(form.enabled).toBe(!DEFAULT_SCHEDULE_FORM_STATE.enabled)
   })
 
+  it('writes into the Missed backup threshold field in the General section', async () => {
+    const form = baseForm()
+    const wrapper = mount({ form })
+    await wrapper.find('input[type="number"]').setValue('5')
+    expect(form.missed_backup_threshold).toBe(5)
+  })
+
   it('changes the Schedule type select in create mode', async () => {
     const wrapper = mount({ isCreate: true })
     await wrapper.find('select').setValue('check')

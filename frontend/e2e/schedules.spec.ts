@@ -22,6 +22,49 @@ function scheduleCard(page: Page, id: number): Locator {
   return page.locator(`.entity-card[data-schedule-id="${id}"]`)
 }
 
+// Fills a numeric settings field, intercepts the PUT so the response echoes
+// back the value the request actually sent (a real save round-trips through
+// the seeded schedule's other fields untouched), and waits for the save to
+// land. Returns the field's input so the caller can assert its final value.
+async function saveNumericScheduleField(
+  page: Page,
+  fieldLabel: string,
+  jsonKey: string,
+  newValue: number,
+): Promise<Locator> {
+  const field = page.locator('.field', { hasText: fieldLabel })
+  const input = field.locator('input[type="number"]')
+  await expect(input).toBeVisible()
+
+  let savedBody: Record<string, unknown> | null = null
+  await page.route(
+    (url) => url.pathname === '/api/schedules/1',
+    async (route) => {
+      if (route.request().method() === 'PUT') {
+        savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+        const response = await route.fetch()
+        const body = (await response.json()) as Record<string, unknown>
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify({ ...body, [jsonKey]: savedBody[jsonKey] }),
+        })
+      }
+      return route.continue()
+    },
+  )
+
+  await input.fill(String(newValue))
+  await page.getByRole('button', { name: 'Save changes' }).click()
+
+  await expect(async () => {
+    expect(savedBody).not.toBeNull()
+    expect((savedBody as Record<string, unknown>)[jsonKey]).toBe(newValue)
+  }).toPass({ timeout: 5_000 })
+
+  return input
+}
+
 // Navigates to the schedules list with schedule 1 forced overdue, and returns
 // its card and Overdue chip locators.
 async function openOverdueScheduleCard(
@@ -248,6 +291,43 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=warning/)
   })
 
+  test("schedule card shows a missed-backups warning chip below the schedule's threshold", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      consecutive_missed_backups: 1,
+      missed_backup_threshold: 3,
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
+    const missedChip = card.locator('.entity-issue-chip', { hasText: '1/3 missed' })
+    await expect(missedChip).toBeVisible()
+
+    await missedChip.click()
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL(/\/schedules\/1$/)
+  })
+
+  test('schedule card shows no missed-backups chip once the threshold is reached', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      consecutive_missed_backups: 3,
+      missed_backup_threshold: 3,
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card', { hasText: 'server-daily' })
+    await expect(card.locator('.entity-issue-chip', { hasText: 'missed' })).toHaveCount(0)
+  })
+
   test('clicking a schedule navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')
@@ -305,39 +385,12 @@ test.describe('Schedules management', () => {
     await page.getByRole('tab', { name: 'Settings' }).click()
     await page.getByRole('button', { name: 'Advanced' }).click()
 
-    const timeoutField = page.locator('.field', { hasText: 'Hook command timeout' })
-    const timeoutInput = timeoutField.locator('input[type="number"]')
-    await expect(timeoutInput).toBeVisible()
-
-    let savedBody: Record<string, unknown> | null = null
-    await page.route(
-      (url) => url.pathname === '/api/schedules/1',
-      async (route) => {
-        if (route.request().method() === 'PUT') {
-          savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
-          const response = await route.fetch()
-          const body = (await response.json()) as Record<string, unknown>
-          return route.fulfill({
-            status: response.status(),
-            contentType: 'application/json',
-            body: JSON.stringify({
-              ...body,
-              hook_timeout_seconds: savedBody.hook_timeout_seconds,
-            }),
-          })
-        }
-        return route.continue()
-      },
+    const timeoutInput = await saveNumericScheduleField(
+      page,
+      'Hook command timeout',
+      'hook_timeout_seconds',
+      180,
     )
-
-    await timeoutInput.fill('180')
-    await page.getByRole('button', { name: 'Save changes' }).click()
-
-    await expect(async () => {
-      expect(savedBody).not.toBeNull()
-      expect((savedBody as Record<string, unknown>).hook_timeout_seconds).toBe(180)
-    }).toPass({ timeout: 5_000 })
-
     await expect(timeoutInput).toHaveValue('180')
   })
 
@@ -388,6 +441,24 @@ test.describe('Schedules management', () => {
     // The multi-line script round-trips through the save intact, still in
     // its own field rather than getting flattened or split across rows.
     await expect(newRow).toHaveValue(script)
+  })
+
+  test('schedule detail General section edits and saves the missed backup threshold', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+
+    const thresholdInput = await saveNumericScheduleField(
+      page,
+      'Mark as failed after',
+      'missed_backup_threshold',
+      5,
+    )
+    await expect(thresholdInput).toHaveValue('5')
   })
 
   test('schedule detail shows host and repository assignment', async ({ page }) => {

@@ -144,6 +144,7 @@ const EVENT_TYPES: NotificationEventType[] = [
   'check_failed',
   'agent_connected',
   'agent_disconnected',
+  'schedule_auto_disabled',
 ]
 
 const CHANNEL_TYPES: ChannelType[] = ['email', 'webhook', 'web_push']

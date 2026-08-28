@@ -275,6 +275,32 @@ DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "S
 STALE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='stale-report-01'")
 AUTO_DISABLED_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='auto-disabled-01'")
 
+# media-store-01 is the "not always on" host in this demo, so it's also the
+# one with wake/shutdown configured - giving the agent and repository Power
+# settings panes, and the run timeline they feed, real data to show.
+echo "==> Configuring power management..."
+api PUT "/api/agents/media-store-01/power" '{
+    "wake": {
+        "wake_enabled": true,
+        "wake_mac_address": "3C:97:0E:2B:9A:44",
+        "wake_broadcast_address": "192.168.1.255",
+        "wake_timeout_seconds": 180,
+        "shutdown_after_backup": true
+    },
+    "start_agent_enabled": false,
+    "stop_agent_after_backup": false,
+    "ssh_host": null,
+    "ssh_port": 22,
+    "agent_service_name": "assimilate-agent"
+}' > /dev/null
+api PUT "/api/repos/$REPO_WEEKLY_ID/power" '{
+    "wake_enabled": true,
+    "wake_mac_address": "9C:B6:D0:1A:44:7F",
+    "wake_broadcast_address": "192.168.1.255",
+    "wake_timeout_seconds": 240,
+    "shutdown_after_backup": true
+}' > /dev/null
+
 echo "==> Creating schedules..."
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],

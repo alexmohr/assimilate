@@ -84,4 +84,9 @@ export type ReportResponse = {
    * Name of the schedule.
    */
   schedule_name: string | null;
+  /**
+   * Correlates to this run's power-management timeline, fetched via
+   * `GET /api/runs/{run_id}/events`, when one was recorded.
+   */
+  run_id: string | null;
 };

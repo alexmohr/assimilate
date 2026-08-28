@@ -33,6 +33,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { agentPowerPhase, type AgentPowerPhase } from '../utils/badge'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
@@ -507,6 +508,7 @@ async function restartAgent(): Promise<void> {
 }
 
 watch([() => props.hostname, routeDomain], () => {
+  powerPhase.value = null
   loadAgent()
 })
 onMounted(() => {
@@ -521,8 +523,25 @@ onMounted(() => {
 
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('DataChanged', () => loadAgent().catch(logger.error))
-onMessage('AgentConnected', () => loadAgent().catch(logger.error))
+onMessage('AgentConnected', () => {
+  powerPhase.value = null
+  loadAgent().catch(logger.error)
+})
 onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
+
+/**
+ * The transient phase `AgentHeader` shows in place of Online/Offline while
+ * this host is being reached or powered down around a backup - derived
+ * entirely from the run's own event stream rather than a dedicated "current
+ * phase" field, matching how the run detail timeline is built. Only events
+ * about this agent's own host move the needle: a `repository`-target event
+ * belongs to the same run but says nothing about this page's host.
+ */
+const powerPhase = ref<AgentPowerPhase | null>(null)
+onMessage('RunEvent', (payload) => {
+  if (payload.hostname !== props.hostname || payload.target !== 'source') return
+  powerPhase.value = agentPowerPhase(payload.event_type)
+})
 
 interface ArchiveProgressData {
   nfiles: number
@@ -652,6 +671,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     <template v-else-if="agent">
       <AgentHeader
         :agent="agent"
+        :power-phase="powerPhase"
         :deploy-label="headerDeployLabel"
         :can-redeploy="canRedeploy"
         :restart-loading="restartLoading"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 
 use axum::{
     Json,
@@ -32,7 +32,9 @@ use super::{
     permissions::is_visible_to_user,
 };
 use crate::{
-    AppState, RepoLock, archive_index,
+    AppState, RepoLock,
+    api::agents::UpdateHostWakeRequest,
+    archive_index,
     borg::Borg,
     config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
@@ -56,6 +58,13 @@ impl From<RepoRow> for RepoResponse {
             owner_id: row.owner_id,
             visibility: row.visibility.parse().unwrap_or_default(),
             sync_schedule: row.sync_schedule,
+            power: shared::responses::HostWakeSettingsResponse {
+                wake_enabled: row.wake_enabled,
+                wake_mac_address: row.wake_mac_address,
+                wake_broadcast_address: row.wake_broadcast_address,
+                wake_timeout_seconds: row.wake_timeout_seconds,
+                shutdown_after_backup: row.shutdown_after_backup,
+            },
         }
     }
 }
@@ -107,6 +116,13 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
                     .unwrap_or_default(),
                 enabled,
             }),
+            power: shared::responses::HostWakeSettingsResponse {
+                wake_enabled: row.wake_enabled,
+                wake_mac_address: row.wake_mac_address,
+                wake_broadcast_address: row.wake_broadcast_address,
+                wake_timeout_seconds: row.wake_timeout_seconds,
+                shutdown_after_backup: row.shutdown_after_backup,
+            },
         }
     }
 }
@@ -631,6 +647,71 @@ pub async fn update_repo(
         db::update_repo(&state.pool, &update_params).await?
     };
 
+    Ok(Json(RepoResponse::from(repo)))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/repos/{repo_id}/power",
+    tag = "Repositories",
+    operation_id = "updateRepoPower",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    request_body = UpdateHostWakeRequest,
+    responses(
+        (status = 200, description = "Updated repository", body = RepoResponse),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// Update a repository's power-management settings (admin only).
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::NotFound`]: the repository does not exist
+pub async fn update_repo_power(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+    ApiJson(req): ApiJson<UpdateHostWakeRequest>,
+) -> Result<Json<RepoResponse>, ApiError> {
+    if req.wake_timeout_seconds <= 0 {
+        return Err(ApiError::BadRequest(
+            "wake timeout must be greater than zero".to_owned(),
+        ));
+    }
+    if req.wake_enabled {
+        let mac = req.wake_mac_address.as_deref().ok_or_else(|| {
+            ApiError::BadRequest("a MAC address is required to wake this host".to_owned())
+        })?;
+        crate::power::MacAddress::from_str(mac)
+            .map_err(|e| ApiError::BadRequest(format!("invalid MAC address: {e}")))?;
+    } else if req.shutdown_after_backup {
+        return Err(ApiError::BadRequest(
+            "shutting down after backup requires waking the host to be enabled".to_owned(),
+        ));
+    }
+
+    // Confirms the repository exists before writing to it.
+    db::get_repo_connection(&state.pool, repo_id).await?;
+
+    let repo = db::update_repo_power(
+        &state.pool,
+        repo_id,
+        db::RepoPowerPatch {
+            wake_enabled: req.wake_enabled,
+            wake_mac_address: req.wake_mac_address.as_deref(),
+            wake_broadcast_address: req.wake_broadcast_address.as_deref(),
+            wake_timeout_seconds: req.wake_timeout_seconds,
+            shutdown_after_backup: req.shutdown_after_backup,
+        },
+    )
+    .await?;
     Ok(Json(RepoResponse::from(repo)))
 }
 
@@ -4270,6 +4351,11 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
@@ -4291,6 +4377,11 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
@@ -4311,6 +4402,11 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);
@@ -4354,6 +4450,11 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(resp.last_op_kind, None);
@@ -4397,6 +4498,11 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(
@@ -4736,6 +4842,11 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert!(resp.quota.is_none());
@@ -4779,6 +4890,11 @@ mod tests {
             quota_warn_action: Some("bogus_action".into()),
             quota_critical_action: Some("block_backups".into()),
             quota_enabled: Some(true),
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         let quota = resp.quota.expect("quota should be present");

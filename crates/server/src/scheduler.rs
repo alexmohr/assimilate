@@ -17,6 +17,7 @@ use crate::{
     api::repos::sync_existing_archives,
     config_assembler, db,
     db::DueScheduleRow,
+    power,
     repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
     ws::{
@@ -68,21 +69,7 @@ pub async fn run(state: AppState) {
                     () = shutdown_token.cancelled() => return,
                     _ = interval.tick() => {}
                 }
-                if let Err(e) = tick(&TickDeps {
-                    pool: &schedule_state.pool,
-                    registry: &schedule_state.registry,
-                    encryption_key: &schedule_state.encryption_key,
-                    tunnel_manager: &schedule_state.tunnel_manager,
-                    completion_bus: &schedule_state.completion_bus,
-                    repo_lock: &schedule_state.repo_lock,
-                    repo_op_tracker: &schedule_state.repo_op_tracker,
-                    ui_broadcast: &schedule_state.ui_broadcast,
-                    background_task_tracker: &schedule_state.background_task_tracker,
-                })
-                .await
-                {
-                    tracing::error!(error = %e, "scheduler tick failed");
-                }
+                run_tick(&schedule_state).await;
             }
         }
     };
@@ -583,6 +570,28 @@ struct TickDeps<'a> {
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
     background_task_tracker: &'a crate::background_tasks::BackgroundTaskTracker,
+    power_sessions: &'a crate::power::PowerSessionTracker,
+}
+
+/// Runs one scheduler tick against `state`, logging (rather than
+/// propagating) a failure -- the caller's loop keeps ticking regardless.
+async fn run_tick(state: &AppState) {
+    if let Err(e) = tick(&TickDeps {
+        pool: &state.pool,
+        registry: &state.registry,
+        encryption_key: &state.encryption_key,
+        tunnel_manager: &state.tunnel_manager,
+        completion_bus: &state.completion_bus,
+        repo_lock: &state.repo_lock,
+        repo_op_tracker: &state.repo_op_tracker,
+        ui_broadcast: &state.ui_broadcast,
+        background_task_tracker: &state.background_task_tracker,
+        power_sessions: &state.power_sessions,
+    })
+    .await
+    {
+        tracing::error!(error = %e, "scheduler tick failed");
+    }
 }
 
 async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
@@ -596,6 +605,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
         repo_op_tracker,
         ui_broadcast,
         background_task_tracker,
+        power_sessions,
     } = *deps;
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
@@ -674,6 +684,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
             repo_lock: repo_lock.clone(),
             repo_op_tracker: repo_op_tracker.clone(),
             ui_broadcast: ui_broadcast.clone(),
+            power_sessions: power_sessions.clone(),
             schedule_id,
             cron,
             targets,
@@ -747,6 +758,7 @@ struct SequentialExecution {
     repo_lock: RepoLock,
     repo_op_tracker: RepoOpTracker,
     ui_broadcast: UiBroadcast,
+    power_sessions: crate::power::PowerSessionTracker,
     schedule_id: i64,
     cron: String,
     targets: Vec<DueScheduleRow>,
@@ -772,6 +784,7 @@ struct SequentialTargetCtx<'a> {
     repo_lock: &'a RepoLock,
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
+    power_sessions: &'a crate::power::PowerSessionTracker,
     schedule_id: i64,
     schedule_name: &'a str,
     cron: &'a str,
@@ -779,6 +792,17 @@ struct SequentialTargetCtx<'a> {
     now: DateTime<Utc>,
     tz: chrono_tz::Tz,
     run_id: &'a str,
+}
+
+impl<'a> SequentialTargetCtx<'a> {
+    fn power_ctx(&self) -> power::PowerCtx<'a> {
+        power::PowerCtx {
+            pool: self.pool,
+            registry: self.registry,
+            ui_broadcast: self.ui_broadcast,
+            power_sessions: self.power_sessions,
+        }
+    }
 }
 
 enum TargetControl {
@@ -796,6 +820,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         repo_lock,
         repo_op_tracker,
         ui_broadcast,
+        power_sessions,
         schedule_id,
         cron,
         targets,
@@ -820,6 +845,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         repo_lock: &repo_lock,
         repo_op_tracker: &repo_op_tracker,
         ui_broadcast: &ui_broadcast,
+        power_sessions: &power_sessions,
         schedule_id,
         schedule_name,
         cron: &cron,
@@ -914,40 +940,55 @@ async fn run_sequential_target(
     // Acquire the per-repo lock to prevent concurrent backups across schedules.
     let _repo_guard = ctx.repo_lock.acquire(target.repo_id).await;
 
+    // Make sure the source and repository hosts are reachable before anything
+    // else that assumes they are, waking each independently and concurrently
+    // (one being slow doesn't hold up the other). Every target that reaches
+    // here is matched by exactly one `teardown_power_for_target` call on
+    // every exit path below, so a host this run wakes is never left running
+    // because of an early return.
+    let (agent_row, repo_row) = ensure_target_power(ctx, target).await;
+    let power = TargetPowerState {
+        ctx: ctx.power_ctx(),
+        agent: agent_row.as_ref(),
+        repo: repo_row.as_ref(),
+        run_id: ctx.run_id,
+        hostname: &target.hostname,
+    };
+
     ctx.tunnel_manager
         .ensure_agent_tunnel_connected(target.agent_id)
         .await;
 
     match push_pre_run_config(ctx, target).await {
         PreRunConfigOutcome::Sent => {}
+        // recorded_failure is not guarded on marked_triggered: an earlier target in
+        // this same tick succeeding must not suppress recording a later target's
+        // failure - each is a distinct target that can fail independently, and a
+        // schedule with `on_failure: Continue` processes every target regardless of
+        // earlier outcomes.
         PreRunConfigOutcome::AgentUnreachable => {
-            // recorded_failure is not guarded on marked_triggered: an earlier target
-            // in this same tick succeeding must not suppress recording a later
-            // target's failure - each is a distinct target that can fail
-            // independently, and a schedule with `on_failure: Continue` processes
-            // every target regardless of earlier outcomes.
-            return fail_target(
+            return fail_target_with_teardown(
                 ctx,
-                target.agent_id,
-                &target.hostname,
+                power,
+                target,
                 true,
                 recorded_failure,
                 triggered_tx,
             )
             .await;
         }
+        // A persistent config-assembly error (e.g. a corrupted encrypted passphrase)
+        // is just as capable of retrying forever on every tick as an unreachable
+        // agent - route it through the same backoff/auto-disable path rather than
+        // leaving next_run_at untouched. Passed as a local/data failure (not
+        // agent_unreachable), so the disable it may cause won't be silently cleared
+        // by an unrelated agent reconnect - see the doc comment on
+        // db::record_schedule_failure.
         PreRunConfigOutcome::ConfigError => {
-            // A persistent config-assembly error (e.g. a corrupted encrypted
-            // passphrase) is just as capable of retrying forever on every tick as
-            // an unreachable agent - route it through the same backoff/auto-disable
-            // path rather than leaving next_run_at untouched. Passed as a local/data
-            // failure (not agent_unreachable), so the disable it may cause won't be
-            // silently cleared by an unrelated agent reconnect - see the doc comment
-            // on db::record_schedule_failure.
-            return fail_target(
+            return fail_target_with_teardown(
                 ctx,
-                target.agent_id,
-                &target.hostname,
+                power,
+                target,
                 false,
                 recorded_failure,
                 triggered_tx,
@@ -962,37 +1003,7 @@ async fn run_sequential_target(
 
     match ctx.registry.send_to(target.agent_id, msg).await {
         Ok(()) => {
-            tracing::info!(
-                hostname = %target.hostname,
-                repo_id = target.repo_id,
-                action,
-                schedule_id,
-                "sequential: triggered"
-            );
-            // Mark the repo as actively in use for the lifetime of the lock guard
-            // (not just while the agent happens to be reporting progress), so the
-            // repo detail page can show that it's locked right now rather than
-            // only ever showing the last completed operation.
-            ctx.repo_op_tracker
-                .set(
-                    target.repo_id,
-                    repo_op_kind_for(schedule_type),
-                    target.hostname.clone(),
-                    Some(target.agent_id),
-                )
-                .await;
-            ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
-                repo_id: target.repo_id,
-                op: ctx.repo_op_tracker.get(target.repo_id).await,
-            });
-            if !*marked_triggered {
-                mark_schedule_triggered_once(ctx, marked_triggered).await;
-            }
-            // Signal tick() only now that mark_schedule_triggered_once's DB write (if
-            // any) has completed - matching fail_target's record-before-signal order,
-            // so a caller unblocked by this signal and immediately reading the
-            // schedule row back can't race this write. See the doc comment above
-            // fail_target for the full race explanation.
+            record_target_dispatched(ctx, target, schedule_type, action, marked_triggered).await;
             signal_first_target_attempted(triggered_tx);
         }
         Err(e) => {
@@ -1004,10 +1015,10 @@ async fn run_sequential_target(
                 error = %e,
                 "sequential: agent not connected, skipping target"
             );
-            return fail_target(
+            return fail_target_with_teardown(
                 ctx,
-                target.agent_id,
-                &target.hostname,
+                power,
+                target,
                 true,
                 recorded_failure,
                 triggered_tx,
@@ -1016,7 +1027,148 @@ async fn run_sequential_target(
         }
     }
 
-    await_target_completion(ctx, target, rx).await
+    let control = await_target_completion(ctx, target, rx).await;
+    teardown_power_for_target(power).await;
+    control
+}
+
+/// Records a successfully dispatched target: logs it, marks the repo as
+/// actively in use for the lifetime of the lock guard (not just while the
+/// agent happens to be reporting progress, so the repo detail page can show
+/// it's locked right now rather than only ever showing the last completed
+/// operation), and marks the schedule triggered. Split out of
+/// [`run_sequential_target`] purely to keep that function's line count down.
+async fn record_target_dispatched(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+    schedule_type: ScheduleType,
+    action: &str,
+    marked_triggered: &mut bool,
+) {
+    let schedule_id = ctx.schedule_id;
+    tracing::info!(
+        hostname = %target.hostname,
+        repo_id = target.repo_id,
+        action,
+        schedule_id,
+        "sequential: triggered"
+    );
+    ctx.repo_op_tracker
+        .set(
+            target.repo_id,
+            repo_op_kind_for(schedule_type),
+            target.hostname.clone(),
+            Some(target.agent_id),
+        )
+        .await;
+    ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
+        repo_id: target.repo_id,
+        op: ctx.repo_op_tracker.get(target.repo_id).await,
+    });
+    if !*marked_triggered {
+        mark_schedule_triggered_once(ctx, marked_triggered).await;
+    }
+}
+
+/// The rows and reachability context [`run_sequential_target`] needs to pass
+/// on to [`teardown_power_for_target`] once it's done with a target,
+/// bundled to keep both functions' argument counts down.
+struct TargetPowerState<'a> {
+    ctx: power::PowerCtx<'a>,
+    agent: Option<&'a db::AgentRow>,
+    repo: Option<&'a db::RepoRow>,
+    run_id: &'a str,
+    hostname: &'a str,
+}
+
+/// [`fail_target`], but first tears down anything this target's own
+/// [`ensure_target_power`] call turned on -- the shared tail of every
+/// pre-dispatch failure path in [`run_sequential_target`].
+async fn fail_target_with_teardown(
+    ctx: &SequentialTargetCtx<'_>,
+    power: TargetPowerState<'_>,
+    target: &DueScheduleRow,
+    agent_unreachable: bool,
+    recorded_failure: &mut bool,
+    triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> TargetControl {
+    teardown_power_for_target(power).await;
+    fail_target(
+        ctx,
+        target.agent_id,
+        &target.hostname,
+        agent_unreachable,
+        recorded_failure,
+        triggered_tx,
+    )
+    .await
+}
+
+/// Fetches the source and repository host rows, makes sure each is
+/// reachable (waking it first if it's configured to and isn't already), and
+/// registers this target's participation in each host's
+/// [`PowerSessionTracker`](crate::power::PowerSessionTracker) session.
+/// Returns the rows (or `None` for one the DB lookup failed for) so the
+/// caller can pass them on to [`teardown_power_for_target`] later. The two
+/// hosts are checked concurrently -- one being slow to wake doesn't hold up
+/// the other.
+async fn ensure_target_power(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+) -> (Option<db::AgentRow>, Option<db::RepoRow>) {
+    let power_ctx = ctx.power_ctx();
+    let agent_row = db::get_agent_by_id(ctx.pool, target.agent_id).await.ok();
+    let repo_row = db::get_repo_by_id(ctx.pool, target.repo_id).await.ok();
+    let (agent_outcome, repo_outcome) = tokio::join!(
+        async {
+            match &agent_row {
+                Some(agent) => power::ensure_agent_online(power_ctx, agent, ctx.run_id).await,
+                None => power::AgentPowerOutcome::default(),
+            }
+        },
+        async {
+            match &repo_row {
+                Some(repo) => {
+                    power::ensure_repo_online(power_ctx, repo, ctx.run_id, &target.hostname).await
+                }
+                None => power::RepoPowerOutcome::default(),
+            }
+        },
+    );
+    if agent_row.is_some() {
+        ctx.power_sessions
+            .begin(
+                power::PowerHostKey::Agent(target.agent_id),
+                agent_outcome.woke,
+                agent_outcome.started_agent,
+            )
+            .await;
+    }
+    if repo_row.is_some() {
+        ctx.power_sessions
+            .begin(
+                power::PowerHostKey::Repo(target.repo_id),
+                repo_outcome.woke,
+                false,
+            )
+            .await;
+    }
+    (agent_row, repo_row)
+}
+
+/// Shuts down / stops each of `agent_row`/`repo_row`'s hosts if this run's
+/// [`PowerSessionTracker`](crate::power::PowerSessionTracker) says it's both
+/// safe (no other concurrently-running target still relying on the host) and
+/// warranted (this session actually woke or started it). A no-op for a host
+/// whose row was never fetched -- see the `is_some()` guards around the
+/// matching `begin()` calls in [`run_sequential_target`].
+async fn teardown_power_for_target(power: TargetPowerState<'_>) {
+    if let Some(agent) = power.agent {
+        power::teardown_agent_power(power.ctx, agent, power.run_id).await;
+    }
+    if let Some(repo) = power.repo {
+        power::teardown_repo_power(power.ctx, repo, power.run_id, power.hostname).await;
+    }
 }
 
 fn signal_first_target_attempted(triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>) {
@@ -1326,6 +1478,7 @@ mod tests {
             session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
                 480,
             )),
+            power_sessions: crate::power::PowerSessionTracker::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 
@@ -1784,6 +1937,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
         })
         .await
         .unwrap();
@@ -1833,6 +1987,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
         })
         .await
         .unwrap();
@@ -1901,6 +2056,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
         })
         .await
         .unwrap();
@@ -1954,6 +2110,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
         })
         .await
         .unwrap();
@@ -2007,6 +2164,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
             })
             .await
             .unwrap();
@@ -2109,6 +2267,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
         })
         .await
         .unwrap();
@@ -2188,6 +2347,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
             })
             .await
             .unwrap();
@@ -2461,6 +2621,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &ui_broadcast,
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
         })
         .await
         .unwrap();
@@ -2479,6 +2640,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
             })
             .await
             .unwrap();
@@ -3111,6 +3273,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &background_task_tracker,
+                power_sessions: &crate::power::PowerSessionTracker::default(),
             })
             .await
             .unwrap();
@@ -3509,6 +3672,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
         })
         .await
         .unwrap();

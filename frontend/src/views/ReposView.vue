@@ -421,6 +421,7 @@ function onRepoImported(created: Repo): void {
       last_op_by: null,
       current_op: null,
       quota: null,
+      power: created.power,
     },
   ]
 }

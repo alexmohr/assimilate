@@ -82,6 +82,12 @@ pub async fn delete_hostname_pattern(pool: &PgPool, pattern_id: i64) -> Result<(
 }
 
 #[derive(Debug, sqlx::FromRow)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring AgentRow's own columns via query_as!, not \
+              mutually-exclusive states; splitting into enums or sub-structs would require \
+              restructuring the query_as! call in find_agent_by_pattern for no correctness benefit"
+)]
 struct PatternAgentJoinRow {
     pub pattern: String,
     pub id: i64,
@@ -104,6 +110,16 @@ struct PatternAgentJoinRow {
     pub is_hidden: bool,
     pub last_ssh_user: Option<String>,
     pub domain: Option<String>,
+    pub wake_enabled: bool,
+    pub wake_mac_address: Option<String>,
+    pub wake_broadcast_address: Option<String>,
+    pub wake_timeout_seconds: i32,
+    pub shutdown_after_backup: bool,
+    pub start_agent_enabled: bool,
+    pub stop_agent_after_backup: bool,
+    pub ssh_host: Option<String>,
+    pub ssh_port: i32,
+    pub agent_service_name: String,
 }
 
 /// Looks up an agent whose registered hostname pattern glob-matches the
@@ -126,8 +142,10 @@ pub async fn find_agent_by_pattern(
          sqlx::types::Json<Vec<String>>\", a.default_post_backup_commands AS \
          \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
          a.default_file_change_patterns_raw, a.agent_token_hash, a.is_hidden, a.last_ssh_user, \
-         a.domain FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY \
-         p.pattern",
+         a.domain, a.wake_enabled, a.wake_mac_address, a.wake_broadcast_address, \
+         a.wake_timeout_seconds, a.shutdown_after_backup, a.start_agent_enabled, \
+         a.stop_agent_after_backup, a.ssh_host, a.ssh_port, a.agent_service_name FROM \
+         agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY p.pattern",
     )
     .fetch_all(pool)
     .await
@@ -158,5 +176,15 @@ pub async fn find_agent_by_pattern(
         is_hidden: row.is_hidden,
         last_ssh_user: row.last_ssh_user.clone(),
         domain: row.domain.clone(),
+        wake_enabled: row.wake_enabled,
+        wake_mac_address: row.wake_mac_address.clone(),
+        wake_broadcast_address: row.wake_broadcast_address.clone(),
+        wake_timeout_seconds: row.wake_timeout_seconds,
+        shutdown_after_backup: row.shutdown_after_backup,
+        start_agent_enabled: row.start_agent_enabled,
+        stop_agent_after_backup: row.stop_agent_after_backup,
+        ssh_host: row.ssh_host.clone(),
+        ssh_port: row.ssh_port,
+        agent_service_name: row.agent_service_name.clone(),
     }))
 }

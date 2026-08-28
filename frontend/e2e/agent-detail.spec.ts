@@ -146,6 +146,7 @@ test.describe('Agent detail', () => {
       'Identity',
       'Backup defaults',
       'Hostname aliases',
+      'Power',
       'Tags',
       'Danger zone',
     ])

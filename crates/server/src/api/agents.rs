@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 
 use axum::{
     Json,
@@ -68,6 +68,59 @@ pub struct UpdateAgentRequest {
     pub default_file_change_patterns_raw: String,
 }
 
+fn default_wake_timeout_seconds() -> i32 {
+    180
+}
+
+fn default_agent_service_name() -> String {
+    "assimilate-agent".to_owned()
+}
+
+/// Request payload for whether/how to wake a host (an agent's, or a
+/// repository's) before a backup, and shut it back down afterward. Shared by
+/// [`UpdateAgentPowerRequest`] and, directly, the repository power endpoint
+/// (`update_repo_power`), since a repository host has no agent-process
+/// settings to nest it under.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateHostWakeRequest {
+    /// Whether to send a Wake-on-LAN packet before a backup if the host
+    /// isn't already reachable.
+    pub wake_enabled: bool,
+    /// MAC address to wake, required when `wake_enabled`.
+    pub wake_mac_address: Option<String>,
+    /// Broadcast address the magic packet is sent to.
+    pub wake_broadcast_address: Option<String>,
+    /// How long to wait for the host to come online after waking it.
+    #[serde(default = "default_wake_timeout_seconds")]
+    pub wake_timeout_seconds: i32,
+    /// Whether to shut the host down after the backup, but only if this run
+    /// is what woke it.
+    pub shutdown_after_backup: bool,
+}
+
+/// Request payload for updating an agent's power-management settings:
+/// waking its host before a backup, and starting/stopping the agent process
+/// itself over SSH.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateAgentPowerRequest {
+    /// Whether/how to wake this agent's host before a backup.
+    pub wake: UpdateHostWakeRequest,
+    /// Whether to start the agent process over SSH before a backup if it
+    /// isn't already connected once the host is up.
+    pub start_agent_enabled: bool,
+    /// Whether to stop the agent process after the backup, but only if this
+    /// run is what started it.
+    pub stop_agent_after_backup: bool,
+    /// SSH hostname used to start/stop the agent process and to shut the
+    /// host down, required when `start_agent_enabled`.
+    pub ssh_host: Option<String>,
+    /// SSH port for `ssh_host`.
+    pub ssh_port: Option<i32>,
+    /// Name of the systemd unit managing the agent process.
+    #[serde(default = "default_agent_service_name")]
+    pub agent_service_name: String,
+}
+
 /// Builds an [`AgentResponse`] for `agent`, resolving live connection and
 /// restart capability from the registry by the agent's own hostname.
 async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentResponse {
@@ -98,6 +151,20 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         visibility: agent.visibility.parse().unwrap_or_default(),
         restart_unavailable_reason,
         last_ssh_user: agent.last_ssh_user,
+        power: shared::responses::AgentPowerSettingsResponse {
+            wake: shared::responses::HostWakeSettingsResponse {
+                wake_enabled: agent.wake_enabled,
+                wake_mac_address: agent.wake_mac_address,
+                wake_broadcast_address: agent.wake_broadcast_address,
+                wake_timeout_seconds: agent.wake_timeout_seconds,
+                shutdown_after_backup: agent.shutdown_after_backup,
+            },
+            start_agent_enabled: agent.start_agent_enabled,
+            stop_agent_after_backup: agent.stop_agent_after_backup,
+            ssh_host: agent.ssh_host,
+            ssh_port: agent.ssh_port,
+            agent_service_name: agent.agent_service_name,
+        },
     }
 }
 
@@ -277,6 +344,98 @@ pub async fn update_agent(
     )
     .await?;
     config_assembler::push_config_to_agent(&state, agent.id).await;
+    Ok(Json(build_agent_response(&state, agent).await))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/agents/{hostname}/power",
+    tag = "Agents",
+    operation_id = "updateAgentPower",
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
+    request_body = UpdateAgentPowerRequest,
+    responses(
+        (status = 200, description = "Updated agent", body = AgentResponse),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
+    )
+)]
+/// Update an agent's power-management settings.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::NotFound`]: the agent does not exist
+pub async fn update_agent_power(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
+    ApiJson(req): ApiJson<UpdateAgentPowerRequest>,
+) -> Result<Json<AgentResponse>, ApiError> {
+    if req.wake.wake_timeout_seconds <= 0 {
+        return Err(ApiError::BadRequest(
+            "wake timeout must be greater than zero".to_owned(),
+        ));
+    }
+    if req.wake.wake_enabled {
+        let mac = req.wake.wake_mac_address.as_deref().ok_or_else(|| {
+            ApiError::BadRequest("a MAC address is required to wake this host".to_owned())
+        })?;
+        crate::power::MacAddress::from_str(mac)
+            .map_err(|e| ApiError::BadRequest(format!("invalid MAC address: {e}")))?;
+    } else if req.wake.shutdown_after_backup {
+        return Err(ApiError::BadRequest(
+            "shutting down after backup requires waking the host to be enabled".to_owned(),
+        ));
+    }
+    if req.stop_agent_after_backup && !req.start_agent_enabled {
+        return Err(ApiError::BadRequest(
+            "stopping the agent after backup requires starting it to be enabled".to_owned(),
+        ));
+    }
+
+    let existing =
+        db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+
+    if req.start_agent_enabled {
+        if req.ssh_host.as_deref().is_none_or(str::is_empty) {
+            return Err(ApiError::BadRequest(
+                "an SSH host is required to start the agent process".to_owned(),
+            ));
+        }
+        if existing.last_ssh_user.is_none() {
+            return Err(ApiError::BadRequest(
+                "deploy the SSH key to this host (Deploy SSH key) before enabling start agent -- \
+                 no SSH user on record for it yet"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let agent = db::update_agent_power(
+        &state.pool,
+        existing.id,
+        db::AgentPowerPatch {
+            wake_enabled: req.wake.wake_enabled,
+            wake_mac_address: req.wake.wake_mac_address.as_deref(),
+            wake_broadcast_address: req.wake.wake_broadcast_address.as_deref(),
+            wake_timeout_seconds: req.wake.wake_timeout_seconds,
+            shutdown_after_backup: req.wake.shutdown_after_backup,
+            start_agent_enabled: req.start_agent_enabled,
+            stop_agent_after_backup: req.stop_agent_after_backup,
+            ssh_host: req.ssh_host.as_deref(),
+            ssh_port: req.ssh_port.unwrap_or(22),
+            agent_service_name: &req.agent_service_name,
+        },
+    )
+    .await?;
     Ok(Json(build_agent_response(&state, agent).await))
 }
 

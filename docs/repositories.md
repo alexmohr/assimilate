@@ -250,6 +250,10 @@ This means borg will only accept a repository relocation **once**, immediately a
 
 Deletion requires admin privileges.
 
+## Power
+
+A repository host that is powered down between backups can be woken over Wake-on-LAN before a backup writes to it, and shut back down afterward. Configured from the repository's **Settings → Power** tab (admins only) — see [Power Management](power-management.md) for the full behavior.
+
 ## Repository Permissions
 
 By default, repository visibility follows the owner model. Admins can grant per-user access to specific repositories using the permissions panel on the repository detail page.

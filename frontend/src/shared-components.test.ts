@@ -82,6 +82,8 @@ const OWNED = [
   'info-actions',
   'field-inline',
   'field-label-row',
+  'field-body',
+  'field-title',
   // Promote a class here once a second file needs it, and delete both scoped
   // copies; the two checks below then keep it that way.
   'detail-breadcrumb',

@@ -389,7 +389,7 @@ Authentication is performed via the `Hello` message immediately after connection
 
 ### UI WebSocket
 
-Browsers open a separate, server-push-only WebSocket at `/ws/ui` to receive live events (`AgentConnected`, `AgentDisconnected`, `BackupStarted`, `BackupCompleted`, `CheckCompleted`, `VerifyCompleted`, `ConfigUpdated`, and more — the `ServerToUi` enum). It carries no client→server commands.
+Browsers open a separate, server-push-only WebSocket at `/ws/ui` to receive live events (`AgentConnected`, `AgentDisconnected`, `BackupStarted`, `BackupCompleted`, `CheckCompleted`, `VerifyCompleted`, `ConfigUpdated`, `RunEvent`, and more — the `ServerToUi` enum). It carries no client→server commands. `RunEvent` carries one step of a run's [power-management timeline](power-management.md#run-timeline) as it happens; the same history is available after the fact via `GET /api/runs/{run_id}/events`.
 
 ## SSH Agent WebSocket
 

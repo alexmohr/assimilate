@@ -4,11 +4,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { getRunEvents } from '../api/runs'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
+import { logger } from '../utils/logger'
+import BaseSpinner from './BaseSpinner.vue'
+import RunEventTimeline from './RunEventTimeline.vue'
 import type { ReportRow } from '../types/report'
+import type { RunEventResponse } from '../types/generated'
 
 /**
  * One backup run, as a single line, following the same grammar as
@@ -43,10 +48,40 @@ const warnings = computed(() => props.report.warnings ?? [])
 /**
  * Warnings are shown for a warned run and errors for a failed one. A warned
  * run can also carry an `error_message` describing the warning it was
- * downgraded from, which would otherwise be rendered twice.
+ * downgraded from, which would otherwise be rendered twice. A run tied to a
+ * power-management timeline is always worth offering to expand, even before
+ * its events have loaded - `run_id` alone doesn't say whether any were
+ * actually recorded (most runs have wake/start disabled and record none).
  */
 const hasDetail = computed(
-  () => warnings.value.length > 0 || (props.report.error_message !== null && !isSuccess.value),
+  () =>
+    warnings.value.length > 0 ||
+    (props.report.error_message !== null && !isSuccess.value) ||
+    props.report.run_id !== null,
+)
+
+const runEvents = ref<RunEventResponse[]>([])
+const loadingEvents = ref(false)
+
+watch(
+  () => props.expanded,
+  (expanded) => {
+    const runId = props.report.run_id
+    if (!expanded || !runId || runEvents.value.length > 0 || loadingEvents.value) return
+    loadingEvents.value = true
+    getRunEvents(runId)
+      .then((events) => {
+        runEvents.value = events
+      })
+      .catch((e: unknown) => logger.error('failed to load run events', e))
+      .finally(() => {
+        loadingEvents.value = false
+      })
+  },
+  // A report can arrive already expanded (a deep link pins a specific run),
+  // and that first render deserves its timeline fetched too, not just a
+  // later toggle.
+  { immediate: true },
 )
 </script>
 
@@ -134,6 +169,24 @@ const hasDetail = computed(
     >
       <strong class="group-label group-label--danger detail-label">Error</strong>
       <pre class="detail-output detail-output--danger">{{ report.error_message }}</pre>
+    </div>
+    <div
+      v-if="report.run_id && (loadingEvents || runEvents.length > 0)"
+      class="detail-block"
+    >
+      <strong class="group-label detail-label">Power management</strong>
+      <div
+        v-if="loadingEvents"
+        class="loading-row"
+      >
+        <BaseSpinner size="sm" />
+      </div>
+      <RunEventTimeline
+        v-else
+        :events="runEvents"
+        :source-label="report.hostname ?? 'source'"
+        :repository-label="report.repo_name ?? 'repository'"
+      />
     </div>
   </div>
 </template>

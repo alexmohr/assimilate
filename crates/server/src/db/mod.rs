@@ -9,6 +9,8 @@ pub mod dashboard;
 pub mod patterns;
 /// Quota database queries.
 pub mod quota;
+/// Backup run power-management event log queries.
+pub mod run_events;
 /// Server-level quota database queries.
 pub mod server_quota;
 /// Tag database queries.
@@ -61,8 +63,10 @@ pub async fn resolve_agent_for_hostname(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1 AND agent_token_hash != \
-         'imported:no-auth'",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+         FROM agents WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
         hostname,
     )
     .fetch_all(pool)
@@ -133,7 +137,10 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain FROM agents WHERE id = $1",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+         FROM agents WHERE id = $1",
         source_id,
     )
     .fetch_optional(&mut *tx)
@@ -221,6 +228,13 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
 
 /// A row from the `agents` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the agents table's columns via query_as!, not \
+              mutually-exclusive states; splitting into enums or sub-structs would require \
+              restructuring every query_as! call site around these columns for no correctness \
+              benefit -- the API layer (AgentResponse) already nests the power-related ones"
+)]
 pub struct AgentRow {
     /// Unique identifier.
     pub id: i64,
@@ -270,6 +284,32 @@ pub struct AgentRow {
     /// Optional DNS domain, set by an admin to disambiguate agents that
     /// share an OS hostname across different networks.
     pub domain: Option<String>,
+    /// Whether to send a Wake-on-LAN packet before a backup if the agent
+    /// isn't already reachable.
+    pub wake_enabled: bool,
+    /// MAC address to wake, required when `wake_enabled`.
+    pub wake_mac_address: Option<String>,
+    /// Broadcast address the magic packet is sent to (defaults to the
+    /// global broadcast address when unset).
+    pub wake_broadcast_address: Option<String>,
+    /// How long to wait for the host to come online after waking it.
+    pub wake_timeout_seconds: i32,
+    /// Whether to shut the host down after the backup, but only if this run
+    /// is what woke it.
+    pub shutdown_after_backup: bool,
+    /// Whether to start the agent process over SSH before a backup if it
+    /// isn't already connected once the host is up.
+    pub start_agent_enabled: bool,
+    /// Whether to stop the agent process after the backup, but only if this
+    /// run is what started it.
+    pub stop_agent_after_backup: bool,
+    /// SSH hostname used to start/stop the agent process and to shut the
+    /// host down, required when `start_agent_enabled`.
+    pub ssh_host: Option<String>,
+    /// SSH port for `ssh_host`.
+    pub ssh_port: i32,
+    /// Name of the systemd unit managing the agent process.
+    pub agent_service_name: String,
 }
 
 /// A row from the `repos` table (sensitive fields excluded).
@@ -299,6 +339,19 @@ pub struct RepoRow {
     pub visibility: String,
     /// Optional cron expression for automatic sync.
     pub sync_schedule: Option<String>,
+    /// Whether to send a Wake-on-LAN packet before a backup if the
+    /// repository host isn't already reachable over SSH.
+    pub wake_enabled: bool,
+    /// MAC address to wake, required when `wake_enabled`.
+    pub wake_mac_address: Option<String>,
+    /// Broadcast address the magic packet is sent to (defaults to the
+    /// global broadcast address when unset).
+    pub wake_broadcast_address: Option<String>,
+    /// How long to wait for the host to come online after waking it.
+    pub wake_timeout_seconds: i32,
+    /// Whether to shut the host down after the backup, but only if this run
+    /// is what woke it.
+    pub shutdown_after_backup: bool,
 }
 
 /// SSH connection details for a repository (passphrase omitted).
@@ -515,8 +568,10 @@ pub async fn get_agent_by_hostname(
              \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
              default_post_backup_commands AS \"default_post_backup_commands: \
              sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1 \
-             AND domain = $2",
+             agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+             start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+             FROM agents WHERE hostname = $1 AND domain = $2",
             hostname,
             domain,
         )
@@ -538,7 +593,10 @@ pub async fn get_agent_by_hostname(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1 ORDER BY domain",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+         FROM agents WHERE hostname = $1 ORDER BY domain",
         hostname,
     )
     .fetch_all(pool)
@@ -577,7 +635,10 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain FROM agents WHERE id = $1",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+         FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -713,7 +774,10 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
              \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
              default_post_backup_commands AS \"default_post_backup_commands: \
              sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user, domain FROM agents ORDER BY hostname",
+             agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+             start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+             FROM agents ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -727,8 +791,10 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
              \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
              default_post_backup_commands AS \"default_post_backup_commands: \
              sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, \
-             agent_token_hash, is_hidden, last_ssh_user, domain FROM agents WHERE is_hidden = \
-             false ORDER BY hostname",
+             agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+             start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+             FROM agents WHERE is_hidden = false ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -754,7 +820,10 @@ pub async fn set_agent_hidden(
          default_pre_backup_commands AS \"default_pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
          \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain",
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name",
         agent_id,
         hidden,
     )
@@ -789,7 +858,10 @@ pub async fn get_or_create_agent_by_hostname(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain FROM agents WHERE hostname = $1",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name \
+         FROM agents WHERE hostname = $1",
         hostname,
     )
     .fetch_all(pool)
@@ -809,7 +881,9 @@ pub async fn get_or_create_agent_by_hostname(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
         hostname,
         Some(format!("{hostname} (imported)")),
         "imported:no-auth",
@@ -839,7 +913,9 @@ pub async fn insert_agent(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
         hostname,
         display_name,
         token_hash,
@@ -889,7 +965,9 @@ pub async fn insert_agent_with_paths(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
         hostname,
         defaults.display_name,
         token_hash,
@@ -927,7 +1005,9 @@ pub async fn update_agent(
          \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
          default_post_backup_commands AS \"default_post_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
-         is_hidden, last_ssh_user, domain",
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
         agent_id,
         new_hostname,
         defaults.display_name,
@@ -937,6 +1017,88 @@ pub async fn update_agent(
         sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
         defaults.domain,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
+        other => ApiError::Database(other),
+    })
+}
+
+/// Power-management configuration for an agent's host: waking it
+/// (Wake-on-LAN) and starting/stopping the agent process over SSH around a
+/// backup. Kept separate from [`AgentDefaults`] -- unlike backup defaults,
+/// these settings are never touched by the config import/export flow.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring AgentRow's own columns, not mutually-exclusive states; \
+              splitting into enums or sub-structs would require restructuring the query_as! call \
+              in update_agent_power for no correctness benefit"
+)]
+pub struct AgentPowerPatch<'a> {
+    /// Whether to send a Wake-on-LAN packet before a backup if the agent
+    /// isn't already reachable.
+    pub wake_enabled: bool,
+    /// MAC address to wake, required when `wake_enabled`.
+    pub wake_mac_address: Option<&'a str>,
+    /// Broadcast address the magic packet is sent to.
+    pub wake_broadcast_address: Option<&'a str>,
+    /// How long to wait for the host to come online after waking it.
+    pub wake_timeout_seconds: i32,
+    /// Whether to shut the host down after the backup, but only if this run
+    /// is what woke it.
+    pub shutdown_after_backup: bool,
+    /// Whether to start the agent process over SSH before a backup if it
+    /// isn't already connected once the host is up.
+    pub start_agent_enabled: bool,
+    /// Whether to stop the agent process after the backup, but only if this
+    /// run is what started it.
+    pub stop_agent_after_backup: bool,
+    /// SSH hostname used to start/stop the agent process and to shut the
+    /// host down, required when `start_agent_enabled`.
+    pub ssh_host: Option<&'a str>,
+    /// SSH port for `ssh_host`.
+    pub ssh_port: i32,
+    /// Name of the systemd unit managing the agent process.
+    pub agent_service_name: &'a str,
+}
+
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
+pub async fn update_agent_power(
+    pool: &PgPool,
+    agent_id: i64,
+    power: AgentPowerPatch<'_>,
+) -> Result<AgentRow, ApiError> {
+    sqlx::query_as!(
+        AgentRow,
+        "UPDATE agents SET wake_enabled = $2, wake_mac_address = $3, wake_broadcast_address = $4, \
+         wake_timeout_seconds = $5, shutdown_after_backup = $6, start_agent_enabled = $7, \
+         stop_agent_after_backup = $8, ssh_host = $9, ssh_port = $10, agent_service_name = $11 \
+         WHERE id = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \
+         \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", \
+         default_post_backup_commands AS \"default_post_backup_commands: \
+         sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
+         start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
+        agent_id,
+        power.wake_enabled,
+        power.wake_mac_address,
+        power.wake_broadcast_address,
+        power.wake_timeout_seconds,
+        power.shutdown_after_backup,
+        power.start_agent_enabled,
+        power.stop_agent_after_backup,
+        power.ssh_host,
+        power.ssh_port,
+        power.agent_service_name,
     )
     .fetch_one(pool)
     .await
@@ -964,7 +1126,10 @@ pub async fn regenerate_agent_token(
          default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: \
          sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \
          \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", \
-         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain",
+         default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, \
+         wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, \
+         shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
+         agent_service_name",
         agent_id,
         token_hash,
     )
@@ -1601,7 +1766,8 @@ pub async fn insert_repo(
             "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, \
              passphrase_encrypted, compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, \
              $6, $7, $8, $9) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
-             compression, encryption, enabled, owner_id, visibility, sync_schedule",
+             compression, encryption, enabled, owner_id, visibility, sync_schedule, wake_enabled, \
+             wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
             params.name,
             params.repo_path,
             params.ssh_user,
@@ -1622,7 +1788,8 @@ pub async fn insert_repo(
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
          compression, encryption, owner_id, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, \
          $8, $9, $10) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, \
-         encryption, enabled, owner_id, visibility, sync_schedule",
+         encryption, enabled, owner_id, visibility, sync_schedule, wake_enabled, \
+         wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
         params.name,
         params.repo_path,
         params.ssh_user,
@@ -1637,6 +1804,28 @@ pub async fn insert_repo(
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)
+}
+
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
+pub async fn get_repo_by_id(pool: &PgPool, repo_id: i64) -> Result<RepoRow, ApiError> {
+    sqlx::query_as!(
+        RepoRow,
+        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
+         enabled, owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup FROM repos WHERE id \
+         = $1",
+        repo_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
+        other => ApiError::Database(other),
+    })
 }
 
 /// # Errors
@@ -1676,7 +1865,8 @@ pub async fn update_repo(
             "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
              $6, compression = $7, encryption = $8, enabled = $9 WHERE id = $1 RETURNING id, \
              name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, \
-             owner_id, visibility, sync_schedule",
+             owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
+             wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
             params.repo_id,
             params.name,
             params.repo_path,
@@ -1702,7 +1892,8 @@ pub async fn update_repo(
         "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
          compression = $7, encryption = $8, enabled = $9, sync_schedule = $10 WHERE id = $1 \
          RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility, sync_schedule",
+         enabled, owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
         params.repo_id,
         params.name,
         params.repo_path,
@@ -1720,6 +1911,57 @@ pub async fn update_repo(
         sqlx::Error::RowNotFound => {
             ApiError::NotFound(format!("repo {} not found", params.repo_id))
         }
+        other => ApiError::Database(other),
+    })
+}
+
+/// Power-management configuration for the host a repository lives on:
+/// waking it (Wake-on-LAN) and shutting it back down around a backup. A
+/// repository host has no agent process, so unlike [`AgentPowerPatch`] there
+/// is no start/stop-agent counterpart here.
+pub struct RepoPowerPatch<'a> {
+    /// Whether to send a Wake-on-LAN packet before a backup if the
+    /// repository host isn't already reachable over SSH.
+    pub wake_enabled: bool,
+    /// MAC address to wake, required when `wake_enabled`.
+    pub wake_mac_address: Option<&'a str>,
+    /// Broadcast address the magic packet is sent to.
+    pub wake_broadcast_address: Option<&'a str>,
+    /// How long to wait for the host to come online after waking it.
+    pub wake_timeout_seconds: i32,
+    /// Whether to shut the host down after the backup, but only if this run
+    /// is what woke it.
+    pub shutdown_after_backup: bool,
+}
+
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
+pub async fn update_repo_power(
+    pool: &PgPool,
+    repo_id: i64,
+    power: RepoPowerPatch<'_>,
+) -> Result<RepoRow, ApiError> {
+    sqlx::query_as!(
+        RepoRow,
+        "UPDATE repos SET wake_enabled = $2, wake_mac_address = $3, wake_broadcast_address = $4, \
+         wake_timeout_seconds = $5, shutdown_after_backup = $6 WHERE id = $1 RETURNING id, name, \
+         repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, owner_id, \
+         visibility, sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
+         wake_timeout_seconds, shutdown_after_backup",
+        repo_id,
+        power.wake_enabled,
+        power.wake_mac_address,
+        power.wake_broadcast_address,
+        power.wake_timeout_seconds,
+        power.shutdown_after_backup,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
         other => ApiError::Database(other),
     })
 }
@@ -1747,7 +1989,8 @@ pub async fn update_repo_and_set_relocation_pending(
              $6, compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, \
              relocation_pending = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, \
              ssh_host, ssh_port, compression, encryption, enabled, owner_id, visibility, \
-             sync_schedule",
+             sync_schedule, wake_enabled, wake_mac_address, wake_broadcast_address, \
+             wake_timeout_seconds, shutdown_after_backup",
             params.repo_id,
             params.name,
             params.repo_path,
@@ -1773,7 +2016,8 @@ pub async fn update_repo_and_set_relocation_pending(
             "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
              $6, compression = $7, encryption = $8, enabled = $9, relocation_pending = true WHERE \
              id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, \
-             encryption, enabled, owner_id, visibility, sync_schedule",
+             encryption, enabled, owner_id, visibility, sync_schedule, wake_enabled, \
+             wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup",
             params.repo_id,
             params.name,
             params.repo_path,
@@ -2375,7 +2619,9 @@ pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as!(
         RepoRow,
         "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility, sync_schedule FROM repos ORDER BY name",
+         enabled, owner_id, visibility, sync_schedule, wake_enabled, wake_mac_address, \
+         wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup FROM repos ORDER BY \
+         name",
     )
     .fetch_all(pool)
     .await
@@ -2460,9 +2706,10 @@ pub async fn list_repos_for_agent_public(
     sqlx::query_as!(
         RepoRow,
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule FROM \
-         repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets st ON st.schedule_id \
-         = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
+         r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
+         r.shutdown_after_backup FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN \
+         schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3907,6 +4154,9 @@ pub struct ReportRow {
     pub archive_name: Option<String>,
     /// Borg command that was executed.
     pub borg_command: Option<String>,
+    /// Correlates to `backup_run_events.run_id` for this run's
+    /// power-management timeline, when one was recorded.
+    pub run_id: Option<String>,
 }
 
 /// Storage statistics grouped by agent and repo.
@@ -4510,10 +4760,10 @@ pub async fn list_reports_for_agent(
              WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
              schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
              br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
-             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command \
-             FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON \
-             s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = $2 ORDER by br.started_at \
-             DESC LIMIT $3",
+             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
+             br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
+             schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = $2 ORDER by \
+             br.started_at DESC LIMIT $3",
             agent_id,
             target_name,
             limit,
@@ -4528,9 +4778,10 @@ pub async fn list_reports_for_agent(
              WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
              schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
              br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
-             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command \
-             FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON \
-             s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
+             br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
+             schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at \
+             DESC LIMIT $2",
             agent_id,
             limit,
         )
@@ -4554,9 +4805,9 @@ pub async fn list_reports_for_schedule(
          s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS schedule_name, \
          br.started_at, br.finished_at, br.status, br.original_size, br.compressed_size, \
          br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
-         br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports br \
-         JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE \
-         br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+         br.warnings, br.borg_version, br.archive_name, br.borg_command, br.run_id FROM \
+         backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
+         br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2",
         schedule_id,
         limit,
     )
@@ -6181,6 +6432,14 @@ pub async fn set_user_preferences(
 
 /// Full repository row with aggregated stats (sizes, agent count, import state, last op).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring this query's own columns via query_as!, not \
+              mutually-exclusive states; splitting into enums or sub-structs would require \
+              restructuring the query_as! call in list_repos_with_stats/get_repo_with_stats for \
+              no correctness benefit -- the API layer (RepoWithStatsResponse) already nests the \
+              power-related ones"
+)]
 pub struct RepoWithStatsRow {
     /// Unique identifier.
     pub id: i64,
@@ -6253,6 +6512,19 @@ pub struct RepoWithStatsRow {
     /// Whether a quota row exists for this repo, and if so, whether it's enabled.
     /// `NULL` means no quota is configured at all.
     pub quota_enabled: Option<bool>,
+    /// Whether to send a Wake-on-LAN packet before a backup if the
+    /// repository host isn't already reachable over SSH.
+    pub wake_enabled: bool,
+    /// MAC address to wake, required when `wake_enabled`.
+    pub wake_mac_address: Option<String>,
+    /// Broadcast address the magic packet is sent to (defaults to the
+    /// global broadcast address when unset).
+    pub wake_broadcast_address: Option<String>,
+    /// How long to wait for the host to come online after waking it.
+    pub wake_timeout_seconds: i32,
+    /// Whether to shut the host down after the backup, but only if this run
+    /// is what woke it.
+    pub shutdown_after_backup: bool,
 }
 
 /// # Errors
@@ -6263,8 +6535,9 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
         RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
          r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
-         r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", \
-         COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
+         r.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \
+         \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
          COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
          COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at, \
          COALESCE(ris.importing, false) AS \"importing!\", ris.error AS import_error, \
@@ -6301,8 +6574,9 @@ pub async fn get_repo_with_stats(
         RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
          r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
-         r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", \
-         COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
+         r.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \
+         \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
          COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
          COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at, \
          COALESCE(ris.importing, false) AS \"importing!\", ris.error AS import_error, \

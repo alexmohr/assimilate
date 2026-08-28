@@ -259,6 +259,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         task_registry,
         user_rate_limiter,
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
+        power_sessions: server::power::PowerSessionTracker::default(),
     }
 }
 
@@ -477,6 +478,10 @@ fn agent_routes() -> Router<AppState> {
             post(api::agents::restart_agent),
         )
         .route(
+            "/api/agents/{hostname}/power",
+            put(api::agents::update_agent_power),
+        )
+        .route(
             "/api/agents/{hostname}/hostname-patterns",
             get(api::agents::list_hostname_patterns).post(api::agents::add_hostname_pattern),
         )
@@ -536,6 +541,10 @@ fn repo_routes() -> Router<AppState> {
             get(api::repos::get_repo)
                 .put(api::repos::update_repo)
                 .delete(api::repos::delete_repo),
+        )
+        .route(
+            "/api/repos/{repo_id}/power",
+            put(api::repos::update_repo_power),
         )
         .route(
             "/api/repos/{repo_id}/destroy",
@@ -710,6 +719,10 @@ fn stats_routes() -> Router<AppState> {
             axum::routing::post(api::stats::dismiss_finding).delete(api::stats::undismiss_finding),
         )
         .route("/api/logs", get(api::logs::get_logs))
+        .route(
+            "/api/runs/{run_id}/events",
+            get(api::reports::list_run_events),
+        )
 }
 
 fn archive_routes() -> Router<AppState> {

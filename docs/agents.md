@@ -246,6 +246,7 @@ Everything that configures the agent lives here, behind a sub-nav:
 | **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, and token regeneration |
 | **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request |
 | **Hostname aliases** | Glob patterns for archive matching (see below) |
+| **Power** | Waking this host and starting the agent process before a backup, admins only — see [Power Management](power-management.md) |
 | **Tags** | Agent tags, for filtering the Agents list |
 | **Danger zone** | Deleting the agent (admins only) |
 

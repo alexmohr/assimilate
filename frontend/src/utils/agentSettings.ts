@@ -6,7 +6,14 @@
  * component so the detail view can parse `?section=` into the union before
  * handing it back down, rather than passing a wide `string` around.
  */
-export const SETTINGS_SECTIONS = ['identity', 'defaults', 'aliases', 'tags', 'danger'] as const
+export const SETTINGS_SECTIONS = [
+  'identity',
+  'defaults',
+  'aliases',
+  'power',
+  'tags',
+  'danger',
+] as const
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 

@@ -781,6 +781,91 @@ describe('AgentDetailView — backup progress', () => {
   })
 })
 
+describe('AgentDetailView — power phase badge', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+  })
+
+  async function mountAgent(): Promise<VueWrapper<ComponentPublicInstance>> {
+    setupApi([], [{ id: 10, name: 'server-daily' }])
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('shows the phase label from a source-target RunEvent for this host', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+
+    expect(wrapper.find('.badge--info').text()).toContain('Waking host...')
+  })
+
+  it('ignores a RunEvent for a different agent', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'other-host',
+    })
+    await nextTick()
+
+    expect(wrapper.text()).not.toContain('Waking host...')
+  })
+
+  it('ignores a repository-target RunEvent for this same run', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'repository',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+
+    expect(wrapper.text()).not.toContain('Waking host...')
+  })
+
+  it('clears the phase and shows Online once the agent actually connects', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+    expect(wrapper.find('.badge--info').exists()).toBe(true)
+
+    wsHandlers['AgentConnected']?.({ hostname: 'test-host' })
+    await nextTick()
+
+    expect(wrapper.find('.badge--info').exists()).toBe(false)
+  })
+})
+
 async function openDefaultsSettings(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
   const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
   await router.push({ query: { tab: 'settings', section: 'defaults' } })

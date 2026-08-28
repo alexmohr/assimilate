@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { getRunEvents } from '../api/runs'
 import AgentBackupRow from './AgentBackupRow.vue'
 import type { ReportRow } from '../types/report'
+
+vi.mock('../api/runs', () => ({
+  getRunEvents: vi.fn(),
+}))
 
 function report(over: Record<string, unknown> = {}): ReportRow {
   return {
@@ -23,6 +29,7 @@ function report(over: Record<string, unknown> = {}): ReportRow {
     error_message: null,
     warnings: [],
     archive_name: 'web-01-2026-06-01',
+    run_id: null,
     ...over,
   } as unknown as ReportRow
 }
@@ -32,6 +39,11 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('AgentBackupRow', () => {
+  beforeEach(() => {
+    vi.mocked(getRunEvents).mockReset()
+    vi.mocked(getRunEvents).mockResolvedValue([])
+  })
+
   it.each([
     ['success', 'success'],
     ['warning', 'warning'],
@@ -147,6 +159,56 @@ describe('AgentBackupRow', () => {
         report: report({ status: 'failed', error_message: 'Connection refused' }),
       })
       expect(wrapper.find('button[aria-expanded]').exists()).toBe(false)
+    })
+  })
+
+  // A run tied to a power-management timeline is worth offering to expand
+  // even when it succeeded with no warnings - most runs have wake/start
+  // disabled and simply won't have recorded anything, but a viewer can't
+  // know that without a way to look.
+  describe('power management timeline', () => {
+    it('offers the toggle for a clean run that has a run_id', () => {
+      const wrapper = mount({ report: report({ run_id: 'run-123' }), showDetail: true })
+      expect(wrapper.find('button[aria-expanded]').exists()).toBe(true)
+    })
+
+    it('does not fetch events until the row is expanded', () => {
+      mount({ report: report({ run_id: 'run-123' }), showDetail: true, expanded: false })
+      expect(getRunEvents).not.toHaveBeenCalled()
+    })
+
+    it('fetches and renders the timeline once expanded', async () => {
+      vi.mocked(getRunEvents).mockResolvedValue([
+        {
+          id: 1,
+          run_id: 'run-123',
+          target: 'source',
+          event_type: 'wake_sent',
+          message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+          occurred_at: '2026-06-01T09:00:00Z',
+        },
+      ])
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(getRunEvents).toHaveBeenCalledWith('run-123')
+      expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
+    })
+
+    it('does not render a timeline section for a run with no run_id', async () => {
+      const wrapper = mount({
+        report: report({ status: 'failed', error_message: 'boom', run_id: null }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(getRunEvents).not.toHaveBeenCalled()
+      expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
     })
   })
 })

@@ -7,7 +7,8 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 
 use crate::types::{
-    AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, SearchEntry,
+    AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, RunEventTarget,
+    RunEventType, SearchEntry,
 };
 
 /// The kind of repository operation being performed.
@@ -594,6 +595,26 @@ pub enum ServerToUi {
         /// The log line content.
         line: String,
     },
+    /// One step of a run's power-management timeline (reachability check,
+    /// wake, agent start, shutdown), pushed live so an open run detail view
+    /// updates without polling.
+    RunEvent {
+        /// Correlates to the run's `backup_reports.run_id`.
+        run_id: String,
+        /// Which host this event happened to.
+        target: RunEventTarget,
+        /// What happened.
+        event_type: RunEventType,
+        /// Human-readable description of the event.
+        message: String,
+        /// When the event occurred.
+        occurred_at: DateTime<Utc>,
+        /// The hostname of the agent this run's schedule targets, so a
+        /// listener can tell whether an event -- including a `target:
+        /// repository` one, still part of the same run -- belongs to the
+        /// agent it's currently showing.
+        hostname: String,
+    },
 }
 
 #[cfg(test)]
@@ -943,6 +964,19 @@ mod tests {
         let msg = ServerToUi::ArchiveDeleted {
             repo_id: 7,
             archive_name: "server-daily-2024-01-01T02:00:00".to_owned(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_ui_run_event_round_trips() {
+        let msg = ServerToUi::RunEvent {
+            run_id: "run-123".to_owned(),
+            target: RunEventTarget::Source,
+            event_type: RunEventType::WakeSent,
+            message: "Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44".to_owned(),
+            occurred_at: Utc::now(),
+            hostname: "web-01".to_owned(),
         };
         assert_round_trips(&msg);
     }

@@ -11,6 +11,7 @@ import { parseLines } from '../utils/validation'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import EditableSection from './EditableSection.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
+import CommandListEditor from './CommandListEditor.vue'
 import type { AgentRow } from '../types/agent'
 
 /**
@@ -39,15 +40,15 @@ const error = ref<string | null>(null)
 const pathsText = ref('')
 const excludesText = ref('')
 const fcpText = ref('')
-const preCmdsText = ref('')
-const postCmdsText = ref('')
+const preCmds = ref<string[]>([])
+const postCmds = ref<string[]>([])
 
 function startEdit(): void {
   pathsText.value = (props.agent.default_backup_paths ?? []).join('\n')
   excludesText.value = (props.agent.default_exclude_patterns ?? []).join('\n')
   fcpText.value = props.agent.default_file_change_patterns_raw ?? ''
-  preCmdsText.value = (props.agent.default_pre_backup_commands ?? []).join('\n')
-  postCmdsText.value = (props.agent.default_post_backup_commands ?? []).join('\n')
+  preCmds.value = [...(props.agent.default_pre_backup_commands ?? [])]
+  postCmds.value = [...(props.agent.default_post_backup_commands ?? [])]
   error.value = null
   editing.value = true
 }
@@ -64,8 +65,8 @@ async function save(): Promise<void> {
         domain: props.agent.domain,
         default_backup_paths: parseLines(pathsText.value),
         default_exclude_patterns: parseLines(excludesText.value),
-        default_pre_backup_commands: parseLines(preCmdsText.value),
-        default_post_backup_commands: parseLines(postCmdsText.value),
+        default_pre_backup_commands: preCmds.value.filter((c) => c.trim().length > 0),
+        default_post_backup_commands: postCmds.value.filter((c) => c.trim().length > 0),
         default_file_change_patterns_raw: fcpText.value,
       },
       props.agent.domain,
@@ -247,30 +248,16 @@ async function save(): Promise<void> {
         </template>
       </FileChangePatternsEditor>
 
-      <label
-        class="group-label group-label--lg"
-        for="defaults-pre"
-        >Pre-backup commands</label
-      >
-      <textarea
-        id="defaults-pre"
-        v-model="preCmdsText"
-        class="input defaults-area"
-        placeholder="Commands run before each backup, one per line&#10;e.g. systemctl stop myapp"
-        spellcheck="false"
+      <label class="group-label group-label--lg">Pre-backup commands</label>
+      <CommandListEditor
+        v-model="preCmds"
+        placeholder="e.g. systemctl stop myapp"
       />
 
-      <label
-        class="group-label group-label--lg"
-        for="defaults-post"
-        >Post-backup commands</label
-      >
-      <textarea
-        id="defaults-post"
-        v-model="postCmdsText"
-        class="input defaults-area"
-        placeholder="Commands run after each backup, one per line&#10;e.g. systemctl start myapp"
-        spellcheck="false"
+      <label class="group-label group-label--lg">Post-backup commands</label>
+      <CommandListEditor
+        v-model="postCmds"
+        placeholder="e.g. systemctl start myapp"
       />
     </template>
   </EditableSection>

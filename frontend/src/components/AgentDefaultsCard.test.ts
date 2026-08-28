@@ -109,10 +109,9 @@ describe('AgentDefaultsCard', () => {
 
     expect(wrapper.find<HTMLTextAreaElement>('#defaults-paths').element.value).toBe('/srv\n/etc')
     expect(wrapper.find<HTMLTextAreaElement>('#defaults-excludes').element.value).toBe('*.cache')
-    expect(wrapper.find<HTMLTextAreaElement>('#defaults-pre').element.value).toBe(
-      'systemctl stop app',
-    )
-    expect(wrapper.find<HTMLTextAreaElement>('#defaults-post').element.value).toBe('')
+    const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
+    expect(editors[0].props('modelValue')).toEqual(['systemctl stop app'])
+    expect(editors[1].props('modelValue')).toEqual([])
     expect(wrapper.findComponent({ name: 'FileChangePatternsEditor' }).props('modelValue')).toBe(
       '/data/wal/** ignore',
     )
@@ -124,7 +123,9 @@ describe('AgentDefaultsCard', () => {
     const wrapper = mount()
     await startEditing(wrapper)
     await wrapper.find('#defaults-paths').setValue('/var\n/opt')
-    await wrapper.find('#defaults-post').setValue('systemctl start app')
+    await wrapper
+      .findAllComponents({ name: 'CommandListEditor' })[1]
+      .vm.$emit('update:modelValue', ['systemctl start app'])
     await clickButton(wrapper, 'Save')
 
     expect(apiClient.put).toHaveBeenCalledTimes(1)
@@ -146,8 +147,9 @@ describe('AgentDefaultsCard', () => {
   it('sends both hook command lists together', async () => {
     const wrapper = mount()
     await startEditing(wrapper)
-    await wrapper.find('#defaults-pre').setValue('pre-one\npre-two')
-    await wrapper.find('#defaults-post').setValue('post-one')
+    const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
+    await editors[0].vm.$emit('update:modelValue', ['pre-one', 'pre-two'])
+    await editors[1].vm.$emit('update:modelValue', ['post-one'])
     await clickButton(wrapper, 'Save')
 
     expect(vi.mocked(apiClient.put).mock.calls[0][1]).toMatchObject({

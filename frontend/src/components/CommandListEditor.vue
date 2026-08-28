@@ -24,12 +24,20 @@ const props = defineProps<{
 const commands = defineModel<string[]>({ required: true })
 
 interface CommandRow {
-  id: string
+  id: number
   value: string
 }
 
+// A plain counter rather than crypto.randomUUID(): the id only needs to be
+// unique among sibling rows for Vue's :key, not globally or cryptographically
+// random, and randomUUID is restricted to secure contexts (HTTPS/localhost) -
+// this app documents plain-HTTP deployment as supported
+// (ASSIMILATE_SECURE_COOKIES=false, docker-compose's unencrypted :8080),
+// where randomUUID is undefined and would throw on every mount.
+let nextRowId = 0
+
 function makeRow(value: string): CommandRow {
-  return { id: crypto.randomUUID(), value }
+  return { id: nextRowId++, value }
 }
 
 // Keyed on a stable per-row id rather than array index: with an index key,

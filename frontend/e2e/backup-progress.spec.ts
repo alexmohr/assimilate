@@ -125,6 +125,18 @@ function makeArchiveProgressLine(nfiles: number, originalSize: number, path: str
   return JSON.stringify({ type: 'archive_progress', nfiles, original_size: originalSize, path })
 }
 
+// Starts a backup for REPO_NAME and waits for the card's "waiting for
+// progress" placeholder, the state both filtered-BackupLog tests start from.
+async function startBackupAndAwaitPlaceholder(page: Page, ws: WebSocketRoute): Promise<void> {
+  sendWsMsg(ws, 'BackupStarted', {
+    hostname: 'web-server-01',
+    target_name: REPO_NAME,
+    started_at: new Date().toISOString(),
+  })
+  await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
+  await expect(page.locator('.live-log-empty')).toBeVisible()
+}
+
 test.describe('backup progress card', () => {
   let ws: WebSocketRoute | null = null
 
@@ -145,7 +157,11 @@ test.describe('backup progress card', () => {
   test('card appears when BackupStarted arrives', async ({ page }) => {
     await expect(page.locator('.live-log-card')).not.toBeVisible()
 
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
 
     await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
     await expect(page.locator('.live-log-title')).toContainText('Backup in progress')
@@ -154,7 +170,11 @@ test.describe('backup progress card', () => {
   })
 
   test('progress data updates when BackupLog with archive_progress arrives', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
     await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
 
     sendWsMsg(ws!, 'BackupLog', {
@@ -171,7 +191,11 @@ test.describe('backup progress card', () => {
   })
 
   test('estimated remaining appears when reference report exists', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
     await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
 
     // Let the elapsed timer fire at least once (1 s) before sending progress data.
@@ -190,7 +214,11 @@ test.describe('backup progress card', () => {
   })
 
   test('card hides when BackupCompleted arrives', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
     await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
 
     sendWsMsg(ws!, 'BackupCompleted', { hostname: 'web-server-01', target_name: REPO_NAME })
@@ -199,9 +227,7 @@ test.describe('backup progress card', () => {
   })
 
   test('BackupLog for a different schedule is ignored', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
-    await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
-    await expect(page.locator('.live-log-empty')).toBeVisible()
+    await startBackupAndAwaitPlaceholder(page, ws!)
 
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',
@@ -216,9 +242,7 @@ test.describe('backup progress card', () => {
   })
 
   test('BackupLog with null schedule_id and different repo is ignored', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
-    await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
-    await expect(page.locator('.live-log-empty')).toBeVisible()
+    await startBackupAndAwaitPlaceholder(page, ws!)
 
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',
@@ -233,7 +257,11 @@ test.describe('backup progress card', () => {
   })
 
   test('BackupStarted for a different repo does not show card', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: 'media-weekly' })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: 'media-weekly',
+      started_at: new Date().toISOString(),
+    })
 
     await page.waitForTimeout(500)
     await expect(page.locator('.live-log-card')).not.toBeVisible()
@@ -350,6 +378,7 @@ test.describe('backup progress card — mid-backup page load', () => {
       hostname: 'web-server-01',
       target_name: REPO_NAME,
       archive_name: 'web-server-01-2026-06-21T02:00:00',
+      started_at: new Date().toISOString(),
     })
 
     await expect(page.locator('.live-log-host-badge')).toContainText('web-server-01', {
@@ -362,6 +391,7 @@ test.describe('backup progress card — mid-backup page load', () => {
       hostname: 'web-server-01',
       target_name: REPO_NAME,
       archive_name: 'web-server-01-2026-06-21T02:00:00',
+      started_at: new Date().toISOString(),
     })
     await expect(page.locator('.live-log-host-badge')).toBeVisible({ timeout: 3_000 })
 
@@ -506,7 +536,11 @@ test.describe('activity log — live backup log', () => {
   test('live session card appears when BackupStarted and BackupLog arrive', async ({ page }) => {
     await expect(page.locator('.live-session-card')).not.toBeVisible()
 
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
 
     // Card not visible yet - needs at least one non-progress log line.
     await page.waitForTimeout(300)
@@ -531,7 +565,11 @@ test.describe('activity log — live backup log', () => {
   })
 
   test('archive_progress lines are not shown in activity live output', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
 
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',
@@ -546,7 +584,11 @@ test.describe('activity log — live backup log', () => {
   })
 
   test('live session card disappears when BackupCompleted arrives', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',
       repo_id: REPO_ID,

@@ -183,13 +183,15 @@ The server tracks liveness via WebSocket pings. If the agent stops responding to
 
 "Disconnected" does not mean the agent is deleted or its data is lost — it simply means the agent is not currently reachable. Scheduled backups for that agent will fail until the agent reconnects.
 
-Each schedule backs off after a failed attempt: instead of retrying on the next 30-second scheduler tick, it waits until its next normal cron occurrence. If three consecutive attempts fail to reach the agent, the schedule is automatically disabled rather than retried again — so a long outage produces a handful of failures, not an unbounded stream of them. It is re-enabled automatically, with its failure count reset, the moment the agent reconnects; no manual action is needed. This only ever applies to schedules the scheduler disabled itself for this reason — a schedule you disable by hand, or one disabled by [quota enforcement](quotas.md), is left untouched.
+Each schedule backs off after a failed attempt: instead of retrying on the next 30-second scheduler tick, it waits until its next normal cron occurrence. Each missed attempt below the schedule's **Mark as failed after** threshold (Settings → General, `missed_backup_threshold`, default 3) shows as a warning on the schedule; once consecutive misses reach that threshold, the schedule is automatically disabled rather than retried again — so a long outage produces a handful of failures, not an unbounded stream of them. It is re-enabled automatically, with its failure count reset, the moment the agent reconnects; no manual action is needed. This only ever applies to schedules the scheduler disabled itself for this reason — a schedule you disable by hand, or one disabled by [quota enforcement](quotas.md), is left untouched.
 
 The failure count is tracked per schedule, not per target agent. For a schedule with multiple target agents, one agent staying permanently offline will eventually auto-disable the *whole* schedule — including its other, perfectly healthy targets — rather than just skipping the unreachable one. Retargeting the schedule away from the broken agent clears its stale failure count (so it starts fresh against its new targets instead of carrying over failures that had nothing to do with them), but does *not* itself flip the schedule back on — it still needs the broken agent to reconnect (if it's still a target elsewhere), or a manual re-enable.
 
 A schedule can also back off and auto-disable for a local/data problem unrelated to connectivity — for example a corrupted encrypted repo passphrase that fails to decrypt on every attempt. That case is *not* cleared by the agent reconnecting, since reconnecting says nothing about whether the underlying problem was fixed: it stays disabled until you fix the cause and re-enable it yourself.
 
 A schedule the scheduler disabled itself is never just labeled "Disabled" — its status pill on the schedules list and its detail page reads "Auto-disabled · agent unreachable" or "Auto-disabled · error", so it's distinguishable at a glance from a schedule you (or [quota enforcement](quotas.md)) turned off. Both the auto-disable and the later reconnect re-enable are also recorded on the [Activity page](activity.md)'s System Events tab.
+
+Before a schedule reaches its threshold, each miss shows as a `N/threshold missed` warning chip on its schedule card, so a struggling agent is visible well before the schedule actually goes down. See [Schedule Configuration](configuration.md#schedule-configuration) for the `missed_backup_threshold` field.
 
 While a backup is running for an agent, its card on the Agents list shows a **Running** pill naming the target repository. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
 
@@ -215,7 +217,7 @@ Edit identity and Deploy SSH key open dialogs rather than expanding inline, so t
 
 The landing tab answers the questions an agent page is usually opened for — is it up, did the last backup work, when does the next one run, and is anything overdue:
 
-- A **progress card** for each backup currently running on this agent.
+- A **progress card** for each backup currently running on this agent, linking to the target repository and offering a **Cancel backup** action. Files/data processed and the current file are shown as they stream in; the current-file path is clamped to two lines and ellipsized if it still doesn't fit, so the card stays a fixed size.
 - A **needs-attention** strip, shown only when there is something to report: an overdue schedule, a failed last run, or an offline agent.
 - Four tiles: **Last backup** with its outcome, **Next run** across every enabled schedule, **Repositories**, and **Recent runs**.
 - Previews of this agent's schedules and its most recent backups, each linking through to the full tab.

@@ -16,6 +16,33 @@ async function openAgent(page: Page, hostname = 'web-server-01'): Promise<void> 
   await page.waitForLoadState('networkidle')
 }
 
+// Minimal report row that satisfies AgentDetailView's "in progress" scan
+// (status pending/started) - mirrors backup-lifecycle.spec.ts's makeReport.
+function makeRunningReport(id: number): object {
+  return {
+    id,
+    agent_id: 1,
+    repo_id: 1,
+    schedule_id: null,
+    status: 'started',
+    started_at: new Date().toISOString(),
+    finished_at: new Date().toISOString(),
+    original_size: 0,
+    compressed_size: 0,
+    deduplicated_size: 0,
+    files_processed: 0,
+    duration_secs: 0,
+    error_message: null,
+    warnings: [],
+    borg_version: null,
+    archive_name: null,
+    borg_command: null,
+    hostname: 'web-server-01',
+    repo_name: 'server-daily',
+    schedule_name: null,
+  }
+}
+
 test.describe('Agent detail', () => {
   test('overview answers is it up, did it work, when is the next run', async ({ page }) => {
     await openAgent(page)
@@ -178,5 +205,30 @@ test.describe('Agent detail', () => {
     await page.getByRole('tab', { name: /Schedules/ }).click()
     await expect(page.locator('.empty-title')).toHaveText('No schedules yet')
     await expect(page.locator('.empty-description')).toContainText('reconstructed from archives')
+  })
+
+  test('running backup links its repository and Cancel backup sends the request', async ({
+    page,
+  }) => {
+    await openAgent(page)
+
+    await page.route('**/api/agents/web-server-01/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeRunningReport(9998)]),
+      }),
+    )
+    await page.reload()
+
+    const badge = page.locator('.live-log-host-badge')
+    await expect(badge).toBeVisible({ timeout: 10_000 })
+    await expect(badge).toHaveAttribute('href', '/repos/1')
+
+    const cancelBtn = page.getByRole('button', { name: 'Cancel backup' })
+    await expect(cancelBtn).toBeVisible()
+    await cancelBtn.click()
+
+    await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
   })
 })

@@ -38,7 +38,9 @@ Click the warning to expand the runs behind it: each cluster lists its runs with
 !!! note
     The rail only ever plots enabled schedules that match the current filters, so filtering the list also narrows the collision check.
 
-Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, a run-history strip, cadence, and next run time, plus a **Run** button for manual triggering. The run-history strip draws up to the ten most recent runs as bars — bar height reflects duration for a completed run, and a failed run always draws at full height so it never reads as the least significant bar in the strip. A run cancelled via the **Cancel** button below draws as a muted bar distinct from a failure, and isn't counted in the strip's failed-run tally. A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention — click it to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue). While a backup for the schedule is currently running, the card also shows a **Running** pill and the **Run** button is replaced with **Cancel**.
+Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, a run-history strip, cadence, and next run time, plus a **Run** button for manual triggering. The run-history strip draws up to the ten most recent runs as bars — bar height reflects duration for a completed run, and a failed run always draws at full height so it never reads as the least significant bar in the strip. A run cancelled via the **Cancel** button below draws as a muted bar distinct from a failure, and isn't counted in the strip's failed-run tally.
+
+A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention, and an **N/threshold missed** chip appears once the schedule has missed at least one backup but hasn't yet crossed its [missed backup threshold](#missed-backup-threshold) — click a chip to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue/missed). While a backup for the schedule is currently running, the card also shows a **Running** pill and the **Run** button is replaced with **Cancel**.
 
 Next to the **Run** button, an **Enabled**/**Disabled** switch lets you pause or resume the schedule directly from the list, without opening it. Flipping it saves immediately; enabling a schedule with no repository assigned, or whose repository's SSH connection can't be reached, shows an error toast instead.
 
@@ -158,6 +160,10 @@ Each schedule row in the UI shows:
 | **Last result** | `success`, `warning`, or `error` from the last run |
 
 Disabling a schedule clears the next-run time. Re-enabling it recalculates the next occurrence from the current time.
+
+### Missed Backup Threshold
+
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Below that count, a miss only shows as an **N/threshold missed** warning chip on the schedule card; once the threshold is reached, the schedule is disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) fires if a channel has a rule for it. A single successful run resets the count back to zero.
 
 ## Manual Trigger
 

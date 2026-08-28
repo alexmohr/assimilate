@@ -76,6 +76,7 @@ function mount(props: Record<string, unknown> = {}) {
       health: [health()],
       reports: [report()],
       liveBackups: [],
+      cancellingRepoIds: [],
       repoNameFor: () => 'server-daily',
       ...props,
     },
@@ -264,9 +265,33 @@ describe('AgentOverviewTab', () => {
   it('leads with a running backup', () => {
     const wrapper = mount({
       liveBackups: [
-        { targetName: 'server-daily', archiveName: 'web-01-now', elapsedSecs: 42, progress: null },
+        {
+          targetName: 'server-daily',
+          repoId: 10,
+          archiveName: 'web-01-now',
+          elapsedSecs: 42,
+          progress: null,
+        },
       ],
     })
     expect(wrapper.findComponent({ name: 'BackupProgressCard' }).exists()).toBe(true)
+  })
+
+  it('links the running backup to its repository and forwards cancel', async () => {
+    const wrapper = mount({
+      liveBackups: [
+        {
+          targetName: 'server-daily',
+          repoId: 10,
+          archiveName: 'web-01-now',
+          elapsedSecs: 42,
+          progress: null,
+        },
+      ],
+    })
+    expect(wrapper.find('.live-log-host-badge').attributes('href')).toBe('/repos/10')
+
+    await wrapper.find('.live-log-header-actions button').trigger('click')
+    expect(wrapper.emitted('cancelBackup')).toEqual([[10]])
   })
 })

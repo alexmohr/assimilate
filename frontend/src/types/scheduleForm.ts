@@ -23,6 +23,7 @@ export interface ScheduleFormState {
   pre_backup_commands: string
   post_backup_commands: string
   hook_timeout_seconds: number
+  missed_backup_threshold: number
   backup_sources: string
 }
 
@@ -50,6 +51,7 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   pre_backup_commands: '',
   post_backup_commands: '',
   hook_timeout_seconds: 60,
+  missed_backup_threshold: 3,
   backup_sources: '',
 }
 

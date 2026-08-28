@@ -46,6 +46,12 @@ export type ServerToUi =
        * The schedule that triggered this backup, if any.
        */
       schedule_id: number | null;
+      /**
+       * When the backup actually started - carried so a UI reconnecting
+       * mid-backup (e.g. a page reload) can resume the elapsed-time
+       * display from the real start rather than the moment it reconnected.
+       */
+      started_at: string;
     };
   }
   | {

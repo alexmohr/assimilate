@@ -10,10 +10,11 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::{
-    protocol::ServerToAgent,
+    protocol::{ServerToAgent, ServerToUi},
     responses::{
         AgentResponse, CreateAgentResponse, DeleteAgentArchivesResponse, MergeAgentResponse,
     },
+    types::RepoId,
 };
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -21,7 +22,7 @@ use uuid::Uuid;
 use super::{
     auth::{AuthUser, RequireAdmin},
     helpers::{self, DomainQuery},
-    permissions::is_visible_to_user,
+    permissions::{check_repo_permission, is_visible_to_user},
 };
 use crate::{
     AppState, config_assembler,
@@ -912,4 +913,60 @@ pub async fn delete_agent_archives(
         total_deleted,
         errors,
     }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/agents/{hostname}/repos/{repo_id}/cancel-backup",
+    tag = "Agents",
+    operation_id = "cancelAgentBackup",
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("repo_id" = i64, Path, description = "Repository ID"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
+    responses(
+        (status = 202, description = "Accepted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
+    )
+)]
+/// Cancel the backup currently in progress for a repository on an agent.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn cancel_agent_backup(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((hostname, repo_id)): Path<(String, i64)>,
+    Query(query): Query<DomainQuery>,
+) -> Result<StatusCode, ApiError> {
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_modify_schedules).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+
+    let msg = ServerToAgent::CancelBackup {
+        repo_id: RepoId(repo_id),
+    };
+    if let Err(e) = state.registry.send_to(agent.id, msg).await {
+        tracing::warn!(
+            hostname = %hostname,
+            error = %e,
+            "agent not connected for cancel_agent_backup"
+        );
+        db::cancel_backup_report(&state.pool, agent.id, repo_id).await?;
+        state
+            .completion_bus
+            .publish(crate::ws::completion_bus::OperationOutcome {
+                agent_id: agent.id,
+                repo_id,
+                success: false,
+            });
+        state.ui_broadcast.clear_active_backup(repo_id);
+        state.ui_broadcast.send(ServerToUi::DataChanged);
+    }
+
+    Ok(StatusCode::ACCEPTED)
 }

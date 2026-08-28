@@ -519,6 +519,10 @@ fn agent_routes() -> Router<AppState> {
             get(api::repos::get_agent_repos),
         )
         .route(
+            "/api/agents/{hostname}/repos/{repo_id}/cancel-backup",
+            post(api::agents::cancel_agent_backup),
+        )
+        .route(
             "/api/agents/{hostname}/reports",
             get(api::reports::list_reports),
         )

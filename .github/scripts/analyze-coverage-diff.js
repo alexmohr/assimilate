@@ -172,18 +172,24 @@ module.exports = async ({ github, context, core, prNumber, headSha, prLcovPath, 
     core.info(`PR #${prNumber}: coverage-diff check passed.`);
   }
 
-  // Deliberately NOT calling the full syncLabels() here (it used to, for
-  // "immediate" freshness before sync-pr-labels.js's ready-to-merge
-  // completeness check existed): that call republished the shared "PR Merge
-  // Gate" check from within this workflow's own check suite, which is why
-  // it showed up confusingly grouped as "Coverage Diff Check / PR Merge
-  // Gate" - a snapshot from a single stage, not the actual gate. The
-  // completeness check (see sync-pr-labels.js) already reads the
-  // COVERAGE_LABEL set/cleared just above directly, from whichever trigger
-  // runs it next (CI completing, Claude's review finishing, ...), so
-  // ready-to-merge can never be granted prematurely either way - this was
-  // never load-bearing for correctness, only for how soon the umbrella
-  // "precheck failed" status label catches up.
+  // Deliberately NOT calling the full syncLabels() here: that call
+  // republished the shared "PR Merge Gate" check from within this workflow's
+  // own check suite, which is why it showed up confusingly grouped as
+  // "Coverage Diff Check / PR Merge Gate" - a snapshot from a single stage,
+  // not the actual gate.
+  //
+  // A re-sync does have to happen though, and this used to claim it didn't:
+  // "whichever trigger runs it next" is not a real trigger. sync-pr-labels.js
+  // waits for a completed "Coverage Diff Check" run on the head commit before
+  // it will leave `pending`, and the check only exists once publishCheckRun
+  // above has returned - seconds after the sync job triggered by the same
+  // "CI completed" event already read the commit's checks and gave up. With
+  // no later event on that commit, the gate sat at in_progress ("still
+  // waiting on: Coverage Diff Check") permanently. coverage-diff-check.yml's
+  // "Notify the merge gate" step now fires a `precheck-complete`
+  // repository_dispatch once this function returns, which re-runs the sync
+  // from pr-status-labels.yml's own workflow (and so its own check suite),
+  // keeping the grouping problem above solved.
 
   return { ok, findings };
 };

@@ -487,6 +487,10 @@ pub enum ServerToUi {
         #[serde(default)]
         #[ts(type = "number | null")]
         schedule_id: Option<i64>,
+        /// When the backup actually started - carried so a UI reconnecting
+        /// mid-backup (e.g. a page reload) can resume the elapsed-time
+        /// display from the real start rather than the moment it reconnected.
+        started_at: DateTime<Utc>,
     },
     /// Notification that a backup has completed.
     BackupCompleted {
@@ -955,6 +959,18 @@ mod tests {
             repo_id: 7,
             line: r#"{"type":"log_message","levelname":"WARNING","message":"File changed"}"#
                 .to_owned(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_ui_backup_started_round_trips() {
+        let msg = ServerToUi::BackupStarted {
+            hostname: "web-01".to_owned(),
+            target_name: "server-daily".to_owned(),
+            archive_name: Some("server-daily-2026-06-27T00:00:00".to_owned()),
+            schedule_id: Some(3),
+            started_at: Utc::now(),
         };
         assert_round_trips(&msg);
     }

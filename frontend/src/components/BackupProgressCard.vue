@@ -12,12 +12,23 @@ interface ArchiveProgressData {
   currentPath: string
 }
 
-defineProps<{
-  badge: string | null
-  archiveName: string | null
-  elapsedSecs: number
-  estimatedRemainingSecs: number | null
-  progress: ArchiveProgressData | null
+withDefaults(
+  defineProps<{
+    badge: string | null
+    repoId?: number | null
+    archiveName: string | null
+    elapsedSecs: number
+    estimatedRemainingSecs: number | null
+    progress: ArchiveProgressData | null
+    cancelLoading?: boolean
+    /** Clamp the current-file path to two lines instead of wrapping it in full. */
+    clampPath?: boolean
+  }>(),
+  { repoId: null, cancelLoading: false, clampPath: false },
+)
+
+const emit = defineEmits<{
+  cancel: []
 }>()
 </script>
 
@@ -26,11 +37,28 @@ defineProps<{
     <div class="live-log-header">
       <span class="pulse-dot pulse-dot--success" />
       <span class="live-log-title">Backup in progress</span>
-      <span
-        v-if="badge"
-        class="live-log-host-badge"
-        >{{ badge }}</span
-      >
+      <div class="live-log-header-actions">
+        <RouterLink
+          v-if="badge && repoId !== null"
+          class="live-log-host-badge"
+          :to="`/repos/${repoId}`"
+          >{{ badge }}</RouterLink
+        >
+        <span
+          v-else-if="badge"
+          class="live-log-host-badge"
+          >{{ badge }}</span
+        >
+        <button
+          v-if="repoId !== null"
+          type="button"
+          class="btn btn-sm btn-danger"
+          :disabled="cancelLoading"
+          @click="emit('cancel')"
+        >
+          {{ cancelLoading ? 'Cancelling...' : 'Cancel backup' }}
+        </button>
+      </div>
     </div>
     <div class="progress-body">
       <div
@@ -53,7 +81,7 @@ defineProps<{
         </div>
         <div class="live-stat-row">
           <span class="live-stat-label">Files</span>
-          <span class="live-stat-value">{{ progress.nfiles.toLocaleString() }}</span>
+          <span class="live-stat-value">{{ (progress.nfiles ?? 0).toLocaleString() }}</span>
         </div>
         <div class="live-stat-row">
           <span class="live-stat-label">Data</span>
@@ -71,7 +99,11 @@ defineProps<{
           class="live-stat-row live-stat-row-wrap"
         >
           <span class="live-stat-label">Current file</span>
-          <span class="live-stat-value progress-path">{{ progress.currentPath }}</span>
+          <span
+            class="live-stat-value progress-path"
+            :class="{ 'progress-path--clamp': clampPath }"
+            >{{ progress.currentPath }}</span
+          >
         </div>
       </template>
     </div>
@@ -104,8 +136,14 @@ defineProps<{
   color: var(--text-muted);
 }
 
-.live-log-host-badge {
+.live-log-header-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.live-log-host-badge {
   font-size: var(--fs-xs);
   color: var(--accent);
   font-family: var(--mono);
@@ -117,8 +155,11 @@ defineProps<{
   font-style: italic;
 }
 
+/* Reserves height for every row up front so the card doesn't resize as
+   fields stream in over the WS connection or a long current-file path wraps. */
 .progress-body {
   padding: var(--space-4) 0;
+  min-height: 13rem;
 }
 
 .live-stat-row {
@@ -149,6 +190,18 @@ defineProps<{
   overflow-wrap: break-word;
   white-space: pre-wrap;
   min-width: 0;
+}
+
+/* Reserves exactly two lines for the path and ellipsizes the rest, instead
+   of letting it wrap in full - used where the card's overall size must stay
+   fixed (the agent overview), not where it's the only thing on the page. */
+.progress-path--clamp {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .progress-mono {

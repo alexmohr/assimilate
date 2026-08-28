@@ -42,6 +42,7 @@ export type NotificationEventType =
   | 'check_failed'
   | 'agent_connected'
   | 'agent_disconnected'
+  | 'schedule_auto_disabled'
 
 export type SmtpSecurity = 'none' | 'starttls' | 'tls'
 

@@ -89,6 +89,7 @@ use crate::{
         crate::api::agents::regenerate_token,
         crate::api::agents::restart_agent,
         crate::api::agents::update_agent_power,
+        crate::api::agents::cancel_agent_backup,
         crate::api::repos::list_repos,
         crate::api::repos::get_agent_repos,
         crate::api::repos::create_repo,

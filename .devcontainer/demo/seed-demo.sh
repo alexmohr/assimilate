@@ -51,6 +51,7 @@ DELETE FROM backup_reports WHERE agent_id IN (SELECT id FROM agents WHERE hostna
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN agents c ON c.id = st.agent_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM schedules WHERE name = 'Stale nightly report';
 DELETE FROM schedules WHERE name = 'Auto-disabled demo';
+DELETE FROM schedules WHERE name = 'Missed backups warning demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy');
@@ -374,6 +375,32 @@ SELECT 'schedule_auto_disabled', 'auto-disabled-01',
 WHERE EXISTS (SELECT 1 FROM schedules WHERE name = 'Auto-disabled demo');
 SQL
 
+api POST "/api/schedules" "{
+    \"name\": \"Missed backups warning demo\",
+    \"agent_ids\": [$AUTO_DISABLED_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 7 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"missed_backup_threshold\": 3,
+    \"backup_sources\": [\"/srv/missed-backups-demo\"]
+}" > /dev/null
+
+# Demonstrates the "N/threshold missed" warning chip (see
+# docs/scheduling.md#missed-backup-threshold) by directly writing a below-threshold
+# consecutive_failures count, the same way the fully auto-disabled schedule above
+# simulates 3 consecutive failures. One miss short of this schedule's own threshold
+# of 3, so it stays enabled with a warning instead of Auto-disabled.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE schedules
+SET consecutive_failures = 2,
+    failure_streak_pure_connectivity = true
+WHERE name = 'Missed backups warning demo';
+SQL
+
 # next_run_at must stay within the dashboard's 2-hour "due soon" window (now..now+2h) at
 # whatever wall-clock time Playwright actually visits the dashboard, not just at seed time -
 # the e2e job's own image build/container startup can eat well over 30 minutes on a slow
@@ -636,7 +663,8 @@ INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES
 INSERT INTO notification_rules (channel_id, event_type, enabled)
 SELECT c.id, e.event_type, true
 FROM notification_channels c,
-     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected')) AS e(event_type)
+     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'))
+         AS e(event_type)
 WHERE c.name = 'Ops Webhook';
 
 INSERT INTO notification_rules (channel_id, event_type, enabled)
@@ -662,6 +690,14 @@ SELECT c.id, 'backup_warning',
     'sent',
     NULL,
     NOW() - interval '1 day'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'schedule_auto_disabled',
+    '{"event_type":"schedule_auto_disabled","hostname":"auto-disabled-01","repo_name":"server-daily","schedule_name":"Auto-disabled demo","status":"auto_disabled","error_message":"agent ''auto-disabled-01'' stayed unreachable","timestamp":"2026-01-13T06:00:00Z"}',
+    'sent',
+    NULL,
+    NOW() - interval '2 days'
 FROM notification_channels c WHERE c.name = 'Ops Webhook';
 SQL
 
@@ -816,6 +852,26 @@ VALUES (
     NOW() - interval '9 hours' - interval '2 minutes',
     NOW() - interval '9 hours',
     'cancelled'
+);
+SQL
+
+echo "==> Seeding an in-progress run on web-server-01..."
+# Feeds the agent overview's and dashboard's "Backups in progress" cards
+# (see docs/agents.md, docs/dashboard.md): both derive an in-progress backup
+# from a persisted backup_reports row with status = 'started', not only from
+# a live WS event, so the scenario needs to exist even when nobody is
+# actively watching the page when a backup happens to start.
+# finished_at mirrors started_at as a placeholder, matching how
+# db::insert_backup_started's own INSERT sets both to the same timestamp for
+# a row that has not actually finished yet - status is what's authoritative.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status)
+VALUES (
+    $WEB01_ID, $REPO_DAILY_ID, $WEB01_DAILY_SCHEDULE_ID,
+    NOW() - interval '90 seconds',
+    NOW() - interval '90 seconds',
+    'started'
 );
 SQL
 

@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use chrono::{DateTime, Utc};
 use shared::protocol::ServerToUi;
 use tokio::sync::broadcast;
 
@@ -37,6 +38,8 @@ pub struct ActiveBackupSnapshot {
     pub repo_id: i64,
     /// Most recent archive progress line from the agent.
     pub progress_line: Option<String>,
+    /// When the backup actually started.
+    pub started_at: DateTime<Utc>,
 }
 
 /// Broadcast channel for real-time UI events sent to all connected browser clients.
@@ -164,11 +167,23 @@ impl UiBroadcast {
         schedule_id: Option<i64>,
         line: &str,
     ) {
-        let is_archive_progress =
-            serde_json::from_str::<serde_json::Value>(line).is_ok_and(|value| {
+        // Borg's final progress line before completion (`"finished": true`) omits
+        // nfiles/original_size/path; skip it and keep the last known progress so a
+        // client reconnecting mid-backup gets replayed real data instead of a
+        // snapshot with those fields missing (mirrors the UI's
+        // `parseArchiveProgress`, which applies the same rule when consuming it).
+        let is_complete_archive_progress = serde_json::from_str::<serde_json::Value>(line)
+            .is_ok_and(|value| {
                 value.get("type").and_then(serde_json::Value::as_str) == Some("archive_progress")
+                    && value
+                        .get("nfiles")
+                        .is_some_and(serde_json::Value::is_number)
+                    && value
+                        .get("original_size")
+                        .is_some_and(serde_json::Value::is_number)
+                    && value.get("path").is_some_and(serde_json::Value::is_string)
             });
-        if !is_archive_progress {
+        if !is_complete_archive_progress {
             return;
         }
         if let Ok(mut map) = self.active_backups.write() {
@@ -179,6 +194,7 @@ impl UiBroadcast {
                 schedule_id,
                 repo_id,
                 progress_line: None,
+                started_at: Utc::now(),
             });
             hostname.clone_into(&mut entry.hostname);
             entry.schedule_id = schedule_id;
@@ -190,6 +206,29 @@ impl UiBroadcast {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const RUNNING_PROGRESS_LINE: &str =
+        r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#;
+
+    /// Seeds a running backup snapshot for repo 20 and sends one complete
+    /// `archive_progress` line for it.
+    fn seed_running_backup(broadcast: &UiBroadcast) {
+        broadcast.set_active_backup(ActiveBackupSnapshot {
+            hostname: "web-server-01".to_string(),
+            target_name: "server-daily".to_string(),
+            archive_name: Some("server-daily-2026-06-27T00:00:00".to_string()),
+            schedule_id: Some(8),
+            repo_id: 20,
+            progress_line: None,
+            started_at: Utc::now(),
+        });
+        broadcast.send(ServerToUi::BackupLog {
+            hostname: "web-server-01".to_string(),
+            schedule_id: Some(8),
+            repo_id: 20,
+            line: RUNNING_PROGRESS_LINE.to_string(),
+        });
+    }
 
     #[test]
     fn import_progress_events_update_snapshots() {
@@ -216,21 +255,7 @@ mod tests {
     #[test]
     fn backup_events_update_and_clear_active_snapshots() {
         let broadcast = UiBroadcast::new();
-        broadcast.set_active_backup(ActiveBackupSnapshot {
-            hostname: "web-server-01".to_string(),
-            target_name: "server-daily".to_string(),
-            archive_name: Some("server-daily-2026-06-27T00:00:00".to_string()),
-            schedule_id: Some(8),
-            repo_id: 20,
-            progress_line: None,
-        });
-        broadcast.send(ServerToUi::BackupLog {
-            hostname: "web-server-01".to_string(),
-            schedule_id: Some(8),
-            repo_id: 20,
-            line: r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#
-                .to_string(),
-        });
+        seed_running_backup(&broadcast);
 
         let snapshots = broadcast.current_active_backups();
         assert_eq!(snapshots.len(), 1);
@@ -239,7 +264,7 @@ mod tests {
         assert_eq!(snapshot.schedule_id, Some(8));
         assert_eq!(
             snapshot.progress_line.as_deref(),
-            Some(r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#)
+            Some(RUNNING_PROGRESS_LINE)
         );
 
         broadcast.send(ServerToUi::BackupCompleted {
@@ -269,5 +294,29 @@ mod tests {
         });
 
         assert_eq!(broadcast.current_active_backups().len(), 0);
+    }
+
+    #[test]
+    fn finished_archive_progress_line_does_not_clobber_last_known_progress() {
+        let broadcast = UiBroadcast::new();
+        seed_running_backup(&broadcast);
+
+        // Borg's final progress line omits nfiles/original_size/path; it must be
+        // ignored rather than overwriting the last complete progress line, or a
+        // client reconnecting after this point would be replayed no usable data.
+        broadcast.send(ServerToUi::BackupLog {
+            hostname: "web-server-01".to_string(),
+            schedule_id: Some(8),
+            repo_id: 20,
+            line: r#"{"type":"archive_progress","finished":true,"time":1750000000}"#.to_string(),
+        });
+
+        let snapshots = broadcast.current_active_backups();
+        assert_eq!(snapshots.len(), 1);
+        let snapshot = snapshots.first().unwrap();
+        assert_eq!(
+            snapshot.progress_line.as_deref(),
+            Some(RUNNING_PROGRESS_LINE)
+        );
     }
 }

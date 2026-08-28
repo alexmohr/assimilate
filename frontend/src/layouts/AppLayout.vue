@@ -475,6 +475,7 @@ onMounted(() => {
     background var(--duration-base),
     color var(--duration-base);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .collapsed .nav-link {
@@ -524,6 +525,7 @@ onMounted(() => {
     background var(--duration-base),
     color var(--duration-base);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .collapsed .nav-group-toggle {

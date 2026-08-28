@@ -26,6 +26,7 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 | Check Failed | A repository consistency check fails |
 | Agent Connected | An agent establishes a WebSocket connection |
 | Agent Disconnected | An agent drops its WebSocket connection |
+| Schedule Auto Disabled | The scheduler disables a schedule after it reaches its [missed backup threshold](scheduling.md#missed-backup-threshold) |
 
 ## Channels
 

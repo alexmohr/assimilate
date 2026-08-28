@@ -27,8 +27,14 @@ function scheduleCard(page: Page, id: number): Locator {
 // what's echoed back - a real save round-trips through the schedule's other
 // fields untouched, so a caller that only cares about one field merges its
 // write into the original response rather than replacing it outright.
-// Returns a getter for the most recently captured request body, since the
-// route handler itself runs on Playwright's side and can't be awaited here.
+//
+// Returns a function that resolves to the request body only once the route
+// handler has actually called `route.fulfill()` - not just once the request
+// body has been captured. Resolving early (while `route.fetch()` is still
+// forwarding to the real backend) let the test finish and its page get torn
+// down while that fetch was still in flight, which Playwright then aborts
+// with "Target page, context or browser has been closed" from inside the
+// route callback.
 async function interceptScheduleSave(
   page: Page,
   scheduleId: number,
@@ -36,25 +42,30 @@ async function interceptScheduleSave(
     requestBody: Record<string, unknown>,
     originalResponseBody: Record<string, unknown>,
   ) => Record<string, unknown>,
-): Promise<() => Record<string, unknown> | null> {
-  let savedBody: Record<string, unknown> | null = null
+): Promise<() => Promise<Record<string, unknown>>> {
+  let resolveSaved: (body: Record<string, unknown>) => void
+  const saved = new Promise<Record<string, unknown>>((resolve) => {
+    resolveSaved = resolve
+  })
   await page.route(
     (url) => url.pathname === `/api/schedules/${scheduleId}`,
     async (route) => {
       if (route.request().method() === 'PUT') {
-        savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+        const requestBody = (await route.request().postDataJSON()) as Record<string, unknown>
         const response = await route.fetch()
         const body = (await response.json()) as Record<string, unknown>
-        return route.fulfill({
+        await route.fulfill({
           status: response.status(),
           contentType: 'application/json',
-          body: JSON.stringify(buildResponseBody(savedBody, body)),
+          body: JSON.stringify(buildResponseBody(requestBody, body)),
         })
+        resolveSaved(requestBody)
+        return
       }
       return route.continue()
     },
   )
-  return () => savedBody
+  return () => saved
 }
 
 // Fills a numeric settings field, intercepts the PUT so the response echoes
@@ -70,7 +81,7 @@ async function saveNumericScheduleField(
   const input = field.locator('input[type="number"]')
   await expect(input).toBeVisible()
 
-  const getSavedBody = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+  const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
     ...responseBody,
     [jsonKey]: requestBody[jsonKey],
   }))
@@ -78,11 +89,8 @@ async function saveNumericScheduleField(
   await input.fill(String(newValue))
   await page.getByRole('button', { name: 'Save changes' }).click()
 
-  await expect(async () => {
-    const savedBody = getSavedBody()
-    expect(savedBody).not.toBeNull()
-    expect((savedBody as Record<string, unknown>)[jsonKey]).toBe(newValue)
-  }).toPass({ timeout: 5_000 })
+  const savedBody = await waitForSave()
+  expect(savedBody[jsonKey]).toBe(newValue)
 
   return input
 }
@@ -434,19 +442,15 @@ test.describe('Schedules management', () => {
       'umount -l /mnt/pve/truenas-backup\npvesm status --storage truenas-backup || exit 1'
     await newRow.fill(script)
 
-    const getSavedBody = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
       ...responseBody,
       pre_backup_commands: requestBody.pre_backup_commands,
     }))
 
     await page.getByRole('button', { name: 'Save changes' }).click()
 
-    await expect(async () => {
-      const savedBody = getSavedBody()
-      expect(savedBody).not.toBeNull()
-      const commands = (savedBody as Record<string, unknown>).pre_backup_commands as string[]
-      expect(commands).toContain(script)
-    }).toPass({ timeout: 5_000 })
+    const savedBody = await waitForSave()
+    expect(savedBody.pre_backup_commands as string[]).toContain(script)
 
     // The multi-line script round-trips through the save intact, still in
     // its own field rather than getting flattened or split across rows.

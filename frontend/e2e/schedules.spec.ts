@@ -341,6 +341,55 @@ test.describe('Schedules management', () => {
     await expect(timeoutInput).toHaveValue('180')
   })
 
+  test('schedule detail Advanced section adds a multi-line pre-backup command and saves it', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Advanced' }).click()
+
+    const preField = page.locator('.field', { hasText: 'Pre-backup commands' })
+    await preField.getByRole('button', { name: '+ Add command' }).click()
+
+    const newRow = preField.locator('textarea').last()
+    const script =
+      'umount -l /mnt/pve/truenas-backup\npvesm status --storage truenas-backup || exit 1'
+    await newRow.fill(script)
+
+    let savedBody: Record<string, unknown> | null = null
+    await page.route(
+      (url) => url.pathname === '/api/schedules/1',
+      async (route) => {
+        if (route.request().method() === 'PUT') {
+          savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+          const response = await route.fetch()
+          const body = (await response.json()) as Record<string, unknown>
+          return route.fulfill({
+            status: response.status(),
+            contentType: 'application/json',
+            body: JSON.stringify(body),
+          })
+        }
+        return route.continue()
+      },
+    )
+
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    await expect(async () => {
+      expect(savedBody).not.toBeNull()
+      const commands = (savedBody as Record<string, unknown>).pre_backup_commands as string[]
+      expect(commands).toContain(script)
+    }).toPass({ timeout: 5_000 })
+
+    // The multi-line script round-trips through the save intact, still in
+    // its own field rather than getting flattened or split across rows.
+    await expect(newRow).toHaveValue(script)
+  })
+
   test('schedule detail shows host and repository assignment', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')

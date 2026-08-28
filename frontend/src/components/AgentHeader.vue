@@ -30,6 +30,10 @@ const props = defineProps<{
   restartLoading: boolean
   regenLoading: boolean
   restartError: string | null
+  /** Only admins may bulk-delete failed report history, matching the other danger-zone actions. */
+  isAdmin: boolean
+  /** How many of this agent's backup runs currently show as failed. */
+  failedReportCount: number
 }>()
 
 const emit = defineEmits<{
@@ -42,6 +46,7 @@ const emit = defineEmits<{
   deploySshKey: []
   regenerateToken: []
   restart: []
+  cleanFailedReports: []
 }>()
 
 const isImported = computed(() => props.agent.is_imported)
@@ -150,6 +155,15 @@ const canRestart = computed(
           @click="run(() => emit('activityLog'))"
         >
           Activity log
+        </button>
+        <button
+          v-if="isAdmin && failedReportCount > 0"
+          class="overflow-menu-item overflow-menu-item--danger"
+          role="menuitem"
+          type="button"
+          @click="run(() => emit('cleanFailedReports'))"
+        >
+          Clean up failed backups ({{ failedReportCount }})
         </button>
         <template v-if="!isImported">
           <button

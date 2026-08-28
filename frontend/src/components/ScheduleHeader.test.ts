@@ -27,6 +27,8 @@ function mount(
       runNowLoading: false,
       cancelLoading: false,
       overdueCount: 0,
+      isAdmin: true,
+      failedReportCount: 0,
       ...props,
     },
   })
@@ -101,5 +103,44 @@ describe('ScheduleHeader', () => {
 
     expect(wrapper.emitted(event)).toHaveLength(1)
     expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
+  })
+
+  // A failed run has no archive behind it, so clearing it out is safe - but
+  // still admin-only, like Delete schedule, and absent entirely rather than
+  // disabled when there is nothing to clear.
+  describe('clean up failed backups', () => {
+    it('is omitted when there are no failed reports', async () => {
+      const wrapper = mount({}, { failedReportCount: 0 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper).some((l) => l.startsWith('Clean up failed'))).toBe(false)
+    })
+
+    it('is omitted for a non-admin even with failed reports', async () => {
+      const wrapper = mount({}, { isAdmin: false, failedReportCount: 4 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper).some((l) => l.startsWith('Clean up failed'))).toBe(false)
+    })
+
+    it('shows the failed count for an admin', async () => {
+      const wrapper = mount({}, { failedReportCount: 4 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper)).toEqual([
+        'Logs',
+        'Clean up failed backups (4)',
+        'Delete schedule',
+      ])
+    })
+
+    it('emits cleanFailedReports from the menu and closes it', async () => {
+      const wrapper = mount({}, { failedReportCount: 4 })
+      await openMenu(wrapper)
+      await wrapper
+        .findAll('.overflow-menu-item')
+        .find((i) => i.text().trim().startsWith('Clean up failed'))!
+        .trigger('click')
+
+      expect(wrapper.emitted('cleanFailedReports')).toHaveLength(1)
+      expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
+    })
   })
 })

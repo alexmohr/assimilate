@@ -1858,3 +1858,119 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.text()).not.toContain('Host A')
   })
 })
+
+// A failed run has no archive behind it, so clearing it out is admin-only but
+// otherwise reachable through the same header overflow menu as every other
+// rare action.
+describe('AgentDetailView - clean up failed backups', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function renderAsAdmin(): Promise<VueWrapper<ComponentPublicInstance>> {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  async function openMenu(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+  }
+
+  // `mockReports` carries exactly one failed run (id 3).
+  it('shows the failed count for an admin', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text() === 'Clean up failed backups (1)'),
+    ).toBe(true)
+  })
+
+  it('is omitted for a non-admin', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, { props: { hostname: 'test-host' } })
+    await flushPromises()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  it('is omitted once there is nothing failed', async () => {
+    const onlySuccess = mockReports.filter((r) => r.status !== 'failed')
+    setupApi(onlySuccess)
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  it('reaches the confirmation through the menu', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('This action cannot be undone.')
+  })
+
+  it('deletes the failed reports on confirmation and shows a toast', async () => {
+    const wrapper = await renderAsAdmin()
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: { deleted: 1 } } as never)
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.delete).toHaveBeenCalledWith('/agents/test-host/reports/failed', {
+      params: {},
+    })
+    expect(mockToastSuccess).toHaveBeenCalledWith('Deleted 1 failed backup report.')
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('reports a failure and leaves the dialog open', async () => {
+    const wrapper = await renderAsAdmin()
+    vi.mocked(apiClient.delete).mockRejectedValue(new Error('locked'))
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockToastError).toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(1)
+  })
+})

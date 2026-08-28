@@ -6166,6 +6166,27 @@ pub async fn delete_failed_backup_reports_for_agent(
     Ok(result.rows_affected())
 }
 
+/// Deletes all failed backup-run history for a schedule, on demand. See
+/// [`delete_failed_backup_reports_for_agent`] - same rationale, scoped to a
+/// schedule instead of an agent.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_failed_backup_reports_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM backup_reports WHERE schedule_id = $1 AND status = 'failed'",
+        schedule_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 /// Get user preferences.
 ///
 /// # Errors

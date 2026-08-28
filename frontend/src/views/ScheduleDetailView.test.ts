@@ -1481,6 +1481,110 @@ describe('ScheduleDetailView - delete confirmation', () => {
   })
 })
 
+// A failed run has no archive behind it, so clearing it out is admin-only but
+// otherwise independent of the Delete-schedule flow above.
+describe('ScheduleDetailView - clean up failed backups', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function openMenu(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+  }
+
+  async function createAdminWrapperWithFailedReport(): Promise<
+    ReturnType<typeof renderWithPlugins>
+  > {
+    setupEditModeWithReport({ id: 1, status: 'failed', started_at: '2026-06-01T02:00:00Z' })
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('is omitted for a non-admin even with a failed report', async () => {
+    setupEditModeWithReport({ id: 1, status: 'failed', started_at: '2026-06-01T02:00:00Z' })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  it('is omitted for an admin when nothing has failed', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  it('reaches the confirmation through the header overflow menu', async () => {
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+
+    const cleanItem = wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')
+    expect(cleanItem).toBeTruthy()
+    await cleanItem!.trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('This action cannot be undone.')
+  })
+
+  it('deletes the failed reports on confirmation', async () => {
+    mockApiClient.delete.mockResolvedValue({ data: { deleted: 1 } })
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.delete).toHaveBeenCalledWith('/schedules/1/reports/failed')
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('reports a failure and leaves the dialog open', async () => {
+    mockApiClient.delete.mockRejectedValue(new Error('locked'))
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+  })
+})
+
 describe('ScheduleDetailView - per-agent overrides', () => {
   beforeEach(() => {
     vi.clearAllMocks()

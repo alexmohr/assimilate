@@ -366,6 +366,39 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1/)
   })
 
+  // Failed run history has no archive behind it, so an admin should be able
+  // to clear it out on demand rather than wait on the age-based retention
+  // setting under System. Schedule 1 (server-daily) is seeded with one
+  // failed run - see seed-demo.sh.
+  test('clean up failed backups deletes failed report history for the schedule', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'More schedule actions' }).click()
+    const cleanItem = page.getByRole('menuitem', { name: /^Clean up failed/ })
+    await expect(cleanItem).toBeVisible()
+
+    let deleteRequested = false
+    await page.route('**/api/schedules/1/reports/failed**', async (route) => {
+      deleteRequested = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ deleted: 1 }),
+      })
+    })
+
+    await cleanItem.click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('button', { name: 'Delete failed reports' }).click()
+
+    await expect(page.getByText('Deleted 1 failed backup report.')).toBeVisible()
+    expect(deleteRequested).toBe(true)
+  })
+
   test('schedule detail with per-host backup sources loads without error', async ({ page }) => {
     await loginAsAdmin(page)
 

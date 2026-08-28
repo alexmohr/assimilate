@@ -31,6 +31,8 @@ function mount(agentOverrides: Record<string, unknown> = {}, props: Record<strin
       restartLoading: false,
       regenLoading: false,
       restartError: null,
+      isAdmin: true,
+      failedReportCount: 0,
       ...props,
     },
   })
@@ -143,6 +145,41 @@ describe('AgentHeader', () => {
       .trigger('click')
 
     expect(wrapper.emitted('activityLog')).toHaveLength(1)
+  })
+
+  // A failed run has no archive behind it, so clearing it out is safe - but
+  // still admin-only, like every other destructive action, and absent
+  // entirely rather than disabled when there is nothing to clear.
+  describe('clean up failed backups', () => {
+    it('is omitted when there are no failed reports', async () => {
+      const wrapper = mount({}, { failedReportCount: 0 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper).some((l) => l.startsWith('Clean up failed'))).toBe(false)
+    })
+
+    it('is omitted for a non-admin even with failed reports', async () => {
+      const wrapper = mount({}, { isAdmin: false, failedReportCount: 3 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper).some((l) => l.startsWith('Clean up failed'))).toBe(false)
+    })
+
+    it('shows the failed count for an admin', async () => {
+      const wrapper = mount({}, { failedReportCount: 3 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper)).toContain('Clean up failed backups (3)')
+    })
+
+    it('emits cleanFailedReports from the menu and closes it', async () => {
+      const wrapper = mount({}, { failedReportCount: 3 })
+      await openMenu(wrapper)
+      await wrapper
+        .findAll('.overflow-menu-item')
+        .find((i) => i.text().trim().startsWith('Clean up failed'))!
+        .trigger('click')
+
+      expect(wrapper.emitted('cleanFailedReports')).toHaveLength(1)
+      expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
+    })
   })
 
   // Escape, an outside click and choosing an item all close the menu. That

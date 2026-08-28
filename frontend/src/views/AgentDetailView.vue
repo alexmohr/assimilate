@@ -15,6 +15,7 @@ import {
   listAgentReports,
   createAgentHostnamePattern,
   cancelAgentBackup,
+  deleteFailedReports,
 } from '../api/agents'
 import { listSchedules, getScheduleHealth } from '../api/schedules'
 import { getSystemVersion } from '../api/system'
@@ -524,6 +525,32 @@ async function cancelBackupInProgress(repoId: number): Promise<void> {
   }
 }
 
+// Clean up failed backup reports (overflow menu)
+const failedReportCount = computed(
+  () => reports.value.filter((r) => normalizeBackupStatus(r.status) === 'failed').length,
+)
+const showCleanFailedDialog = ref(false)
+const cleaningFailedReports = ref(false)
+
+async function confirmCleanFailedReports(): Promise<void> {
+  if (!agent.value) return
+  cleaningFailedReports.value = true
+  try {
+    const result = await deleteFailedReports(agent.value.hostname, agent.value.domain)
+    showCleanFailedDialog.value = false
+    toastSuccess(
+      result.deleted === 1
+        ? 'Deleted 1 failed backup report.'
+        : `Deleted ${result.deleted} failed backup reports.`,
+    )
+    await loadAgent()
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    cleaningFailedReports.value = false
+  }
+}
+
 watch([() => props.hostname, routeDomain], () => {
   loadAgent()
 })
@@ -678,6 +705,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
         :restart-loading="restartLoading"
         :regen-loading="regenLoading"
         :restart-error="restartError"
+        :is-admin="isAdmin"
+        :failed-report-count="failedReportCount"
         @adopt="adoptHost"
         @merge="openMergeDialog"
         @deploy="
@@ -692,6 +721,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         @deploy-ssh-key="showDeploySshKey = true"
         @regenerate-token="regenerateToken"
         @restart="restartAgent"
+        @clean-failed-reports="showCleanFailedDialog = true"
       />
 
       <BaseTabs
@@ -735,12 +765,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="highlightedArchiveName"
           :pinned-report-id="pinnedReportId"
-          :hostname="agent.hostname"
-          :domain="agent.domain"
-          :can-clean-failed="isAdmin"
           @toggle="toggleReport"
           @open="openReport"
-          @cleaned="loadAgent"
         />
 
         <AgentSettingsTab
@@ -848,6 +874,36 @@ watch(wsStatus, (newStatus, oldStatus) => {
           @click="showDeploySshKey = false"
         >
           Close
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Clean up failed backups -->
+    <BaseModal
+      :open="showCleanFailedDialog"
+      title="Clean up failed backups"
+      @close="showCleanFailedDialog = false"
+    >
+      <p>
+        Permanently delete <strong>{{ failedReportCount }}</strong>
+        {{ failedReportCount === 1 ? 'failed backup report' : 'failed backup reports' }} for this
+        agent? This only removes the history entries — no borg archive exists for a failed run, so
+        there is nothing to delete on disk. This action cannot be undone.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showCleanFailedDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="cleaningFailedReports"
+          @click="confirmCleanFailedReports"
+        >
+          {{ cleaningFailedReports ? 'Deleting...' : 'Delete failed reports' }}
         </button>
       </template>
     </BaseModal>

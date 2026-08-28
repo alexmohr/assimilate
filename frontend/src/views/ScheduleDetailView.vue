@@ -18,6 +18,7 @@ import {
   listScheduleTargets,
   getScheduleBackupSources,
   listScheduleReports,
+  deleteFailedScheduleReports,
   getScheduleHealth,
   type CreateScheduleRequest,
 } from '../api/schedules'
@@ -512,6 +513,30 @@ async function confirmDeleteSchedule(): Promise<void> {
   }
 }
 
+const failedReportCount = computed(
+  () => reports.value.filter((r) => normalizeBackupStatus(r.status) === 'failed').length,
+)
+const showCleanFailedDialog = ref(false)
+const cleaningFailedReports = ref(false)
+
+async function confirmCleanFailedReports(): Promise<void> {
+  cleaningFailedReports.value = true
+  try {
+    const result = await deleteFailedScheduleReports(props.id)
+    showCleanFailedDialog.value = false
+    toastSuccess(
+      result.deleted === 1
+        ? 'Deleted 1 failed backup report.'
+        : `Deleted ${result.deleted} failed backup reports.`,
+    )
+    await loadReports()
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    cleaningFailedReports.value = false
+  }
+}
+
 async function runNow(agentId?: number): Promise<void> {
   if (agentId != null) {
     retryingAgentId.value = agentId
@@ -673,10 +698,13 @@ watch(activeTab, (tab) => {
         :run-now-loading="runNowLoading"
         :cancel-loading="cancelLoading"
         :overdue-count="overdueTargetCount"
+        :is-admin="isAdmin"
+        :failed-report-count="failedReportCount"
         @run-now="runNow()"
         @cancel-backup="cancelBackup"
         @logs="goToLogs"
         @delete="showDeleteDialog = true"
+        @clean-failed-reports="showCleanFailedDialog = true"
       />
       <div
         v-else
@@ -799,6 +827,36 @@ watch(activeTab, (tab) => {
           @click="confirmDeleteSchedule"
         >
           {{ deleteLoading ? 'Deleting...' : 'Delete schedule' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Clean up failed backups -->
+    <BaseModal
+      :open="showCleanFailedDialog"
+      title="Clean up failed backups"
+      @close="showCleanFailedDialog = false"
+    >
+      <p>
+        Permanently delete <strong>{{ failedReportCount }}</strong>
+        {{ failedReportCount === 1 ? 'failed backup report' : 'failed backup reports' }} for this
+        schedule? This only removes the history entries — no borg archive exists for a failed run,
+        so there is nothing to delete on disk. This action cannot be undone.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showCleanFailedDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="cleaningFailedReports"
+          @click="confirmCleanFailedReports"
+        >
+          {{ cleaningFailedReports ? 'Deleting...' : 'Delete failed reports' }}
         </button>
       </template>
     </BaseModal>

@@ -649,6 +649,10 @@ fn schedule_and_config_routes() -> Router<AppState> {
             get(api::schedules::list_schedule_reports),
         )
         .route(
+            "/api/schedules/{id}/reports/failed",
+            delete(api::schedules::delete_failed_schedule_reports),
+        )
+        .route(
             "/api/schedules/{id}/targets",
             get(api::schedules::list_schedule_targets),
         )

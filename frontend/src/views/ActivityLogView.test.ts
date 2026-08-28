@@ -5,10 +5,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
-import { mockApiClient, mockTimezone } from '../test-utils/sharedMocks'
+import { mockApiClientRw, mockTimezone } from '../test-utils/sharedMocks'
 
 vi.mock('../composables/useTimezone', () => mockTimezone())
-vi.mock('../api/client', () => mockApiClient())
+vi.mock('../api/client', () => mockApiClientRw())
 
 const wsMessageHandlers = new Map<string, Array<(payload?: unknown) => void>>()
 
@@ -32,11 +32,14 @@ import type { ReportRow } from '../types/report'
 import ActivityLogView from './ActivityLogView.vue'
 
 const mockGet = vi.mocked(apiClient.get)
+const mockPost = vi.mocked(apiClient.post)
+const mockDelete = vi.mocked(apiClient.delete)
 
 interface ActivityRow {
   id: number
   hostname: string
   target_name: string
+  acknowledged?: boolean
   started_at: string
   finished_at: string
   status: string
@@ -165,7 +168,11 @@ function mountView(): ReturnType<typeof mount> {
 function setupDefaultMocks(): void {
   mockGet.mockImplementation((url: string) => {
     if (url === '/agents') return Promise.resolve({ data: AGENTS })
-    if (url === '/stats/activity') return Promise.resolve({ data: ACTIVITY_ROWS })
+    // A fresh shallow clone each call: `toggleAcknowledge` mutates the row
+    // object it receives in place, and reusing the shared fixture objects
+    // would leak an acknowledged-in-one-test state into every test after it.
+    if (url === '/stats/activity')
+      return Promise.resolve({ data: ACTIVITY_ROWS.map((r) => ({ ...r })) })
     if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
     if (url.startsWith('/agents/') && url.endsWith('/reports'))
       return Promise.resolve({ data: WARNING_MOCK_REPORTS })
@@ -207,6 +214,12 @@ function findWarningRow(wrapper: ReturnType<typeof mount>) {
     )
 }
 
+function findFailedRow(wrapper: ReturnType<typeof mount>) {
+  return wrapper
+    .findAll('.run-card:not(.run-card-system) .run-card-summary')
+    .filter((r) => r.find('.badge--danger').exists())
+}
+
 function findSegmentBtn(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('.segmented-option').find((b) => b.text() === text)
 }
@@ -214,6 +227,8 @@ function findSegmentBtn(wrapper: ReturnType<typeof mount>, text: string) {
 describe('ActivityLogView', () => {
   beforeEach(() => {
     mockGet.mockReset()
+    mockPost.mockReset()
+    mockDelete.mockReset()
     wsMessageHandlers.clear()
   })
 
@@ -415,6 +430,97 @@ describe('ActivityLogView', () => {
       const warningPre = wrapper.find('pre.warning-pre')
       expect(warningPre.exists()).toBe(true)
       expect(warningPre.text()).toContain('some file changed during backup')
+    })
+  })
+
+  describe('acknowledging warnings and failures', () => {
+    function ackButton(row: ReturnType<typeof mount>) {
+      return row.findAll('button').find((b) => b.text() === 'Acknowledge')
+    }
+
+    it('offers Acknowledge on a warning row', async () => {
+      const wrapper = await mountDefault()
+      const rows = findWarningRow(wrapper)
+      expect(rows.length).toBeGreaterThan(0)
+      expect(ackButton(rows[0])).toBeTruthy()
+    })
+
+    it('offers Acknowledge on a failed row', async () => {
+      const wrapper = await mountDefault()
+      const rows = findFailedRow(wrapper)
+      expect(rows.length).toBeGreaterThan(0)
+      expect(ackButton(rows[0])).toBeTruthy()
+    })
+
+    it('does not offer Acknowledge on a successful row', async () => {
+      const wrapper = await mountDefault()
+      const successRow = wrapper
+        .findAll('.run-card:not(.run-card-system) .run-card-summary')
+        .find((r) => r.find('.badge--success').exists())
+      expect(successRow).toBeTruthy()
+      expect(ackButton(successRow!)).toBeUndefined()
+    })
+
+    it('acknowledges the report and swaps the button to Unacknowledge', async () => {
+      mockPost.mockResolvedValue({ data: undefined })
+      const wrapper = await mountDefault()
+      const row = findWarningRow(wrapper)[0]
+
+      await ackButton(row)!.trigger('click')
+      await flushPromises()
+
+      expect(mockPost).toHaveBeenCalledWith('/stats/activity/103/acknowledge')
+      expect(row.find('.badge--neutral').text()).toBe('Acknowledged')
+      expect(row.findAll('button').find((b) => b.text() === 'Unacknowledge')).toBeTruthy()
+    })
+
+    it('clicking Acknowledge does not also expand the row', async () => {
+      const wrapper = await mountDefault()
+      const row = findWarningRow(wrapper)[0]
+
+      await ackButton(row)!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('pre.warning-pre').exists()).toBe(false)
+    })
+
+    it('unacknowledges a previously acknowledged report', async () => {
+      mockDelete.mockResolvedValue({ data: undefined })
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') {
+          return Promise.resolve({
+            data: ACTIVITY_ROWS.map((r) => (r.id === 103 ? { ...r, acknowledged: true } : r)),
+          })
+        }
+        if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      const row = findWarningRow(wrapper)[0]
+      expect(row.find('.badge--neutral').text()).toBe('Acknowledged')
+
+      const unackButton = row.findAll('button').find((b) => b.text() === 'Unacknowledge')!
+      await unackButton.trigger('click')
+      await flushPromises()
+
+      expect(mockDelete).toHaveBeenCalledWith('/stats/activity/103/acknowledge')
+      expect(row.find('.badge--neutral').exists()).toBe(false)
+      expect(ackButton(row)).toBeTruthy()
+    })
+
+    it('reports a failure without changing the button state', async () => {
+      mockPost.mockRejectedValue(new Error('forbidden'))
+      const wrapper = await mountDefault()
+      const row = findWarningRow(wrapper)[0]
+
+      await ackButton(row)!.trigger('click')
+      await flushPromises()
+
+      expect(row.findAll('button').find((b) => b.text() === 'Acknowledge')).toBeTruthy()
+      expect(row.find('.badge--neutral').exists()).toBe(false)
     })
   })
 

@@ -27,6 +27,12 @@ Click any card to expand it and see detailed statistics:
 - **Warnings** — a list of warning messages (if the run completed with warnings)
 - **Error** — error message, shown only for a failed run — a warning-only run's message already appears in the Warnings section above, so it isn't duplicated here
 
+### Acknowledging a warning or failure
+
+A warning or failed run's card carries an **Acknowledge** button. Acknowledging marks the run as reviewed — the card stays in the list (nothing is deleted or hidden) but dims, and picks up an **Acknowledged** badge next to its status, so a long list of past incidents is easy to scan for what still needs attention. **Unacknowledge** reverses it. Acknowledgment is shared across every user, not tied to whoever clicked it — like the run itself.
+
+A successful run has no Acknowledge button; there is nothing on it to review.
+
 ## Filters
 
 When viewing Backup or All activity, the following filters are available:
@@ -87,6 +93,8 @@ The activity view loads entries in pages. Click **Load more** at the bottom to f
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/stats/activity` | List backup activity entries |
+| `POST` | `/api/stats/activity/:id/acknowledge` | Acknowledge a backup run's warning or failure |
+| `DELETE` | `/api/stats/activity/:id/acknowledge` | Clear a run's acknowledgment |
 | `GET` | `/api/stats/system-events` | List system events |
 | `GET` | `/api/logs` | Retrieve server log entries |
 | `GET` | `/api/agents/:hostname/reports` | List backup reports for an agent |

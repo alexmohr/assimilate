@@ -142,6 +142,8 @@ use crate::{
         crate::api::stats::storage,
         crate::api::stats::storage_breakdown,
         crate::api::stats::activity,
+        crate::api::stats::acknowledge_activity_entry,
+        crate::api::stats::unacknowledge_activity_entry,
         crate::api::stats::system_events,
         crate::api::stats::health,
         crate::api::stats::trends,

@@ -27,6 +27,7 @@ export interface ActivityEntry {
   schedule_id: number | null
   schedule_name: string | null
   run_id: string | null
+  acknowledged: boolean
 }
 
 export interface ActivityFeedParams {
@@ -123,6 +124,14 @@ export async function getScheduleCounts(options?: {
 
 export async function dismissFinding(findingId: string): Promise<void> {
   await apiClient.post(`/stats/findings/${encodeURIComponent(findingId)}/dismiss`)
+}
+
+export async function acknowledgeActivityEntry(id: number): Promise<void> {
+  await apiClient.post(`/stats/activity/${id}/acknowledge`)
+}
+
+export async function unacknowledgeActivityEntry(id: number): Promise<void> {
+  await apiClient.delete(`/stats/activity/${id}/acknowledge`)
 }
 
 export interface CalendarParams {

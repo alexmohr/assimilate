@@ -3958,6 +3958,9 @@ pub struct ActivityRow {
     /// Run ID for tracking multi-step backups.
     #[serde(default)]
     pub run_id: Option<String>,
+    /// Whether a human has acknowledged this run's warning/failure.
+    #[serde(default)]
+    pub acknowledged: bool,
 }
 
 /// Health summary for a schedule-agent-repo combination.
@@ -4598,13 +4601,13 @@ pub async fn get_activity_feed(
         ActivityRow,
         "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS \"schedule_name?\", br.run_id FROM backup_reports br JOIN \
-         agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s \
-         ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
-         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND ($1::bigint IS NULL OR \
-         br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND ($3::bigint IS NULL OR \
-         br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) ORDER BY br.started_at \
-         DESC LIMIT $5",
+         br.schedule_id, s.name AS \"schedule_name?\", br.run_id, br.acknowledged FROM \
+         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+         LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
+         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND \
+         ($1::bigint IS NULL OR br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND \
+         ($3::bigint IS NULL OR br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) \
+         ORDER BY br.started_at DESC LIMIT $5",
         repo_id,
         hostname,
         schedule_id,
@@ -6187,6 +6190,44 @@ pub async fn delete_failed_backup_reports_for_schedule(
     Ok(result.rows_affected())
 }
 
+/// Looks up the repository a backup report belongs to, so the caller can run
+/// a repo-scoped permission check before acknowledging it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if no report has this id, or
+/// [`ApiError::Database`] if the query fails.
+pub async fn get_backup_report_repo_id(pool: &PgPool, id: i64) -> Result<i64, ApiError> {
+    sqlx::query_scalar!("SELECT repo_id FROM backup_reports WHERE id = $1", id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::Database)?
+        .ok_or_else(|| ApiError::NotFound(format!("report id '{id}' not found")))
+}
+
+/// Sets or clears the acknowledged flag on a backup report. Acknowledging is
+/// a shared, all-users action - like the report itself, it isn't scoped to
+/// whoever clicked it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn set_backup_report_acknowledged(
+    pool: &PgPool,
+    id: i64,
+    acknowledged: bool,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE backup_reports SET acknowledged = $1 WHERE id = $2",
+        acknowledged,
+        id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 /// Get user preferences.
 ///
 /// # Errors
@@ -6759,17 +6800,18 @@ pub async fn get_activity_feed_days(
         ActivityRow,
         "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!\", \
          duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, \
-         schedule_name AS \"schedule_name?\", run_id FROM ( SELECT br.id, a.hostname, r.name AS \
-         target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, \
-         br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, \
-         ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM \
-         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
-         LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
-         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND \
-         br.started_at > NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR \
-         br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR \
-         br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint \
-         IS NULL OR rn <= $6 ORDER BY started_at DESC",
+         schedule_name AS \"schedule_name?\", run_id, acknowledged AS \"acknowledged!\" FROM ( \
+         SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
+         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
+         br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, ROW_NUMBER() OVER \
+         (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM backup_reports br \
+         JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN \
+         schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> \
+         'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > \
+         NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
+         ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
+         AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint IS NULL OR rn <= $6 \
+         ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         repo_id,
         hostname,

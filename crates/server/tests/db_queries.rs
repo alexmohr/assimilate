@@ -1982,6 +1982,86 @@ async fn activity_feed_days(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_reports_are_unacknowledged_by_default(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-default-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(activity.len(), 1);
+    assert!(!activity.first().unwrap().acknowledged);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn set_backup_report_acknowledged_toggles_and_is_visible_in_both_feeds(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-toggle-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let report_id = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id;
+
+    db::set_backup_report_acknowledged(&pool, report_id, true)
+        .await
+        .unwrap();
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(activity.first().unwrap().acknowledged);
+
+    let activity_days = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(activity_days.first().unwrap().acknowledged);
+
+    db::set_backup_report_acknowledged(&pool, report_id, false)
+        .await
+        .unwrap();
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(!activity.first().unwrap().acknowledged);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_backup_report_repo_id_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-repoid-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let report_id = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id;
+
+    let repo_id = db::get_backup_report_repo_id(&pool, report_id)
+        .await
+        .unwrap();
+    assert_eq!(repo_id, repo.id);
+
+    let err = db::get_backup_report_repo_id(&pool, report_id.saturating_add(1_000_000))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, server::error::ApiError::NotFound(_)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn health_summary(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
     insert_test_report_for_schedule(

@@ -69,10 +69,17 @@ watch(commands, (value) => {
   rows.value = value.map(makeRow)
 })
 
+// Guarded the same way as the watcher above: when `rows` was just
+// regenerated from an incoming `commands` change, this deep watch still
+// fires (the row objects are new), and mapping it straight back out would
+// re-emit a referentially-new but content-identical array on every external
+// reassignment. Comparing content first makes that echo a no-op.
 watch(
   rows,
   (value) => {
-    commands.value = value.map((row) => row.value)
+    const next = value.map((row) => row.value)
+    if (sameContent(next, commands.value)) return
+    commands.value = next
   },
   { deep: true },
 )

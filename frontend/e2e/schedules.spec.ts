@@ -434,11 +434,10 @@ test.describe('Schedules management', () => {
       'umount -l /mnt/pve/truenas-backup\npvesm status --storage truenas-backup || exit 1'
     await newRow.fill(script)
 
-    const getSavedBody = await interceptScheduleSave(
-      page,
-      1,
-      (_requestBody, responseBody) => responseBody,
-    )
+    const getSavedBody = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+      ...responseBody,
+      pre_backup_commands: requestBody.pre_backup_commands,
+    }))
 
     await page.getByRole('button', { name: 'Save changes' }).click()
 

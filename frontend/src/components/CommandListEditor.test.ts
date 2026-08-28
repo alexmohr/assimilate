@@ -68,6 +68,31 @@ describe('CommandListEditor', () => {
     expect(after[1].element).toBe(thirdEl)
   })
 
+  // Covers the other half of the parent/child sync: an external reassignment
+  // of modelValue (e.g. loading a different schedule into an already-mounted
+  // editor) must regenerate rows to match, not just the initial mount.
+  it('regenerates rows when the parent replaces modelValue with different content', async () => {
+    const wrapper = mount(['first'])
+    await wrapper.setProps({ modelValue: ['second', 'third'] })
+
+    const textareas = wrapper.findAll('textarea')
+    expect(textareas).toHaveLength(2)
+    expect((textareas[0].element as HTMLTextAreaElement).value).toBe('second')
+    expect((textareas[1].element as HTMLTextAreaElement).value).toBe('third')
+  })
+
+  // The sameContent guard exists specifically to make this a no-op: without
+  // it, the editor's own emit echoing back through v-model would regenerate
+  // every row's id and DOM node on every keystroke.
+  it('does not regenerate rows when modelValue is reassigned with the same content', async () => {
+    const wrapper = mount(['first'])
+    const beforeEl = wrapper.find('textarea').element
+
+    await wrapper.setProps({ modelValue: ['first'] })
+
+    expect(wrapper.find('textarea').element).toBe(beforeEl)
+  })
+
   it('applies the given accessible name to every row', () => {
     const wrapper = renderWithPlugins(CommandListEditor, {
       props: {

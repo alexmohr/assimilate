@@ -157,6 +157,42 @@ describe('AgentPowerCard', () => {
     )
   })
 
+  it('sends edits to every field and toggle on save', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('#power-wake-broadcast').setValue('10.0.0.255')
+    await wrapper.find('#power-wake-timeout').setValue('300')
+    await wrapper.find('#power-ssh-host').setValue('web-01.internal')
+    await wrapper.find('#power-ssh-port').setValue('2222')
+    await wrapper.find('#power-service-name').setValue('borg-agent')
+
+    const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
+    await toggles[1]!.vm.$emit('update:modelValue', false) // shutdownAfterBackup
+    await toggles[3]!.vm.$emit('update:modelValue', false) // stopAgentAfterBackup
+    await flushPromises()
+
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01/power',
+      {
+        wake: {
+          wake_enabled: true,
+          wake_mac_address: '3C:97:0E:2B:9A:44',
+          wake_broadcast_address: '10.0.0.255',
+          wake_timeout_seconds: 300,
+          shutdown_after_backup: false,
+        },
+        start_agent_enabled: true,
+        stop_agent_after_backup: false,
+        ssh_host: 'web-01.internal',
+        ssh_port: 2222,
+        agent_service_name: 'borg-agent',
+      },
+      { params: {} },
+    )
+  })
+
   it('emits the saved agent so the view can merge it back', async () => {
     const wrapper = mount()
     await expectSavedEmitted(wrapper, [AGENT])

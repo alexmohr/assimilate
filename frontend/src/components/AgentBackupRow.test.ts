@@ -199,6 +199,20 @@ describe('AgentBackupRow', () => {
       expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
     })
 
+    it('stops loading and hides the timeline when the fetch fails', async () => {
+      vi.mocked(getRunEvents).mockRejectedValue(new Error('network error'))
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(getRunEvents).toHaveBeenCalledWith('run-123')
+      expect(wrapper.text()).not.toContain('Power management')
+      expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
+    })
+
     it('does not render a timeline section for a run with no run_id', async () => {
       const wrapper = mount({
         report: report({ status: 'failed', error_message: 'boom', run_id: null }),

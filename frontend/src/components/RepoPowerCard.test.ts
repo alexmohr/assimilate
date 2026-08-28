@@ -109,6 +109,27 @@ describe('RepoPowerCard', () => {
     })
   })
 
+  it('sends edits to every field and the shutdown toggle on save', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('#repo-power-wake-broadcast').setValue('10.0.0.255')
+    await wrapper.find('#repo-power-wake-timeout').setValue('300')
+
+    const shutdownToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[1]!
+    await shutdownToggle.vm.$emit('update:modelValue', false)
+    await flushPromises()
+
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith('/repos/42/power', {
+      wake_enabled: true,
+      wake_mac_address: '9C:B6:D0:1A:44:7F',
+      wake_broadcast_address: '10.0.0.255',
+      wake_timeout_seconds: 300,
+      shutdown_after_backup: false,
+    })
+  })
+
   it('emits saved so the view can refetch', async () => {
     const wrapper = mount()
     await expectSavedEmitted(wrapper, [])

@@ -383,19 +383,25 @@ async function loadAgent(): Promise<void> {
 async function loadTabData(): Promise<void> {
   if (!agent.value) return
   const hostname = agent.value.hostname
+  // Fetched independently of the Promise.all below: it backs a menu badge,
+  // not the page itself, so a failure here (e.g. a not-yet-registered host)
+  // must not take down the rest of the tab data with it.
+  countFailedReports(hostname, agent.value.domain)
+    .then((count) => {
+      failedReportCount.value = count
+    })
+    .catch((e: unknown) => logger.error('countFailedReports failed', e))
   try {
-    const [repoRows, scheduleRows, reportRows, healthRows, failedCount] = await Promise.all([
+    const [repoRows, scheduleRows, reportRows, healthRows] = await Promise.all([
       listAgentRepos(hostname, agent.value.domain),
       listSchedules(),
       listAgentReports(hostname, undefined, agent.value.domain),
       getScheduleHealth(),
-      countFailedReports(hostname, agent.value.domain),
     ])
     repos.value = repoRows
     schedules.value = scheduleRows
     reports.value = reportRows
     scheduleHealth.value = healthRows.filter((h) => h.hostname === hostname)
-    failedReportCount.value = failedCount
     const runningReports = reportRows.filter((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'

@@ -27,6 +27,7 @@ import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
+import { logger } from '../utils/logger'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -301,6 +302,15 @@ async function loadData(): Promise<void> {
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
+      // Fetched independently of the Promise.all below: it backs a menu
+      // badge, not the page itself, so a failure here must not take down
+      // the rest of the schedule's data with it.
+      countFailedScheduleReports(props.id)
+        .then((count) => {
+          failedReportCount.value = count
+        })
+        .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
+
       const [
         scheduleRow,
         agentRows,
@@ -309,7 +319,6 @@ async function loadData(): Promise<void> {
         sourcesResponse,
         recentReports,
         healthRows,
-        failedCount,
       ] = await Promise.all([
         getSchedule(props.id),
         listAgents(),
@@ -318,7 +327,6 @@ async function loadData(): Promise<void> {
         getScheduleBackupSources(props.id),
         listScheduleReports(props.id, 20),
         getScheduleHealth(),
-        countFailedScheduleReports(props.id),
       ])
       schedule.value = scheduleRow
       agents.value = agentRows
@@ -327,7 +335,6 @@ async function loadData(): Promise<void> {
       selectedRepoId.value = scheduleRow.repo_id ?? null
       reports.value = recentReports
       health.value = healthRows
-      failedReportCount.value = failedCount
       const runningReport = recentReports.find((r) => {
         const status = normalizeBackupStatus(r.status)
         return status === 'pending' || status === 'started'
@@ -572,13 +579,16 @@ async function runNow(agentId?: number): Promise<void> {
 async function loadReports(): Promise<void> {
   reportsLoading.value = true
   reportsError.value = null
+  // Independent of the report list below: it backs a menu badge, not the
+  // page itself, so a failure here must not mark the whole refresh failed.
+  countFailedScheduleReports(props.id)
+    .then((count) => {
+      failedReportCount.value = count
+    })
+    .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
   try {
-    const [reportRows, failedCount] = await Promise.all([
-      listScheduleReports(props.id, 100),
-      countFailedScheduleReports(props.id),
-    ])
+    const reportRows = await listScheduleReports(props.id, 100)
     reports.value = reportRows
-    failedReportCount.value = failedCount
     backupRunning.value = reportRows.some((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'

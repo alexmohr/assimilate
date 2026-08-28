@@ -1526,8 +1526,9 @@ describe('ScheduleDetailView - delete confirmation', () => {
   })
 })
 
-// A failed run has no archive behind it, so clearing it out is admin-only but
-// otherwise independent of the Delete-schedule flow above.
+// A failed run has no archive behind it, so clearing it out is safe - the
+// server (not this component) is the source of truth for who may do it,
+// same as the pre-existing Delete-schedule flow above.
 describe('ScheduleDetailView - clean up failed backups', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -1550,18 +1551,7 @@ describe('ScheduleDetailView - clean up failed backups', () => {
     return wrapper
   }
 
-  it('is omitted for a non-admin even with a failed report', async () => {
-    setupEditModeWithReport({ id: 1, status: 'failed', started_at: '2026-06-01T02:00:00Z' })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-    await openMenu(wrapper)
-
-    expect(
-      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
-    ).toBe(false)
-  })
-
-  it('is omitted for an admin when nothing has failed', async () => {
+  it('is omitted when nothing has failed', async () => {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, {
       props: { id: '1' },

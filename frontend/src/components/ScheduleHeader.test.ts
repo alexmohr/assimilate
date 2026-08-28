@@ -27,7 +27,6 @@ function mount(
       runNowLoading: false,
       cancelLoading: false,
       overdueCount: 0,
-      isAdmin: true,
       failedReportCount: 0,
       ...props,
     },
@@ -105,8 +104,9 @@ describe('ScheduleHeader', () => {
     expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
   })
 
-  // A failed run has no archive behind it, so clearing it out is safe - but
-  // still admin-only, like Delete schedule, and absent entirely rather than
+  // A failed run has no archive behind it, so clearing it out is safe - and,
+  // like Delete schedule in the same menu, the server (not this component)
+  // is the source of truth for who may do it: absent entirely rather than
   // disabled when there is nothing to clear.
   describe('clean up failed backups', () => {
     it('is omitted when there are no failed reports', async () => {
@@ -115,13 +115,7 @@ describe('ScheduleHeader', () => {
       expect(menuLabels(wrapper).some((l) => l.startsWith('Clean up failed'))).toBe(false)
     })
 
-    it('is omitted for a non-admin even with failed reports', async () => {
-      const wrapper = mount({}, { isAdmin: false, failedReportCount: 4 })
-      await openMenu(wrapper)
-      expect(menuLabels(wrapper).some((l) => l.startsWith('Clean up failed'))).toBe(false)
-    })
-
-    it('shows the failed count for an admin', async () => {
+    it('shows the failed count', async () => {
       const wrapper = mount({}, { failedReportCount: 4 })
       await openMenu(wrapper)
       expect(menuLabels(wrapper)).toEqual([

@@ -5929,6 +5929,39 @@ async fn test_delete_failed_schedule_reports_removes_only_failed_schedule_report
     assert_eq!(remaining, vec![("success".to_string(),)]);
 }
 
+/// Regression test for: this endpoint used to gate on global `RequireAdmin`,
+/// stricter than every other schedule-mutating endpoint (`delete_schedule`,
+/// `update_schedule`, `run_schedule_now`, ...), which use the repo-scoped
+/// `can_modify_schedules` permission - a strict superset of global admin. A
+/// user with neither must still be refused.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn delete_failed_schedule_reports_forbidden_without_repo_permission() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "failed-sched-forbidden-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('failed-sched-forbidden-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = non_admin_delete_request(&format!("/api/schedules/{schedule_id}/reports/failed"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a viewer with no repo-scoped can_modify_schedules permission must not be able to delete \
+         failed reports"
+    );
+}
+
 /// Regression test for: the "clean up failed backups" confirmation dialog's
 /// count came from `reports.value`, which the report-list endpoint's own
 /// `limit` bounds - so it could understate how many records the unbounded

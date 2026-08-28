@@ -67,7 +67,7 @@ impl From<db::PerAgentFileChangePatterns> for PerAgentFileChangePatternsResponse
 use uuid::Uuid;
 
 use super::{
-    auth::{AuthUser, RequireAdmin},
+    auth::AuthUser,
     permissions::{check_repo_permission, is_visible_to_user},
 };
 use crate::{
@@ -1096,10 +1096,18 @@ pub async fn list_schedule_reports(
 /// Returns an error if the underlying operation fails.
 pub async fn delete_failed_schedule_reports(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<DeleteFailedReportsResponse>, ApiError> {
-    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if let Some(rid) = schedule.repo_id {
+        check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
+    } else if !effective.can_delete_repo {
+        return Err(ApiError::Forbidden(
+            "only admins can delete orphaned schedules' reports".into(),
+        ));
+    }
     let deleted = db::delete_failed_backup_reports_for_schedule(&state.pool, id).await?;
     Ok(Json(DeleteFailedReportsResponse { deleted }))
 }

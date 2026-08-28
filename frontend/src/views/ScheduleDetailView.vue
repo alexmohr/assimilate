@@ -720,7 +720,6 @@ watch(activeTab, (tab) => {
         :run-now-loading="runNowLoading"
         :cancel-loading="cancelLoading"
         :overdue-count="overdueTargetCount"
-        :is-admin="isAdmin"
         :failed-report-count="failedReportCount"
         @run-now="runNow()"
         @cancel-backup="cancelBackup"

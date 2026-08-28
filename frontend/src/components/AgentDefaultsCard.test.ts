@@ -112,6 +112,11 @@ describe('AgentDefaultsCard', () => {
     const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
     expect(editors[0].props('modelValue')).toEqual(['systemctl stop app'])
     expect(editors[1].props('modelValue')).toEqual([])
+    // Each command list still carries an accessible name, since swapping the
+    // old single `<textarea id>` for a variable-length list of fields means
+    // a single `<label for>` can no longer target them directly.
+    expect(editors[0].props('ariaLabel')).toBe('Pre-backup commands')
+    expect(editors[1].props('ariaLabel')).toBe('Post-backup commands')
     expect(wrapper.findComponent({ name: 'FileChangePatternsEditor' }).props('modelValue')).toBe(
       '/data/wal/** ignore',
     )

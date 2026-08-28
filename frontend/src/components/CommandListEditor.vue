@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { X } from '@lucide/vue'
 
 /**
@@ -13,43 +14,86 @@ import { X } from '@lucide/vue'
  * command is still just a shell string executed via `sh -c`, so a list entry
  * may itself contain newlines - it is a whole script, not a line.
  */
-defineProps<{
+const props = defineProps<{
   placeholder?: string
+  /** Accessible name applied to every row's field, since a single `<label
+   * for>` can't target a variable-length list of textareas. */
+  ariaLabel?: string
 }>()
 
 const commands = defineModel<string[]>({ required: true })
 
+interface CommandRow {
+  id: string
+  value: string
+}
+
+function makeRow(value: string): CommandRow {
+  return { id: crypto.randomUUID(), value }
+}
+
+// Keyed on a stable per-row id rather than array index: with an index key,
+// removing a row from the middle/start makes Vue reuse DOM nodes by
+// position, force-patching the wrong textarea's content (and stealing focus
+// from whichever one the user was actually editing).
+const rows = ref<CommandRow[]>(commands.value.map(makeRow))
+
+function sameContent(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
+// Regenerating `rows` from `commands` always mints fresh row ids, which the
+// deep watch below then sees as a change and re-emits - since an emitted
+// array is never referentially equal to the array `commands` held before,
+// that would otherwise loop forever. Comparing content first means an emit
+// that just echoes `rows`' own current values is a no-op here, and only a
+// genuinely different incoming list (e.g. switching to another schedule)
+// regenerates rows - and picks up fresh ids, correctly resetting identity
+// for what's now unrelated content.
+watch(commands, (value) => {
+  if (
+    sameContent(
+      value,
+      rows.value.map((row) => row.value),
+    )
+  )
+    return
+  rows.value = value.map(makeRow)
+})
+
+watch(
+  rows,
+  (value) => {
+    commands.value = value.map((row) => row.value)
+  },
+  { deep: true },
+)
+
 function addCommand(): void {
-  commands.value = [...commands.value, '']
+  rows.value = [...rows.value, makeRow('')]
 }
 
 function removeCommand(index: number): void {
-  const next = [...commands.value]
+  const next = [...rows.value]
   next.splice(index, 1)
-  commands.value = next
-}
-
-function updateCommand(index: number, value: string): void {
-  const next = [...commands.value]
-  next[index] = value
-  commands.value = next
+  rows.value = next
 }
 </script>
 
 <template>
   <div class="cmd-list-editor">
     <div
-      v-for="(cmd, index) in commands"
-      :key="index"
+      v-for="(row, index) in rows"
+      :key="row.id"
       class="cmd-list-row"
     >
       <textarea
-        :value="cmd"
+        v-model="row.value"
         class="input cmd-list-script"
         :placeholder="placeholder ?? 'e.g. systemctl stop myapp'"
+        :aria-label="props.ariaLabel"
         spellcheck="false"
         rows="1"
-        @input="updateCommand(index, ($event.target as HTMLTextAreaElement).value)"
       />
       <button
         type="button"

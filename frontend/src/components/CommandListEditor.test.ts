@@ -48,4 +48,36 @@ describe('CommandListEditor', () => {
     await wrapper.findAll('textarea')[1].setValue('edited')
     expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([['first', 'edited']])
   })
+
+  // Regression test for keying rows by array index: removing a middle row
+  // would make Vue reuse the DOM node at the highest index (destroying
+  // whichever field had focus) and force-patch every other node's value in
+  // place instead, corrupting the browser's native undo history for fields
+  // the user never touched.
+  it('keeps the DOM node for every untouched row when a middle row is removed', async () => {
+    const wrapper = mount(['first', 'second', 'third'])
+    const before = wrapper.findAll('textarea')
+    const firstEl = before[0].element
+    const thirdEl = before[2].element
+
+    await wrapper.findAll('.btn-danger')[1].trigger('click')
+
+    const after = wrapper.findAll('textarea')
+    expect(after).toHaveLength(2)
+    expect(after[0].element).toBe(firstEl)
+    expect(after[1].element).toBe(thirdEl)
+  })
+
+  it('applies the given accessible name to every row', () => {
+    const wrapper = renderWithPlugins(CommandListEditor, {
+      props: {
+        modelValue: ['first', 'second'],
+        ariaLabel: 'Pre-backup commands',
+        'onUpdate:modelValue': () => {},
+      },
+    })
+    for (const textarea of wrapper.findAll('textarea')) {
+      expect(textarea.attributes('aria-label')).toBe('Pre-backup commands')
+    }
+  })
 })

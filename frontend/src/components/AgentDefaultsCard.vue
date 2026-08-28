@@ -252,12 +252,14 @@ async function save(): Promise<void> {
       <CommandListEditor
         v-model="preCmds"
         placeholder="e.g. systemctl stop myapp"
+        aria-label="Pre-backup commands"
       />
 
       <label class="group-label group-label--lg">Post-backup commands</label>
       <CommandListEditor
         v-model="postCmds"
         placeholder="e.g. systemctl start myapp"
+        aria-label="Post-backup commands"
       />
     </template>
   </EditableSection>

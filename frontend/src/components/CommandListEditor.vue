@@ -130,8 +130,8 @@ function removeCommand(index: number): void {
       <button
         type="button"
         class="btn btn-sm btn-danger"
-        :title="`Remove command ${index + 1}`"
-        :aria-label="`Remove command ${index + 1}`"
+        :title="`Remove ${props.ariaLabel ?? 'command'} ${index + 1}`"
+        :aria-label="`Remove ${props.ariaLabel ?? 'command'} ${index + 1}`"
         @click="removeCommand(index)"
       >
         <X :size="14" />
@@ -140,6 +140,7 @@ function removeCommand(index: number): void {
     <button
       type="button"
       class="btn btn-sm btn-ghost"
+      :aria-label="`Add ${props.ariaLabel ?? 'command'}`"
       @click="addCommand()"
     >
       + Add command

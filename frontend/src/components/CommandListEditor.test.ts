@@ -156,4 +156,23 @@ describe('CommandListEditor', () => {
     expect(buttons[0].attributes('aria-label')).toBe('Remove command 1')
     expect(buttons[1].attributes('aria-label')).toBe('Remove command 2')
   })
+
+  // A page with both a Pre-backup and a Post-backup CommandListEditor (every
+  // caller of this component) would otherwise have two buttons both named
+  // "Remove command 1" - the given accessible name needs to fold into the
+  // remove/add buttons too, not just the row fields, to actually disambiguate
+  // them for a screen reader or voice-control user.
+  it('folds the given accessible name into the remove and add buttons', () => {
+    const wrapper = renderWithPlugins(CommandListEditor, {
+      props: {
+        modelValue: ['first', 'second'],
+        ariaLabel: 'Pre-backup commands',
+        'onUpdate:modelValue': () => {},
+      },
+    })
+    const buttons = wrapper.findAll('.btn-danger')
+    expect(buttons[0].attributes('aria-label')).toBe('Remove Pre-backup commands 1')
+    expect(buttons[1].attributes('aria-label')).toBe('Remove Pre-backup commands 2')
+    expect(wrapper.find('.btn-ghost').attributes('aria-label')).toBe('Add Pre-backup commands')
+  })
 })

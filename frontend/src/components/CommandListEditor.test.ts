@@ -25,6 +25,25 @@ describe('CommandListEditor', () => {
     expect(wrapper.findAll('textarea')).toHaveLength(0)
   })
 
+  // The old single shared textarea always showed its placeholder as
+  // guidance; a still-empty list of rows here must not go silent just
+  // because there is nothing yet to click "+ Add command" and see it on.
+  it('shows the placeholder text as a hint when the list is empty', () => {
+    const wrapper = renderWithPlugins(CommandListEditor, {
+      props: {
+        modelValue: [],
+        placeholder: 'e.g. systemctl stop myapp',
+        'onUpdate:modelValue': () => {},
+      },
+    })
+    expect(wrapper.find('.field-hint').text()).toBe('e.g. systemctl stop myapp')
+  })
+
+  it('hides the empty-list hint once a row exists', () => {
+    const wrapper = mount(['first'])
+    expect(wrapper.find('.field-hint').exists()).toBe(false)
+  })
+
   it('preserves newlines within a single command, unlike a shared textarea', () => {
     const script = 'umount -l /mnt/pve/x\npvesm status --storage x || exit 1'
     const wrapper = mount([script])

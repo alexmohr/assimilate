@@ -105,6 +105,15 @@ function removeCommand(index: number): void {
 
 <template>
   <div class="cmd-list-editor">
+    <!-- With no rows, the old single shared textarea's placeholder was still
+         visible; a still-empty list here would otherwise show no guidance at
+         all until "+ Add command" is clicked. -->
+    <p
+      v-if="rows.length === 0"
+      class="field-hint"
+    >
+      {{ placeholder ?? 'e.g. systemctl stop myapp' }}
+    </p>
     <div
       v-for="(row, index) in rows"
       :key="row.id"

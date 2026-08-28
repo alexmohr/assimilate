@@ -29,7 +29,7 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
-import { parseLines } from '../utils/validation'
+import { dropBlankCommands, parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
 import { parseArchiveProgress } from '../utils/archiveProgress'
@@ -405,8 +405,8 @@ async function save(): Promise<void> {
       keep_yearly: form.value.keep_yearly,
       compact_enabled: form.value.compact_enabled,
       rate_limit_kbps: form.value.rate_limit_kbps,
-      pre_backup_commands: form.value.pre_backup_commands.filter((c) => c.trim().length > 0),
-      post_backup_commands: form.value.post_backup_commands.filter((c) => c.trim().length > 0),
+      pre_backup_commands: dropBlankCommands(form.value.pre_backup_commands),
+      post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
       hook_timeout_seconds: form.value.hook_timeout_seconds,
       missed_backup_threshold: form.value.missed_backup_threshold,
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
@@ -455,12 +455,8 @@ async function save(): Promise<void> {
       for (const id of selectedAgentIds.value) {
         perAgent.push({
           agent_id: id,
-          pre_backup_commands: (agentOverrides.value.perAgentPreCmds[id] ?? []).filter(
-            (c) => c.trim().length > 0,
-          ),
-          post_backup_commands: (agentOverrides.value.perAgentPostCmds[id] ?? []).filter(
-            (c) => c.trim().length > 0,
-          ),
+          pre_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPreCmds[id] ?? []),
+          post_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPostCmds[id] ?? []),
         })
       }
       payload.commands_per_agent = perAgent

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref } from 'vue'
 import { updateAgent } from '../api/agents'
 import { extractError } from '../utils/error'
-import { parseLines } from '../utils/validation'
+import { dropBlankCommands, parseLines } from '../utils/validation'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import EditableSection from './EditableSection.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
@@ -65,8 +65,8 @@ async function save(): Promise<void> {
         domain: props.agent.domain,
         default_backup_paths: parseLines(pathsText.value),
         default_exclude_patterns: parseLines(excludesText.value),
-        default_pre_backup_commands: preCmds.value.filter((c) => c.trim().length > 0),
-        default_post_backup_commands: postCmds.value.filter((c) => c.trim().length > 0),
+        default_pre_backup_commands: dropBlankCommands(preCmds.value),
+        default_post_backup_commands: dropBlankCommands(postCmds.value),
         default_file_change_patterns_raw: fcpText.value,
       },
       props.agent.domain,

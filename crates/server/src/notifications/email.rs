@@ -142,7 +142,7 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
     };
     if matches!(
         event_type_str,
-        "backup_warning" | "backup_failed" | "check_failed"
+        "backup_warning" | "backup_failed" | "check_failed" | "schedule_auto_disabled"
     ) {
         if let Some(msg) = payload
             .get("error_message")
@@ -299,6 +299,21 @@ mod tests {
         assert_eq!(
             build_email_subject(&p),
             "Assimilate: check failed - myhost: integrity check failed"
+        );
+    }
+
+    #[test]
+    fn subject_schedule_auto_disabled_includes_hostname_and_reason() {
+        let p = serde_json::json!({
+            "event_type": "schedule_auto_disabled",
+            "hostname": "web-server-01",
+            "status": "auto_disabled",
+            "error_message": "agent 'web-server-01' stayed unreachable",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: schedule auto disabled - web-server-01: agent 'web-server-01' stayed \
+             unreachable"
         );
     }
 

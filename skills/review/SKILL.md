@@ -96,6 +96,24 @@ on PR #373: a stale `coverage failed` label sat next to an already-passing
 "Coverage Diff Check" run for hours with no fresh sync ever reconciling
 them, exactly the kind of inconsistency this guards against.
 
+The flip side of that requirement is that *something* has to re-run the sync
+once each stage's check actually lands, and for coverage-diff nothing did.
+Its check is published a few seconds after `pr-status-labels.yml`'s own sync
+job has already read the commit's check list — both start together on the
+same CI-completion event, but the sync is two API calls while coverage-diff
+first locates two CI runs and downloads two artifacts, so the sync lost that
+race every single time. It then published `PR Merge Gate` as `in_progress`
+("CI is green, but still waiting on: Coverage Diff Check") and, with no
+further event on that commit, the gate stayed there indefinitely. Observed
+on PRs #452, #454 and #455 simultaneously, with the coverage check landing
+3–5s after each sync read the list. `coverage-diff-check.yml`'s final
+"Notify the merge gate" step now fires a `precheck-complete`
+`repository_dispatch` once its check is genuinely on the commit, which
+re-runs the sync (see "Automated Claude review" below for why a dispatch
+rather than a `workflow_run` chain). `duplicate-code-check.yml` needs no
+equivalent: it runs on `pull_request_target` at push time and its
+`Detect duplicate code` job check completes long before CI does.
+
 `coverage failed` and `duplicate code` are two independent stages and can
 both be present on a PR at once — neither erases the other. Each owns its
 own add/remove lifecycle end to end in its own script
@@ -156,7 +174,10 @@ why a check run, not a label, is what's waited on.
   — this catches removed/weakened tests even when the source lines they used
   to cover weren't touched by the diff). A failure posts its own PR comment,
   sets its own `coverage failed` label, and publishes a "Coverage Diff
-  Check" check run on the commit, same pattern as duplication above.
+  Check" check run on the commit, same pattern as duplication above. A final
+  step then fires a `precheck-complete` `repository_dispatch` so the merge
+  gate re-syncs against that freshly-published check — see the `ready to
+  merge` section above for what went wrong without it.
 
 #### How Claude's gate uses them
 
@@ -230,6 +251,16 @@ is kept as a secondary trigger only for a human adding the label by hand.
 Before this existed, the symptom looked like "the review job only starts if
 you remove and re-add the label" — doing that by hand uses a real user
 token, which isn't subject to the restriction.
+
+`pr-status-labels.yml` consumes a second dispatch type of its own,
+`precheck-complete`, for the same underlying reason plus one more: a
+`workflow_run` chained off `coverage-diff-check.yml` would be useless, since
+that workflow is itself `workflow_run`-triggered and so runs in the default
+branch's context — `head_sha` is `main`'s and `workflow_run.pull_requests` is
+empty, leaving no route back to the PR number. (The existing CI trigger works
+only because `github.event.workflow_run` there describes the *CI* run, which
+does sit on the PR's head branch.) A dispatch carries the PR number
+explicitly in `client_payload`.
 
 The workflow itself has two jobs: a small `gate` job, and the actual `review`
 job it feeds via `needs:`/`if:`. This exists because the `workflow_run: CI

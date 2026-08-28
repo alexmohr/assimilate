@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", hook_timeout_seconds, execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", s.post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
   "describe": {
     "columns": [
       {
@@ -115,36 +115,41 @@
       },
       {
         "ordinal": 22,
+        "name": "missed_backup_threshold",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 23,
         "name": "execution_mode",
         "type_info": "Text"
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "on_failure",
         "type_info": "Text"
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 25,
+        "ordinal": 26,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 26,
+        "ordinal": 27,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       }
@@ -179,6 +184,7 @@
       false,
       false,
       false,
+      false,
       true,
       false,
       false,
@@ -186,5 +192,5 @@
       null
     ]
   },
-  "hash": "2eb3e6b787068650469e43778423bfcf352a2af4547949ded6a05ff15d5f6831"
+  "hash": "79e4f99d1634854aa9b768392f616ccadee241927971c0983d531393346cd2ed"
 }

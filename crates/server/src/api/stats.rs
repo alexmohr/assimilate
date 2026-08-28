@@ -902,6 +902,8 @@ pub async fn health(
                 last_error_message: row.last_error_message,
                 cron_expression: row.cron_expression,
                 schedule_enabled: row.schedule_enabled,
+                consecutive_missed_backups: row.consecutive_missed_backups,
+                missed_backup_threshold: row.missed_backup_threshold,
             }
         })
         .collect();
@@ -1365,6 +1367,8 @@ mod tests {
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
+            consecutive_missed_backups: 0,
+            missed_backup_threshold: 3,
         };
         let response = HealthResponse {
             repo_id: row.repo_id,
@@ -1381,6 +1385,8 @@ mod tests {
             last_error_message: row.last_error_message,
             cron_expression: row.cron_expression,
             schedule_enabled: row.schedule_enabled,
+            consecutive_missed_backups: row.consecutive_missed_backups,
+            missed_backup_threshold: row.missed_backup_threshold,
         };
         assert_eq!(response.last_status, Some(BackupStatus::Success));
     }
@@ -1409,6 +1415,8 @@ mod tests {
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
+            consecutive_missed_backups: 0,
+            missed_backup_threshold: 3,
         };
         let response = HealthResponse {
             repo_id: row.repo_id,
@@ -1425,6 +1433,8 @@ mod tests {
             last_error_message: row.last_error_message,
             cron_expression: row.cron_expression,
             schedule_enabled: row.schedule_enabled,
+            consecutive_missed_backups: row.consecutive_missed_backups,
+            missed_backup_threshold: row.missed_backup_threshold,
         };
         assert_eq!(response.last_status, None);
     }
@@ -1441,6 +1451,8 @@ mod tests {
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
+            consecutive_missed_backups: 0,
+            missed_backup_threshold: 3,
         };
         let response = HealthResponse {
             repo_id: row.repo_id,
@@ -1457,6 +1469,8 @@ mod tests {
             last_error_message: row.last_error_message,
             cron_expression: row.cron_expression,
             schedule_enabled: row.schedule_enabled,
+            consecutive_missed_backups: row.consecutive_missed_backups,
+            missed_backup_threshold: row.missed_backup_threshold,
         };
         assert_eq!(response.last_status, None);
         assert!(!response.is_overdue);

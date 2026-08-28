@@ -9,6 +9,19 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+  # Fired by coverage-diff-check.yml once its "Coverage Diff Check" run is
+  # actually on the commit. That stage publishes a few seconds after this
+  # workflow's own sync job has already read the commit's check list (both
+  # trigger on the same "workflow_run: CI completed" event and start
+  # together, but the sync is two API calls while coverage-diff first has to
+  # locate two CI runs and download two artifacts), so the sync reliably lost
+  # the race, found the check missing, and published "PR Merge Gate" as
+  # in_progress - "CI is green, but still waiting on: Coverage Diff Check".
+  # Nothing re-ran the sync for that commit afterwards, so the gate stayed
+  # stuck there indefinitely. See "Resolve PR number" below for why this is a
+  # repository_dispatch rather than a workflow_run on that workflow.
+  repository_dispatch:
+    types: [precheck-complete]
 
 permissions:
   # write (not just read): sync-pr-labels.js squash-merges a PR itself once
@@ -29,7 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     # labeled/unlabeled only matters for the claude-approved / claude-changes-requested
     # review-verdict labels (see sync-pr-labels.js) - otherwise every status
-    # label this workflow itself adds/removes would re-trigger it.
+    # label this workflow itself adds/removes would re-trigger it. A
+    # repository_dispatch clears both clauses as-is: its event_name isn't
+    # workflow_run, and its `action` is the dispatch type (precheck-complete),
+    # never labeled/unlabeled.
     if: >-
       (github.event_name != 'workflow_run' || github.event.workflow_run.pull_requests[0] != null) && (github.event.action != 'labeled' && github.event.action != 'unlabeled' ||
        contains(fromJSON('["claude-approved","claude-changes-requested"]'), github.event.label.name))
@@ -40,13 +56,25 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
             .github/scripts
+      # The precheck-complete branch is why that trigger is a
+      # repository_dispatch and not simply another `workflow_run` entry:
+      # coverage-diff-check.yml is itself workflow_run-triggered, so its run
+      # lives in the default branch's context - head_branch is `main`, head_sha
+      # is main's sha, and `workflow_run.pull_requests` is empty. A workflow
+      # chained off it would have no way back to the PR number (the CI branch
+      # above works only because `github.event.workflow_run` there describes
+      # the CI run, which does sit on the PR's own head branch). A dispatch
+      # carries the PR number explicitly in its client_payload instead, the
+      # same mechanism sync-pr-labels.js already uses to reach claude-review.yml.
       - name: Resolve PR number
         id: pr
         uses: actions/github-script@v7
         with:
           script: |
             let number = null;
-            if (context.eventName === "workflow_run") {
+            if (context.eventName === "repository_dispatch") {
+              number = context.payload.client_payload.pr_number ?? null;
+            } else if (context.eventName === "workflow_run") {
               const prs = context.payload.workflow_run.pull_requests || [];
               if (prs.length > 0) number = prs[0].number;
             } else {

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", latest.finished_at AS \"last_backup_at?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.finished_at, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", latest.finished_at AS \"last_backup_at?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.finished_at, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
   "describe": {
     "columns": [
       {
@@ -47,6 +47,16 @@
         "ordinal": 8,
         "name": "schedule_enabled",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "consecutive_missed_backups",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "missed_backup_threshold",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -61,8 +71,10 @@
       false,
       true,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "794d1722a7ca63a12a6f9725023dddcbc6893d98dd545e7ce8d3d57cd9993fb2"
+  "hash": "8e0849e09517916fc11ba5ef22b169a57be0acfca71249e905b050e52fcbdff1"
 }

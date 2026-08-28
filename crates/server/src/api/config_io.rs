@@ -216,6 +216,7 @@ async fn build_schedule_export(
         pre_backup_commands,
         post_backup_commands,
         hook_timeout_seconds: sched.hook_timeout_seconds,
+        missed_backup_threshold: sched.missed_backup_threshold,
         repo_name,
         backup_sources,
         targets,
@@ -573,6 +574,9 @@ async fn import_schedule(
         hook_timeout_seconds: sched
             .hook_timeout_seconds
             .clamp(1, super::schedules::MAX_HOOK_TIMEOUT_SECONDS),
+        missed_backup_threshold: sched
+            .missed_backup_threshold
+            .clamp(1, super::schedules::MAX_MISSED_BACKUP_THRESHOLD),
         on_failure: &on_failure_str,
     };
 

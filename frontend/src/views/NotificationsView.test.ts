@@ -392,7 +392,17 @@ describe('NotificationsView', () => {
       dialogButton('Next').click()
       await flushPromises()
 
-      expect(document.body.querySelectorAll('.event-item')).toHaveLength(7)
+      expect(document.body.querySelectorAll('.event-item')).toHaveLength(8)
+    })
+
+    it('labels the schedule-auto-disabled event type in plain words', async () => {
+      await openWizard()
+      await fillStepOne()
+      dialogButton('Next').click()
+      await flushPromises()
+
+      const items = [...document.body.querySelectorAll('.event-item')]
+      expect(items.some((el) => el.textContent?.includes('Schedule auto disabled'))).toBe(true)
     })
 
     it('creates the channel and one rule per selected event', async () => {

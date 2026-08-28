@@ -158,6 +158,9 @@ pub struct CreateScheduleRequest {
     pub post_backup_commands: Option<Vec<String>>,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     pub hook_timeout_seconds: Option<i32>,
+    /// How many consecutive missed backups this schedule tolerates before it
+    /// is marked failed and auto-disabled (defaults to 3).
+    pub missed_backup_threshold: Option<i32>,
     /// Backup sources (schedule-level).
     pub backup_sources: Option<Vec<String>>,
     /// Per-agent backup sources.
@@ -212,6 +215,9 @@ pub struct UpdateScheduleRequest {
     pub post_backup_commands: Option<Vec<String>>,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     pub hook_timeout_seconds: Option<i32>,
+    /// How many consecutive missed backups this schedule tolerates before it
+    /// is marked failed and auto-disabled.
+    pub missed_backup_threshold: Option<i32>,
     /// Backup sources (schedule-level, replaces all).
     pub backup_sources: Option<Vec<String>>,
     /// Per-agent backup sources (replaces all).
@@ -337,6 +343,8 @@ pub async fn create_schedule(
     let post_backup_commands = req.post_backup_commands.unwrap_or_default();
     let hook_timeout_seconds =
         validate_hook_timeout_seconds(req.hook_timeout_seconds.unwrap_or(60))?;
+    let missed_backup_threshold =
+        validate_missed_backup_threshold(req.missed_backup_threshold.unwrap_or(3))?;
 
     let params = ScheduleParams {
         name: req.name.as_deref().unwrap_or(""),
@@ -357,6 +365,7 @@ pub async fn create_schedule(
         pre_backup_commands: &pre_backup_commands,
         post_backup_commands: &post_backup_commands,
         hook_timeout_seconds,
+        missed_backup_threshold,
         on_failure: &on_failure_str,
     };
 
@@ -500,6 +509,10 @@ pub async fn update_schedule(
         req.hook_timeout_seconds
             .unwrap_or(existing.hook_timeout_seconds),
     )?;
+    let missed_backup_threshold = validate_missed_backup_threshold(
+        req.missed_backup_threshold
+            .unwrap_or(existing.missed_backup_threshold),
+    )?;
 
     let on_failure = req
         .on_failure
@@ -529,6 +542,7 @@ pub async fn update_schedule(
         pre_backup_commands: &pre_backup_commands,
         post_backup_commands: &post_backup_commands,
         hook_timeout_seconds,
+        missed_backup_threshold,
         on_failure: &on_failure,
     };
 
@@ -731,6 +745,24 @@ fn validate_hook_timeout_seconds(seconds: i32) -> Result<i32, ApiError> {
         )));
     }
     Ok(seconds)
+}
+
+/// Upper bound on how many consecutive missed backups a schedule can tolerate
+/// before being marked failed and auto-disabled. Generous enough to ride out an
+/// extended agent outage, but still bounded so a schedule can't be configured to
+/// never fail.
+///
+/// `pub(crate)`: also used by `config_io::import_schedule` to clamp an imported
+/// config's value into the same bound the REST create/update paths enforce.
+pub(crate) const MAX_MISSED_BACKUP_THRESHOLD: i32 = 1000;
+
+fn validate_missed_backup_threshold(threshold: i32) -> Result<i32, ApiError> {
+    if threshold <= 0 || threshold > MAX_MISSED_BACKUP_THRESHOLD {
+        return Err(ApiError::BadRequest(format!(
+            "missed_backup_threshold must be between 1 and {MAX_MISSED_BACKUP_THRESHOLD}"
+        )));
+    }
+    Ok(threshold)
 }
 
 async fn insert_schedule_sources(

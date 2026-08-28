@@ -61,6 +61,7 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
             target_name: snap.target_name.clone(),
             archive_name: snap.archive_name.clone(),
             schedule_id: snap.schedule_id,
+            started_at: snap.started_at,
         };
         if let Ok(json) = serde_json::to_string(&started)
             && sink.send(Message::Text(json.into())).await.is_err()

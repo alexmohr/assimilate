@@ -143,6 +143,18 @@ export async function deleteAgentArchives(hostname: string, domain?: string | nu
   await apiClient.post(`/agents/${hostname}/delete-archives`, {}, { params: domainParams(domain) })
 }
 
+export async function cancelAgentBackup(
+  hostname: string,
+  repoId: number,
+  domain?: string | null,
+): Promise<void> {
+  await apiClient.post(
+    `/agents/${hostname}/repos/${repoId}/cancel-backup`,
+    {},
+    { params: domainParams(domain) },
+  )
+}
+
 export async function listAgentHostnamePatterns(
   hostname: string,
   domain?: string | null,

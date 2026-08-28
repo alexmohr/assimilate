@@ -110,6 +110,7 @@ Agents are keyed by **hostname**. Hostname alone is not always unique — two ho
 | `PUT` | `/api/agents/{hostname}/hide` / `/unhide` | Hide or reveal an imported placeholder agent |
 | `POST` | `/api/agents/{hostname}/delete-archives` | Delete selected archives owned by the agent |
 | `GET` | `/api/agents/{hostname}/repos` | List repositories assigned to the agent |
+| `POST` | `/api/agents/{hostname}/repos/{repo_id}/cancel-backup` | Cancel the backup currently in progress for a repository on the agent |
 | `GET` | `/api/agents/{hostname}/reports` | List backup reports for the agent |
 | `GET` | `/api/agents/{hostname}/tunnel` | Get the agent's SSH tunnel configuration |
 | `GET` / `PUT` | `/api/agents/{hostname}/tags` | Get or set the agent's tags |

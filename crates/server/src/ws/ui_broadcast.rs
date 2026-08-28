@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use chrono::{DateTime, Utc};
 use shared::protocol::ServerToUi;
 use tokio::sync::broadcast;
 
@@ -37,6 +38,8 @@ pub struct ActiveBackupSnapshot {
     pub repo_id: i64,
     /// Most recent archive progress line from the agent.
     pub progress_line: Option<String>,
+    /// When the backup actually started.
+    pub started_at: DateTime<Utc>,
 }
 
 /// Broadcast channel for real-time UI events sent to all connected browser clients.
@@ -179,6 +182,7 @@ impl UiBroadcast {
                 schedule_id,
                 repo_id,
                 progress_line: None,
+                started_at: Utc::now(),
             });
             hostname.clone_into(&mut entry.hostname);
             entry.schedule_id = schedule_id;
@@ -223,6 +227,7 @@ mod tests {
             schedule_id: Some(8),
             repo_id: 20,
             progress_line: None,
+            started_at: Utc::now(),
         });
         broadcast.send(ServerToUi::BackupLog {
             hostname: "web-server-01".to_string(),

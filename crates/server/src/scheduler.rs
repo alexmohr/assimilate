@@ -1425,6 +1425,19 @@ mod tests {
         ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
 
+    /// Clears `var` on drop, panic or not - so a failed `assert_eq!` partway through
+    /// [`interval_overrides_read_env_and_fall_back_to_defaults`]'s loop can't leak an
+    /// override into every later test in the same `cargo test` process. Same hazard
+    /// class `BorgBinaryGuard` below guards against for `BORG_BINARY`.
+    struct EnvVarClearGuard(&'static str);
+
+    impl Drop for EnvVarClearGuard {
+        fn drop(&mut self) {
+            // SAFETY: caller holds `scheduler_env_lock()` for the guard's lifetime.
+            unsafe { std::env::remove_var(self.0) };
+        }
+    }
+
     // Combined into one test: all four cases mutate process-wide env vars, causing
     // races when run in parallel with each other (mirrors
     // `shared::borg::kill_escalation_delay_reads_env_override_and_falls_back_to_default`).
@@ -1456,6 +1469,8 @@ mod tests {
                 session_cleanup_interval,
             ),
         ] {
+            let _clear_on_drop = EnvVarClearGuard(var);
+
             unsafe { std::env::set_var(var, "2") };
             assert_eq!(get(), Duration::from_secs(2), "{var} override");
 
@@ -1471,8 +1486,6 @@ mod tests {
                 Duration::from_secs(1),
                 "{var} zero clamps to 1s (tokio::time::interval panics on a zero period)"
             );
-
-            unsafe { std::env::remove_var(var) };
         }
     }
 

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT enabled, auto_disabled_agent_unreachable, auto_disabled_by_agent_id, consecutive_failures FROM schedules WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "auto_disabled_agent_unreachable",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "auto_disabled_by_agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "consecutive_failures",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "5bb3c75777815828aeeffe9134e5b05ec600acb7a74caebd3d35dc235f22ef7e"
+}

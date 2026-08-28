@@ -85,6 +85,7 @@ function missedBackupsIssue(
 ): EntityIssue | null {
   if (entry == null) return null
   const { consecutive_missed_backups: missed, missed_backup_threshold: threshold } = entry
+  if (!Number.isFinite(missed) || !Number.isFinite(threshold)) return null
   if (missed <= 0 || missed >= threshold) return null
   return {
     key: 'missed-backups',

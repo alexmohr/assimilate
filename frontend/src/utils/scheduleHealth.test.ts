@@ -124,6 +124,21 @@ describe('scheduleIssuesFromEntries', () => {
     })
   })
 
+  it('does not return a missed-backups chip when the counters are missing from the response', () => {
+    // Regression: an older/incomplete health payload (or a test mock built
+    // before these fields existed) must render as healthy, not as a broken
+    // "undefined/undefined missed" chip.
+    const entry = makeEntry() as unknown as Record<string, unknown>
+    delete entry.consecutive_missed_backups
+    delete entry.missed_backup_threshold
+    const issues = scheduleIssuesFromEntries(
+      [entry as unknown as ScheduleHealthEntry],
+      1,
+      makeRouter(),
+    )
+    expect(issues).toEqual([])
+  })
+
   it('does not return a missed-backups chip once the threshold is reached', () => {
     const issues = scheduleIssuesFromEntries(
       [makeEntry({ consecutive_missed_backups: 3, missed_backup_threshold: 3 })],

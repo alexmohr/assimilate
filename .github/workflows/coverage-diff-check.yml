@@ -7,7 +7,12 @@ on:
     types: [completed]
 
 permissions:
-  contents: read
+  # write (not read) solely so the final "Notify the merge gate" step can fire
+  # a repository_dispatch - GitHub's create-dispatch API requires contents
+  # write. This workflow only ever checks out .github/scripts from the default
+  # branch (never the PR's own code) and never pushes, so the wider scope adds
+  # no new exposure here.
+  contents: write
   pull-requests: write
   issues: write
   actions: read
@@ -93,3 +98,35 @@ jobs:
               prLcovPath: `${process.env.GITHUB_WORKSPACE}/pr-coverage/final.info`,
               baseLcovPath: `${process.env.GITHUB_WORKSPACE}/main-coverage/final.info`,
             });
+
+      # pr-status-labels.yml's sync job runs off the same "CI completed" event
+      # this workflow does and finishes seconds before the step above publishes
+      # the "Coverage Diff Check" run, so it always saw that check missing and
+      # parked "PR Merge Gate" at in_progress ("still waiting on: Coverage Diff
+      # Check") with nothing left to ever re-run it. Poke it once the check is
+      # genuinely on the commit. See that workflow's repository_dispatch
+      # trigger for the full reasoning, including why it can't just chain off
+      # this workflow with workflow_run.
+      #
+      # always(): if the analyze step died after publishing the check run (it
+      # publishes first, before the comment/label work), the gate still needs
+      # the refresh; if it died before, an extra sync is harmless - it just
+      # recomputes the same pending verdict.
+      - name: Notify the merge gate
+        if: always() && steps.runs.outputs.pr_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.repos.createDispatchEvent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                event_type: "precheck-complete",
+                client_payload: { pr_number: Number("${{ steps.runs.outputs.pr_number }}") },
+              });
+            } catch (err) {
+              // Mirrors sync-pr-labels.js's own dispatch handling: a failed
+              // notification must not red a run whose actual analysis
+              // succeeded. Worst case the gate needs a manual nudge.
+              core.warning(`Failed to dispatch precheck-complete: ${err.message}`);
+            }

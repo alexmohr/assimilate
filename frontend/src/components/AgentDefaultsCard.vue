@@ -248,19 +248,23 @@ async function save(): Promise<void> {
         </template>
       </FileChangePatternsEditor>
 
-      <label class="group-label group-label--lg">Pre-backup commands</label>
-      <CommandListEditor
-        v-model="preCmds"
-        placeholder="e.g. systemctl stop myapp"
-        aria-label="Pre-backup commands"
-      />
+      <fieldset class="cmd-fieldset">
+        <legend class="group-label group-label--lg">Pre-backup commands</legend>
+        <CommandListEditor
+          v-model="preCmds"
+          placeholder="e.g. systemctl stop myapp"
+          aria-label="Pre-backup commands"
+        />
+      </fieldset>
 
-      <label class="group-label group-label--lg">Post-backup commands</label>
-      <CommandListEditor
-        v-model="postCmds"
-        placeholder="e.g. systemctl start myapp"
-        aria-label="Post-backup commands"
-      />
+      <fieldset class="cmd-fieldset">
+        <legend class="group-label group-label--lg">Post-backup commands</legend>
+        <CommandListEditor
+          v-model="postCmds"
+          placeholder="e.g. systemctl start myapp"
+          aria-label="Post-backup commands"
+        />
+      </fieldset>
     </template>
   </EditableSection>
 </template>
@@ -285,6 +289,21 @@ async function save(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* A native fieldset/legend groups Pre/Post-backup commands' variable-length
+   list of fields under one accessible name, since a single `<label for>`
+   can't target more than one field. Reset to blend into `.settings-pane`'s
+   flex layout: without `min-width: 0`, a fieldset's UA-default intrinsic
+   sizing can force it wider than its container. */
+.cmd-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
 }
 
 .fcp-action-badge {

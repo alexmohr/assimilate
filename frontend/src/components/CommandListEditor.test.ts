@@ -93,7 +93,10 @@ describe('CommandListEditor', () => {
     expect(wrapper.find('textarea').element).toBe(beforeEl)
   })
 
-  it('applies the given accessible name to every row', () => {
+  // Each row's own name is numbered - not just the given ariaLabel repeated
+  // verbatim on every row - so a screen reader user can tell "Pre-backup
+  // commands 1" apart from "Pre-backup commands 2" once there's more than one.
+  it('applies the given accessible name to every row, numbered by position', () => {
     const wrapper = renderWithPlugins(CommandListEditor, {
       props: {
         modelValue: ['first', 'second'],
@@ -101,8 +104,18 @@ describe('CommandListEditor', () => {
         'onUpdate:modelValue': () => {},
       },
     })
-    for (const textarea of wrapper.findAll('textarea')) {
-      expect(textarea.attributes('aria-label')).toBe('Pre-backup commands')
-    }
+    const textareas = wrapper.findAll('textarea')
+    expect(textareas[0].attributes('aria-label')).toBe('Pre-backup commands 1')
+    expect(textareas[1].attributes('aria-label')).toBe('Pre-backup commands 2')
+  })
+
+  // Same reasoning for the remove buttons: identical labels make voice
+  // control ("click Remove command") and screen-reader navigation ambiguous
+  // once there's more than one row.
+  it('numbers each row remove button so they are distinguishable', () => {
+    const wrapper = mount(['first', 'second'])
+    const buttons = wrapper.findAll('.btn-danger')
+    expect(buttons[0].attributes('aria-label')).toBe('Remove command 1')
+    expect(buttons[1].attributes('aria-label')).toBe('Remove command 2')
   })
 })

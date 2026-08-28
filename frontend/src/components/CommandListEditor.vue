@@ -99,15 +99,15 @@ function removeCommand(index: number): void {
         v-model="row.value"
         class="input cmd-list-script"
         :placeholder="placeholder ?? 'e.g. systemctl stop myapp'"
-        :aria-label="props.ariaLabel"
+        :aria-label="props.ariaLabel ? `${props.ariaLabel} ${index + 1}` : undefined"
         spellcheck="false"
         rows="1"
       />
       <button
         type="button"
         class="btn btn-sm btn-danger"
-        title="Remove command"
-        aria-label="Remove command"
+        :title="`Remove command ${index + 1}`"
+        :aria-label="`Remove command ${index + 1}`"
         @click="removeCommand(index)"
       >
         <X :size="14" />

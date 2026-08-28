@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { renderWithPlugins } from '../test-utils'
+import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import { apiClient } from '../api/client'
 import AgentPowerCard from './AgentPowerCard.vue'
 import type { AgentRow } from '../types/agent'
@@ -35,17 +35,6 @@ function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(AgentPowerCard, {
     props: { agent: AGENT, canEdit: true, ...props },
   })
-}
-
-async function startEditing(wrapper: ReturnType<typeof mount>) {
-  await wrapper.find('button').trigger('click')
-}
-
-async function clickButton(wrapper: ReturnType<typeof mount>, label: string) {
-  const button = wrapper.findAll('button').find((b) => b.text().trim() === label)
-  if (!button) throw new Error(`no "${label}" button on the card`)
-  await button.trigger('click')
-  await flushPromises()
 }
 
 describe('AgentPowerCard', () => {
@@ -93,7 +82,7 @@ describe('AgentPowerCard', () => {
 
   it('seeds every field from the current value when editing starts', async () => {
     const wrapper = mount()
-    await startEditing(wrapper)
+    await startEditingSection(wrapper)
 
     expect(wrapper.find<HTMLInputElement>('#power-wake-mac').element.value).toBe(
       '3C:97:0E:2B:9A:44',
@@ -113,7 +102,7 @@ describe('AgentPowerCard', () => {
   // Save would otherwise send stale values for should not even be visible.
   it('hides the wake-dependent fields once the wake toggle is switched off', async () => {
     const wrapper = mount()
-    await startEditing(wrapper)
+    await startEditingSection(wrapper)
     expect(wrapper.find('#power-wake-mac').exists()).toBe(true)
 
     const wakeToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[0]!
@@ -125,7 +114,7 @@ describe('AgentPowerCard', () => {
 
   it('hides the agent-process-dependent fields once start-agent is switched off', async () => {
     const wrapper = mount()
-    await startEditing(wrapper)
+    await startEditingSection(wrapper)
     expect(wrapper.find('#power-service-name').exists()).toBe(true)
 
     const startAgentToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[2]!
@@ -137,9 +126,9 @@ describe('AgentPowerCard', () => {
 
   it('sends the whole power settings object on save', async () => {
     const wrapper = mount()
-    await startEditing(wrapper)
+    await startEditingSection(wrapper)
     await wrapper.find('#power-wake-mac').setValue('AA:BB:CC:DD:EE:FF')
-    await clickButton(wrapper, 'Save')
+    await clickSectionButton(wrapper, 'Save')
 
     expect(apiClient.put).toHaveBeenCalledTimes(1)
     expect(apiClient.put).toHaveBeenCalledWith(
@@ -164,8 +153,8 @@ describe('AgentPowerCard', () => {
 
   it('emits the saved agent so the view can merge it back', async () => {
     const wrapper = mount()
-    await startEditing(wrapper)
-    await clickButton(wrapper, 'Save')
+    await startEditingSection(wrapper)
+    await clickSectionButton(wrapper, 'Save')
 
     expect(wrapper.emitted('saved')).toEqual([[AGENT]])
   })
@@ -173,8 +162,8 @@ describe('AgentPowerCard', () => {
   it('stays in edit mode and shows the error when the save fails', async () => {
     vi.mocked(apiClient.put).mockRejectedValue(new Error('agent offline'))
     const wrapper = mount()
-    await startEditing(wrapper)
-    await clickButton(wrapper, 'Save')
+    await startEditingSection(wrapper)
+    await clickSectionButton(wrapper, 'Save')
 
     expect(wrapper.find('.form-error').text()).toContain('agent offline')
     expect(wrapper.find('#power-wake-mac').exists()).toBe(true)
@@ -182,8 +171,8 @@ describe('AgentPowerCard', () => {
 
   it('leaves the card without saving on Cancel', async () => {
     const wrapper = mount()
-    await startEditing(wrapper)
-    await clickButton(wrapper, 'Cancel')
+    await startEditingSection(wrapper)
+    await clickSectionButton(wrapper, 'Cancel')
 
     expect(wrapper.find('#power-wake-mac').exists()).toBe(false)
     expect(apiClient.put).not.toHaveBeenCalled()

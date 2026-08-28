@@ -144,6 +144,34 @@ export async function clickButtonWithText(
 }
 
 /**
+ * Opens an `EditableSection`-backed card's edit form via its one Edit
+ * button - always the card's first button in view mode. Shared by every
+ * card built on that component (`AgentDefaultsCard`, `AgentPowerCard`,
+ * `RepoPowerCard`, ...), whose view/edit/save shell is otherwise identical.
+ */
+export async function startEditingSection(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+): Promise<void> {
+  await wrapper.find('button').trigger('click')
+}
+
+/**
+ * Clicks an `EditableSection` card's Save/Cancel button by its exact label
+ * and waits for the resulting save request to settle. Exact match (not
+ * `clickButtonWithText`'s substring one) so "Save" doesn't also match a
+ * "Save changes" button elsewhere in the same card.
+ */
+export async function clickSectionButton(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  label: string,
+): Promise<void> {
+  const button = wrapper.findAll('button').find((b) => b.text().trim() === label)
+  if (!button) throw new Error(`no "${label}" button on the card`)
+  await button.trigger('click')
+  await flushPromises()
+}
+
+/**
  * Drives the common "row action opens a ConfirmDeleteDialog" flow: opens it via the row's
  * first `.btn-danger-text` button, dismisses it via the close button and asserts the delete
  * API was not called, then reopens and confirms, asserting the delete API was called with

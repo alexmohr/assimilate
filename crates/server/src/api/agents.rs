@@ -420,6 +420,9 @@ pub async fn update_agent_power(
         }
     }
 
+    let ssh_port = req.ssh_port.unwrap_or(22);
+    u16::try_from(ssh_port).map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
+
     let agent = db::update_agent_power(
         &state.pool,
         existing.id,
@@ -432,7 +435,7 @@ pub async fn update_agent_power(
             start_agent_enabled: req.start_agent_enabled,
             stop_agent_after_backup: req.stop_agent_after_backup,
             ssh_host: req.ssh_host.as_deref(),
-            ssh_port: req.ssh_port.unwrap_or(22),
+            ssh_port,
             agent_service_name: &req.agent_service_name,
         },
     )

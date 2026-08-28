@@ -200,6 +200,23 @@ describe('AgentBackupRow', () => {
       expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
     })
 
+    // Most runs have wake/start disabled and record no power-management
+    // events at all - that must not read as "the toggle does nothing", since
+    // the toggle offers itself on every run with a run_id (the vast
+    // majority), not just power-managed ones.
+    it('shows an empty-state message rather than nothing when a run recorded no events', async () => {
+      vi.mocked(getRunEvents).mockResolvedValue([])
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+      expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
+    })
+
     it('stops loading and hides the timeline when the fetch fails', async () => {
       vi.mocked(getRunEvents).mockRejectedValue(new Error('network error'))
       const wrapper = mount({

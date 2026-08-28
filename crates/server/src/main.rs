@@ -522,6 +522,10 @@ fn agent_routes() -> Router<AppState> {
             get(api::reports::list_reports),
         )
         .route(
+            "/api/agents/{hostname}/reports/failed",
+            delete(api::reports::delete_failed_reports),
+        )
+        .route(
             "/api/agents/{hostname}/tags",
             get(api::tags::get_agent_tags).put(api::tags::set_agent_tags),
         )

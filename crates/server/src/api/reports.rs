@@ -6,10 +6,13 @@ use axum::{
     extract::{Path, Query, State},
 };
 use serde::Deserialize;
-use shared::responses::ReportResponse;
+use shared::responses::{DeleteFailedReportsResponse, ReportResponse};
 use tracing::warn;
 
-use super::auth::AuthUser;
+use super::{
+    auth::{AuthUser, RequireAdmin},
+    helpers::DomainQuery,
+};
 use crate::{AppState, db, error::ApiError};
 
 #[cfg(test)]
@@ -153,4 +156,37 @@ pub async fn list_reports(
             .map(|r| row_to_report_response(r, hostname_clone.clone()))
             .collect();
     Ok(Json(reports))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/agents/{hostname}/reports/failed",
+    tag = "Reports",
+    operation_id = "deleteFailedReports",
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
+    responses(
+        (status = 200, description = "Failed reports deleted", body = DeleteFailedReportsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Agent not found"),
+        (status = 409, description = "Hostname is ambiguous; specify a domain"),
+    )
+)]
+/// Delete all failed backup reports for an agent.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn delete_failed_reports(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
+) -> Result<Json<DeleteFailedReportsResponse>, ApiError> {
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let deleted = db::delete_failed_backup_reports_for_agent(&state.pool, agent.id).await?;
+    Ok(Json(DeleteFailedReportsResponse { deleted }))
 }

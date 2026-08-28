@@ -7543,6 +7543,96 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "clean-failed-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let other_agent = db::insert_agent(&pool, "other-clean-failed-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    let base = InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: now,
+        finished_at: now,
+        status: shared::types::BackupStatus::Failed,
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 0,
+        error_message: Some("connection refused".to_string()),
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: None,
+        borg_command: None,
+        run_id: None,
+    };
+
+    // Two failed reports for the target agent -- both should be deleted.
+    db::insert_backup_report(&pool, &base).await.unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            started_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            finished_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A successful report for the same agent must be kept.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            status: shared::types::BackupStatus::Success,
+            error_message: None,
+            archive_name: Some("kept-archive".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A failed report for a different agent must be untouched.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: other_agent.id,
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    let deleted = db::delete_failed_backup_reports_for_agent(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 2);
+
+    let remaining = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(
+        remaining.first().map(|r| r.status.as_str()),
+        Some("success")
+    );
+
+    let other_remaining = db::list_reports_for_agent(&pool, other_agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(other_remaining.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn delete_system_events_before_keeps_recent(pool: PgPool) {
     let before_insert = Utc::now();
     db::insert_system_event(

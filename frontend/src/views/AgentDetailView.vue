@@ -735,8 +735,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="highlightedArchiveName"
           :pinned-report-id="pinnedReportId"
+          :hostname="agent.hostname"
+          :domain="agent.domain"
+          :can-clean-failed="isAdmin"
           @toggle="toggleReport"
           @open="openReport"
+          @cleaned="loadAgent"
         />
 
         <AgentSettingsTab

@@ -230,4 +230,35 @@ test.describe('Agent detail', () => {
 
     await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
   })
+
+  // Failed run history has no archive behind it, so an admin should be able
+  // to clear it out on demand rather than wait on the age-based retention
+  // setting under System.
+  test('clean up failed backups deletes failed report history for the agent', async ({
+    page,
+  }) => {
+    await openAgent(page)
+    await page.getByRole('tab', { name: /Backups/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    const cleanBtn = page.locator('button', { hasText: /^Clean up failed/ })
+    await expect(cleanBtn).toBeVisible()
+
+    let deleteRequested = false
+    await page.route('**/api/agents/web-server-01/reports/failed**', async (route) => {
+      deleteRequested = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ deleted: 2 }),
+      })
+    })
+
+    await cleanBtn.click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('button', { name: 'Delete failed reports' }).click()
+
+    await expect(page.getByText('Deleted 2 failed backup reports.')).toBeVisible()
+    expect(deleteRequested).toBe(true)
+  })
 })

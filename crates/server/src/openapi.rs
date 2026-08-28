@@ -158,6 +158,7 @@ use crate::{
         crate::api::ssh::list_dir,
         crate::api::health::health,
         crate::api::reports::list_reports,
+        crate::api::reports::delete_failed_reports,
         crate::api::logs::get_logs,
         crate::api::keys::export_key,
         crate::api::keys::import_key,

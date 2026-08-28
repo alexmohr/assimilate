@@ -7,6 +7,7 @@ import type { AgentHostnamePattern, AgentRow } from '../types/agent'
 import type {
   AgentTagEntryResponse,
   CreateAgentResponse,
+  DeleteFailedReportsResponse,
   DeployAgentResponse,
   MergeAgentResponse,
 } from '../types/generated'
@@ -153,6 +154,17 @@ export async function cancelAgentBackup(
     {},
     { params: domainParams(domain) },
   )
+}
+
+export async function deleteFailedReports(
+  hostname: string,
+  domain?: string | null,
+): Promise<DeleteFailedReportsResponse> {
+  const response = await apiClient.delete<DeleteFailedReportsResponse>(
+    `/agents/${hostname}/reports/failed`,
+    { params: domainParams(domain) },
+  )
+  return response.data
 }
 
 export async function listAgentHostnamePatterns(

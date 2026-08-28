@@ -267,6 +267,15 @@ pub struct DeleteAgentArchivesResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+/// Response containing delete failed reports.
+pub struct DeleteFailedReportsResponse {
+    #[ts(type = "number")]
+    /// Number of failed backup reports that were deleted.
+    pub deleted: u64,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
 /// Response containing hostname pattern.
 pub struct HostnamePatternResponse {
     #[ts(type = "number")]

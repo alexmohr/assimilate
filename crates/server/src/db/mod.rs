@@ -6143,6 +6143,29 @@ pub async fn delete_backup_reports_with_archive_before(
     Ok(result.rows_affected())
 }
 
+/// Deletes all failed backup-run history for an agent, on demand.
+///
+/// A failed run never carries an `archive_name` (no archive was produced),
+/// so this can't touch the archive list - unlike the age-based retention
+/// above, it acts immediately regardless of `failed_report_retention_days`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_failed_backup_reports_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM backup_reports WHERE agent_id = $1 AND status = 'failed'",
+        agent_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 /// Get user preferences.
 ///
 /// # Errors

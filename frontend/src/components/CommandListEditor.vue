@@ -56,8 +56,14 @@ function sameContent(a: string[], b: string[]): boolean {
 // that would otherwise loop forever. Comparing content first means an emit
 // that just echoes `rows`' own current values is a no-op here, and only a
 // genuinely different incoming list (e.g. switching to another schedule)
-// regenerates rows - and picks up fresh ids, correctly resetting identity
-// for what's now unrelated content.
+// regenerates rows.
+//
+// Reusing the existing row wherever its value is unchanged (rather than
+// mapping every incoming value through makeRow) matters even when only one
+// entry actually differs: minting a fresh id for every row - not just the
+// changed one - would destroy and recreate the DOM node for every untouched
+// row too, the same DOM-identity/focus-loss problem the stable per-row id
+// was introduced to prevent in the first place.
 watch(commands, (value) => {
   if (
     sameContent(
@@ -66,7 +72,9 @@ watch(commands, (value) => {
     )
   )
     return
-  rows.value = value.map(makeRow)
+  rows.value = value.map((value, index) =>
+    rows.value[index]?.value === value ? rows.value[index] : makeRow(value),
+  )
 })
 
 // Guarded the same way as the watcher above: when `rows` was just

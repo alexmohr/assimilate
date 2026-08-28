@@ -93,6 +93,25 @@ describe('CommandListEditor', () => {
     expect(wrapper.find('textarea').element).toBe(beforeEl)
   })
 
+  // A partial external reassignment (only one entry actually differs) must
+  // not churn the rows that didn't change: minting a fresh id for every row,
+  // not just the changed one, would destroy and recreate the untouched rows'
+  // DOM nodes too - the same focus/identity loss the stable per-row id keying
+  // exists to prevent.
+  it('keeps the DOM node for rows whose value is unchanged when only one entry differs', async () => {
+    const wrapper = mount(['a', 'b', 'c'])
+    const before = wrapper.findAll('textarea')
+    const firstEl = before[0].element
+    const thirdEl = before[2].element
+
+    await wrapper.setProps({ modelValue: ['a', 'X', 'c'] })
+
+    const after = wrapper.findAll('textarea')
+    expect(after[0].element).toBe(firstEl)
+    expect((after[1].element as HTMLTextAreaElement).value).toBe('X')
+    expect(after[2].element).toBe(thirdEl)
+  })
+
   // Each row's own name is numbered - not just the given ariaLabel repeated
   // verbatim on every row - so a screen reader user can tell "Pre-backup
   // commands 1" apart from "Pre-backup commands 2" once there's more than one.

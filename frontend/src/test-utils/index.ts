@@ -172,6 +172,38 @@ export async function clickSectionButton(
 }
 
 /**
+ * Drives an `EditableSection` card's edit-then-Save flow and asserts it
+ * emitted `saved` with the given args, so the parent view can merge the
+ * result back in. Shared by every card built on that component.
+ */
+export async function expectSavedEmitted(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  expectedArgs: unknown[],
+): Promise<void> {
+  await startEditingSection(wrapper)
+  await clickSectionButton(wrapper, 'Save')
+  expect(wrapper.emitted('saved')).toEqual([expectedArgs])
+}
+
+/**
+ * Drives an `EditableSection` card's edit-then-Save flow expecting the save
+ * request to have been mocked to fail, and asserts the card stays in edit
+ * mode with the API's error message shown - proven by a field that only
+ * exists in edit mode still being present. Shared by every card built on
+ * that component.
+ */
+export async function expectSaveErrorKeepsEditing(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  errorMessage: string,
+  survivingFieldSelector: string,
+): Promise<void> {
+  await startEditingSection(wrapper)
+  await clickSectionButton(wrapper, 'Save')
+  expect(wrapper.find('.form-error').text()).toContain(errorMessage)
+  expect(wrapper.find(survivingFieldSelector).exists()).toBe(true)
+}
+
+/**
  * Drives the common "row action opens a ConfirmDeleteDialog" flow: opens it via the row's
  * first `.btn-danger-text` button, dismisses it via the close button and asserts the delete
  * API was not called, then reopens and confirms, asserting the delete API was called with

@@ -3,7 +3,13 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
+import {
+  clickSectionButton,
+  expectSaveErrorKeepsEditing,
+  expectSavedEmitted,
+  renderWithPlugins,
+  startEditingSection,
+} from '../test-utils'
 import { apiClient } from '../api/client'
 import RepoPowerCard from './RepoPowerCard.vue'
 import type { RepoWithStats } from '../types/repo'
@@ -105,20 +111,13 @@ describe('RepoPowerCard', () => {
 
   it('emits saved so the view can refetch', async () => {
     const wrapper = mount()
-    await startEditingSection(wrapper)
-    await clickSectionButton(wrapper, 'Save')
-
-    expect(wrapper.emitted('saved')).toEqual([[]])
+    await expectSavedEmitted(wrapper, [])
   })
 
   it('stays in edit mode and shows the error when the save fails', async () => {
     vi.mocked(apiClient.put).mockRejectedValue(new Error('host offline'))
     const wrapper = mount()
-    await startEditingSection(wrapper)
-    await clickSectionButton(wrapper, 'Save')
-
-    expect(wrapper.find('.form-error').text()).toContain('host offline')
-    expect(wrapper.find('#repo-power-wake-mac').exists()).toBe(true)
+    await expectSaveErrorKeepsEditing(wrapper, 'host offline', '#repo-power-wake-mac')
   })
 
   it('leaves the card without saving on Cancel', async () => {

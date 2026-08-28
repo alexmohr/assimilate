@@ -3,7 +3,13 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
+import {
+  clickSectionButton,
+  expectSaveErrorKeepsEditing,
+  expectSavedEmitted,
+  renderWithPlugins,
+  startEditingSection,
+} from '../test-utils'
 import { apiClient } from '../api/client'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import type { AgentRow } from '../types/agent'
@@ -147,20 +153,13 @@ describe('AgentDefaultsCard', () => {
 
   it('emits the saved agent so the view can merge it back', async () => {
     const wrapper = mount()
-    await startEditingSection(wrapper)
-    await clickSectionButton(wrapper, 'Save')
-
-    expect(wrapper.emitted('saved')).toEqual([[AGENT]])
+    await expectSavedEmitted(wrapper, [AGENT])
   })
 
   it('stays in edit mode and shows the error when the save fails', async () => {
     vi.mocked(apiClient.put).mockRejectedValue(new Error('agent offline'))
     const wrapper = mount()
-    await startEditingSection(wrapper)
-    await clickSectionButton(wrapper, 'Save')
-
-    expect(wrapper.find('.form-error').text()).toContain('agent offline')
-    expect(wrapper.find('#defaults-paths').exists()).toBe(true)
+    await expectSaveErrorKeepsEditing(wrapper, 'agent offline', '#defaults-paths')
   })
 
   it('leaves edit mode after a successful save', async () => {

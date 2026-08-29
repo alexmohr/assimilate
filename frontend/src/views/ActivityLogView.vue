@@ -15,6 +15,8 @@ import { apiClient } from '../api/client'
 import {
   getActivity,
   getSystemEvents,
+  acknowledgeActivityEntry,
+  unacknowledgeActivityEntry,
   type ActivityEntry,
   type SystemEventEntry,
 } from '../api/stats'
@@ -22,8 +24,10 @@ import { listAgents, listAgentReports } from '../api/agents'
 import { listSchedules } from '../api/schedules'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
+import { useToast } from '../composables/useToast'
 import { formatDuration, formatBytes, formatDateShort, formatEventType } from '../utils/format'
 import { logger } from '../utils/logger'
+import { extractError } from '../utils/error'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
 import { backupStatusBadgeClass, badgeClass, logLevelTone } from '../utils/badge'
@@ -453,6 +457,32 @@ function statusClass(status: string): string {
   return backupStatusBadgeClass(status)
 }
 
+/** Only a warning or a failure needs acknowledging - a clean run has nothing to mute. */
+function isAckable(entry: ActivityEntry): boolean {
+  const status = normalizeBackupStatus(entry.status)
+  return status === 'warning' || status === 'failed'
+}
+
+const { error: toastError } = useToast()
+const ackingId = ref<number | null>(null)
+
+async function toggleAcknowledge(entry: ActivityEntry): Promise<void> {
+  ackingId.value = entry.id
+  try {
+    if (entry.acknowledged) {
+      await unacknowledgeActivityEntry(entry.id)
+      entry.acknowledged = false
+    } else {
+      await acknowledgeActivityEntry(entry.id)
+      entry.acknowledged = true
+    }
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    ackingId.value = null
+  }
+}
+
 function eventTypeClass(eventType: string): string {
   switch (classifyEventType(eventType)) {
     case 'success':
@@ -787,7 +817,10 @@ function filterByRun(runId: string): void {
           <article
             v-if="row.kind === 'backup' && row.backup"
             class="panel panel--sectioned run-card"
-            :class="{ expanded: expandedId === row.backup.id }"
+            :class="{
+              expanded: expandedId === row.backup.id,
+              'run-card--acknowledged': row.backup.acknowledged,
+            }"
           >
             <div
               class="run-card-summary"
@@ -798,11 +831,18 @@ function filterByRun(runId: string): void {
                   <span class="run-card-hostname">{{ row.backup.hostname }}</span>
                   <span class="run-card-time">{{ formatDateShort(row.backup.started_at) }}</span>
                 </div>
-                <span
-                  class="badge"
-                  :class="statusClass(row.backup.status)"
-                  >{{ row.backup.status }}</span
-                >
+                <div class="run-card-badges">
+                  <span
+                    class="badge"
+                    :class="statusClass(row.backup.status)"
+                    >{{ row.backup.status }}</span
+                  >
+                  <span
+                    v-if="row.backup.acknowledged"
+                    class="badge badge--neutral"
+                    >Acknowledged</span
+                  >
+                </div>
               </div>
               <div class="run-card-meta">
                 <span>{{ row.backup.target_name }}</span>
@@ -823,6 +863,14 @@ function filterByRun(runId: string): void {
                   @click.stop="filterByRun(row.backup.run_id)"
                 >
                   View run
+                </button>
+                <button
+                  v-if="isAckable(row.backup)"
+                  class="btn btn-xs btn-ghost"
+                  :disabled="ackingId === row.backup.id"
+                  @click.stop="toggleAcknowledge(row.backup)"
+                >
+                  {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
                 </button>
               </div>
             </div>
@@ -995,6 +1043,19 @@ function filterByRun(runId: string): void {
 
 .run-card.expanded {
   border-color: var(--text-muted);
+}
+
+/* Stays in the list rather than disappearing - this only dims it so the
+   history remains scrollable and the toggle is easy to find again. */
+.run-card--acknowledged {
+  opacity: 0.6;
+}
+
+.run-card-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
 }
 
 .run-card-summary {

@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockScheduleOneHealth, mockScheduleOnePatch, test } from './fixtures'
+import {
+  expect,
+  loginAsAdmin,
+  makeFailedReport,
+  mockScheduleOneHealth,
+  mockScheduleOnePatch,
+  test,
+} from './fixtures'
 import type { Locator, Page } from '@playwright/test'
 
 interface ScheduleListEntry {
@@ -435,6 +442,62 @@ test.describe('Schedules management', () => {
     await page.getByRole('button', { name: 'More schedule actions' }).click()
     await page.getByRole('menuitem', { name: 'Logs' }).click()
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1/)
+  })
+
+  // Failed run history has no archive behind it, so an admin should be able
+  // to clear it out on demand rather than wait on the age-based retention
+  // setting under System. The menu item and dialog count come from the
+  // unbounded /reports/failed/count endpoint, not the report list above (a
+  // page-size `limit` bounds that one) - mocked independently of whatever
+  // the demo seed's own failure window currently contains, the same reason
+  // agent-detail.spec.ts's equivalent test mocks both endpoints.
+  test('clean up failed backups deletes failed report history for the schedule', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeFailedReport(9997, 1)]),
+      }),
+    )
+    await page.route('**/api/schedules/1/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
+    const countLoaded = page.waitForResponse(
+      (res) => res.url().includes('/api/schedules/1/reports/failed/count') && res.status() === 200,
+    )
+    await page.reload()
+    await countLoaded
+
+    await page.getByRole('button', { name: 'More schedule actions' }).click()
+    const cleanItem = page.getByRole('menuitem', { name: /^Clean up failed/ })
+    await expect(cleanItem).toBeVisible()
+
+    let deleteRequested = false
+    await page.route('**/api/schedules/1/reports/failed**', async (route) => {
+      deleteRequested = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ deleted: 1 }),
+      })
+    })
+
+    await cleanItem.click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('button', { name: 'Delete failed reports' }).click()
+
+    await expect(page.getByText('Deleted 1 failed backup report.')).toBeVisible()
+    expect(deleteRequested).toBe(true)
   })
 
   test('schedule detail with per-host backup sources loads without error', async ({ page }) => {

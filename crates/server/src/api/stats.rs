@@ -23,7 +23,7 @@ use shared::{
     types::{FindingKind, FindingSeverity, FindingStatus},
 };
 
-use super::auth::AuthUser;
+use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, db, error::ApiError};
 
 /// Computes `(part / total) * 100.0` without using `as` casts.
@@ -778,6 +778,66 @@ pub async fn activity(
         .await?
     };
     Ok(Json(rows))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/stats/activity/{id}/acknowledge",
+    tag = "Statistics",
+    operation_id = "acknowledgeActivityEntry",
+    params(("id" = i64, Path, description = "Backup report ID")),
+    responses(
+        (status = 204, description = "Acknowledged"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Report is not a warning or failed run"),
+    )
+)]
+/// Acknowledge a backup run's warning or failure in the activity feed. Shared
+/// across every user, like the report itself.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn acknowledge_activity_entry(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let repo_id = db::get_ackable_backup_report_repo_id(&state.pool, id).await?;
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_modify_schedules).await?;
+    db::set_backup_report_acknowledged(&state.pool, id, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/stats/activity/{id}/acknowledge",
+    tag = "Statistics",
+    operation_id = "unacknowledgeActivityEntry",
+    params(("id" = i64, Path, description = "Backup report ID")),
+    responses(
+        (status = 204, description = "Unacknowledged"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// Clear a previously acknowledged backup run.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn unacknowledge_activity_entry(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let repo_id = db::get_backup_report_repo_id(&state.pool, id).await?;
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_modify_schedules).await?;
+    db::set_backup_report_acknowledged(&state.pool, id, false).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(

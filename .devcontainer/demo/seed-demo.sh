@@ -801,6 +801,21 @@ WHERE id = (
 );
 SQL
 
+echo "==> Acknowledging that warning, so the Activity Log demonstrates both states..."
+# The remaining seeded failures/warnings (db-server-01's outage below, the
+# hourly failure, the failed-report-cleanup targets) stay unacknowledged, so
+# the activity screenshot shows an Acknowledged badge next to a still-open one.
+WEB01_WARNING_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT id FROM backup_reports
+     WHERE agent_id = (SELECT id FROM agents WHERE hostname = 'web-server-01')
+       AND archive_name LIKE 'web-server-01-backup-%'
+     ORDER BY started_at DESC LIMIT 1")
+if [ -z "$WEB01_WARNING_REPORT_ID" ]; then
+    echo "expected a web-server-01 backup report to acknowledge, found none" >&2
+    exit 1
+fi
+api POST "/api/stats/activity/$WEB01_WARNING_REPORT_ID/acknowledge" > /dev/null
+
 echo "==> Seeding a recovered outage on db-server-01..."
 # Feeds the agent detail Overview's run strip, which draws one cell per run
 # rather than reducing a window of days to a percentage. Three *consecutive*

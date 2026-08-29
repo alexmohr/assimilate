@@ -97,3 +97,48 @@ test('expands warning report row and shows warning messages', async ({ page }: {
   // A warning-only report must not also render a duplicate Error box.
   await expect(page.locator('.error-pre')).toHaveCount(0)
 })
+
+test('acknowledges a warning row and can undo it', async ({ page }: { page: Page }) => {
+  await loginAsAdmin(page)
+
+  await page.route('**/api/agents', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  )
+  await page.route('**/api/schedules', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  )
+  await page.route('**/api/stats/system-events**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  )
+
+  // The view mutates the row in place on a successful ack/unack rather than
+  // refetching the list, so the activity feed only needs to be served once.
+  await page.route('**/api/stats/activity**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{ ...makeActivityRow(), acknowledged: false }]),
+    }),
+  )
+  let ackRequests = 0
+  await page.route('**/api/stats/activity/9999/acknowledge', async (route) => {
+    ackRequests += 1
+    await route.fulfill({ status: 204, body: '' })
+  })
+
+  await page.goto('/activity')
+  await page.waitForTimeout(1000)
+
+  const warningRow = page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
+  await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
+
+  await warningRow.first().getByRole('button', { name: 'Acknowledge' }).click()
+  await expect(warningRow.first().getByText('Acknowledged')).toBeVisible({ timeout: 10_000 })
+  const unackButton = warningRow.first().getByRole('button', { name: 'Unacknowledge' })
+  await expect(unackButton).toBeVisible()
+
+  await unackButton.click()
+  await expect(warningRow.first().getByText('Acknowledged')).not.toBeVisible({ timeout: 10_000 })
+  await expect(warningRow.first().getByRole('button', { name: 'Acknowledge' })).toBeVisible()
+  expect(ackRequests).toBe(2)
+})

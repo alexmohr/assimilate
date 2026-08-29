@@ -18,6 +18,8 @@ import {
   listScheduleTargets,
   getScheduleBackupSources,
   listScheduleReports,
+  deleteFailedScheduleReports,
+  countFailedScheduleReports,
   getScheduleHealth,
   type CreateScheduleRequest,
 } from '../api/schedules'
@@ -25,6 +27,7 @@ import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
+import { logger } from '../utils/logger'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -299,6 +302,15 @@ async function loadData(): Promise<void> {
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
+      // Fetched independently of the Promise.all below: it backs a menu
+      // badge, not the page itself, so a failure here must not take down
+      // the rest of the schedule's data with it.
+      countFailedScheduleReports(props.id)
+        .then((count) => {
+          failedReportCount.value = count
+        })
+        .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
+
       const [
         scheduleRow,
         agentRows,
@@ -514,6 +526,32 @@ async function confirmDeleteSchedule(): Promise<void> {
   }
 }
 
+// Counted separately from `reports.value` (which the report list's own
+// `limit` bounds) so the menu label and confirmation dialog never
+// understate how many records the unbounded delete is actually about to
+// remove.
+const failedReportCount = ref(0)
+const showCleanFailedDialog = ref(false)
+const cleaningFailedReports = ref(false)
+
+async function confirmCleanFailedReports(): Promise<void> {
+  cleaningFailedReports.value = true
+  try {
+    const result = await deleteFailedScheduleReports(props.id)
+    showCleanFailedDialog.value = false
+    toastSuccess(
+      result.deleted === 1
+        ? 'Deleted 1 failed backup report.'
+        : `Deleted ${result.deleted} failed backup reports.`,
+    )
+    await loadReports()
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    cleaningFailedReports.value = false
+  }
+}
+
 async function runNow(agentId?: number): Promise<void> {
   if (agentId != null) {
     retryingAgentId.value = agentId
@@ -541,6 +579,13 @@ async function runNow(agentId?: number): Promise<void> {
 async function loadReports(): Promise<void> {
   reportsLoading.value = true
   reportsError.value = null
+  // Independent of the report list below: it backs a menu badge, not the
+  // page itself, so a failure here must not mark the whole refresh failed.
+  countFailedScheduleReports(props.id)
+    .then((count) => {
+      failedReportCount.value = count
+    })
+    .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
   try {
     const reportRows = await listScheduleReports(props.id, 100)
     reports.value = reportRows
@@ -675,10 +720,12 @@ watch(activeTab, (tab) => {
         :run-now-loading="runNowLoading"
         :cancel-loading="cancelLoading"
         :overdue-count="overdueTargetCount"
+        :failed-report-count="failedReportCount"
         @run-now="runNow()"
         @cancel-backup="cancelBackup"
         @logs="goToLogs"
         @delete="showDeleteDialog = true"
+        @clean-failed-reports="showCleanFailedDialog = true"
       />
       <div
         v-else
@@ -801,6 +848,36 @@ watch(activeTab, (tab) => {
           @click="confirmDeleteSchedule"
         >
           {{ deleteLoading ? 'Deleting...' : 'Delete schedule' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Clean up failed backups -->
+    <BaseModal
+      :open="showCleanFailedDialog"
+      title="Clean up failed backups"
+      @close="showCleanFailedDialog = false"
+    >
+      <p>
+        Permanently delete <strong>{{ failedReportCount }}</strong>
+        {{ failedReportCount === 1 ? 'failed backup report' : 'failed backup reports' }} for this
+        schedule? Only failed runs that produced no archive are removed — nothing on disk is
+        touched. This action cannot be undone.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showCleanFailedDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="cleaningFailedReports"
+          @click="confirmCleanFailedReports"
+        >
+          {{ cleaningFailedReports ? 'Deleting...' : 'Delete failed reports' }}
         </button>
       </template>
     </BaseModal>

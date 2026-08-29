@@ -15,6 +15,8 @@ import {
   listAgentReports,
   createAgentHostnamePattern,
   cancelAgentBackup,
+  deleteFailedReports,
+  countFailedReports,
 } from '../api/agents'
 import { listSchedules, getScheduleHealth } from '../api/schedules'
 import { getSystemVersion } from '../api/system'
@@ -382,6 +384,14 @@ async function loadAgent(): Promise<void> {
 async function loadTabData(): Promise<void> {
   if (!agent.value) return
   const hostname = agent.value.hostname
+  // Fetched independently of the Promise.all below: it backs a menu badge,
+  // not the page itself, so a failure here (e.g. a not-yet-registered host)
+  // must not take down the rest of the tab data with it.
+  countFailedReports(hostname, agent.value.domain)
+    .then((count) => {
+      failedReportCount.value = count
+    })
+    .catch((e: unknown) => logger.error('countFailedReports failed', e))
   try {
     const [repoRows, scheduleRows, reportRows, healthRows] = await Promise.all([
       listAgentRepos(hostname, agent.value.domain),
@@ -522,6 +532,33 @@ async function cancelBackupInProgress(repoId: number): Promise<void> {
     toastError(extractError(e))
   } finally {
     cancellingRepoIds.value = cancellingRepoIds.value.filter((id) => id !== repoId)
+  }
+}
+
+// Clean up failed backup reports (overflow menu). Counted separately from
+// `reports.value` (which the report list's own `limit` bounds) so the menu
+// label and confirmation dialog never understate how many records the
+// unbounded delete is actually about to remove.
+const failedReportCount = ref(0)
+const showCleanFailedDialog = ref(false)
+const cleaningFailedReports = ref(false)
+
+async function confirmCleanFailedReports(): Promise<void> {
+  if (!agent.value) return
+  cleaningFailedReports.value = true
+  try {
+    const result = await deleteFailedReports(agent.value.hostname, agent.value.domain)
+    showCleanFailedDialog.value = false
+    toastSuccess(
+      result.deleted === 1
+        ? 'Deleted 1 failed backup report.'
+        : `Deleted ${result.deleted} failed backup reports.`,
+    )
+    await loadAgent()
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    cleaningFailedReports.value = false
   }
 }
 
@@ -717,6 +754,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
         :restart-loading="restartLoading"
         :regen-loading="regenLoading"
         :restart-error="restartError"
+        :is-admin="isAdmin"
+        :failed-report-count="failedReportCount"
         @adopt="adoptHost"
         @merge="openMergeDialog"
         @deploy="
@@ -731,6 +770,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         @deploy-ssh-key="showDeploySshKey = true"
         @regenerate-token="regenerateToken"
         @restart="restartAgent"
+        @clean-failed-reports="showCleanFailedDialog = true"
       />
 
       <BaseTabs
@@ -883,6 +923,36 @@ watch(wsStatus, (newStatus, oldStatus) => {
           @click="showDeploySshKey = false"
         >
           Close
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Clean up failed backups -->
+    <BaseModal
+      :open="showCleanFailedDialog"
+      title="Clean up failed backups"
+      @close="showCleanFailedDialog = false"
+    >
+      <p>
+        Permanently delete <strong>{{ failedReportCount }}</strong>
+        {{ failedReportCount === 1 ? 'failed backup report' : 'failed backup reports' }} for this
+        agent? Only failed runs that produced no archive are removed — nothing on disk is touched.
+        This action cannot be undone.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showCleanFailedDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="cleaningFailedReports"
+          @click="confirmCleanFailedReports"
+        >
+          {{ cleaningFailedReports ? 'Deleting...' : 'Delete failed reports' }}
         </button>
       </template>
     </BaseModal>

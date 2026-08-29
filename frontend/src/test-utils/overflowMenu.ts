@@ -15,3 +15,18 @@ export async function openMenu(wrapper: VueWrapper): Promise<void> {
 export function menuLabels(wrapper: VueWrapper): string[] {
   return wrapper.findAll('.overflow-menu-item').map((i) => i.text().trim())
 }
+
+/**
+ * Clicks the first open menu item whose label starts with `labelPrefix` -
+ * for an item whose label carries a live count (e.g. "Clean up failed
+ * backups (3)") and so can't be matched by exact text.
+ */
+export async function clickMenuItemStartingWith(
+  wrapper: VueWrapper,
+  labelPrefix: string,
+): Promise<void> {
+  await wrapper
+    .findAll('.overflow-menu-item')
+    .find((i) => i.text().trim().startsWith(labelPrefix))!
+    .trigger('click')
+}

@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockScheduleOneHealth, mockScheduleOnePatch, test } from './fixtures'
+import {
+  expect,
+  loginAsAdmin,
+  makeFailedReport,
+  mockScheduleOneHealth,
+  mockScheduleOnePatch,
+  test,
+} from './fixtures'
 import type { Locator, Page } from '@playwright/test'
 
 interface ScheduleListEntry {
@@ -437,33 +444,6 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1/)
   })
 
-  // Minimal failed report satisfying the schedule reports endpoint's shape -
-  // mirrors agent-detail.spec.ts's makeFailedReport.
-  function makeFailedScheduleReport(id: number): object {
-    return {
-      id,
-      agent_id: 1,
-      repo_id: 1,
-      schedule_id: 1,
-      status: 'failed',
-      started_at: new Date(Date.now() - 3600_000).toISOString(),
-      finished_at: new Date().toISOString(),
-      original_size: 0,
-      compressed_size: 0,
-      deduplicated_size: 0,
-      files_processed: 0,
-      duration_secs: 5,
-      error_message: 'connection refused',
-      warnings: [],
-      borg_version: null,
-      archive_name: null,
-      borg_command: null,
-      hostname: 'web-server-01',
-      repo_name: 'server-daily',
-      schedule_name: null,
-    }
-  }
-
   // Failed run history has no archive behind it, so an admin should be able
   // to clear it out on demand rather than wait on the age-based retention
   // setting under System. The menu item and dialog count come from the
@@ -482,7 +462,7 @@ test.describe('Schedules management', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeFailedScheduleReport(9997)]),
+        body: JSON.stringify([makeFailedReport(9997, 1)]),
       }),
     )
     await page.route('**/api/schedules/1/reports/failed/count**', (route) =>

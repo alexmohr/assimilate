@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, makeFailedReport, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -33,34 +33,6 @@ function makeRunningReport(id: number): object {
     files_processed: 0,
     duration_secs: 0,
     error_message: null,
-    warnings: [],
-    borg_version: null,
-    archive_name: null,
-    borg_command: null,
-    hostname: 'web-server-01',
-    repo_name: 'server-daily',
-    schedule_name: null,
-  }
-}
-
-// Guarantees a failed report exists for the "clean up failed backups" test
-// below, independent of whatever the demo seed's own failure window
-// currently contains.
-function makeFailedReport(id: number): object {
-  return {
-    id,
-    agent_id: 1,
-    repo_id: 1,
-    schedule_id: null,
-    status: 'failed',
-    started_at: new Date(Date.now() - 3600_000).toISOString(),
-    finished_at: new Date().toISOString(),
-    original_size: 0,
-    compressed_size: 0,
-    deduplicated_size: 0,
-    files_processed: 0,
-    duration_secs: 5,
-    error_message: 'connection refused',
     warnings: [],
     borg_version: null,
     archive_name: null,

@@ -7310,6 +7310,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "failed_report_retention_days": 200,
         "system_event_retention_days": 30,
         "notification_delivery_retention_days": 15,
+        "run_event_retention_days": 45,
         "timezone": "UTC",
         "borg_query_timeout_secs": 120,
         "session_idle_timeout_minutes": 60,
@@ -7325,6 +7326,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         body.get("notification_delivery_retention_days").unwrap(),
         15
     );
+    assert_eq!(body.get("run_event_retention_days").unwrap(), 45);
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
@@ -7358,6 +7360,11 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "omitted field must echo the persisted value, not a request-derived default"
     );
     assert_eq!(
+        body.get("run_event_retention_days").unwrap(),
+        45,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
         body.get("session_idle_timeout_minutes").unwrap(),
         60,
         "omitted field must echo the persisted value, not a request-derived default"
@@ -7385,6 +7392,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         body.get("notification_delivery_retention_days").unwrap(),
         15
     );
+    assert_eq!(body.get("run_event_retention_days").unwrap(), 45);
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);

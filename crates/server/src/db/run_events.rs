@@ -94,3 +94,27 @@ pub async fn list_run_events(
     .await
     .map_err(ApiError::Database)
 }
+
+/// Prunes old run events by age, the same way every other historical/event
+/// table in this app is bounded (`system_events`, `backup_reports`, ...).
+/// `run_id` is deliberately not a foreign key to `backup_reports` (see the
+/// migration's own comment -- one `run_id` fans out to several reports), so
+/// this table isn't cleaned up as a side effect of report retention and
+/// needs its own cutoff, or its rows outlive the reports they describe.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_run_events_before(
+    pool: &PgPool,
+    before: DateTime<Utc>,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM backup_run_events WHERE occurred_at < $1",
+        before
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}

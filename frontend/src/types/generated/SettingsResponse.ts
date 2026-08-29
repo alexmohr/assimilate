@@ -25,6 +25,10 @@ export type SettingsResponse = {
    */
   notification_delivery_retention_days: number;
   /**
+   * Number of days to retain a run's power-management event timeline.
+   */
+  run_event_retention_days: number;
+  /**
    * Timezone setting.
    */
   timezone: string;

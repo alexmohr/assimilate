@@ -509,12 +509,15 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         30,
     )
     .await?;
+    let run_event_days =
+        retention_days_setting(pool, "run_event_retention_days", legacy_retention, 90).await?;
 
     let mut events_deleted: u64 = 0;
     let mut reports_deleted: u64 = 0;
     let mut archive_reports_deleted: u64 = 0;
     let mut login_attempts_deleted: u64 = 0;
     let mut notification_deliveries_deleted: u64 = 0;
+    let mut run_events_deleted: u64 = 0;
 
     if let Some(cutoff) =
         Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
@@ -556,11 +559,20 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             db::delete_notification_deliveries_before(pool, cutoff).await?;
     }
 
+    if run_event_days > 0 {
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(run_event_days))
+        else {
+            return Ok(());
+        };
+        run_events_deleted = db::run_events::delete_run_events_before(pool, cutoff).await?;
+    }
+
     if events_deleted > 0
         || reports_deleted > 0
         || archive_reports_deleted > 0
         || login_attempts_deleted > 0
         || notification_deliveries_deleted > 0
+        || run_events_deleted > 0
     {
         tracing::info!(
             events_deleted,
@@ -568,10 +580,12 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             archive_reports_deleted,
             login_attempts_deleted,
             notification_deliveries_deleted,
+            run_events_deleted,
             report_days,
             failed_days,
             event_days,
             notification_delivery_days,
+            run_event_days,
             "retention cleanup completed"
         );
     }

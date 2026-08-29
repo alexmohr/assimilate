@@ -10019,3 +10019,65 @@ async fn run_events_are_scoped_to_their_own_target_pairing_within_a_shared_run_i
         "message for target b"
     );
 }
+
+#[cfg(test)]
+async fn insert_test_run_event(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    occurred_at: DateTime<Utc>,
+) {
+    sqlx::query!(
+        "INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, \
+         occurred_at) VALUES ('retention-test-run', $1, $2, 'source', 'wake_sent', 'test event', \
+         $3)",
+        agent_id,
+        repo_id,
+        occurred_at,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_run_events_before_deletes_old(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-retention-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let old = Utc::now().checked_sub_signed(Duration::days(120)).unwrap();
+    insert_test_run_event(&pool, agent.id, repo.id, old).await;
+
+    let cutoff = Utc::now().checked_sub_signed(Duration::days(90)).unwrap();
+    let deleted = db::run_events::delete_run_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1, "run event older than cutoff must be deleted");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_run_events_before_keeps_recent(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-retention-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let before_insert = Utc::now();
+    insert_test_run_event(&pool, agent.id, repo.id, before_insert).await;
+
+    let cutoff = before_insert
+        .checked_sub_signed(Duration::seconds(1))
+        .unwrap();
+    let deleted = db::run_events::delete_run_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 0,
+        "run event created after cutoff must not be deleted"
+    );
+
+    let events = db::run_events::list_run_events(&pool, "retention-test-run", agent.id, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+}

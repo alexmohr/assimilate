@@ -1208,6 +1208,9 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Number of days to retain notification delivery-attempt history.
     pub notification_delivery_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain a run's power-management event timeline.
+    pub run_event_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]

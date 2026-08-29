@@ -27,7 +27,7 @@ CREATE TABLE backup_run_events (
         CHECK (event_type IN (
             'reachability_check', 'wake_sent', 'host_online',
             'agent_start_sent', 'agent_connected',
-            'agent_stop_sent', 'shutdown_sent', 'host_offline'
+            'agent_stop_sent', 'agent_stopped', 'shutdown_sent', 'host_offline'
         )),
     message TEXT NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

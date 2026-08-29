@@ -1138,7 +1138,6 @@ pub async fn count_failed_schedule_reports(
 ) -> Result<Json<FailedReportCountResponse>, ApiError> {
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let count = db::count_failed_backup_reports_for_schedule(&state.pool, id).await?;
-    let count = u64::try_from(count).unwrap_or(0);
     Ok(Json(FailedReportCountResponse { count }))
 }
 

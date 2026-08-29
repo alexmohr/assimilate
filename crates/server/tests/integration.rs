@@ -5250,6 +5250,16 @@ fn non_admin_get_request(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+#[cfg(test)]
+fn non_admin_post_request_without_body(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("POST")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_list_hides_quota_config_from_viewer_but_shows_it_to_admin(pool: sqlx::PgPool) {
     let repo_id = insert_test_repo(&pool, "quota-visibility-repo").await;
@@ -5866,6 +5876,42 @@ async fn test_delete_failed_reports_removes_only_failed_agent_reports() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn delete_failed_reports_forbidden_for_non_admin() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "delete-failed-agent-forbidden-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES \
+         ('delete-failed-agent-forbidden-host', 'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req =
+        non_admin_delete_request("/api/agents/delete-failed-agent-forbidden-host/reports/failed");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a non-admin user must not be able to delete an agent's failed reports"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_delete_failed_schedule_reports_removes_only_failed_schedule_reports() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
@@ -6075,6 +6121,53 @@ async fn test_acknowledge_and_unacknowledge_activity_entry() {
             .get("acknowledged")
             .unwrap(),
         false
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_activity_entry_forbidden_without_repo_permission() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "acknowledge-activity-forbidden-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES \
+         ('acknowledge-activity-forbidden-host', 'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = non_admin_post_request_without_body(&format!(
+        "/api/stats/activity/{report_id}/acknowledge"
+    ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a viewer with no repo-scoped can_modify_schedules permission must not be able to \
+         acknowledge a run"
+    );
+
+    let req = non_admin_delete_request(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a viewer with no repo-scoped can_modify_schedules permission must not be able to \
+         unacknowledge a run"
     );
 }
 

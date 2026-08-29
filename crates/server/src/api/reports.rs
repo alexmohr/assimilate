@@ -222,6 +222,5 @@ pub async fn count_failed_reports(
 ) -> Result<Json<FailedReportCountResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let count = db::count_failed_backup_reports_for_agent(&state.pool, agent.id).await?;
-    let count = u64::try_from(count).unwrap_or(0);
     Ok(Json(FailedReportCountResponse { count }))
 }

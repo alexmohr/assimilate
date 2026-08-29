@@ -288,7 +288,7 @@ pub struct FailedReportCountResponse {
     /// Total number of failed backup reports, unbounded by any report-list
     /// pagination window - the true count a "clean up failed backups"
     /// confirmation is about to delete.
-    pub count: u64,
+    pub count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

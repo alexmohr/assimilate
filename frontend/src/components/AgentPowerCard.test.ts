@@ -130,6 +130,45 @@ describe('AgentPowerCard', () => {
     expect(wrapper.find('#power-service-name').exists()).toBe(false)
   })
 
+  // A value hidden by the toggle that gated it must not silently resubmit -
+  // the server rejects `shutdown_after_backup: true` once `wake_enabled` is
+  // false, and the field that could fix it is no longer on screen.
+  it('resets shutdown-after-backup once wake is switched off', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    const wakeToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[0]!
+    await wakeToggle.vm.$emit('update:modelValue', false)
+    await wakeToggle.vm.$emit('update:modelValue', true)
+    await flushPromises()
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01/power',
+      expect.objectContaining({
+        wake: expect.objectContaining({ shutdown_after_backup: false }),
+      }),
+      { params: {} },
+    )
+  })
+
+  it('resets stop-agent-after-backup once start-agent is switched off', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    const startAgentToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[2]!
+    await startAgentToggle.vm.$emit('update:modelValue', false)
+    await startAgentToggle.vm.$emit('update:modelValue', true)
+    await flushPromises()
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01/power',
+      expect.objectContaining({ stop_agent_after_backup: false }),
+      { params: {} },
+    )
+  })
+
   it('sends the whole power settings object on save', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)

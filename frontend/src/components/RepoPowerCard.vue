@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { updateRepoPower } from '../api/repos'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
@@ -35,6 +35,13 @@ const wakeMac = ref('')
 const wakeBroadcast = ref('')
 const wakeTimeout = ref(180)
 const shutdownAfterBackup = ref(false)
+
+// See AgentPowerCard.vue: the field is only hidden by the parent's v-if, not
+// reset, so left stale it would resubmit a value the server rejects once
+// wake is off, with no way back to the field that fixes it.
+watch(wakeEnabled, (enabled) => {
+  if (!enabled) shutdownAfterBackup.value = false
+})
 
 function startEdit(): void {
   const power = props.repo.power

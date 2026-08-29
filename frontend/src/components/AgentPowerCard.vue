@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { updateAgentPower } from '../api/agents'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
@@ -42,6 +42,16 @@ const stopAgentAfterBackup = ref(false)
 const sshHost = ref('')
 const sshPort = ref(22)
 const serviceName = ref('assimilate-agent')
+
+// A dependent toggle's field is only hidden by the parent's v-if, not reset -
+// left stale it would silently resubmit a value the server rejects once the
+// parent that justified it is off, with no way back to the field that fixes it.
+watch(wakeEnabled, (enabled) => {
+  if (!enabled) shutdownAfterBackup.value = false
+})
+watch(startAgentEnabled, (enabled) => {
+  if (!enabled) stopAgentAfterBackup.value = false
+})
 
 function startEdit(): void {
   const power = props.agent.power

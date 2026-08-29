@@ -239,7 +239,7 @@ Both tabs render one line per entry: a status stripe, a name, a time, and stats 
 
 Each tab label carries a count, including zero.
 
-A failed run never produced a borg archive, so there is nothing on disk to lose by clearing its history. When the Backups tab has one or more failed runs, an admin sees a **Clean up failed (N)** button next to the sort toggle; it deletes every failed report for this agent after a confirmation dialog. This is a manual, on-demand action for this agent alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* agent automatically by age.
+A failed run never produced a borg archive, so there is nothing on disk to lose by clearing its history. When there are one or more failed runs, an admin can clear them via **Clean up failed backups (N)** in the header's overflow menu; it deletes every failed report for this agent after a confirmation dialog. This is a manual, on-demand action for this agent alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* agent automatically by age.
 
 ### Settings
 

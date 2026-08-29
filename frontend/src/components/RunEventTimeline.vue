@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
 import { Check, Clock, LogIn, Power, WifiOff, Zap } from '@lucide/vue'
+import { formatTime } from '../utils/format'
 import type { RunEventResponse, RunEventType } from '../types/generated'
 
 /**
@@ -51,10 +52,6 @@ const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'muted'>> = {
   agent_stop_sent: 'muted',
   shutdown_sent: 'muted',
   host_offline: 'muted',
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour12: false })
 }
 </script>
 

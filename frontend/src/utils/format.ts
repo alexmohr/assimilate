@@ -28,6 +28,13 @@ export function formatDateShort(iso: string | null, fallback: string = '\u2014')
   })
 }
 
+export function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour12: false,
+    timeZone: getConfiguredTimezone(),
+  })
+}
+
 export function formatDuration(secs: number): string {
   if (secs < 60) return `${secs}s`
   const m = Math.floor(secs / 60)

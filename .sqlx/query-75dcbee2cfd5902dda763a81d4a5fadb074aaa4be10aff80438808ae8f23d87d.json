@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM backup_reports WHERE schedule_id = $1 AND status = 'failed' AND archive_name IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "75dcbee2cfd5902dda763a81d4a5fadb074aaa4be10aff80438808ae8f23d87d"
+}

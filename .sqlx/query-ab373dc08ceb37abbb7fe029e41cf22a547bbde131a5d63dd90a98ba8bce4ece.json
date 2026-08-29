@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM backup_reports WHERE agent_id = $1 AND status = 'failed' AND archive_name IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ab373dc08ceb37abbb7fe029e41cf22a547bbde131a5d63dd90a98ba8bce4ece"
+}

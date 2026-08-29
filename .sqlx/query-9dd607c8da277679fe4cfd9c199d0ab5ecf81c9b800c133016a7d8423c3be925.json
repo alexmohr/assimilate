@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*) as count FROM backup_reports WHERE schedule_id = $1 AND status = 'failed'",
+  "query": "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1 AND status = 'failed' AND archive_name IS NULL",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       null
     ]
   },
-  "hash": "931b0d1bb97ac30f87a42473b9e4d4e2af164f48e434c951ea2ce32207689d62"
+  "hash": "9dd607c8da277679fe4cfd9c199d0ab5ecf81c9b800c133016a7d8423c3be925"
 }

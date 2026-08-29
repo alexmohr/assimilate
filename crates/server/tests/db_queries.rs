@@ -7760,11 +7760,27 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
     .await
     .unwrap();
 
+    // A failed report that still carries an archive_name - e.g. borg create
+    // succeeded but a later prune/compact/post-backup hook failed the run
+    // overall - must be excluded from both the count and the delete, so
+    // "clean up failed backups" can never discard the only report row
+    // linking to a retained archive.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            archive_name: Some("orphan-risk-archive".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
     assert_eq!(
         db::count_failed_backup_reports_for_agent(&pool, agent.id)
             .await
             .unwrap(),
-        2
+        2,
+        "the archived failed report must not be counted"
     );
 
     let deleted = db::delete_failed_backup_reports_for_agent(&pool, agent.id)
@@ -7783,11 +7799,14 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
     let remaining = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
         .unwrap();
-    assert_eq!(remaining.len(), 1);
     assert_eq!(
-        remaining.first().map(|r| r.status.as_str()),
-        Some("success")
+        remaining.len(),
+        2,
+        "the success and archived-failed reports must survive"
     );
+    let mut remaining_statuses: Vec<&str> = remaining.iter().map(|r| r.status.as_str()).collect();
+    remaining_statuses.sort_unstable();
+    assert_eq!(remaining_statuses, vec!["failed", "success"]);
 
     let other_remaining = db::list_reports_for_agent(&pool, other_agent.id, None, 10)
         .await
@@ -7894,11 +7913,25 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
     .await
     .unwrap();
 
+    // A failed report that still carries an archive_name (create succeeded,
+    // a later prune/compact/post-backup hook failed the run overall) must be
+    // excluded from both the count and the delete.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            archive_name: Some("orphan-risk-archive".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
     assert_eq!(
         db::count_failed_backup_reports_for_schedule(&pool, schedule.id)
             .await
             .unwrap(),
-        2
+        2,
+        "the archived failed report must not be counted"
     );
 
     let deleted = db::delete_failed_backup_reports_for_schedule(&pool, schedule.id)
@@ -7917,11 +7950,14 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
     let remaining = db::list_reports_for_schedule(&pool, schedule.id, 10)
         .await
         .unwrap();
-    assert_eq!(remaining.len(), 1);
     assert_eq!(
-        remaining.first().map(|r| r.status.as_str()),
-        Some("success")
+        remaining.len(),
+        2,
+        "the success and archived-failed reports must survive"
     );
+    let mut remaining_statuses: Vec<&str> = remaining.iter().map(|r| r.status.as_str()).collect();
+    remaining_statuses.sort_unstable();
+    assert_eq!(remaining_statuses, vec!["failed", "success"]);
 
     let other_remaining = db::list_reports_for_schedule(&pool, other_schedule.id, 10)
         .await

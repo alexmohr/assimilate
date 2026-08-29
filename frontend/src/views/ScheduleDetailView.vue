@@ -861,8 +861,8 @@ watch(activeTab, (tab) => {
       <p>
         Permanently delete <strong>{{ failedReportCount }}</strong>
         {{ failedReportCount === 1 ? 'failed backup report' : 'failed backup reports' }} for this
-        schedule? This only removes the history entries — no borg archive exists for a failed run,
-        so there is nothing to delete on disk. This action cannot be undone.
+        schedule? Only failed runs that produced no archive are removed — nothing on disk is
+        touched. This action cannot be undone.
       </p>
 
       <template #footer>

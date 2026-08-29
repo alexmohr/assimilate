@@ -437,16 +437,66 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1/)
   })
 
+  // Minimal failed report satisfying the schedule reports endpoint's shape -
+  // mirrors agent-detail.spec.ts's makeFailedReport.
+  function makeFailedScheduleReport(id: number): object {
+    return {
+      id,
+      agent_id: 1,
+      repo_id: 1,
+      schedule_id: 1,
+      status: 'failed',
+      started_at: new Date(Date.now() - 3600_000).toISOString(),
+      finished_at: new Date().toISOString(),
+      original_size: 0,
+      compressed_size: 0,
+      deduplicated_size: 0,
+      files_processed: 0,
+      duration_secs: 5,
+      error_message: 'connection refused',
+      warnings: [],
+      borg_version: null,
+      archive_name: null,
+      borg_command: null,
+      hostname: 'web-server-01',
+      repo_name: 'server-daily',
+      schedule_name: null,
+    }
+  }
+
   // Failed run history has no archive behind it, so an admin should be able
   // to clear it out on demand rather than wait on the age-based retention
-  // setting under System. Schedule 1 (server-daily) is seeded with one
-  // failed run - see seed-demo.sh.
+  // setting under System. The menu item and dialog count come from the
+  // unbounded /reports/failed/count endpoint, not the report list above (a
+  // page-size `limit` bounds that one) - mocked independently of whatever
+  // the demo seed's own failure window currently contains, the same reason
+  // agent-detail.spec.ts's equivalent test mocks both endpoints.
   test('clean up failed backups deletes failed report history for the schedule', async ({
     page,
   }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
+
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeFailedScheduleReport(9997)]),
+      }),
+    )
+    await page.route('**/api/schedules/1/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
+    const countLoaded = page.waitForResponse(
+      (res) => res.url().includes('/api/schedules/1/reports/failed/count') && res.status() === 200,
+    )
+    await page.reload()
+    await countLoaded
 
     await page.getByRole('button', { name: 'More schedule actions' }).click()
     const cleanItem = page.getByRole('menuitem', { name: /^Clean up failed/ })

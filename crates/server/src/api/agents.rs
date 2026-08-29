@@ -99,6 +99,42 @@ pub struct UpdateHostWakeRequest {
     pub shutdown_after_backup: bool,
 }
 
+/// Validates the wake-settings rules shared by both the agent and
+/// repository power endpoints: a positive timeout, a well-formed MAC/
+/// broadcast address whenever one is present (regardless of `wake_enabled`
+/// -- the DB's MAC-format CHECK constraint applies unconditionally, and the
+/// UI deliberately keeps stale values in the form after the wake toggle is
+/// switched off), `wake_enabled` requiring a MAC, and `shutdown_after_backup`
+/// requiring `wake_enabled`.
+pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), ApiError> {
+    if wake.wake_timeout_seconds <= 0 {
+        return Err(ApiError::BadRequest(
+            "wake timeout must be greater than zero".to_owned(),
+        ));
+    }
+    if let Some(mac) = wake.wake_mac_address.as_deref() {
+        crate::power::MacAddress::from_str(mac)
+            .map_err(|e| ApiError::BadRequest(format!("invalid MAC address: {e}")))?;
+    }
+    if let Some(broadcast) = wake.wake_broadcast_address.as_deref() {
+        broadcast
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| ApiError::BadRequest("invalid broadcast address".to_owned()))?;
+    }
+    if wake.wake_enabled {
+        if wake.wake_mac_address.is_none() {
+            return Err(ApiError::BadRequest(
+                "a MAC address is required to wake this host".to_owned(),
+            ));
+        }
+    } else if wake.shutdown_after_backup {
+        return Err(ApiError::BadRequest(
+            "shutting down after backup requires waking the host to be enabled".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// Request payload for updating an agent's power-management settings:
 /// waking its host before a backup, and starting/stopping the agent process
 /// itself over SSH.
@@ -380,30 +416,7 @@ pub async fn update_agent_power(
     Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<UpdateAgentPowerRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    if req.wake.wake_timeout_seconds <= 0 {
-        return Err(ApiError::BadRequest(
-            "wake timeout must be greater than zero".to_owned(),
-        ));
-    }
-    // Validated whenever a value is present, not just when wake_enabled: the
-    // DB's CHECK constraint applies unconditionally to any non-NULL
-    // wake_mac_address, and the UI deliberately keeps a stale value in the
-    // form after the wake toggle is switched off.
-    if let Some(mac) = req.wake.wake_mac_address.as_deref() {
-        crate::power::MacAddress::from_str(mac)
-            .map_err(|e| ApiError::BadRequest(format!("invalid MAC address: {e}")))?;
-    }
-    if req.wake.wake_enabled {
-        if req.wake.wake_mac_address.is_none() {
-            return Err(ApiError::BadRequest(
-                "a MAC address is required to wake this host".to_owned(),
-            ));
-        }
-    } else if req.wake.shutdown_after_backup {
-        return Err(ApiError::BadRequest(
-            "shutting down after backup requires waking the host to be enabled".to_owned(),
-        ));
-    }
+    validate_host_wake(&req.wake)?;
     if req.stop_agent_after_backup && !req.start_agent_enabled {
         return Err(ApiError::BadRequest(
             "stopping the agent after backup requires starting it to be enabled".to_owned(),

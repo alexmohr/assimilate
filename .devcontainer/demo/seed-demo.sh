@@ -784,6 +784,10 @@ WEB01_WARNING_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg 
      WHERE agent_id = (SELECT id FROM agents WHERE hostname = 'web-server-01')
        AND archive_name LIKE 'web-server-01-backup-%'
      ORDER BY started_at DESC LIMIT 1")
+if [ -z "$WEB01_WARNING_REPORT_ID" ]; then
+    echo "expected a web-server-01 backup report to acknowledge, found none" >&2
+    exit 1
+fi
 api POST "/api/stats/activity/$WEB01_WARNING_REPORT_ID/acknowledge" > /dev/null
 
 echo "==> Seeding a recovered outage on db-server-01..."

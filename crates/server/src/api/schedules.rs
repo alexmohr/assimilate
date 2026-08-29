@@ -1100,13 +1100,15 @@ pub async fn delete_failed_schedule_reports(
     Path(id): Path<i64>,
 ) -> Result<Json<DeleteFailedReportsResponse>, ApiError> {
     let schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     if let Some(rid) = schedule.repo_id {
         check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
-    } else if !effective.can_delete_repo {
-        return Err(ApiError::Forbidden(
-            "only admins can delete orphaned schedules' reports".into(),
-        ));
+    } else {
+        let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+        if !effective.can_delete_repo {
+            return Err(ApiError::Forbidden(
+                "only admins can delete orphaned schedules' reports".into(),
+            ));
+        }
     }
     let deleted = db::delete_failed_backup_reports_for_schedule(&state.pool, id).await?;
     Ok(Json(DeleteFailedReportsResponse { deleted }))

@@ -6296,14 +6296,18 @@ pub async fn set_backup_report_acknowledged(
     id: i64,
     acknowledged: bool,
 ) -> Result<(), ApiError> {
-    sqlx::query!(
+    let rows_affected = sqlx::query!(
         "UPDATE backup_reports SET acknowledged = $1 WHERE id = $2",
         acknowledged,
         id,
     )
     .execute(pool)
     .await
-    .map_err(ApiError::Database)?;
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    if rows_affected == 0 {
+        return Err(ApiError::NotFound(format!("backup report {id} not found")));
+    }
     Ok(())
 }
 

@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
-import { menuLabels, openMenu } from '../test-utils/overflowMenu'
+import { clickMenuItemStartingWith, menuLabels, openMenu } from '../test-utils/overflowMenu'
 import ScheduleHeader from './ScheduleHeader.vue'
 import type { ScheduleRow } from '../types/schedule'
 
@@ -27,6 +27,7 @@ function mount(
       runNowLoading: false,
       cancelLoading: false,
       overdueCount: 0,
+      failedReportCount: 0,
       ...props,
     },
   })
@@ -101,5 +102,36 @@ describe('ScheduleHeader', () => {
 
     expect(wrapper.emitted(event)).toHaveLength(1)
     expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
+  })
+
+  // A failed run has no archive behind it, so clearing it out is safe - and,
+  // like Delete schedule in the same menu, the server (not this component)
+  // is the source of truth for who may do it: absent entirely rather than
+  // disabled when there is nothing to clear.
+  describe('clean up failed backups', () => {
+    it('is omitted when there are no failed reports', async () => {
+      const wrapper = mount({}, { failedReportCount: 0 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper).some((l) => l.startsWith('Clean up failed'))).toBe(false)
+    })
+
+    it('shows the failed count', async () => {
+      const wrapper = mount({}, { failedReportCount: 4 })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper)).toEqual([
+        'Logs',
+        'Clean up failed backups (4)',
+        'Delete schedule',
+      ])
+    })
+
+    it('emits cleanFailedReports from the menu and closes it', async () => {
+      const wrapper = mount({}, { failedReportCount: 4 })
+      await openMenu(wrapper)
+      await clickMenuItemStartingWith(wrapper, 'Clean up failed')
+
+      expect(wrapper.emitted('cleanFailedReports')).toHaveLength(1)
+      expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
+    })
   })
 })

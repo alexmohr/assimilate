@@ -522,6 +522,14 @@ fn agent_routes() -> Router<AppState> {
             get(api::reports::list_reports),
         )
         .route(
+            "/api/agents/{hostname}/reports/failed",
+            delete(api::reports::delete_failed_reports),
+        )
+        .route(
+            "/api/agents/{hostname}/reports/failed/count",
+            get(api::reports::count_failed_reports),
+        )
+        .route(
             "/api/agents/{hostname}/tags",
             get(api::tags::get_agent_tags).put(api::tags::set_agent_tags),
         )
@@ -645,6 +653,14 @@ fn schedule_and_config_routes() -> Router<AppState> {
             get(api::schedules::list_schedule_reports),
         )
         .route(
+            "/api/schedules/{id}/reports/failed",
+            delete(api::schedules::delete_failed_schedule_reports),
+        )
+        .route(
+            "/api/schedules/{id}/reports/failed/count",
+            get(api::schedules::count_failed_schedule_reports),
+        )
+        .route(
             "/api/schedules/{id}/targets",
             get(api::schedules::list_schedule_targets),
         )
@@ -696,6 +712,11 @@ fn stats_routes() -> Router<AppState> {
             get(api::stats::storage_breakdown),
         )
         .route("/api/stats/activity", get(api::stats::activity))
+        .route(
+            "/api/stats/activity/{id}/acknowledge",
+            post(api::stats::acknowledge_activity_entry)
+                .delete(api::stats::unacknowledge_activity_entry),
+        )
         .route("/api/stats/system-events", get(api::stats::system_events))
         .route("/api/stats/health", get(api::stats::health))
         .route("/api/stats/trends", get(api::stats::trends))

@@ -3975,6 +3975,9 @@ pub struct ActivityRow {
     /// Run ID for tracking multi-step backups.
     #[serde(default)]
     pub run_id: Option<String>,
+    /// Whether a human has acknowledged this run's warning/failure.
+    #[serde(default)]
+    pub acknowledged: bool,
 }
 
 /// Health summary for a schedule-agent-repo combination.
@@ -4620,13 +4623,13 @@ pub async fn get_activity_feed(
         ActivityRow,
         "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS \"schedule_name?\", br.run_id FROM backup_reports br JOIN \
-         agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s \
-         ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
-         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND ($1::bigint IS NULL OR \
-         br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND ($3::bigint IS NULL OR \
-         br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) ORDER BY br.started_at \
-         DESC LIMIT $5",
+         br.schedule_id, s.name AS \"schedule_name?\", br.run_id, br.acknowledged FROM \
+         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+         LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
+         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND \
+         ($1::bigint IS NULL OR br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND \
+         ($3::bigint IS NULL OR br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) \
+         ORDER BY br.started_at DESC LIMIT $5",
         repo_id,
         hostname,
         schedule_id,
@@ -6166,6 +6169,192 @@ pub async fn delete_backup_reports_with_archive_before(
     Ok(result.rows_affected())
 }
 
+/// Deletes all failed backup-run history for an agent, on demand.
+///
+/// A failed run *usually* carries no `archive_name` (no archive was
+/// produced), but `run_backup`'s create step can succeed and a later
+/// prune/compact/post-backup-hook step can still fail the run overall - so
+/// this guards on `archive_name IS NULL` too, matching
+/// [`delete_backup_reports_before`]'s age-based equivalent, rather than
+/// ever discarding the only report row linking to a retained archive.
+/// Unlike that age-based retention, this acts immediately regardless of
+/// `failed_report_retention_days`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_failed_backup_reports_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM backup_reports WHERE agent_id = $1 AND status = 'failed' AND archive_name IS \
+         NULL",
+        agent_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
+/// Deletes all failed backup-run history for a schedule, on demand. See
+/// [`delete_failed_backup_reports_for_agent`] - same rationale, scoped to a
+/// schedule instead of an agent.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_failed_backup_reports_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM backup_reports WHERE schedule_id = $1 AND status = 'failed' AND archive_name \
+         IS NULL",
+        schedule_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
+/// Counts an agent's failed backup-run history, unbounded by the report-list
+/// pagination `limit` a page's own display uses. A "clean up failed backups"
+/// confirmation must state how many records [`delete_failed_backup_reports_for_agent`]
+/// is actually about to remove, not how many happen to fall within the most
+/// recently displayed page of reports - so this carries the same
+/// `archive_name IS NULL` guard as that delete, or the count would overstate
+/// what the delete actually removes.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_failed_backup_reports_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1 AND status = 'failed' \
+         AND archive_name IS NULL",
+        agent_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Counts a schedule's failed backup-run history. See
+/// [`count_failed_backup_reports_for_agent`] - same rationale, scoped to a
+/// schedule instead of an agent.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_failed_backup_reports_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM backup_reports WHERE schedule_id = $1 AND status = \
+         'failed' AND archive_name IS NULL",
+        schedule_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Looks up the repository a backup report belongs to, so the caller can run
+/// a repo-scoped permission check before acknowledging it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if no report has this id, or
+/// [`ApiError::Database`] if the query fails.
+pub async fn get_backup_report_repo_id(pool: &PgPool, id: i64) -> Result<i64, ApiError> {
+    sqlx::query_scalar!("SELECT repo_id FROM backup_reports WHERE id = $1", id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::Database)?
+        .ok_or_else(|| ApiError::NotFound(format!("report id '{id}' not found")))
+}
+
+/// Looks up the repository a backup report belongs to, for the acknowledge
+/// endpoint specifically - unlike [`get_backup_report_repo_id`], this also
+/// rejects a report whose status isn't warning/failed, since a successful
+/// run has nothing to review (matching the frontend's own `isAckable` gate,
+/// which this backs up rather than duplicates trust in).
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if no report has this id,
+/// [`ApiError::Unprocessable`] if the report's status isn't warning or
+/// failed, or [`ApiError::Database`] if the query fails.
+pub async fn get_ackable_backup_report_repo_id(pool: &PgPool, id: i64) -> Result<i64, ApiError> {
+    let row = sqlx::query!(
+        "SELECT repo_id, status FROM backup_reports WHERE id = $1",
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .ok_or_else(|| ApiError::NotFound(format!("report id '{id}' not found")))?;
+
+    let ackable = matches!(
+        row.status.parse::<BackupStatus>(),
+        Ok(BackupStatus::Warning | BackupStatus::Failed)
+    );
+    if !ackable {
+        return Err(ApiError::Unprocessable(format!(
+            "report {id} cannot be acknowledged: only warning or failed runs can be reviewed"
+        )));
+    }
+    Ok(row.repo_id)
+}
+
+/// Sets or clears the acknowledged flag on a backup report. Acknowledging is
+/// a shared, all-users action - like the report itself, it isn't scoped to
+/// whoever clicked it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn set_backup_report_acknowledged(
+    pool: &PgPool,
+    id: i64,
+    acknowledged: bool,
+) -> Result<(), ApiError> {
+    let rows_affected = sqlx::query!(
+        "UPDATE backup_reports SET acknowledged = $1 WHERE id = $2",
+        acknowledged,
+        id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    if rows_affected == 0 {
+        return Err(ApiError::NotFound(format!("backup report {id} not found")));
+    }
+    Ok(())
+}
+
 /// Get user preferences.
 ///
 /// # Errors
@@ -6738,17 +6927,18 @@ pub async fn get_activity_feed_days(
         ActivityRow,
         "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!\", \
          duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, \
-         schedule_name AS \"schedule_name?\", run_id FROM ( SELECT br.id, a.hostname, r.name AS \
-         target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, \
-         br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, \
-         ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM \
-         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
-         LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
-         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND \
-         br.started_at > NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR \
-         br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR \
-         br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint \
-         IS NULL OR rn <= $6 ORDER BY started_at DESC",
+         schedule_name AS \"schedule_name?\", run_id, acknowledged AS \"acknowledged!\" FROM ( \
+         SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
+         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
+         br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, ROW_NUMBER() OVER \
+         (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM backup_reports br \
+         JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN \
+         schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> \
+         'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > \
+         NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
+         ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
+         AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint IS NULL OR rn <= $6 \
+         ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         repo_id,
         hostname,

@@ -7,7 +7,9 @@ import type { AgentHostnamePattern, AgentRow } from '../types/agent'
 import type {
   AgentTagEntryResponse,
   CreateAgentResponse,
+  DeleteFailedReportsResponse,
   DeployAgentResponse,
+  FailedReportCountResponse,
   MergeAgentResponse,
 } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -153,6 +155,32 @@ export async function cancelAgentBackup(
     {},
     { params: domainParams(domain) },
   )
+}
+
+export async function deleteFailedReports(
+  hostname: string,
+  domain?: string | null,
+): Promise<DeleteFailedReportsResponse> {
+  const response = await apiClient.delete<DeleteFailedReportsResponse>(
+    `/agents/${hostname}/reports/failed`,
+    { params: domainParams(domain) },
+  )
+  return response.data
+}
+
+/**
+ * Unbounded by the report list's own pagination window - the true count a
+ * "clean up failed backups" confirmation is about to delete.
+ */
+export async function countFailedReports(
+  hostname: string,
+  domain?: string | null,
+): Promise<number> {
+  const response = await apiClient.get<FailedReportCountResponse>(
+    `/agents/${hostname}/reports/failed/count`,
+    { params: domainParams(domain) },
+  )
+  return response.data.count
 }
 
 export async function listAgentHostnamePatterns(

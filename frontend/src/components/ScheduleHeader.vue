@@ -28,6 +28,8 @@ defineProps<{
   cancelLoading: boolean
   /** How many of this schedule's targets are currently overdue. */
   overdueCount: number
+  /** How many of this schedule's runs currently show as failed. */
+  failedReportCount: number
 }>()
 
 const emit = defineEmits<{
@@ -35,6 +37,7 @@ const emit = defineEmits<{
   cancelBackup: []
   logs: []
   delete: []
+  cleanFailedReports: []
 }>()
 </script>
 
@@ -95,6 +98,15 @@ const emit = defineEmits<{
           @click="run(() => emit('logs'))"
         >
           Logs
+        </button>
+        <button
+          v-if="failedReportCount > 0"
+          class="overflow-menu-item overflow-menu-item--danger"
+          role="menuitem"
+          type="button"
+          @click="run(() => emit('cleanFailedReports'))"
+        >
+          Clean up failed backups ({{ failedReportCount }})
         </button>
         <button
           class="overflow-menu-item overflow-menu-item--danger"

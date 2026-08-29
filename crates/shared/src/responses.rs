@@ -273,6 +273,26 @@ pub struct DeleteAgentArchivesResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+/// Response containing delete failed reports.
+pub struct DeleteFailedReportsResponse {
+    #[ts(type = "number")]
+    /// Number of failed backup reports that were deleted.
+    pub deleted: u64,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing a count of failed backup reports.
+pub struct FailedReportCountResponse {
+    #[ts(type = "number")]
+    /// Total number of failed backup reports, unbounded by any report-list
+    /// pagination window - the true count a "clean up failed backups"
+    /// confirmation is about to delete.
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
 /// Response containing hostname pattern.
 pub struct HostnamePatternResponse {
     #[ts(type = "number")]

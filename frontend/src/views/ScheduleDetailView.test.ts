@@ -51,6 +51,10 @@ vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
 }))
 
+vi.mock('../utils/logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}))
+
 // Captured WebSocket message handlers - populated during component setup().
 // Accessing wsHandlers here is safe because onMessage is only CALLED during
 // component setup(), which happens inside test functions after module evaluation.
@@ -67,6 +71,7 @@ vi.mock('../composables/useWebSocket', () => ({
 import { apiClient } from '../api/client'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import ScheduleDetailView from './ScheduleDetailView.vue'
+import { logger } from '../utils/logger'
 
 const mockApiClient = apiClient as {
   get: ReturnType<typeof vi.fn>
@@ -164,6 +169,10 @@ function setupEditModeWithReport(report: Record<string, unknown>): void {
     if (url === '/schedules/1/sources')
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
     if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
+    if (url === '/schedules/1/reports/failed/count') {
+      const count = report.status === 'failed' ? 1 : 0
+      return Promise.resolve({ data: { count } })
+    }
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
@@ -1286,7 +1295,42 @@ describe('ScheduleDetailView - Backups tab', () => {
     const after = mockApiClient.get.mock.calls.filter((c) =>
       String(c[0]).includes('/reports'),
     ).length
-    expect(after).toBe(before + 1)
+    // loadReports() now fetches the report list and the unbounded failed
+    // count in parallel, so one refetch is two "/reports"-matching calls.
+    expect(after).toBe(before + 2)
+  })
+
+  // The count backs a menu badge, not the page itself - a failure fetching
+  // it during a refresh must not break the report list refresh alongside it
+  // (regression: it used to sit inside the same Promise.all as the report
+  // list, so a rejection there took the whole refresh down with it).
+  it('logs and keeps the report list refresh working when the count fetch fails', async () => {
+    const report = {
+      id: 1,
+      status: 'success',
+      archive_name: 'test-archive-2026-06-01',
+      started_at: '2026-06-01T02:00:00Z',
+      original_size: 500,
+      agent_id: 10,
+      hostname: 'web-server-01',
+    }
+    const wrapper = await createBackupsWrapper([report])
+    await goToBackups(wrapper)
+
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/reports/failed/count') return Promise.reject(new Error('boom'))
+      if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'countFailedScheduleReports failed',
+      expect.any(Error),
+    )
+    expect(wrapper.text()).toContain('test-archive-2026-06-01')
   })
 
   it('releases the row the server names as finished deleting', async () => {
@@ -1479,6 +1523,134 @@ describe('ScheduleDetailView - delete confirmation', () => {
 
     expect(mockApiClient.delete).not.toHaveBeenCalled()
     expect(openModals(wrapper)).toHaveLength(0)
+  })
+})
+
+// A failed run has no archive behind it, so clearing it out is safe - the
+// server (not this component) is the source of truth for who may do it,
+// same as the pre-existing Delete-schedule flow above.
+describe('ScheduleDetailView - clean up failed backups', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function openMenu(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+  }
+
+  async function createAdminWrapperWithFailedReport(): Promise<
+    ReturnType<typeof renderWithPlugins>
+  > {
+    setupEditModeWithReport({ id: 1, status: 'failed', started_at: '2026-06-01T02:00:00Z' })
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('is omitted when nothing has failed', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  it('reaches the confirmation through the header overflow menu', async () => {
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+
+    const cleanItem = wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')
+    expect(cleanItem).toBeTruthy()
+    await cleanItem!.trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('This action cannot be undone.')
+  })
+
+  it('closes the dialog without deleting when Cancel is clicked', async () => {
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Cancel')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.delete).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('closes the dialog without deleting on dismissal', async () => {
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await dismissModal(wrapper)
+
+    expect(mockApiClient.delete).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('deletes the failed reports on confirmation', async () => {
+    mockApiClient.delete.mockResolvedValue({ data: { deleted: 1 } })
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.delete).toHaveBeenCalledWith('/schedules/1/reports/failed')
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('reports a failure and leaves the dialog open', async () => {
+    mockApiClient.delete.mockRejectedValue(new Error('locked'))
+    const wrapper = await createAdminWrapperWithFailedReport()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
   })
 })
 

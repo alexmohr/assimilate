@@ -158,6 +158,14 @@ fn test_app_core_routes() -> Router<server::AppState> {
             get(server::api::reports::list_reports),
         )
         .route(
+            "/api/agents/{hostname}/reports/failed",
+            delete(server::api::reports::delete_failed_reports),
+        )
+        .route(
+            "/api/agents/{hostname}/reports/failed/count",
+            get(server::api::reports::count_failed_reports),
+        )
+        .route(
             "/api/agents/{hostname}/repos/{repo_id}/cancel-backup",
             post(server::api::agents::cancel_agent_backup),
         )
@@ -220,6 +228,14 @@ fn test_app_repo_routes() -> Router<server::AppState> {
                 .delete(server::api::schedules::delete_schedule),
         )
         .route(
+            "/api/schedules/{id}/reports/failed",
+            delete(server::api::schedules::delete_failed_schedule_reports),
+        )
+        .route(
+            "/api/schedules/{id}/reports/failed/count",
+            get(server::api::schedules::count_failed_schedule_reports),
+        )
+        .route(
             "/api/schedules/{id}/sources",
             get(server::api::schedules::list_schedule_backup_sources),
         )
@@ -251,6 +267,11 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
         .route(
             "/api/stats/storage-breakdown",
             get(server::api::stats::storage_breakdown),
+        )
+        .route(
+            "/api/stats/activity/{id}/acknowledge",
+            post(server::api::stats::acknowledge_activity_entry)
+                .delete(server::api::stats::unacknowledge_activity_entry),
         )
         .route("/api/stats/calendar", get(server::api::stats::calendar))
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
@@ -5229,6 +5250,16 @@ fn non_admin_get_request(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+#[cfg(test)]
+fn non_admin_post_request_without_body(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("POST")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_list_hides_quota_config_from_viewer_but_shows_it_to_admin(pool: sqlx::PgPool) {
     let repo_id = insert_test_repo(&pool, "quota-visibility-repo").await;
@@ -5776,6 +5807,418 @@ async fn test_cancel_agent_backup_unknown_hostname_returns_not_found() {
     );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// -- failed report cleanup --
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_failed_reports_removes_only_failed_agent_reports() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "delete-failed-agent-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('delete-failed-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for status in ["failed", "success"] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), $3, true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = get_request("/api/agents/delete-failed-host/reports/failed/count");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 1);
+
+    let req = delete_request("/api/agents/delete-failed-host/reports/failed");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("deleted").unwrap(), 1);
+
+    let req = get_request("/api/agents/delete-failed-host/reports/failed/count");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 0);
+
+    let req = get_request("/api/agents/delete-failed-host/reports");
+    let resp = oneshot(&mut app, req).await;
+    let remaining: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let statuses: Vec<&str> = remaining
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(statuses, vec!["success"]);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn delete_failed_reports_forbidden_for_non_admin() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "delete-failed-agent-forbidden-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES \
+         ('delete-failed-agent-forbidden-host', 'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req =
+        non_admin_delete_request("/api/agents/delete-failed-agent-forbidden-host/reports/failed");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a non-admin user must not be able to delete an agent's failed reports"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_delete_failed_schedule_reports_removes_only_failed_schedule_reports() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "delete-failed-schedule-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('delete-failed-sched-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    for status in ["failed", "success"] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, matched) VALUES ($1, $2, $3, NOW(), NOW(), $4, true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(schedule_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = get_request(&format!(
+        "/api/schedules/{schedule_id}/reports/failed/count"
+    ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 1);
+
+    let req = delete_request(&format!("/api/schedules/{schedule_id}/reports/failed"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("deleted").unwrap(), 1);
+
+    let req = get_request(&format!(
+        "/api/schedules/{schedule_id}/reports/failed/count"
+    ));
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("count").unwrap(), 0);
+
+    let remaining: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM backup_reports WHERE schedule_id = $1")
+            .bind(schedule_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, vec![("success".to_string(),)]);
+}
+
+/// Regression test for: this endpoint used to gate on global `RequireAdmin`,
+/// stricter than every other schedule-mutating endpoint (`delete_schedule`,
+/// `update_schedule`, `run_schedule_now`, ...), which use the repo-scoped
+/// `can_modify_schedules` permission - a strict superset of global admin. A
+/// user with neither must still be refused.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn delete_failed_schedule_reports_forbidden_without_repo_permission() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "failed-sched-forbidden-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('failed-sched-forbidden-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = non_admin_delete_request(&format!("/api/schedules/{schedule_id}/reports/failed"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a viewer with no repo-scoped can_modify_schedules permission must not be able to delete \
+         failed reports"
+    );
+}
+
+/// Regression test for: the "clean up failed backups" confirmation dialog's
+/// count came from `reports.value`, which the report-list endpoint's own
+/// `limit` bounds - so it could understate how many records the unbounded
+/// delete was actually about to remove. The count endpoint must report the
+/// true total regardless of what a small list `limit` returns.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_failed_report_count_is_not_bounded_by_the_report_list_limit() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "count-unbounded-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('count-unbounded-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for _ in 0..3 {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), 'failed', true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = get_request("/api/agents/count-unbounded-host/reports?limit=1");
+    let resp = oneshot(&mut app, req).await;
+    let list: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+
+    let req = get_request("/api/agents/count-unbounded-host/reports/failed/count");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body.get("count").unwrap(),
+        3,
+        "count must not shrink to match the report list's own limit"
+    );
+}
+
+// -- activity acknowledgement --
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_acknowledge_and_unacknowledge_activity_entry() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "acknowledge-activity-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('acknowledge-activity-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let req = get_request("/api/stats/activity?hostname=acknowledge-activity-host");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        rows.as_array()
+            .unwrap()
+            .first()
+            .unwrap()
+            .get("acknowledged")
+            .unwrap(),
+        true
+    );
+
+    let req = delete_request(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let req = get_request("/api/stats/activity?hostname=acknowledge-activity-host");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        rows.as_array()
+            .unwrap()
+            .first()
+            .unwrap()
+            .get("acknowledged")
+            .unwrap(),
+        false
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_activity_entry_forbidden_without_repo_permission() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "acknowledge-activity-forbidden-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES \
+         ('acknowledge-activity-forbidden-host', 'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = non_admin_post_request_without_body(&format!(
+        "/api/stats/activity/{report_id}/acknowledge"
+    ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a viewer with no repo-scoped can_modify_schedules permission must not be able to \
+         acknowledge a run"
+    );
+
+    let req = non_admin_delete_request(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a viewer with no repo-scoped can_modify_schedules permission must not be able to \
+         unacknowledge a run"
+    );
+}
+
+/// Regression test for: the frontend only shows the Acknowledge button for a
+/// warning/failed run ("a successful run has nothing to review"), but the
+/// server had no equivalent check - any caller with repo permission could
+/// acknowledge a successful run directly against the API.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_activity_entry_rejects_a_successful_report() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "acknowledge-success-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('acknowledge-success-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'success', true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a successful run has nothing to review and must not be acknowledgeable"
+    );
+
+    let acknowledged: bool =
+        sqlx::query_scalar("SELECT acknowledged FROM backup_reports WHERE id = $1")
+            .bind(report_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !acknowledged,
+        "the rejected request must not have flipped the acknowledged flag"
+    );
 }
 
 // -- archive resync reliability --

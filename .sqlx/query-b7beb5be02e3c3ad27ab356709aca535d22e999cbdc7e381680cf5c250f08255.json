@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT repo_id FROM backup_reports WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b7beb5be02e3c3ad27ab356709aca535d22e999cbdc7e381680cf5c250f08255"
+}

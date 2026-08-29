@@ -7,6 +7,7 @@ import { ref, nextTick, type ComponentPublicInstance } from 'vue'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import AgentDetailView from './AgentDetailView.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
+import { logger } from '../utils/logger'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -172,6 +173,10 @@ function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unkno
     if (url === '/agents/test-host/repos') return Promise.resolve({ data: repos })
     if (url === '/schedules') return Promise.resolve({ data: schedules })
     if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
+    if (url === '/agents/test-host/reports/failed/count') {
+      const count = reports.filter((r) => r.status === 'failed').length
+      return Promise.resolve({ data: { count } })
+    }
     if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
     if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
     return Promise.resolve({ data: [] })
@@ -1856,5 +1861,185 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
     expect(wrapper.text()).toContain('Host B')
     expect(wrapper.text()).not.toContain('Host A')
+  })
+})
+
+// A failed run has no archive behind it, so clearing it out is admin-only but
+// otherwise reachable through the same header overflow menu as every other
+// rare action.
+describe('AgentDetailView - clean up failed backups', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function renderAsAdmin(): Promise<VueWrapper<ComponentPublicInstance>> {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  async function openMenu(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+  }
+
+  // `mockReports` carries exactly one failed run (id 3).
+  it('shows the failed count for an admin', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper
+        .findAll('.overflow-menu-item')
+        .some((i) => i.text() === 'Clean up failed backups (1)'),
+    ).toBe(true)
+  })
+
+  it('is omitted for a non-admin', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, { props: { hostname: 'test-host' } })
+    await flushPromises()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  it('is omitted once there is nothing failed', async () => {
+    const onlySuccess = mockReports.filter((r) => r.status !== 'failed')
+    setupApi(onlySuccess)
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openMenu(wrapper)
+
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  // The count backs a menu badge, not the page itself - a failure fetching
+  // it must not break the rest of the tab data (regression: it used to sit
+  // inside the same Promise.all as the report list, so a rejection there
+  // took the whole page down with it).
+  it('logs and omits the item when the count fetch fails, without breaking the rest of the page', async () => {
+    setupApi()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents/test-host/reports/failed/count') {
+        return Promise.reject(new Error('boom'))
+      }
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/agents/test-host/reports') return Promise.resolve({ data: mockReports })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.detail-name').text()).toBe('test-host')
+    expect(logger.error).toHaveBeenCalledWith('countFailedReports failed', expect.any(Error))
+    await openMenu(wrapper)
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  it('reaches the confirmation through the menu', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('This action cannot be undone.')
+  })
+
+  it('closes the dialog without deleting when Cancel is clicked', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Cancel')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('closes the dialog without deleting on dismissal', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await dismissModal(wrapper)
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('deletes the failed reports on confirmation and shows a toast', async () => {
+    const wrapper = await renderAsAdmin()
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: { deleted: 1 } } as never)
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(apiClient.delete).toHaveBeenCalledWith('/agents/test-host/reports/failed', {
+      params: {},
+    })
+    expect(mockToastSuccess).toHaveBeenCalledWith('Deleted 1 failed backup report.')
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  it('reports a failure and leaves the dialog open', async () => {
+    const wrapper = await renderAsAdmin()
+    vi.mocked(apiClient.delete).mockRejectedValue(new Error('locked'))
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockToastError).toHaveBeenCalled()
+    expect(openModals(wrapper)).toHaveLength(1)
   })
 })

@@ -1989,6 +1989,140 @@ async fn activity_feed_days(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_reports_are_unacknowledged_by_default(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-default-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(activity.len(), 1);
+    assert!(!activity.first().unwrap().acknowledged);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn set_backup_report_acknowledged_toggles_and_is_visible_in_both_feeds(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-toggle-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let report_id = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id;
+
+    db::set_backup_report_acknowledged(&pool, report_id, true)
+        .await
+        .unwrap();
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(activity.first().unwrap().acknowledged);
+
+    let activity_days = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(activity_days.first().unwrap().acknowledged);
+
+    db::set_backup_report_acknowledged(&pool, report_id, false)
+        .await
+        .unwrap();
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(!activity.first().unwrap().acknowledged);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_backup_report_repo_id_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-repoid-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let report_id = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id;
+
+    let repo_id = db::get_backup_report_repo_id(&pool, report_id)
+        .await
+        .unwrap();
+    assert_eq!(repo_id, repo.id);
+
+    let err = db::get_backup_report_repo_id(&pool, report_id.saturating_add(1_000_000))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, server::error::ApiError::NotFound(_)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_ackable_backup_report_repo_id_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-status-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    let failed_params = InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+        finished_at: now,
+        status: shared::types::BackupStatus::Failed,
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 5,
+        error_message: Some("connection refused".to_string()),
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: None,
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &failed_params)
+        .await
+        .unwrap();
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    let failed_report_id = activity.iter().find(|e| e.status == "failed").unwrap().id;
+    let success_report_id = activity.iter().find(|e| e.status == "success").unwrap().id;
+
+    let repo_id = db::get_ackable_backup_report_repo_id(&pool, failed_report_id)
+        .await
+        .unwrap();
+    assert_eq!(repo_id, repo.id, "a failed report must be ackable");
+
+    let err = db::get_ackable_backup_report_repo_id(&pool, success_report_id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, server::error::ApiError::Unprocessable(_)),
+        "a successful report has nothing to review and must not be ackable"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn health_summary(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
     insert_test_report_for_schedule(
@@ -7554,6 +7688,281 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "clean-failed-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let other_agent = db::insert_agent(&pool, "other-clean-failed-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    let base = InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: now,
+        finished_at: now,
+        status: shared::types::BackupStatus::Failed,
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 0,
+        error_message: Some("connection refused".to_string()),
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: None,
+        borg_command: None,
+        run_id: None,
+    };
+
+    // Two failed reports for the target agent -- both should be deleted.
+    db::insert_backup_report(&pool, &base).await.unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            started_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            finished_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A successful report for the same agent must be kept.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            status: shared::types::BackupStatus::Success,
+            error_message: None,
+            archive_name: Some("kept-archive".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A failed report for a different agent must be untouched.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: other_agent.id,
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A failed report that still carries an archive_name - e.g. borg create
+    // succeeded but a later prune/compact/post-backup hook failed the run
+    // overall - must be excluded from both the count and the delete, so
+    // "clean up failed backups" can never discard the only report row
+    // linking to a retained archive.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            archive_name: Some("orphan-risk-archive".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        db::count_failed_backup_reports_for_agent(&pool, agent.id)
+            .await
+            .unwrap(),
+        2,
+        "the archived failed report must not be counted"
+    );
+
+    let deleted = db::delete_failed_backup_reports_for_agent(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 2);
+
+    assert_eq!(
+        db::count_failed_backup_reports_for_agent(&pool, agent.id)
+            .await
+            .unwrap(),
+        0,
+        "count must reflect the delete, not the report list's own pagination window"
+    );
+
+    let remaining = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining.len(),
+        2,
+        "the success and archived-failed reports must survive"
+    );
+    let mut remaining_statuses: Vec<&str> = remaining.iter().map(|r| r.status.as_str()).collect();
+    remaining_statuses.sort_unstable();
+    assert_eq!(remaining_statuses, vec!["failed", "success"]);
+
+    let other_remaining = db::list_reports_for_agent(&pool, other_agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(other_remaining.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let other_schedule = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "other-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 4 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let now = Utc::now();
+
+    let base = InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: Some(schedule.id),
+        started_at: now,
+        finished_at: now,
+        status: shared::types::BackupStatus::Failed,
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 0,
+        error_message: Some("connection refused".to_string()),
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: None,
+        borg_command: None,
+        run_id: None,
+    };
+
+    // Two failed reports for the target schedule -- both should be deleted.
+    db::insert_backup_report(&pool, &base).await.unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            started_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            finished_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A successful report for the same schedule must be kept.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            status: shared::types::BackupStatus::Success,
+            error_message: None,
+            archive_name: Some("kept-archive".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A failed report for a different schedule must be untouched. Needs its
+    // own started_at: the upsert conflict target is (repo_id, agent_id,
+    // started_at) for archive-less rows and does not include schedule_id, so
+    // reusing `now` here would silently reassign the first failed report's
+    // schedule_id instead of inserting a second row.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            schedule_id: Some(other_schedule.id),
+            started_at: now.checked_add_signed(Duration::seconds(2)).unwrap(),
+            finished_at: now.checked_add_signed(Duration::seconds(2)).unwrap(),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    // A failed report that still carries an archive_name (create succeeded,
+    // a later prune/compact/post-backup hook failed the run overall) must be
+    // excluded from both the count and the delete.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            archive_name: Some("orphan-risk-archive".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        db::count_failed_backup_reports_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap(),
+        2,
+        "the archived failed report must not be counted"
+    );
+
+    let deleted = db::delete_failed_backup_reports_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 2);
+
+    assert_eq!(
+        db::count_failed_backup_reports_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap(),
+        0,
+        "count must reflect the delete, not the report list's own pagination window"
+    );
+
+    let remaining = db::list_reports_for_schedule(&pool, schedule.id, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining.len(),
+        2,
+        "the success and archived-failed reports must survive"
+    );
+    let mut remaining_statuses: Vec<&str> = remaining.iter().map(|r| r.status.as_str()).collect();
+    remaining_statuses.sort_unstable();
+    assert_eq!(remaining_statuses, vec!["failed", "success"]);
+
+    let other_remaining = db::list_reports_for_schedule(&pool, other_schedule.id, 10)
+        .await
+        .unwrap();
+    assert_eq!(other_remaining.len(), 1);
 }
 
 #[sqlx::test(migrations = "./migrations")]

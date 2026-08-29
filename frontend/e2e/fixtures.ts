@@ -5,6 +5,38 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test as base, expect, type Page } from '@playwright/test'
 
+/**
+ * Minimal failed backup report satisfying the agent/schedule reports
+ * endpoints' shared shape, for guaranteeing a "clean up failed backups" menu
+ * item's visibility independent of whatever the demo seed's own failure
+ * window currently contains. `scheduleId` is null for an agent-only test,
+ * or a schedule's id when the report needs to belong to one.
+ */
+export function makeFailedReport(id: number, scheduleId: number | null = null): object {
+  return {
+    id,
+    agent_id: 1,
+    repo_id: 1,
+    schedule_id: scheduleId,
+    status: 'failed',
+    started_at: new Date(Date.now() - 3600_000).toISOString(),
+    finished_at: new Date().toISOString(),
+    original_size: 0,
+    compressed_size: 0,
+    deduplicated_size: 0,
+    files_processed: 0,
+    duration_secs: 5,
+    error_message: 'connection refused',
+    warnings: [],
+    borg_version: null,
+    archive_name: null,
+    borg_command: null,
+    hostname: 'web-server-01',
+    repo_name: 'server-daily',
+    schedule_name: null,
+  }
+}
+
 export const adminRoutes = [
   '/system',
   '/admin/roles',

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1 AND status = 'failed' AND archive_name IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9dd607c8da277679fe4cfd9c199d0ab5ecf81c9b800c133016a7d8423c3be925"
+}

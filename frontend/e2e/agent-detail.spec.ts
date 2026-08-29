@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, makeFailedReport, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -229,5 +229,70 @@ test.describe('Agent detail', () => {
     await cancelBtn.click()
 
     await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
+  })
+
+  // Failed run history has no archive behind it, so an admin should be able
+  // to clear it out on demand rather than wait on the age-based retention
+  // setting under System. Reachable from the header overflow menu, like every
+  // other rare/destructive agent action.
+  test('clean up failed backups deletes failed report history for the agent', async ({ page }) => {
+    await openAgent(page)
+
+    // The demo seed's own failure window shifts with the current date, so
+    // the menu item's visibility can't depend on it - guarantee one here.
+    await page.route('**/api/agents/web-server-01/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeFailedReport(9997)]),
+      }),
+    )
+    // The menu label and dialog count come from a separate, unbounded count
+    // endpoint (not from the report list above, which a page-size `limit`
+    // bounds) - registered after the broader route above so it wins for
+    // this more specific URL.
+    await page.route('**/api/agents/web-server-01/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
+    // networkidle doesn't reliably gate on this fetch resolving, and the
+    // menu item's count comes from it - wait for the response itself so the
+    // menu isn't opened before the count has a chance to update.
+    const countLoaded = page.waitForResponse(
+      (res) =>
+        res.url().includes('/api/agents/web-server-01/reports/failed/count') &&
+        res.status() === 200,
+    )
+    await page.reload()
+    await countLoaded
+
+    await page.locator('.overflow-toggle').click()
+    // getByRole's accessible name is whitespace-normalized; a plain
+    // `.overflow-menu-item` locator with a `hasText` regex tests the raw
+    // (unnormalized) textContent instead, so the template's leading space
+    // before "Clean" breaks a `^`-anchored pattern - see the identical,
+    // working locator in schedules.spec.ts's equivalent test.
+    const cleanItem = page.getByRole('menuitem', { name: /^Clean up failed/ })
+    await expect(cleanItem).toBeVisible()
+
+    let deleteRequested = false
+    await page.route('**/api/agents/web-server-01/reports/failed**', async (route) => {
+      deleteRequested = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ deleted: 2 }),
+      })
+    })
+
+    await cleanItem.click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('button', { name: 'Delete failed reports' }).click()
+
+    await expect(page.getByText('Deleted 2 failed backup reports.')).toBeVisible()
+    expect(deleteRequested).toBe(true)
   })
 })

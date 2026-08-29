@@ -1776,6 +1776,34 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     )
   })
 
+  // A CommandListEditor entry can be left blank (e.g. after "+ Add command"
+  // with nothing typed yet); saving must drop those rather than sending an
+  // empty-string command through to the agent.
+  it('drops blank command entries but keeps real ones when saving', async () => {
+    const wrapper = await renderAdvanced({
+      backup_sources: ['/data'],
+      backup_sources_per_agent: [],
+    })
+
+    const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
+    await editors[0].vm.$emit('update:modelValue', [
+      'docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql',
+      '',
+      '   ',
+    ])
+    await editors[1].vm.$emit('update:modelValue', ['', 'systemctl start app'])
+
+    await save(wrapper)
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({
+        pre_backup_commands: ['docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'],
+        post_backup_commands: ['systemctl start app'],
+      }),
+    )
+  })
+
   // The shared fields stay in charge when the server sent no per-agent rows,
   // so an empty list must not flip the schedule into per-agent mode.
   it('stays in shared mode when no per-agent rows come back', async () => {

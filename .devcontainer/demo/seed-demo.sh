@@ -426,7 +426,11 @@ api POST "/api/schedules" "{
     \"keep_daily\": 14,
     \"keep_weekly\": 8,
     \"keep_monthly\": 12,
-    \"pre_backup_commands\": [\"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\"],
+    \"pre_backup_commands\": [
+        \"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\",
+        \"df -hP /var/lib/postgresql | tail -n1 | awk '{print \$5}' > /tmp/db-disk-usage.txt\\necho \\\"disk usage recorded: \$(cat /tmp/db-disk-usage.txt)\\\"\"
+    ],
+    \"post_backup_commands\": [\"rm -f /tmp/mydb.sql /tmp/db-disk-usage.txt\"],
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
     \"rate_limit_kbps\": 5000,
     \"hook_timeout_seconds\": 120

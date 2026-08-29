@@ -32,7 +32,7 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
-import { parseLines } from '../utils/validation'
+import { dropBlankCommands, parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
 import { parseArchiveProgress } from '../utils/archiveProgress'
@@ -280,8 +280,8 @@ function populateForm(s: ScheduleRow): void {
     keep_yearly: s.keep_yearly,
     compact_enabled: s.compact_enabled,
     rate_limit_kbps: s.rate_limit_kbps ?? 0,
-    pre_backup_commands: s.pre_backup_commands.join('\n'),
-    post_backup_commands: s.post_backup_commands.join('\n'),
+    pre_backup_commands: s.pre_backup_commands,
+    post_backup_commands: s.post_backup_commands,
     hook_timeout_seconds: s.hook_timeout_seconds,
     missed_backup_threshold: s.missed_backup_threshold,
     backup_sources: '',
@@ -381,11 +381,11 @@ async function loadData(): Promise<void> {
       const perAgentCmdEntries = sources.commands_per_agent ?? []
       if (perAgentCmdEntries.length > 0) {
         agentOverrides.value.usePerAgentCmds = true
-        const preMap: Record<number, string> = {}
-        const postMap: Record<number, string> = {}
+        const preMap: Record<number, string[]> = {}
+        const postMap: Record<number, string[]> = {}
         for (const entry of perAgentCmdEntries) {
-          preMap[Number(entry.agent_id)] = entry.pre_backup_commands.join('\n')
-          postMap[Number(entry.agent_id)] = entry.post_backup_commands.join('\n')
+          preMap[Number(entry.agent_id)] = entry.pre_backup_commands
+          postMap[Number(entry.agent_id)] = entry.post_backup_commands
         }
         agentOverrides.value.perAgentPreCmds = preMap
         agentOverrides.value.perAgentPostCmds = postMap
@@ -417,8 +417,8 @@ async function save(): Promise<void> {
       keep_yearly: form.value.keep_yearly,
       compact_enabled: form.value.compact_enabled,
       rate_limit_kbps: form.value.rate_limit_kbps,
-      pre_backup_commands: parseLines(form.value.pre_backup_commands),
-      post_backup_commands: parseLines(form.value.post_backup_commands),
+      pre_backup_commands: dropBlankCommands(form.value.pre_backup_commands),
+      post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
       hook_timeout_seconds: form.value.hook_timeout_seconds,
       missed_backup_threshold: form.value.missed_backup_threshold,
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
@@ -467,8 +467,8 @@ async function save(): Promise<void> {
       for (const id of selectedAgentIds.value) {
         perAgent.push({
           agent_id: id,
-          pre_backup_commands: parseLines(agentOverrides.value.perAgentPreCmds[id] ?? ''),
-          post_backup_commands: parseLines(agentOverrides.value.perAgentPostCmds[id] ?? ''),
+          pre_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPreCmds[id] ?? []),
+          post_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPostCmds[id] ?? []),
         })
       }
       payload.commands_per_agent = perAgent

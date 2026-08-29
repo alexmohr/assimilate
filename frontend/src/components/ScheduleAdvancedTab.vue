@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref } from 'vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
+import CommandListEditor from './CommandListEditor.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import BorgPatternReference from './BorgPatternReference.vue'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -187,20 +188,18 @@ const refOpen = ref(false)
       <template v-if="!overrides.usePerAgentCmds">
         <div class="field">
           <label class="field-label">Pre-backup commands</label>
-          <textarea
+          <CommandListEditor
             v-model="form.pre_backup_commands"
-            class="input cmd-area"
-            placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-            spellcheck="false"
+            placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+            aria-label="Pre-backup commands"
           />
         </div>
         <div class="field">
           <label class="field-label">Post-backup commands</label>
-          <textarea
+          <CommandListEditor
             v-model="form.post_backup_commands"
-            class="input cmd-area"
-            placeholder="One command per line (optional)"
-            spellcheck="false"
+            placeholder="e.g. rm /tmp/dump.sql (optional)"
+            aria-label="Post-backup commands"
           />
         </div>
       </template>
@@ -211,26 +210,18 @@ const refOpen = ref(false)
       >
         <template #default="{ agentId }">
           <label class="form-sublabel">Pre-backup</label>
-          <textarea
-            :value="overrides.perAgentPreCmds[agentId] ?? ''"
-            class="input cmd-area"
-            placeholder="One command per line"
-            spellcheck="false"
-            @input="
-              ($event) =>
-                (overrides.perAgentPreCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
-            "
+          <CommandListEditor
+            :model-value="overrides.perAgentPreCmds[agentId] ?? []"
+            placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+            aria-label="Pre-backup commands"
+            @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
           />
           <label class="form-sublabel">Post-backup</label>
-          <textarea
-            :value="overrides.perAgentPostCmds[agentId] ?? ''"
-            class="input cmd-area"
-            placeholder="One command per line (optional)"
-            spellcheck="false"
-            @input="
-              ($event) =>
-                (overrides.perAgentPostCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
-            "
+          <CommandListEditor
+            :model-value="overrides.perAgentPostCmds[agentId] ?? []"
+            placeholder="e.g. rm /tmp/dump.sql (optional)"
+            aria-label="Post-backup commands"
+            @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
           />
         </template>
         <template #hint>Leave an agent empty to run no schedule-level commands.</template>
@@ -240,14 +231,6 @@ const refOpen = ref(false)
 </template>
 
 <style scoped>
-.cmd-area {
-  min-height: 60px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
 .ref-toggle {
   padding: var(--space-1) var(--space-4);
   border: 1px solid var(--border);

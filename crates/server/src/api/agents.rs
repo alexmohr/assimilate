@@ -426,19 +426,25 @@ pub async fn update_agent_power(
     let existing =
         db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
 
-    if req.start_agent_enabled {
-        if req.ssh_host.as_deref().is_none_or(str::is_empty) {
-            return Err(ApiError::BadRequest(
-                "an SSH host is required to start the agent process".to_owned(),
-            ));
-        }
-        if existing.last_ssh_user.is_none() {
-            return Err(ApiError::BadRequest(
-                "deploy the SSH key to this host (Deploy SSH key) before enabling start agent -- \
-                 no SSH user on record for it yet"
-                    .to_owned(),
-            ));
-        }
+    // A wake-only host (agent already running as a persistent service, so
+    // start_agent_enabled is off) can still enable shutdown_after_backup --
+    // shutdown always goes over SSH (teardown_agent_power), so it needs an
+    // SSH host just as much as starting the agent does.
+    if (req.start_agent_enabled || req.wake.shutdown_after_backup)
+        && req.ssh_host.as_deref().is_none_or(str::is_empty)
+    {
+        return Err(ApiError::BadRequest(
+            "an SSH host is required to start the agent process or to shut the host down after \
+             backup"
+                .to_owned(),
+        ));
+    }
+    if req.start_agent_enabled && existing.last_ssh_user.is_none() {
+        return Err(ApiError::BadRequest(
+            "deploy the SSH key to this host (Deploy SSH key) before enabling start agent -- no \
+             SSH user on record for it yet"
+                .to_owned(),
+        ));
     }
 
     let ssh_port = req.ssh_port.unwrap_or(22);

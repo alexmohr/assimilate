@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { updateAgentPower } from '../api/agents'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
@@ -52,6 +52,16 @@ watch(wakeEnabled, (enabled) => {
 watch(startAgentEnabled, (enabled) => {
   if (!enabled) stopAgentAfterBackup.value = false
 })
+
+// Shutting down needs an SSH destination just as much as starting the agent
+// does - a wake-only host (wake + shutdown enabled, agent already running as
+// a persistent service) never sets startAgentEnabled, but still needs
+// somewhere to send `shutdown -h now`. The field lives in the "Agent
+// process" section for layout reasons, but its visibility follows both
+// toggles that can need it, not just start-agent.
+const needsSshHost = computed(
+  () => startAgentEnabled.value || (wakeEnabled.value && shutdownAfterBackup.value),
+)
 
 function startEdit(): void {
   const power = props.agent.power
@@ -144,9 +154,16 @@ async function save(): Promise<void> {
         <dl class="info-grid">
           <dt>Start agent before backup</dt>
           <dd>{{ agent.power.start_agent_enabled ? 'Enabled' : 'Disabled' }}</dd>
-          <template v-if="agent.power.start_agent_enabled">
+          <template
+            v-if="
+              agent.power.start_agent_enabled ||
+              (agent.power.wake.wake_enabled && agent.power.wake.shutdown_after_backup)
+            "
+          >
             <dt>SSH host</dt>
             <dd class="mono">{{ agent.power.ssh_host ?? 'Not set' }}:{{ agent.power.ssh_port }}</dd>
+          </template>
+          <template v-if="agent.power.start_agent_enabled">
             <dt>Service name</dt>
             <dd class="mono">{{ agent.power.agent_service_name }}</dd>
             <dt>Stop agent after backup</dt>
@@ -255,7 +272,7 @@ async function save(): Promise<void> {
           <ToggleSwitch v-model="startAgentEnabled" />
         </div>
 
-        <template v-if="startAgentEnabled">
+        <template v-if="needsSshHost">
           <div class="field-row">
             <div class="field">
               <label
@@ -286,7 +303,15 @@ async function save(): Promise<void> {
               />
             </div>
           </div>
+          <span
+            v-if="!startAgentEnabled"
+            class="field-hint"
+            >Needed to shut this host down after backup - the agent itself already runs as a
+            persistent service.</span
+          >
+        </template>
 
+        <template v-if="startAgentEnabled">
           <div class="field">
             <label
               class="field-label"

@@ -996,6 +996,75 @@ async fn test_update_agent_power_rejects_start_agent_without_ssh_host() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_shutdown_after_backup_without_ssh_host() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    // A wake-only host (agent already runs as a persistent service, so
+    // start_agent_enabled stays off) still needs an SSH destination to shut
+    // the host down -- shutdown always goes over SSH.
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_accepts_shutdown_after_backup_without_start_agent_given_ssh_host()
+{
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    // Unlike start_agent_enabled, shutdown_after_backup alone doesn't need a
+    // recorded last_ssh_user (teardown_agent_power falls back to a default
+    // SSH user), so this succeeds once an ssh_host is supplied.
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_update_agent_power_rejects_start_agent_without_recorded_ssh_user() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;

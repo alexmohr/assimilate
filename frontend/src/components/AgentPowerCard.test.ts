@@ -131,6 +131,33 @@ describe('AgentPowerCard', () => {
     expect(wrapper.find('#power-service-name').exists()).toBe(false)
   })
 
+  // Shutting a host down always goes over SSH, independent of whether the
+  // agent itself needs starting - a wake-only host (agent already runs as a
+  // persistent service) still needs the SSH host field to configure that.
+  it('keeps the SSH host field visible for a wake+shutdown host with start-agent off', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    const startAgentToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[2]!
+    await startAgentToggle.vm.$emit('update:modelValue', false)
+    await flushPromises()
+
+    expect(wrapper.find('#power-ssh-host').exists()).toBe(true)
+    expect(wrapper.find('#power-service-name').exists()).toBe(false)
+  })
+
+  it('hides the SSH host field when neither shutdown nor start-agent needs it', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
+    await toggles[1]!.vm.$emit('update:modelValue', false) // shutdownAfterBackup
+    await toggles[2]!.vm.$emit('update:modelValue', false) // startAgentEnabled
+    await flushPromises()
+
+    expect(wrapper.find('#power-ssh-host').exists()).toBe(false)
+  })
+
   // A value hidden by the toggle that gated it must not silently resubmit -
   // the server rejects `shutdown_after_backup: true` once `wake_enabled` is
   // false, and the field that could fix it is no longer on screen.

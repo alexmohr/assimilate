@@ -46,3 +46,11 @@ ALTER TABLE agents
 ALTER TABLE agents
     ADD CONSTRAINT agents_start_agent_requires_ssh_host
     CHECK (NOT start_agent_enabled OR ssh_host IS NOT NULL);
+
+-- Shutting the host down also needs an SSH destination, independently of
+-- start_agent_enabled: a host that runs the agent as a persistent service
+-- (never needs starting) can still be wake+shutdown managed, and shutdown
+-- itself always goes over SSH (crates/server/src/power.rs::teardown_agent_power).
+ALTER TABLE agents
+    ADD CONSTRAINT agents_shutdown_requires_ssh_host
+    CHECK (NOT shutdown_after_backup OR ssh_host IS NOT NULL);

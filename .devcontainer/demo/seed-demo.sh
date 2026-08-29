@@ -290,7 +290,7 @@ api PUT "/api/agents/media-store-01/power" '{
     },
     "start_agent_enabled": false,
     "stop_agent_after_backup": false,
-    "ssh_host": null,
+    "ssh_host": "media-store-01",
     "ssh_port": 22,
     "agent_service_name": "assimilate-agent"
 }' > /dev/null

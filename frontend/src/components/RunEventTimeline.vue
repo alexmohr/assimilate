@@ -42,6 +42,7 @@ const ICONS: Record<RunEventType, Component> = {
   agent_start_sent: LogIn,
   agent_connected: Check,
   agent_stop_sent: Power,
+  agent_stopped: Power,
   shutdown_sent: Power,
   host_offline: Power,
 }
@@ -50,6 +51,7 @@ const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'muted'>> = {
   wake_sent: 'accent',
   agent_connected: 'success',
   agent_stop_sent: 'muted',
+  agent_stopped: 'muted',
   shutdown_sent: 'muted',
   host_offline: 'muted',
 }

@@ -996,6 +996,41 @@ async fn test_update_agent_power_rejects_start_agent_without_ssh_host() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_ipv6_broadcast_address() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    // Wake-on-LAN has no real IPv6 equivalent (IPv6 uses multicast, not
+    // broadcast), and send_wol_packet binds an IPv4-only UdpSocket, so a
+    // syntactically valid IPv6 address must still be rejected here rather
+    // than persisting and failing silently at wake time.
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": "::1",
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_update_agent_power_rejects_shutdown_after_backup_without_ssh_host() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;

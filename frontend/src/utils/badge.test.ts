@@ -110,7 +110,7 @@ describe('agentPowerPhase', () => {
     },
   )
 
-  it.each(['agent_connected', 'host_offline'] as RunEventType[])(
+  it.each(['agent_connected', 'host_offline', 'agent_stopped'] as RunEventType[])(
     'maps %s to null, ending the transient phase',
     (eventType) => {
       expect(agentPowerPhase(eventType)).toBeNull()

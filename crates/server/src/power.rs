@@ -710,7 +710,18 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
         )
         .await
         {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                record_event(
+                    ctx,
+                    run_id,
+                    target_ids,
+                    RunEventTarget::Source,
+                    RunEventType::AgentStopped,
+                    "Agent stopped",
+                    &agent.hostname,
+                )
+                .await;
+            }
             Ok(Err(e)) => warn!(agent_id = agent.id, error = %e, "failed to stop agent process"),
             Err(_) => warn!(agent_id = agent.id, "timed out stopping agent process"),
         }
@@ -1162,6 +1173,55 @@ mod tests {
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(event_types, vec!["shutdown_sent"]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_agent_power_attempts_stop_when_this_run_started_the_agent(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = test_repo(&pool).await;
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: false,
+                wake_mac_address: None,
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: false,
+                start_agent_enabled: true,
+                stop_agent_after_backup: true,
+                ssh_host: Some(UNREACHABLE_HOST),
+                ssh_port: UNREACHABLE_PORT,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        sessions
+            .begin(PowerHostKey::Agent(agent.id), false, true)
+            .await;
+
+        teardown_agent_power(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+        )
+        .await;
+
+        // The SSH stop attempt fails (nothing listens on the port), so only
+        // the attempt itself is recorded, not the terminal AgentStopped
+        // event that a successful stop records.
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["agent_stop_sent"]);
     }
 
     #[ignore = "requires DATABASE_URL"]

@@ -117,8 +117,12 @@ pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), Api
             .map_err(|e| ApiError::BadRequest(format!("invalid MAC address: {e}")))?;
     }
     if let Some(broadcast) = wake.wake_broadcast_address.as_deref() {
+        // IPv4 only: send_wol_packet (power.rs) binds an IPv4 UdpSocket, and
+        // Wake-on-LAN has no real IPv6 equivalent to begin with (IPv6 uses
+        // multicast, not broadcast). A syntactically valid IPv6 address would
+        // otherwise persist successfully and only fail silently at wake time.
         broadcast
-            .parse::<std::net::IpAddr>()
+            .parse::<std::net::Ipv4Addr>()
             .map_err(|_| ApiError::BadRequest("invalid broadcast address".to_owned()))?;
     }
     if wake.wake_enabled {

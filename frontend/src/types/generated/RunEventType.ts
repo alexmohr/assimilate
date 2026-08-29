@@ -12,5 +12,6 @@ export type RunEventType =
   | "agent_start_sent"
   | "agent_connected"
   | "agent_stop_sent"
+  | "agent_stopped"
   | "shutdown_sent"
   | "host_offline";

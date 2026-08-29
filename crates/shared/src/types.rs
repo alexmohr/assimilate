@@ -451,6 +451,10 @@ pub enum RunEventType {
     /// The agent process was stopped over SSH because this run started it,
     /// leaving the host itself running.
     AgentStopSent,
+    /// The agent process finished stopping. Distinct from `HostOffline`
+    /// (which follows `ShutdownSent`) since the host itself stays up here --
+    /// only the agent process was stopped, not the machine.
+    AgentStopped,
     /// A shutdown command was sent because this run woke the host.
     ShutdownSent,
     /// The host went offline after being shut down.

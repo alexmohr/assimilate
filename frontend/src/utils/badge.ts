@@ -74,6 +74,7 @@ export function agentPowerPhase(eventType: RunEventType): AgentPowerPhase | null
       return { label: 'Shutting down...', tone: 'neutral' }
     case 'agent_connected':
     case 'host_offline':
+    case 'agent_stopped':
       return null
   }
 }

@@ -84,6 +84,8 @@ For backup-type schedules, the schedule detail view includes a **Backups** tab. 
 
 The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
 
+A failed run never produced a borg archive, so there is nothing on disk to lose by clearing its history. When there are one or more failed runs, **Clean up failed backups (N)** in the header's overflow menu deletes every failed report for this schedule after a confirmation dialog. This is a manual, on-demand action for this schedule alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* schedule automatically by age. It requires the same permission as editing or deleting the schedule itself.
+
 ## Cron Expression Builder
 
 Schedules use standard five-field cron syntax: `minute hour day-of-month month day-of-week`.

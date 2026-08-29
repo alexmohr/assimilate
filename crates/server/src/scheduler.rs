@@ -25,10 +25,60 @@ use crate::{
     },
 };
 
-const TICK_INTERVAL: Duration = Duration::from_secs(30);
-const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
-const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
-const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
+const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(30);
+const DEFAULT_RETENTION_INTERVAL: Duration = Duration::from_hours(1);
+const DEFAULT_SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
+const DEFAULT_SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
+
+/// Reads `var` as a whole number of seconds, falling back to `default` when unset or
+/// unparsable - mirrors [`shared::borg::kill_escalation_delay`]'s override pattern.
+/// Clamped to a 1s minimum: unlike `kill_escalation_delay`'s `Duration` (which only ever
+/// feeds `tokio::time::sleep`), these feed `tokio::time::interval`, which *panics* on a
+/// zero period - an operator setting e.g. `SCHEDULER_TICK_INTERVAL_SECS=0` would otherwise
+/// panic the whole `run()` future on first poll and silently kill scheduled backups,
+/// retention cleanup, disk sync, and session cleanup together.
+fn duration_from_env_secs(var: &str, default: Duration) -> Duration {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(default, |secs| Duration::from_secs(secs.max(1)))
+}
+
+/// Overridable via `SCHEDULER_TICK_INTERVAL_SECS`. Coverage-instrumented e2e runs set
+/// this (and `SCHEDULER_SYNC_CHECK_INTERVAL_SECS`) to a value longer than any test run
+/// so only `tokio::time::interval`'s guaranteed-immediate first tick ever fires -
+/// without this, the number of real ticks completed during a live e2e session depends
+/// on how long that session happens to run, and every line each tick's call graph
+/// touches shows up in the coverage report with a hit count that swings by exactly one
+/// tick's worth between CI runs, which `coverage-diff-check.yml` reports as a
+/// regression even though nothing about the code changed.
+fn tick_interval() -> Duration {
+    duration_from_env_secs("SCHEDULER_TICK_INTERVAL_SECS", DEFAULT_TICK_INTERVAL)
+}
+
+/// Overridable via `SCHEDULER_RETENTION_INTERVAL_SECS`.
+fn retention_interval() -> Duration {
+    duration_from_env_secs(
+        "SCHEDULER_RETENTION_INTERVAL_SECS",
+        DEFAULT_RETENTION_INTERVAL,
+    )
+}
+
+/// Overridable via `SCHEDULER_SYNC_CHECK_INTERVAL_SECS` - see [`tick_interval`].
+fn sync_check_interval() -> Duration {
+    duration_from_env_secs(
+        "SCHEDULER_SYNC_CHECK_INTERVAL_SECS",
+        DEFAULT_SYNC_CHECK_INTERVAL,
+    )
+}
+
+/// Overridable via `SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS`.
+fn session_cleanup_interval() -> Duration {
+    duration_from_env_secs(
+        "SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS",
+        DEFAULT_SESSION_CLEANUP_INTERVAL,
+    )
+}
 const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 /// Default number of consecutive failures to reach a schedule's agent (offline or
 /// unreachable at trigger time) tolerated before the schedule is disabled rather than
@@ -50,11 +100,11 @@ const MAX_CONSECUTIVE_FAILURES: i32 = 3;
 /// exists to prevent.
 const CRON_EVAL_FAILURE_BACKOFF_HOURS: i64 = 1;
 
-/// Ticks due schedules on `TICK_INTERVAL` until `shutdown_token` fires. Split out of
+/// Ticks due schedules on [`tick_interval`] until `shutdown_token` fires. Split out of
 /// `run()` (rather than an inline closure) purely to keep `run()` itself under the
 /// line-count limit now that `TickDeps` carries the notification fields too.
 async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::CancellationToken) {
-    let mut interval = tokio::time::interval(TICK_INTERVAL);
+    let mut interval = tokio::time::interval(tick_interval());
     loop {
         tokio::select! {
             biased;
@@ -99,7 +149,7 @@ pub async fn run(state: AppState) {
     let retention_task = {
         let shutdown_token = shutdown_token.clone();
         async move {
-            let mut interval = tokio::time::interval(RETENTION_INTERVAL);
+            let mut interval = tokio::time::interval(retention_interval());
             loop {
                 tokio::select! {
                     biased;
@@ -116,7 +166,7 @@ pub async fn run(state: AppState) {
     let sync_task = {
         let shutdown_token = shutdown_token.clone();
         async move {
-            let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
+            let mut interval = tokio::time::interval(sync_check_interval());
             loop {
                 tokio::select! {
                     biased;
@@ -138,7 +188,7 @@ pub async fn run(state: AppState) {
     };
 
     let session_cleanup_task = async move {
-        let mut interval = tokio::time::interval(SESSION_CLEANUP_INTERVAL);
+        let mut interval = tokio::time::interval(session_cleanup_interval());
         loop {
             tokio::select! {
                 biased;
@@ -1375,6 +1425,70 @@ mod tests {
         ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
 
+    /// Clears `var` on drop, panic or not - so a failed `assert_eq!` partway through
+    /// [`interval_overrides_read_env_and_fall_back_to_defaults`]'s loop can't leak an
+    /// override into every later test in the same `cargo test` process. Same hazard
+    /// class `BorgBinaryGuard` below guards against for `BORG_BINARY`.
+    struct EnvVarClearGuard(&'static str);
+
+    impl Drop for EnvVarClearGuard {
+        fn drop(&mut self) {
+            // SAFETY: caller holds `scheduler_env_lock()` for the guard's lifetime.
+            unsafe { std::env::remove_var(self.0) };
+        }
+    }
+
+    // Combined into one test: all four cases mutate process-wide env vars, causing
+    // races when run in parallel with each other (mirrors
+    // `shared::borg::kill_escalation_delay_reads_env_override_and_falls_back_to_default`).
+    // Also races `run_returns_promptly_when_shutdown_token_is_cancelled`, which reads
+    // these same four vars from a concurrently-scheduled task - guarded by
+    // `scheduler_env_lock()`, same pattern as `BORG_BINARY_LOCK` below.
+    #[tokio::test]
+    async fn interval_overrides_read_env_and_fall_back_to_defaults() {
+        let _guard = scheduler_env_lock().await;
+        for (var, default, get) in [
+            (
+                "SCHEDULER_TICK_INTERVAL_SECS",
+                DEFAULT_TICK_INTERVAL,
+                tick_interval as fn() -> Duration,
+            ),
+            (
+                "SCHEDULER_RETENTION_INTERVAL_SECS",
+                DEFAULT_RETENTION_INTERVAL,
+                retention_interval,
+            ),
+            (
+                "SCHEDULER_SYNC_CHECK_INTERVAL_SECS",
+                DEFAULT_SYNC_CHECK_INTERVAL,
+                sync_check_interval,
+            ),
+            (
+                "SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS",
+                DEFAULT_SESSION_CLEANUP_INTERVAL,
+                session_cleanup_interval,
+            ),
+        ] {
+            let _clear_on_drop = EnvVarClearGuard(var);
+
+            unsafe { std::env::set_var(var, "2") };
+            assert_eq!(get(), Duration::from_secs(2), "{var} override");
+
+            unsafe { std::env::remove_var(var) };
+            assert_eq!(get(), default, "{var} default");
+
+            unsafe { std::env::set_var(var, "not-a-number") };
+            assert_eq!(get(), default, "{var} invalid falls back to default");
+
+            unsafe { std::env::set_var(var, "0") };
+            assert_eq!(
+                get(),
+                Duration::from_secs(1),
+                "{var} zero clamps to 1s (tokio::time::interval panics on a zero period)"
+            );
+        }
+    }
+
     /// `run()`'s four inner loops each race their interval tick against
     /// `shutdown_token.cancelled()` with `biased;` ordering the cancellation arm
     /// first, so cancelling immediately after spawning always wins even on a
@@ -1385,6 +1499,7 @@ mod tests {
     /// touching the DB, so a lazily-connected, never-reachable pool is fine here.
     #[tokio::test]
     async fn run_returns_promptly_when_shutdown_token_is_cancelled() {
+        let _guard = scheduler_env_lock().await;
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
         let ui_broadcast = UiBroadcast::new();
         let state = AppState {
@@ -1429,6 +1544,19 @@ mod tests {
             result.is_ok(),
             "scheduler::run did not exit within 5s after shutdown_token cancellation"
         );
+    }
+
+    static SCHEDULER_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// Serializes tests that mutate the process-wide `SCHEDULER_*_INTERVAL_SECS` env
+    /// vars against each other and against `run()` reading them from a concurrently-
+    /// scheduled task - same hazard class `BORG_BINARY_LOCK` below guards against for
+    /// `BORG_BINARY`.
+    async fn scheduler_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        SCHEDULER_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .await
     }
 
     static BORG_BINARY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

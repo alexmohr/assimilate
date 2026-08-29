@@ -7,6 +7,7 @@ import {
   clickSectionButton,
   expectSaveErrorKeepsEditing,
   expectSavedEmitted,
+  expectToggleOffThenOnResetsDependentOnSave,
   renderWithPlugins,
   startEditingSection,
 } from '../test-utils'
@@ -98,16 +99,10 @@ describe('RepoPowerCard', () => {
   // false, and the field that could fix it is no longer on screen.
   it('resets shutdown-after-backup once wake is switched off', async () => {
     const wrapper = mount()
-    await startEditingSection(wrapper)
-
-    const wakeToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[0]!
-    await wakeToggle.vm.$emit('update:modelValue', false)
-    await wakeToggle.vm.$emit('update:modelValue', true)
-    await flushPromises()
-    await clickSectionButton(wrapper, 'Save')
-
-    expect(apiClient.put).toHaveBeenCalledWith(
-      '/repos/42/power',
+    await expectToggleOffThenOnResetsDependentOnSave(
+      wrapper,
+      0,
+      vi.mocked(apiClient.put),
       expect.objectContaining({ shutdown_after_backup: false }),
     )
   })

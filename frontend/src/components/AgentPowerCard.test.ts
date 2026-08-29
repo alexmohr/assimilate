@@ -7,6 +7,7 @@ import {
   clickSectionButton,
   expectSaveErrorKeepsEditing,
   expectSavedEmitted,
+  expectToggleOffThenOnResetsDependentOnSave,
   renderWithPlugins,
   startEditingSection,
 } from '../test-utils'
@@ -135,37 +136,23 @@ describe('AgentPowerCard', () => {
   // false, and the field that could fix it is no longer on screen.
   it('resets shutdown-after-backup once wake is switched off', async () => {
     const wrapper = mount()
-    await startEditingSection(wrapper)
-
-    const wakeToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[0]!
-    await wakeToggle.vm.$emit('update:modelValue', false)
-    await wakeToggle.vm.$emit('update:modelValue', true)
-    await flushPromises()
-    await clickSectionButton(wrapper, 'Save')
-
-    expect(apiClient.put).toHaveBeenCalledWith(
-      '/agents/web-01/power',
+    await expectToggleOffThenOnResetsDependentOnSave(
+      wrapper,
+      0,
+      vi.mocked(apiClient.put),
       expect.objectContaining({
         wake: expect.objectContaining({ shutdown_after_backup: false }),
       }),
-      { params: {} },
     )
   })
 
   it('resets stop-agent-after-backup once start-agent is switched off', async () => {
     const wrapper = mount()
-    await startEditingSection(wrapper)
-
-    const startAgentToggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[2]!
-    await startAgentToggle.vm.$emit('update:modelValue', false)
-    await startAgentToggle.vm.$emit('update:modelValue', true)
-    await flushPromises()
-    await clickSectionButton(wrapper, 'Save')
-
-    expect(apiClient.put).toHaveBeenCalledWith(
-      '/agents/web-01/power',
+    await expectToggleOffThenOnResetsDependentOnSave(
+      wrapper,
+      2,
+      vi.mocked(apiClient.put),
       expect.objectContaining({ stop_agent_after_backup: false }),
-      { params: {} },
     )
   })
 

@@ -204,6 +204,29 @@ export async function expectSaveErrorKeepsEditing(
 }
 
 /**
+ * Toggles the `ToggleSwitch` at `toggleIndex` off then on and saves,
+ * asserting the save request's body (found regardless of how many
+ * further positional args that card's update call takes) matches
+ * `bodyMatcher` - the shared "a value hidden by its parent toggle must not
+ * silently resubmit once the toggle is switched back on" regression shape
+ * used by `AgentPowerCard` and `RepoPowerCard`.
+ */
+export async function expectToggleOffThenOnResetsDependentOnSave(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  toggleIndex: number,
+  putMock: ReturnType<typeof vi.fn>,
+  bodyMatcher: unknown,
+): Promise<void> {
+  await startEditingSection(wrapper)
+  const toggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[toggleIndex]!
+  await toggle.vm.$emit('update:modelValue', false)
+  await toggle.vm.$emit('update:modelValue', true)
+  await flushPromises()
+  await clickSectionButton(wrapper, 'Save')
+  expect(putMock.mock.calls.at(-1)?.[1]).toEqual(bodyMatcher)
+}
+
+/**
  * Drives the common "row action opens a ConfirmDeleteDialog" flow: opens it via the row's
  * first `.btn-danger-text` button, dismisses it via the close button and asserts the delete
  * API was not called, then reopens and confirms, asserting the delete API was called with

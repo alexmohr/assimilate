@@ -685,12 +685,20 @@ pub async fn update_repo_power(
             "wake timeout must be greater than zero".to_owned(),
         ));
     }
-    if req.wake_enabled {
-        let mac = req.wake_mac_address.as_deref().ok_or_else(|| {
-            ApiError::BadRequest("a MAC address is required to wake this host".to_owned())
-        })?;
+    // Validated whenever a value is present, not just when wake_enabled: the
+    // DB's CHECK constraint applies unconditionally to any non-NULL
+    // wake_mac_address, and the UI deliberately keeps a stale value in the
+    // form after the wake toggle is switched off.
+    if let Some(mac) = req.wake_mac_address.as_deref() {
         crate::power::MacAddress::from_str(mac)
             .map_err(|e| ApiError::BadRequest(format!("invalid MAC address: {e}")))?;
+    }
+    if req.wake_enabled {
+        if req.wake_mac_address.is_none() {
+            return Err(ApiError::BadRequest(
+                "a MAC address is required to wake this host".to_owned(),
+            ));
+        }
     } else if req.shutdown_after_backup {
         return Err(ApiError::BadRequest(
             "shutting down after backup requires waking the host to be enabled".to_owned(),

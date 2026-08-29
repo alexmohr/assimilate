@@ -848,6 +848,40 @@ async fn test_update_agent_power_rejects_wake_enabled_without_mac() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_malformed_mac_even_with_wake_disabled() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    // The UI keeps a MAC typed while wake was on in the form even after the
+    // toggle is switched off, so this combination must not be able to reach
+    // the DB's unconditional CHECK constraint as an opaque 500.
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": "not-a-mac",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_update_agent_power_rejects_shutdown_without_wake() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
@@ -1056,6 +1090,30 @@ async fn test_update_repo_power_rejects_wake_enabled_without_mac() {
         Some(json!({
             "wake_enabled": true,
             "wake_mac_address": null,
+            "wake_broadcast_address": null,
+            "shutdown_after_backup": false
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_repo_power_rejects_malformed_mac_even_with_wake_disabled() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "power-repo-2").await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": false,
+            "wake_mac_address": "not-a-mac",
             "wake_broadcast_address": null,
             "shutdown_after_backup": false
         })),

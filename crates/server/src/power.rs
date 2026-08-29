@@ -69,6 +69,14 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How long a single reachability probe (SSH connect attempt) is allowed to
 /// take before it counts as "no response".
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a single SSH action that connects and then runs one remote
+/// command (start/stop the agent service, shut a host down) is allowed to
+/// take before it counts as failed. Longer than `PROBE_TIMEOUT` since it
+/// covers actually running the command, not just connecting -- but still
+/// bounded, so a host that accepts the TCP connection but never completes
+/// the handshake (or a firewall silently dropping packets) can't stall the
+/// caller past this module's documented "always returns" behavior.
+const SSH_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// Fallback SSH user when an agent has never recorded one (only reachable
 /// via `start_agent_enabled`, which the API layer requires `last_ssh_user`
 /// for -- this is a last-resort default, not the expected path).
@@ -95,11 +103,21 @@ impl FromStr for MacAddress {
     type Err = MacAddressParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let octets: Vec<u8> = s
-            .split(':')
-            .map(|part| u8::from_str_radix(part, 16).map_err(|_| MacAddressParseError))
-            .collect::<Result<_, _>>()?;
-        let octets: [u8; 6] = octets.try_into().map_err(|_| MacAddressParseError)?;
+        // Exactly two hex digits per octet, matching the DB's
+        // `agents_wake_mac_format`/`repos_wake_mac_format` CHECK constraints
+        // byte-for-byte -- `u8::from_str_radix` alone is looser (it accepts
+        // single-digit octets and a leading `+`), which would let a value
+        // pass this parse and still fail that constraint as an opaque 500.
+        let parts: Vec<&str> = s.split(':').collect();
+        let [p0, p1, p2, p3, p4, p5]: [&str; 6] =
+            parts.try_into().map_err(|_| MacAddressParseError)?;
+        let mut octets = [0u8; 6];
+        for (octet, part) in octets.iter_mut().zip([p0, p1, p2, p3, p4, p5]) {
+            if part.len() != 2 || !part.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(MacAddressParseError);
+            }
+            *octet = u8::from_str_radix(part, 16).map_err(|_| MacAddressParseError)?;
+        }
         Ok(Self(octets))
     }
 }
@@ -487,17 +505,30 @@ async fn start_agent_process(
     };
     let ssh_user = agent.last_ssh_user.as_deref().unwrap_or(FALLBACK_SSH_USER);
 
-    if let Err(e) = ssh::set_systemd_service(
-        ssh_host,
-        ssh_user,
-        port_u16(agent.ssh_port),
-        &agent.agent_service_name,
-        SystemctlAction::Start,
+    match tokio::time::timeout(
+        SSH_ACTION_TIMEOUT,
+        ssh::set_systemd_service(
+            ssh_host,
+            ssh_user,
+            port_u16(agent.ssh_port),
+            &agent.agent_service_name,
+            SystemctlAction::Start,
+        ),
     )
     .await
     {
-        warn!(agent_id = agent.id, error = %e, "failed to start agent process over SSH");
-        return false;
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            warn!(agent_id = agent.id, error = %e, "failed to start agent process over SSH");
+            return false;
+        }
+        Err(_) => {
+            warn!(
+                agent_id = agent.id,
+                "timed out starting agent process over SSH"
+            );
+            return false;
+        }
     }
     record_event(
         ctx,
@@ -635,8 +666,13 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
             &agent.hostname,
         )
         .await;
-        match ssh::shutdown_host(ssh_host, ssh_user, port).await {
-            Ok(()) => {
+        match tokio::time::timeout(
+            SSH_ACTION_TIMEOUT,
+            ssh::shutdown_host(ssh_host, ssh_user, port),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
                 record_event(
                     ctx,
                     run_id,
@@ -648,7 +684,8 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
                 )
                 .await;
             }
-            Err(e) => warn!(agent_id = agent.id, error = %e, "failed to shut down agent host"),
+            Ok(Err(e)) => warn!(agent_id = agent.id, error = %e, "failed to shut down agent host"),
+            Err(_) => warn!(agent_id = agent.id, "timed out shutting down agent host"),
         }
     } else if started_agent && agent.stop_agent_after_backup {
         record_event(
@@ -661,16 +698,21 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
             &agent.hostname,
         )
         .await;
-        if let Err(e) = ssh::set_systemd_service(
-            ssh_host,
-            ssh_user,
-            port,
-            &agent.agent_service_name,
-            SystemctlAction::Stop,
+        match tokio::time::timeout(
+            SSH_ACTION_TIMEOUT,
+            ssh::set_systemd_service(
+                ssh_host,
+                ssh_user,
+                port,
+                &agent.agent_service_name,
+                SystemctlAction::Stop,
+            ),
         )
         .await
         {
-            warn!(agent_id = agent.id, error = %e, "failed to stop agent process");
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => warn!(agent_id = agent.id, error = %e, "failed to stop agent process"),
+            Err(_) => warn!(agent_id = agent.id, "timed out stopping agent process"),
         }
     }
 }
@@ -706,8 +748,13 @@ pub async fn teardown_repo_power(
         hostname,
     )
     .await;
-    match ssh::shutdown_host(&repo.ssh_host, &repo.ssh_user, port_u16(repo.ssh_port)).await {
-        Ok(()) => {
+    match tokio::time::timeout(
+        SSH_ACTION_TIMEOUT,
+        ssh::shutdown_host(&repo.ssh_host, &repo.ssh_user, port_u16(repo.ssh_port)),
+    )
+    .await
+    {
+        Ok(Ok(())) => {
             record_event(
                 ctx,
                 run_id,
@@ -719,7 +766,8 @@ pub async fn teardown_repo_power(
             )
             .await;
         }
-        Err(e) => warn!(repo_id = repo.id, error = %e, "failed to shut down repository host"),
+        Ok(Err(e)) => warn!(repo_id = repo.id, error = %e, "failed to shut down repository host"),
+        Err(_) => warn!(repo_id = repo.id, "timed out shutting down repository host"),
     }
 }
 
@@ -738,6 +786,17 @@ mod tests {
         assert!("not-a-mac".parse::<MacAddress>().is_err());
         assert!("AA:BB:CC:DD:EE".parse::<MacAddress>().is_err());
         assert!("AA:BB:CC:DD:EE:GG".parse::<MacAddress>().is_err());
+    }
+
+    // The DB's `..._wake_mac_format` CHECK constraints require exactly two
+    // hex digits per octet unconditionally; a value that parses here but
+    // fails that constraint surfaces as an opaque 500 instead of a clean
+    // 400, so the parser must reject everything the constraint would.
+    #[test]
+    fn mac_address_rejects_what_the_db_check_constraint_would() {
+        assert!("1:2:3:4:5:6".parse::<MacAddress>().is_err());
+        assert!("+AA:BB:CC:DD:EE:FF".parse::<MacAddress>().is_err());
+        assert!("AA:BB:CC:DD:EE:F".parse::<MacAddress>().is_err());
     }
 
     #[test]

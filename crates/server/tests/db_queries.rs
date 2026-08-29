@@ -2069,6 +2069,60 @@ async fn get_backup_report_repo_id_test(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn get_ackable_backup_report_repo_id_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-status-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    let failed_params = InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+        finished_at: now,
+        status: shared::types::BackupStatus::Failed,
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 5,
+        error_message: Some("connection refused".to_string()),
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: None,
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &failed_params)
+        .await
+        .unwrap();
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
+    let failed_report_id = activity.iter().find(|e| e.status == "failed").unwrap().id;
+    let success_report_id = activity.iter().find(|e| e.status == "success").unwrap().id;
+
+    let repo_id = db::get_ackable_backup_report_repo_id(&pool, failed_report_id)
+        .await
+        .unwrap();
+    assert_eq!(repo_id, repo.id, "a failed report must be ackable");
+
+    let err = db::get_ackable_backup_report_repo_id(&pool, success_report_id)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, server::error::ApiError::Unprocessable(_)),
+        "a successful report has nothing to review and must not be ackable"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn health_summary(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
     insert_test_report_for_schedule(

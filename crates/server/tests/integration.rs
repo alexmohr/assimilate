@@ -6171,6 +6171,56 @@ async fn acknowledge_activity_entry_forbidden_without_repo_permission() {
     );
 }
 
+/// Regression test for: the frontend only shows the Acknowledge button for a
+/// warning/failed run ("a successful run has nothing to review"), but the
+/// server had no equivalent check - any caller with repo permission could
+/// acknowledge a successful run directly against the API.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_activity_entry_rejects_a_successful_report() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "acknowledge-success-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('acknowledge-success-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'success', true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a successful run has nothing to review and must not be acknowledgeable"
+    );
+
+    let acknowledged: bool =
+        sqlx::query_scalar("SELECT acknowledged FROM backup_reports WHERE id = $1")
+            .bind(report_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !acknowledged,
+        "the rejected request must not have flipped the acknowledged flag"
+    );
+}
+
 // -- archive resync reliability --
 
 /// Regression test for: repos with no backups getting stuck in "Listing archives..." forever.

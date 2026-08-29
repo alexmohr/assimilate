@@ -6284,6 +6284,39 @@ pub async fn get_backup_report_repo_id(pool: &PgPool, id: i64) -> Result<i64, Ap
         .ok_or_else(|| ApiError::NotFound(format!("report id '{id}' not found")))
 }
 
+/// Looks up the repository a backup report belongs to, for the acknowledge
+/// endpoint specifically - unlike [`get_backup_report_repo_id`], this also
+/// rejects a report whose status isn't warning/failed, since a successful
+/// run has nothing to review (matching the frontend's own `isAckable` gate,
+/// which this backs up rather than duplicates trust in).
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if no report has this id,
+/// [`ApiError::Unprocessable`] if the report's status isn't warning or
+/// failed, or [`ApiError::Database`] if the query fails.
+pub async fn get_ackable_backup_report_repo_id(pool: &PgPool, id: i64) -> Result<i64, ApiError> {
+    let row = sqlx::query!(
+        "SELECT repo_id, status FROM backup_reports WHERE id = $1",
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .ok_or_else(|| ApiError::NotFound(format!("report id '{id}' not found")))?;
+
+    let ackable = matches!(
+        row.status.parse::<BackupStatus>(),
+        Ok(BackupStatus::Warning | BackupStatus::Failed)
+    );
+    if !ackable {
+        return Err(ApiError::Unprocessable(format!(
+            "report {id} cannot be acknowledged: only warning or failed runs can be reviewed"
+        )));
+    }
+    Ok(row.repo_id)
+}
+
 /// Sets or clears the acknowledged flag on a backup report. Acknowledging is
 /// a shared, all-users action - like the report itself, it isn't scoped to
 /// whoever clicked it.

@@ -791,6 +791,7 @@ pub async fn activity(
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
+        (status = 422, description = "Report is not a warning or failed run"),
     )
 )]
 /// Acknowledge a backup run's warning or failure in the activity feed. Shared
@@ -804,7 +805,7 @@ pub async fn acknowledge_activity_entry(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let repo_id = db::get_backup_report_repo_id(&state.pool, id).await?;
+    let repo_id = db::get_ackable_backup_report_repo_id(&state.pool, id).await?;
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_modify_schedules).await?;
     db::set_backup_report_acknowledged(&state.pool, id, true).await?;
     Ok(StatusCode::NO_CONTENT)

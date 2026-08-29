@@ -217,7 +217,7 @@ describe('AgentBackupRow', () => {
       expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
     })
 
-    it('stops loading and hides the timeline when the fetch fails', async () => {
+    it('shows an error state rather than silently hiding the block when the fetch fails', async () => {
       vi.mocked(getRunEvents).mockRejectedValue(new Error('network error'))
       const wrapper = mount({
         report: report({ run_id: 'run-123' }),
@@ -227,7 +227,8 @@ describe('AgentBackupRow', () => {
       await flushPromises()
 
       expect(getRunEvents).toHaveBeenCalledWith('run-123', 5, 10)
-      expect(wrapper.text()).not.toContain('Power management')
+      expect(wrapper.text()).toContain('Power management')
+      expect(wrapper.text()).toContain("Couldn't load power-management activity for this run.")
       expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
     })
 

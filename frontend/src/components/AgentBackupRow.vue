@@ -64,9 +64,10 @@ const runEvents = ref<RunEventResponse[]>([])
 const loadingEvents = ref(false)
 // Most runs have wake/start disabled and record no power-management events at
 // all, so an empty result is the common case, not a failure - distinguished
-// from a fetch that errored (kept hidden below) so expanding a run always
+// from a fetch that errored (surfaced below) so expanding a run always
 // shows *something* rather than a toggle that silently does nothing.
 const eventsFetched = ref(false)
+const eventsError = ref(false)
 
 watch(
   () => props.expanded,
@@ -74,12 +75,16 @@ watch(
     const runId = props.report.run_id
     if (!expanded || !runId || eventsFetched.value || loadingEvents.value) return
     loadingEvents.value = true
+    eventsError.value = false
     getRunEvents(runId, props.report.agent_id, props.report.repo_id)
       .then((events) => {
         runEvents.value = events
         eventsFetched.value = true
       })
-      .catch((e: unknown) => logger.error('failed to load run events', e))
+      .catch((e: unknown) => {
+        logger.error('failed to load run events', e)
+        eventsError.value = true
+      })
       .finally(() => {
         loadingEvents.value = false
       })
@@ -177,7 +182,7 @@ watch(
       <pre class="detail-output detail-output--danger">{{ report.error_message }}</pre>
     </div>
     <div
-      v-if="report.run_id && (loadingEvents || eventsFetched)"
+      v-if="report.run_id && (loadingEvents || eventsFetched || eventsError)"
       class="detail-block"
     >
       <strong class="group-label detail-label">Power management</strong>
@@ -187,6 +192,12 @@ watch(
       >
         <BaseSpinner size="sm" />
       </div>
+      <p
+        v-else-if="eventsError"
+        class="field-hint field-hint-error"
+      >
+        Couldn't load power-management activity for this run.
+      </p>
       <p
         v-else-if="runEvents.length === 0"
         class="field-hint"

@@ -518,10 +518,6 @@ async function submitDeploy(): Promise<void> {
   margin-bottom: 0;
 }
 
-.field-hint-error {
-  color: var(--danger);
-}
-
 .disclosure-actions {
   display: flex;
   justify-content: flex-end;

@@ -1050,6 +1050,10 @@
     color: var(--text-muted);
   }
 
+  .field-hint-error {
+    color: var(--danger);
+  }
+
   /* A field whose control sits beside its label rather than under it. Used
      for toggles, where a full-width column wastes a whole row. */
   .field-inline {

@@ -278,8 +278,14 @@ AUTO_DISABLED_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "S
 
 # media-store-01 is the "not always on" host in this demo, so it's also the
 # one with wake/shutdown configured - giving the agent and repository Power
-# settings panes, and the run timeline they feed, real data to show.
+# settings panes, and the run timeline they feed, real data to show. Its
+# agent runs as a persistent service started by start-agent.sh, not deployed
+# by the server over SSH, so last_ssh_user is never set by the normal deploy
+# flow - set it directly here, standing in for "an admin has already
+# verified SSH access to this host", which shutdown_after_backup requires.
 echo "==> Configuring power management..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c \
+    "UPDATE agents SET last_ssh_user = 'borg' WHERE hostname = 'media-store-01'" > /dev/null
 api PUT "/api/agents/media-store-01/power" '{
     "wake": {
         "wake_enabled": true,

@@ -233,6 +233,8 @@ The passphrase is never logged or transmitted in plaintext. See [Security](secur
 
 Changing the SSH host or path does not move or modify the remote repository. It only updates the connection details Assimilate uses to reach it.
 
+Toggling **Disk Sync** on schedules a periodic `borg info`/`borg list` resync of this repository, independent of any backup schedule, using the same cron expression and visual [Cron Expression Builder](scheduling.md#cron-expression-builder) that backup schedules use.
+
 ### Repository Relocation Safety
 
 When you change a repository's path, SSH host, or SSH port, borg needs to accept that the repository has moved. Assimilate handles this securely:

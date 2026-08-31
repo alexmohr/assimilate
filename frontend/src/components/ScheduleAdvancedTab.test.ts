@@ -22,8 +22,8 @@ function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
     keep_yearly: 1,
     compact_enabled: false,
     rate_limit_kbps: 0,
-    pre_backup_commands: '',
-    post_backup_commands: '',
+    pre_backup_commands: [],
+    post_backup_commands: [],
     hook_timeout_seconds: 60,
     backup_sources: '/srv',
     ...overrides,
@@ -139,13 +139,6 @@ describe('ScheduleAdvancedTab', () => {
     expect(state.file_change_patterns).toBe('**/*.log')
   })
 
-  it('writes edited post-backup commands back through the form model', async () => {
-    const state = form()
-    const wrapper = mount({ form: state })
-    await wrapper.findAll('textarea.cmd-area')[1].setValue('systemctl start app')
-    expect(state.post_backup_commands).toBe('systemctl start app')
-  })
-
   // The per-agent switches only make sense on a multi-host schedule; with a
   // single agent there is nothing to vary, so the toggle must not appear.
   it('hides the per-agent switches for a single-agent schedule', () => {
@@ -232,16 +225,16 @@ describe('ScheduleAdvancedTab', () => {
   })
 
   describe('commands', () => {
-    it('offers one pre and one post field in shared mode', () => {
+    it('offers one pre and one post command list editor in shared mode', () => {
       const wrapper = mount()
-      expect(wrapper.findAll('textarea.cmd-area')).toHaveLength(2)
+      expect(wrapper.findAllComponents({ name: 'CommandListEditor' })).toHaveLength(2)
     })
 
-    // Per-agent mode keeps the same field styling but gives each agent its
-    // own pre and post pair, so two agents means four command fields.
+    // Per-agent mode keeps the same editor but gives each agent its own pre
+    // and post pair, so two agents means four command list editors.
     it('swaps both to a pre/post pair per agent once overridden', () => {
       const wrapper = mount({ overrides: agentOverrides({ usePerAgentCmds: true }) })
-      expect(wrapper.findAll('textarea.cmd-area')).toHaveLength(4)
+      expect(wrapper.findAllComponents({ name: 'CommandListEditor' })).toHaveLength(4)
       expect(wrapper.findComponent({ name: 'PerAgentFields' }).exists()).toBe(true)
       expect(wrapper.findAll('.form-sublabel').map((l) => l.text())).toEqual([
         'Pre-backup',
@@ -254,19 +247,64 @@ describe('ScheduleAdvancedTab', () => {
     it('routes an edited per-agent command to that agent and phase', async () => {
       const overrides = agentOverrides({ usePerAgentCmds: true })
       const wrapper = mount({ overrides })
-      const fields = wrapper.findAll('textarea.cmd-area')
+      const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
 
-      await fields[0].setValue('pre on host-01')
-      await fields[3].setValue('post on host-02')
+      await editors[0].vm.$emit('update:modelValue', ['pre on host-01'])
+      await editors[3].vm.$emit('update:modelValue', ['post on host-02'])
 
-      expect(overrides.perAgentPreCmds[1]).toBe('pre on host-01')
-      expect(overrides.perAgentPostCmds[2]).toBe('post on host-02')
+      expect(overrides.perAgentPreCmds[1]).toEqual(['pre on host-01'])
+      expect(overrides.perAgentPostCmds[2]).toEqual(['post on host-02'])
     })
 
     it('writes edited commands back through the form model', async () => {
       const wrapper = mount()
-      await wrapper.findAll('textarea.cmd-area')[0].setValue('systemctl stop app')
-      expect(wrapper.props('form')).toMatchObject({ pre_backup_commands: 'systemctl stop app' })
+      await wrapper
+        .findAllComponents({ name: 'CommandListEditor' })[0]
+        .vm.$emit('update:modelValue', ['systemctl stop app'])
+      expect(wrapper.props('form')).toMatchObject({ pre_backup_commands: ['systemctl stop app'] })
+    })
+
+    it('writes edited post-backup commands back through the form model', async () => {
+      const state = form()
+      const wrapper = mount({ form: state })
+      await wrapper
+        .findAllComponents({ name: 'CommandListEditor' })[1]
+        .vm.$emit('update:modelValue', ['systemctl start app'])
+      expect(state.post_backup_commands).toEqual(['systemctl start app'])
+    })
+
+    it('gives each command list editor an accessible name, in both shared and per-agent mode', () => {
+      const shared = mount().findAllComponents({ name: 'CommandListEditor' })
+      expect(shared.map((e) => e.props('ariaLabel'))).toEqual([
+        'Pre-backup commands',
+        'Post-backup commands',
+      ])
+
+      const perAgent = mount({
+        overrides: agentOverrides({ usePerAgentCmds: true }),
+      }).findAllComponents({ name: 'CommandListEditor' })
+      expect(perAgent.map((e) => e.props('ariaLabel'))).toEqual([
+        'Pre-backup commands',
+        'Post-backup commands',
+        'Pre-backup commands',
+        'Post-backup commands',
+      ])
+    })
+
+    // The per-agent instances used to fall through to CommandListEditor's
+    // generic default hint, losing the "(optional)" cue that used to tell
+    // the required-feeling pre-backup field apart from the optional
+    // post-backup one - same example commands as the shared-mode instances.
+    it('gives each per-agent command list editor the same example placeholder as shared mode', () => {
+      const perAgent = mount({
+        overrides: agentOverrides({ usePerAgentCmds: true }),
+      }).findAllComponents({ name: 'CommandListEditor' })
+      expect(perAgent.map((e) => e.props('placeholder'))).toEqual([
+        'e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql',
+        'e.g. rm /tmp/dump.sql (optional)',
+        'e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql',
+        'e.g. rm /tmp/dump.sql (optional)',
+      ])
     })
   })
 })

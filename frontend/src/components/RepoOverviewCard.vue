@@ -20,6 +20,7 @@ import { repoOpLabel } from '../utils/repoOp'
 import BaseModal from './BaseModal.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import EditFormActions from './EditFormActions.vue'
+import CronBuilder from './CronBuilder.vue'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 
 interface EditForm {
@@ -116,6 +117,15 @@ const editForm = reactive<EditForm>({
 const repo = computed(() => props.repo)
 const isAdmin = computed(() => props.isAdmin)
 const currentOp = computed(() => props.currentOp)
+
+/** CronBuilder always expects a string; sync_schedule is only ever null while
+    disk sync is off, which is when this field is hidden. */
+const syncScheduleCron = computed<string>({
+  get: () => editForm.sync_schedule ?? '0 0,12 * * *',
+  set: (val) => {
+    editForm.sync_schedule = val
+  },
+})
 
 function startEdit(): void {
   if (!repo.value) return
@@ -387,11 +397,7 @@ onMounted(checkHostKeyMismatch)
             class="field field-full"
           >
             <label class="field-label">Sync schedule (cron)</label>
-            <input
-              v-model="editForm.sync_schedule"
-              class="input mono"
-              placeholder="0 0,12 * * *"
-            />
+            <CronBuilder v-model="syncScheduleCron" />
             <span class="field-hint">Cron expression for automatic disk sync</span>
           </div>
         </div>

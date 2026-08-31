@@ -98,16 +98,35 @@ describe('AgentDefaultsCard', () => {
     expect(mount({ canEdit: false }).findAll('button')).toHaveLength(0)
   })
 
+  // Older/imported agent rows may have never had these fields set, unlike
+  // the fixture's always-present arrays - editing must still start cleanly
+  // rather than seeding the command lists with undefined.
+  it('starts editing with empty command lists when the fields are missing entirely', async () => {
+    const agent = { ...AGENT }
+    delete (agent as { default_pre_backup_commands?: string[] }).default_pre_backup_commands
+    delete (agent as { default_post_backup_commands?: string[] }).default_post_backup_commands
+    const wrapper = mount({ agent })
+    await startEditingSection(wrapper)
+
+    const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
+    expect(editors[0].props('modelValue')).toEqual([])
+    expect(editors[1].props('modelValue')).toEqual([])
+  })
+
   it('seeds every field from the current value when editing starts', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
 
     expect(wrapper.find<HTMLTextAreaElement>('#defaults-paths').element.value).toBe('/srv\n/etc')
     expect(wrapper.find<HTMLTextAreaElement>('#defaults-excludes').element.value).toBe('*.cache')
-    expect(wrapper.find<HTMLTextAreaElement>('#defaults-pre').element.value).toBe(
-      'systemctl stop app',
-    )
-    expect(wrapper.find<HTMLTextAreaElement>('#defaults-post').element.value).toBe('')
+    const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
+    expect(editors[0].props('modelValue')).toEqual(['systemctl stop app'])
+    expect(editors[1].props('modelValue')).toEqual([])
+    // Each command list still carries an accessible name, since swapping the
+    // old single `<textarea id>` for a variable-length list of fields means
+    // a single `<label for>` can no longer target them directly.
+    expect(editors[0].props('ariaLabel')).toBe('Pre-backup commands')
+    expect(editors[1].props('ariaLabel')).toBe('Post-backup commands')
     expect(wrapper.findComponent({ name: 'FileChangePatternsEditor' }).props('modelValue')).toBe(
       '/data/wal/** ignore',
     )
@@ -119,7 +138,9 @@ describe('AgentDefaultsCard', () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
     await wrapper.find('#defaults-paths').setValue('/var\n/opt')
-    await wrapper.find('#defaults-post').setValue('systemctl start app')
+    await wrapper
+      .findAllComponents({ name: 'CommandListEditor' })[1]
+      .vm.$emit('update:modelValue', ['systemctl start app'])
     await clickSectionButton(wrapper, 'Save')
 
     expect(apiClient.put).toHaveBeenCalledTimes(1)
@@ -141,8 +162,9 @@ describe('AgentDefaultsCard', () => {
   it('sends both hook command lists together', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
-    await wrapper.find('#defaults-pre').setValue('pre-one\npre-two')
-    await wrapper.find('#defaults-post').setValue('post-one')
+    const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
+    await editors[0].vm.$emit('update:modelValue', ['pre-one', 'pre-two'])
+    await editors[1].vm.$emit('update:modelValue', ['post-one'])
     await clickSectionButton(wrapper, 'Save')
 
     expect(vi.mocked(apiClient.put).mock.calls[0][1]).toMatchObject({

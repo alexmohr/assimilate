@@ -20,8 +20,8 @@ export interface ScheduleFormState {
   keep_yearly: number
   compact_enabled: boolean
   rate_limit_kbps: number
-  pre_backup_commands: string
-  post_backup_commands: string
+  pre_backup_commands: string[]
+  post_backup_commands: string[]
   hook_timeout_seconds: number
   missed_backup_threshold: number
   backup_sources: string
@@ -48,8 +48,8 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   keep_yearly: 10,
   compact_enabled: true,
   rate_limit_kbps: 0,
-  pre_backup_commands: '',
-  post_backup_commands: '',
+  pre_backup_commands: [],
+  post_backup_commands: [],
   hook_timeout_seconds: 60,
   missed_backup_threshold: 3,
   backup_sources: '',
@@ -65,6 +65,6 @@ export interface ScheduleAgentOverrides {
   usePerHostFileChangePatterns: boolean
   perHostFileChangePatterns: Record<number, string>
   usePerAgentCmds: boolean
-  perAgentPreCmds: Record<number, string>
-  perAgentPostCmds: Record<number, string>
+  perAgentPreCmds: Record<number, string[]>
+  perAgentPostCmds: Record<number, string[]>
 }

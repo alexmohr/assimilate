@@ -8,6 +8,15 @@ export function parseLines(text: string): string[] {
     .filter((l) => l.length > 0)
 }
 
+/**
+ * Drops blank hook-command entries (e.g. a "+ Add command" row left empty)
+ * before saving. Never trims the surviving entries' content - a command is a
+ * whole script, and leading whitespace can be meaningful indentation.
+ */
+export function dropBlankCommands(commands: string[]): string[] {
+  return commands.filter((c) => c.trim().length > 0)
+}
+
 export function validatePassword(newPassword: string, confirmPassword: string): string | null {
   if (newPassword.length < 8) {
     return 'Password must be at least 8 characters'

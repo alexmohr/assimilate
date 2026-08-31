@@ -203,7 +203,9 @@ describe('RepoOverviewCard', () => {
       await toggles[toggles.length - 1].vm.$emit('update:modelValue', true)
       await flushPromises()
 
-      await wrapper.find('input[placeholder="0 0,12 * * *"]').setValue('30 3 * * *')
+      await wrapper
+        .findComponent({ name: 'CronBuilder' })
+        .vm.$emit('update:modelValue', '30 3 * * *')
 
       vi.mocked(apiClient.post).mockResolvedValueOnce({
         data: { ssh_ok: true, borg_installed: true },
@@ -226,7 +228,7 @@ describe('RepoOverviewCard', () => {
       await toggles[toggles.length - 1].vm.$emit('update:modelValue', false)
       await flushPromises()
 
-      expect(wrapper.find('input[placeholder="0 0,12 * * *"]').exists()).toBe(false)
+      expect(wrapper.findComponent({ name: 'CronBuilder' }).exists()).toBe(false)
     })
 
     // Saving an unreachable host would leave a repo that silently fails every

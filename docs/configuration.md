@@ -135,8 +135,8 @@ Each schedule is associated with a repository and controls when and how backups 
 | `exclude_patterns` | List of borg exclude patterns applied to this schedule. |
 | `ignore_global_excludes` | When `true`, global exclude patterns (configured under Excludes) are not applied to this schedule. |
 | `canary_enabled` | When `true`, a canary file is written before backup and verified after to detect silent failures. |
-| `pre_backup_commands` | Shell commands executed on the agent before the backup starts. If any command fails, the backup is aborted and `post_backup_commands` is not run. |
-| `post_backup_commands` | Shell commands executed on the agent after the backup completes with success or warnings. Not run if `borg create` fails outright. |
+| `pre_backup_commands` | List of shell commands executed on the agent before the backup starts, each run as its own `sh -c` invocation and each able to span multiple lines (a full script, not just one statement). If any entry fails, the backup is aborted and `post_backup_commands` is not run. |
+| `post_backup_commands` | Same shape as `pre_backup_commands`, executed on the agent after the backup completes with success or warnings. Not run if `borg create` fails outright. |
 | `hook_timeout_seconds` | Timeout, in seconds, applied to each pre- and post-backup command individually. A command still running past this is killed and treated as a failure. Defaults to `60`, up to a maximum of `3600`. |
 | `missed_backup_threshold` | Number of consecutive missed backups (agent or target unreachable at trigger time) tolerated before the schedule is marked failed and automatically disabled — see [Agent status and auto-disable](agents.md#agent-status). Below this count, a miss only shows as a warning. Defaults to `3`. |
 

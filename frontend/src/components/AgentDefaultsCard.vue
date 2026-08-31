@@ -7,10 +7,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref } from 'vue'
 import { updateAgent } from '../api/agents'
 import { extractError } from '../utils/error'
-import { parseLines } from '../utils/validation'
+import { dropBlankCommands, parseLines } from '../utils/validation'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import EditableSection from './EditableSection.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
+import CommandListEditor from './CommandListEditor.vue'
 import type { AgentRow } from '../types/agent'
 
 /**
@@ -39,15 +40,15 @@ const error = ref<string | null>(null)
 const pathsText = ref('')
 const excludesText = ref('')
 const fcpText = ref('')
-const preCmdsText = ref('')
-const postCmdsText = ref('')
+const preCmds = ref<string[]>([])
+const postCmds = ref<string[]>([])
 
 function startEdit(): void {
   pathsText.value = (props.agent.default_backup_paths ?? []).join('\n')
   excludesText.value = (props.agent.default_exclude_patterns ?? []).join('\n')
   fcpText.value = props.agent.default_file_change_patterns_raw ?? ''
-  preCmdsText.value = (props.agent.default_pre_backup_commands ?? []).join('\n')
-  postCmdsText.value = (props.agent.default_post_backup_commands ?? []).join('\n')
+  preCmds.value = [...(props.agent.default_pre_backup_commands ?? [])]
+  postCmds.value = [...(props.agent.default_post_backup_commands ?? [])]
   error.value = null
   editing.value = true
 }
@@ -64,8 +65,8 @@ async function save(): Promise<void> {
         domain: props.agent.domain,
         default_backup_paths: parseLines(pathsText.value),
         default_exclude_patterns: parseLines(excludesText.value),
-        default_pre_backup_commands: parseLines(preCmdsText.value),
-        default_post_backup_commands: parseLines(postCmdsText.value),
+        default_pre_backup_commands: dropBlankCommands(preCmds.value),
+        default_post_backup_commands: dropBlankCommands(postCmds.value),
         default_file_change_patterns_raw: fcpText.value,
       },
       props.agent.domain,
@@ -162,11 +163,11 @@ async function save(): Promise<void> {
         <div class="defaults-group">
           <span class="group-label group-label--lg">Pre-backup commands</span>
           <div
-            v-if="agent.default_pre_backup_commands.length > 0"
+            v-if="(agent.default_pre_backup_commands ?? []).length > 0"
             class="paths-list"
           >
             <code
-              v-for="(cmd, idx) in agent.default_pre_backup_commands"
+              v-for="(cmd, idx) in agent.default_pre_backup_commands ?? []"
               :key="idx"
               class="path-item mono"
             >
@@ -183,11 +184,11 @@ async function save(): Promise<void> {
         <div class="defaults-group">
           <span class="group-label group-label--lg">Post-backup commands</span>
           <div
-            v-if="agent.default_post_backup_commands.length > 0"
+            v-if="(agent.default_post_backup_commands ?? []).length > 0"
             class="paths-list"
           >
             <code
-              v-for="(cmd, idx) in agent.default_post_backup_commands"
+              v-for="(cmd, idx) in agent.default_post_backup_commands ?? []"
               :key="idx"
               class="path-item mono"
             >
@@ -247,31 +248,23 @@ async function save(): Promise<void> {
         </template>
       </FileChangePatternsEditor>
 
-      <label
-        class="group-label group-label--lg"
-        for="defaults-pre"
-        >Pre-backup commands</label
-      >
-      <textarea
-        id="defaults-pre"
-        v-model="preCmdsText"
-        class="input defaults-area"
-        placeholder="Commands run before each backup, one per line&#10;e.g. systemctl stop myapp"
-        spellcheck="false"
-      />
+      <fieldset class="cmd-fieldset">
+        <legend class="group-label group-label--lg">Pre-backup commands</legend>
+        <CommandListEditor
+          v-model="preCmds"
+          placeholder="e.g. systemctl stop myapp"
+          aria-label="Pre-backup commands"
+        />
+      </fieldset>
 
-      <label
-        class="group-label group-label--lg"
-        for="defaults-post"
-        >Post-backup commands</label
-      >
-      <textarea
-        id="defaults-post"
-        v-model="postCmdsText"
-        class="input defaults-area"
-        placeholder="Commands run after each backup, one per line&#10;e.g. systemctl start myapp"
-        spellcheck="false"
-      />
+      <fieldset class="cmd-fieldset">
+        <legend class="group-label group-label--lg">Post-backup commands</legend>
+        <CommandListEditor
+          v-model="postCmds"
+          placeholder="e.g. systemctl start myapp"
+          aria-label="Post-backup commands"
+        />
+      </fieldset>
     </template>
   </EditableSection>
 </template>
@@ -296,6 +289,21 @@ async function save(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* A native fieldset/legend groups Pre/Post-backup commands' variable-length
+   list of fields under one accessible name, since a single `<label for>`
+   can't target more than one field. Reset to blend into `.settings-pane`'s
+   flex layout: without `min-width: 0`, a fieldset's UA-default intrinsic
+   sizing can force it wider than its container. */
+.cmd-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
 }
 
 .fcp-action-badge {

@@ -4244,6 +4244,7 @@ esac
     /// before the (possibly hours-long) backup ran. Simulates an admin
     /// flipping the setting on mid-run by passing a stale, pre-change row
     /// alongside a DB that already has the new value.
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn teardown_power_for_target_uses_current_settings_not_the_pre_run_snapshot(
         pool: sqlx::PgPool,

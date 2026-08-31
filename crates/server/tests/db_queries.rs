@@ -18,7 +18,7 @@ use server::{
     archive_index::codec::{self, DirEntry},
     db::{self, patterns, *},
 };
-use shared::types::QuotaAction;
+use shared::types::{AcknowledgedFilter, QuotaAction, SystemEventType};
 use sqlx::PgPool;
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1965,7 +1965,7 @@ async fn activity_feed(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let activity = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert_eq!(activity.len(), 1);
@@ -1982,7 +1982,7 @@ async fn activity_feed_days(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let activity = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
+    let activity = db::get_activity_feed_days(&pool, 7, None, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert_eq!(activity.len(), 1);
@@ -1996,7 +1996,7 @@ async fn activity_feed_reports_are_unacknowledged_by_default(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let activity = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert_eq!(activity.len(), 1);
@@ -2011,7 +2011,7 @@ async fn set_backup_report_acknowledged_toggles_and_is_visible_in_both_feeds(poo
     let repo = create_test_repo(&pool).await;
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let report_id = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let report_id = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap()
         .first()
@@ -2022,12 +2022,12 @@ async fn set_backup_report_acknowledged_toggles_and_is_visible_in_both_feeds(poo
         .await
         .unwrap();
 
-    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let activity = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert!(activity.first().unwrap().acknowledged);
 
-    let activity_days = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
+    let activity_days = db::get_activity_feed_days(&pool, 7, None, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert!(activity_days.first().unwrap().acknowledged);
@@ -2036,10 +2036,293 @@ async fn set_backup_report_acknowledged_toggles_and_is_visible_in_both_feeds(poo
         .await
         .unwrap();
 
-    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let activity = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert!(!activity.first().unwrap().acknowledged);
+}
+
+/// A report in whatever state the caller needs, for the acknowledgment tests -
+/// [`insert_test_report`] always files a successful run, which can never be
+/// acknowledged.
+#[cfg(test)]
+async fn insert_report_with_status(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    status: shared::types::BackupStatus,
+) {
+    let now = Utc::now();
+    db::insert_backup_report(
+        pool,
+        &InsertReportParams {
+            agent_id,
+            repo_id,
+            schedule_id: None,
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            finished_at: now,
+            status,
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            repo_unique_csize: 250_000,
+            files_processed: 1000,
+            duration_secs: 300,
+            error_message: Some("boom".to_owned()),
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_filters_on_acknowledgment_state(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ack-filter-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Failed,
+    )
+    .await;
+
+    let report_id = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id;
+    db::set_backup_report_acknowledged(&pool, report_id, true)
+        .await
+        .unwrap();
+
+    let hidden = db::get_activity_feed(
+        &pool,
+        10,
+        ActivityFeedFilters {
+            acknowledged: AcknowledgedFilter::Unacknowledged,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        hidden.is_empty(),
+        "an acknowledged run must drop out of the default feed"
+    );
+
+    let only = db::get_activity_feed(
+        &pool,
+        10,
+        ActivityFeedFilters {
+            acknowledged: AcknowledgedFilter::Acknowledged,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(only.len(), 1);
+
+    let days_hidden = db::get_activity_feed_days(
+        &pool,
+        7,
+        None,
+        ActivityFeedFilters {
+            acknowledged: AcknowledgedFilter::Unacknowledged,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(days_hidden.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acknowledge_backup_reports_in_repos_only_touches_listed_repos(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "bulk-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_a = create_test_repo_with_host(&pool, "bulk-ack-repo-a", "a.local").await;
+    let repo_b = create_test_repo_with_host(&pool, "bulk-ack-repo-b", "b.local").await;
+
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo_a.id,
+        shared::types::BackupStatus::Failed,
+    )
+    .await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo_a.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo_b.id,
+        shared::types::BackupStatus::Warning,
+    )
+    .await;
+
+    let mut pending = db::repos_with_unacknowledged_reports(&pool).await.unwrap();
+    pending.sort_unstable();
+    let mut expected = vec![repo_a.id, repo_b.id];
+    expected.sort_unstable();
+    assert_eq!(pending, expected);
+
+    let acknowledged = db::acknowledge_backup_reports_in_repos(&pool, &[repo_a.id])
+        .await
+        .unwrap();
+    assert_eq!(acknowledged, 1, "only the failed run in repo A is ackable");
+
+    let still_pending = db::repos_with_unacknowledged_reports(&pool).await.unwrap();
+    assert_eq!(still_pending, vec![repo_b.id]);
+
+    // A successful run is never marked - acknowledging it would hide history
+    // nobody asked to review.
+    let successes_acknowledged = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM backup_reports WHERE status = 'success' AND acknowledged = true",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(successes_acknowledged, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn system_events_acknowledge_round_trip_and_filter(pool: PgPool) {
+    db::insert_system_event(
+        &pool,
+        SystemEventType::RepoSyncFailed,
+        Some("sync-host"),
+        "Periodic sync failed",
+    )
+    .await
+    .unwrap();
+    db::insert_system_event(
+        &pool,
+        SystemEventType::RepoSync,
+        Some("sync-host"),
+        "Synced",
+    )
+    .await
+    .unwrap();
+
+    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    let failed = events
+        .iter()
+        .find(|e| e.event_type == SystemEventType::RepoSyncFailed)
+        .unwrap();
+    assert!(failed.acknowledgeable);
+    assert!(!failed.acknowledged);
+    let synced = events
+        .iter()
+        .find(|e| e.event_type == SystemEventType::RepoSync)
+        .unwrap();
+    assert!(
+        !synced.acknowledgeable,
+        "a successful sync has nothing to review"
+    );
+
+    db::get_acknowledgeable_system_event_type(&pool, failed.id)
+        .await
+        .unwrap();
+    db::set_system_event_acknowledged(&pool, failed.id, true)
+        .await
+        .unwrap();
+
+    let pending = db::get_system_events(&pool, 10, AcknowledgedFilter::Unacknowledged)
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending.first().unwrap().event_type,
+        SystemEventType::RepoSync
+    );
+
+    let acknowledged = db::get_system_events(&pool, 10, AcknowledgedFilter::Acknowledged)
+        .await
+        .unwrap();
+    assert_eq!(acknowledged.len(), 1);
+    assert!(acknowledged.first().unwrap().acknowledged);
+
+    db::set_system_event_acknowledged(&pool, failed.id, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::get_system_events(&pool, 10, AcknowledgedFilter::Unacknowledged)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acknowledgeable_system_event_type_rejects_an_informational_event(pool: PgPool) {
+    db::insert_system_event(&pool, SystemEventType::RepoSync, None, "Synced")
+        .await
+        .unwrap();
+    let id = db::get_system_events(&pool, 1, AcknowledgedFilter::All)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id;
+
+    let err = db::get_acknowledgeable_system_event_type(&pool, id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, server::error::ApiError::Unprocessable(_)));
+
+    let missing = db::get_acknowledgeable_system_event_type(&pool, id.saturating_add(9_999))
+        .await
+        .unwrap_err();
+    assert!(matches!(missing, server::error::ApiError::NotFound(_)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acknowledge_all_system_events_skips_the_ones_with_nothing_to_review(pool: PgPool) {
+    for (event_type, message) in [
+        (SystemEventType::RepoSyncFailed, "sync failed"),
+        (SystemEventType::RepoSyncSlow, "sync slow"),
+        (SystemEventType::RepoSync, "sync ok"),
+        (SystemEventType::RepoSyncCancelled, "sync cancelled"),
+    ] {
+        db::insert_system_event(&pool, event_type, None, message)
+            .await
+            .unwrap();
+    }
+
+    let acknowledged = db::acknowledge_all_system_events(&pool).await.unwrap();
+    assert_eq!(
+        acknowledged, 2,
+        "only the failed and slow events are ackable"
+    );
+
+    let pending = db::get_system_events(&pool, 10, AcknowledgedFilter::Unacknowledged)
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 2);
+    assert!(pending.iter().all(|e| !e.acknowledgeable));
+
+    // Nothing left to do the second time around.
+    assert_eq!(db::acknowledge_all_system_events(&pool).await.unwrap(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2050,7 +2333,7 @@ async fn get_backup_report_repo_id_test(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let report_id = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let report_id = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap()
         .first()
@@ -2102,7 +2385,7 @@ async fn get_ackable_backup_report_repo_id_test(pool: PgPool) {
         .unwrap();
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let activity = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap();
     let failed_report_id = activity.iter().find(|e| e.status == "failed").unwrap().id;
@@ -3818,7 +4101,9 @@ async fn system_events_crud(pool: PgPool) {
     .await
     .unwrap();
 
-    let events = db::get_system_events(&pool, 10).await.unwrap();
+    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        .await
+        .unwrap();
     assert_eq!(events.len(), 2);
 
     let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
@@ -3827,7 +4112,9 @@ async fn system_events_crud(pool: PgPool) {
         .unwrap();
     assert_eq!(deleted, 2);
 
-    let events = db::get_system_events(&pool, 10).await.unwrap();
+    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        .await
+        .unwrap();
     assert_eq!(events.len(), 0);
 }
 
@@ -3870,7 +4157,9 @@ async fn get_system_events_skips_rows_with_unrecognized_event_type(pool: PgPool)
     .await
     .unwrap();
 
-    let events = db::get_system_events(&pool, 10).await.unwrap();
+    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        .await
+        .unwrap();
     assert_eq!(events.len(), 2);
     assert!(
         events
@@ -6664,23 +6953,30 @@ async fn activity_feed_repo_filter(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let all = db::get_activity_feed(&pool, 10, None, None, None, None)
+    let all = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert_ne!(all.len(), 0);
 
-    let filtered = db::get_activity_feed(&pool, 10, Some(repo.id), None, None, None)
-        .await
-        .unwrap();
+    let filtered = db::get_activity_feed(
+        &pool,
+        10,
+        ActivityFeedFilters {
+            repo_id: Some(repo.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(filtered.len(), 1);
 
     let empty = db::get_activity_feed(
         &pool,
         10,
-        Some(repo.id.saturating_add(999)),
-        None,
-        None,
-        None,
+        ActivityFeedFilters {
+            repo_id: Some(repo.id.saturating_add(999)),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -6696,14 +6992,28 @@ async fn activity_feed_hostname_filter(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let filtered = db::get_activity_feed(&pool, 10, None, Some("hostname-filter-host"), None, None)
-        .await
-        .unwrap();
+    let filtered = db::get_activity_feed(
+        &pool,
+        10,
+        ActivityFeedFilters {
+            hostname: Some("hostname-filter-host"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(filtered.len(), 1);
 
-    let empty = db::get_activity_feed(&pool, 10, None, Some("nonexistent-host"), None, None)
-        .await
-        .unwrap();
+    let empty = db::get_activity_feed(
+        &pool,
+        10,
+        ActivityFeedFilters {
+            hostname: Some("nonexistent-host"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(empty.len(), 0);
 }
 
@@ -6716,25 +7026,48 @@ async fn activity_feed_days_test(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let all = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
+    let all = db::get_activity_feed_days(&pool, 7, None, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert_ne!(all.len(), 0);
 
-    let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None, None, None, None)
-        .await
-        .unwrap();
+    let with_repo = db::get_activity_feed_days(
+        &pool,
+        7,
+        None,
+        ActivityFeedFilters {
+            repo_id: Some(repo.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(with_repo.len(), 1);
 
-    let with_host =
-        db::get_activity_feed_days(&pool, 7, None, Some("days-feed-host"), None, None, None)
-            .await
-            .unwrap();
+    let with_host = db::get_activity_feed_days(
+        &pool,
+        7,
+        None,
+        ActivityFeedFilters {
+            hostname: Some("days-feed-host"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(with_host.len(), 1);
 
-    let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"), None, None, None)
-        .await
-        .unwrap();
+    let no_match = db::get_activity_feed_days(
+        &pool,
+        7,
+        None,
+        ActivityFeedFilters {
+            hostname: Some("wrong-host"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(no_match.len(), 0);
 }
 
@@ -6749,12 +7082,12 @@ async fn activity_feed_days_limit(pool: PgPool) {
     insert_test_report(&pool, agent.id, repo.id).await;
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let unbounded = db::get_activity_feed_days(&pool, 7, None, None, None, None, None)
+    let unbounded = db::get_activity_feed_days(&pool, 7, None, ActivityFeedFilters::default())
         .await
         .unwrap();
     assert_eq!(unbounded.len(), 3);
 
-    let limited = db::get_activity_feed_days(&pool, 7, None, None, None, None, Some(2))
+    let limited = db::get_activity_feed_days(&pool, 7, Some(2), ActivityFeedFilters::default())
         .await
         .unwrap();
     assert_eq!(limited.len(), 2);
@@ -6835,7 +7168,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
     )
     .await;
 
-    let rows = db::get_activity_feed_days(&pool, 30, None, None, None, None, Some(2))
+    let rows = db::get_activity_feed_days(&pool, 30, Some(2), ActivityFeedFilters::default())
         .await
         .unwrap();
 
@@ -7989,7 +8322,9 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
         "system event created after cutoff must not be deleted"
     );
 
-    let events = db::get_system_events(&pool, 10).await.unwrap();
+    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        .await
+        .unwrap();
     assert_eq!(events.len(), 1);
 }
 
@@ -8063,7 +8398,9 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
         "system event must be deleted with future cutoff"
     );
 
-    let events = db::get_system_events(&pool, 10).await.unwrap();
+    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        .await
+        .unwrap();
     assert!(events.is_empty());
 }
 
@@ -8879,7 +9216,9 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
     .await
     .unwrap();
 
-    let events = db::get_system_events(&pool, 10).await.unwrap();
+    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        .await
+        .unwrap();
     let security_events: Vec<_> = events
         .iter()
         .filter(|e| e.event_type == shared::types::SystemEventType::SecurityViolation)

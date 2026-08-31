@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT repo_id FROM backup_reports WHERE acknowledged = false AND status IN ($1, $2) ORDER BY repo_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "be875c4b84da79e2227424503b213f26bb16a42f1cee4be799275ee1ce2774ec"
+}

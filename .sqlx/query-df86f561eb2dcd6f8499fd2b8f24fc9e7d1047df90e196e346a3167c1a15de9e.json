@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!\", duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id, acknowledged AS \"acknowledged!\" FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint IS NULL OR rn <= $6 ORDER BY started_at DESC",
+  "query": "SELECT id, hostname, target_name, started_at, finished_at, status AS \"status!\", duration_secs AS \"duration_secs!\", repo_id, archive_name, error_message, schedule_id, schedule_name AS \"schedule_name?\", run_id, acknowledged AS \"acknowledged!\" FROM ( SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, br.schedule_id, s.name AS schedule_name, br.run_id, br.acknowledged, ROW_NUMBER() OVER (PARTITION BY br.schedule_id ORDER BY br.started_at DESC) AS rn FROM backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) ) ranked WHERE $7::bigint IS NULL OR rn <= $7 ORDER BY started_at DESC",
   "describe": {
     "columns": [
       {
@@ -81,6 +81,7 @@
         "Text",
         "Int8",
         "Text",
+        "Bool",
         "Int8"
       ]
     },
@@ -101,5 +102,5 @@
       false
     ]
   },
-  "hash": "f8881ed64a3ebf40c9c5185d79718c0b5ca74f1c003a25fd237d881a3eeea9c1"
+  "hash": "df86f561eb2dcd6f8499fd2b8f24fc9e7d1047df90e196e346a3167c1a15de9e"
 }

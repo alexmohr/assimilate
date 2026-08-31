@@ -657,6 +657,101 @@ impl FromStr for SystemEventType {
     }
 }
 
+/// Which acknowledgment state an activity or system-event query returns.
+///
+/// The default is [`Self::All`] so a caller that only wants raw history - the
+/// dashboard success ring, duration sampling - keeps seeing every run; the
+/// Activity Log asks for [`Self::Unacknowledged`] explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "lowercase")]
+pub enum AcknowledgedFilter {
+    /// Acknowledged and unacknowledged entries alike.
+    #[default]
+    All,
+    /// Only entries nobody has acknowledged yet.
+    Unacknowledged,
+    /// Only entries somebody has already acknowledged.
+    Acknowledged,
+}
+
+impl AcknowledgedFilter {
+    /// The value an `acknowledged = $1` clause should compare against, or
+    /// `None` when the query should not filter on acknowledgment at all.
+    #[must_use]
+    pub const fn as_sql_predicate(self) -> Option<bool> {
+        match self {
+            Self::All => None,
+            Self::Unacknowledged => Some(false),
+            Self::Acknowledged => Some(true),
+        }
+    }
+}
+
+/// How a [`SystemEventType`] reads in the activity feed: whether it records
+/// normal operation or a problem a human still has to look at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "lowercase")]
+pub enum SystemEventSeverity {
+    /// Routine bookkeeping, neither good nor bad news.
+    Info,
+    /// An operation that completed as intended.
+    Success,
+    /// Something degraded that is worth a look.
+    Warning,
+    /// An operation that failed.
+    Failed,
+}
+
+impl SystemEventType {
+    /// Every variant, so callers can enumerate the closed set the
+    /// `system_events_event_type_check` constraint locks the column to.
+    pub const ALL: [Self; 11] = [
+        Self::AuthFailed,
+        Self::RepoSync,
+        Self::RepoSyncCancelled,
+        Self::RepoSyncSlow,
+        Self::RepoSyncFailed,
+        Self::ArchiveDeleteFailed,
+        Self::ArchiveCompactFailed,
+        Self::SecurityViolation,
+        Self::AccountLocked,
+        Self::ScheduleAutoDisabled,
+        Self::ScheduleReenabled,
+    ];
+
+    /// How this event reads in the activity feed. Drives both the badge the
+    /// frontend paints and whether the event can be acknowledged, so the two
+    /// can never drift apart.
+    #[must_use]
+    pub const fn severity(self) -> SystemEventSeverity {
+        match self {
+            Self::RepoSync | Self::ScheduleReenabled => SystemEventSeverity::Success,
+            Self::RepoSyncCancelled => SystemEventSeverity::Info,
+            Self::RepoSyncSlow | Self::ScheduleAutoDisabled | Self::AccountLocked => {
+                SystemEventSeverity::Warning
+            }
+            Self::RepoSyncFailed
+            | Self::ArchiveDeleteFailed
+            | Self::ArchiveCompactFailed
+            | Self::AuthFailed
+            | Self::SecurityViolation => SystemEventSeverity::Failed,
+        }
+    }
+
+    /// Whether a human can acknowledge this event. Only events that report a
+    /// problem can be - a successful sync has nothing to review, so muting it
+    /// would just hide history.
+    #[must_use]
+    pub const fn is_acknowledgeable(self) -> bool {
+        matches!(
+            self.severity(),
+            SystemEventSeverity::Warning | SystemEventSeverity::Failed
+        )
+    }
+}
+
 impl Serialize for SystemEventType {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_str(self)
@@ -1396,6 +1491,93 @@ mod tests {
             assert_eq!(expected.parse::<SystemEventType>().unwrap(), variant);
         }
         assert!("unknown".parse::<SystemEventType>().is_err());
+    }
+
+    #[test]
+    fn system_event_type_all_covers_every_persisted_variant() {
+        // The strings are the closed set the system_events_event_type_check
+        // constraint allows, so a new variant that never made it into ALL
+        // would drop out of every bulk operation keyed off it.
+        let persisted = [
+            "auth_failed",
+            "repo_sync",
+            "repo_sync_cancelled",
+            "repo_sync_slow",
+            "repo_sync_failed",
+            "archive_delete_failed",
+            "archive_compact_failed",
+            "security_violation",
+            "account_locked",
+            "schedule_auto_disabled",
+            "schedule_reenabled",
+        ];
+        assert_eq!(SystemEventType::ALL.len(), persisted.len());
+        for raw in persisted {
+            let parsed = raw.parse::<SystemEventType>().unwrap();
+            assert!(
+                SystemEventType::ALL.contains(&parsed),
+                "{raw} missing from ALL"
+            );
+        }
+    }
+
+    #[test]
+    fn acknowledged_filter_maps_to_sql_predicate() {
+        assert_eq!(AcknowledgedFilter::default(), AcknowledgedFilter::All);
+        assert_eq!(AcknowledgedFilter::All.as_sql_predicate(), None);
+        assert_eq!(
+            AcknowledgedFilter::Unacknowledged.as_sql_predicate(),
+            Some(false)
+        );
+        assert_eq!(
+            AcknowledgedFilter::Acknowledged.as_sql_predicate(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn system_event_severity_marks_only_problems_acknowledgeable() {
+        let expected = [
+            (SystemEventType::RepoSync, SystemEventSeverity::Success),
+            (
+                SystemEventType::ScheduleReenabled,
+                SystemEventSeverity::Success,
+            ),
+            (
+                SystemEventType::RepoSyncCancelled,
+                SystemEventSeverity::Info,
+            ),
+            (SystemEventType::RepoSyncSlow, SystemEventSeverity::Warning),
+            (
+                SystemEventType::ScheduleAutoDisabled,
+                SystemEventSeverity::Warning,
+            ),
+            (SystemEventType::AccountLocked, SystemEventSeverity::Warning),
+            (SystemEventType::RepoSyncFailed, SystemEventSeverity::Failed),
+            (
+                SystemEventType::ArchiveDeleteFailed,
+                SystemEventSeverity::Failed,
+            ),
+            (
+                SystemEventType::ArchiveCompactFailed,
+                SystemEventSeverity::Failed,
+            ),
+            (SystemEventType::AuthFailed, SystemEventSeverity::Failed),
+            (
+                SystemEventType::SecurityViolation,
+                SystemEventSeverity::Failed,
+            ),
+        ];
+        for (event_type, severity) in expected {
+            assert_eq!(event_type.severity(), severity);
+            assert_eq!(
+                event_type.is_acknowledgeable(),
+                matches!(
+                    severity,
+                    SystemEventSeverity::Warning | SystemEventSeverity::Failed
+                )
+            );
+        }
     }
 
     #[test]

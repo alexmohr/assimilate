@@ -1664,6 +1664,7 @@ mod tests {
     use std::{os::unix::fs::PermissionsExt, sync::OnceLock, time::Duration};
 
     use chrono::TimeZone;
+    use shared::types::AcknowledgedFilter;
     use tempfile::TempDir;
     use tokio::sync::{Mutex, mpsc};
 
@@ -2517,7 +2518,9 @@ esac
         );
 
         // The auto-disable must not be invisible outside server logs.
-        let events = db::get_system_events(&pool, 10).await.unwrap();
+        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+            .await
+            .unwrap();
         assert!(
             events
                 .iter()
@@ -3146,7 +3149,9 @@ esac
             "the streak contained a config error, so it must not be marked agent-unreachable"
         );
 
-        let events = db::get_system_events(&pool, 10).await.unwrap();
+        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+            .await
+            .unwrap();
         let event = events
             .iter()
             .find(|e| matches!(e.event_type, SystemEventType::ScheduleAutoDisabled))

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE system_events SET acknowledged = true WHERE acknowledged = false AND event_type = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2cd7c345a0932ec050b69033db590c9f92aa02d8ef5dc5c0165e6b23752fbc0b"
+}

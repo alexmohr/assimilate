@@ -29,9 +29,25 @@ Click any card to expand it and see detailed statistics:
 
 ### Acknowledging a warning or failure
 
-A warning or failed run's card carries an **Acknowledge** button. Acknowledging marks the run as reviewed — the card stays in the list (nothing is deleted or hidden) but dims, and picks up an **Acknowledged** badge next to its status, so a long list of past incidents is easy to scan for what still needs attention. **Unacknowledge** reverses it. Acknowledgment is shared across every user, not tied to whoever clicked it — like the run itself.
+A warning or failed run's card carries an **Acknowledge** button. Acknowledging marks the run as reviewed: the entry drops out of the feed (the **Acknowledged** filter brings it back, see [Filters](#filters)) and stops counting towards the dashboard. Nothing is deleted. **Unacknowledge** reverses it. Acknowledgment is shared across every user, not tied to whoever clicked it — like the run itself.
 
 A successful run has no Acknowledge button; there is nothing on it to review.
+
+Acknowledging a run also removes it from the dashboard:
+
+- its **Needs attention** finding disappears, so the finding count drops
+- the **Last failure** / **Last warning** tiles fall back to the most recent run still awaiting review
+- an acknowledged failure no longer leaves the schedule target flagged as overdue or never-succeeded — the target is muted until its next run files a fresh report, which is flagged again if it fails too
+
+The success-rate ring is history rather than a to-do list, so it keeps counting every run, acknowledged or not.
+
+### Acknowledging everything at once
+
+**Acknowledge all**, in the page header, marks every outstanding warning and failure as reviewed in one step. It appears only while something is left to acknowledge, and it reaches exactly as far as acknowledging each entry by hand would: backup runs only in repositories you may modify schedules for, and system events only if you are an admin.
+
+### Acknowledging a system event
+
+A system event that reports a problem — a failed or slow periodic repository sync, an auto-disabled schedule, a locked account — can be acknowledged the same way. System events are global rather than repository-scoped, so only an admin can acknowledge one. Events that report normal operation (a completed sync, a cancelled sync) have no Acknowledge button.
 
 ## Filters
 
@@ -40,11 +56,16 @@ When viewing Backup or All activity, the following filters are available:
 | Filter | Description |
 |--------|-------------|
 | Machine | Show only runs from a specific host |
+| Schedule | Show only runs of a specific schedule |
 | Target | Show only runs targeting a specific repository |
 | Status | Filter by outcome (success, warning, failed) |
+| Acknowledged | `Hidden` (the default) leaves out everything already reviewed, `Shown` includes it, `Only acknowledged` shows nothing else |
 | From / To | Date range filter |
 
-Click **Clear** to reset all filters.
+Click **Clear** to reset all filters, including putting **Acknowledged** back to `Hidden`.
+
+!!! note
+    Because acknowledged entries are hidden by default, acknowledging an entry makes it disappear from the list straight away. Switch **Acknowledged** to `Shown` or `Only acknowledged` to find it again and undo it.
 
 ## System Events
 
@@ -55,7 +76,7 @@ System events record significant server-side occurrences:
 - Configuration changes
 - A schedule auto-disabled after repeated failures to reach its agent, and its automatic re-enable once that agent reconnects (see [Agents](agents.md))
 
-Each event row shows a timestamp, hostname (if applicable), message, and event type badge.
+Each event row shows a timestamp, hostname (if applicable), message, and event type badge. The badge colour comes from the event's severity: green for a completed operation, amber for something degraded, red for a failure, grey for a purely informational record. Anything amber or red can be acknowledged — see [Acknowledging a system event](#acknowledging-a-system-event).
 
 ## Server Logs
 
@@ -92,10 +113,13 @@ The activity view loads entries in pages. Click **Load more** at the bottom to f
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/stats/activity` | List backup activity entries |
+| `GET` | `/api/stats/activity` | List backup activity entries (`?acknowledged=all\|unacknowledged\|acknowledged`, default `all`) |
 | `POST` | `/api/stats/activity/:id/acknowledge` | Acknowledge a backup run's warning or failure |
 | `DELETE` | `/api/stats/activity/:id/acknowledge` | Clear a run's acknowledgment |
-| `GET` | `/api/stats/system-events` | List system events |
+| `POST` | `/api/stats/activity/acknowledge-all` | Acknowledge every outstanding warning and failure the caller may act on |
+| `GET` | `/api/stats/system-events` | List system events (same `?acknowledged=` filter) |
+| `POST` | `/api/stats/system-events/:id/acknowledge` | Acknowledge a system event that reports a problem (admin only) |
+| `DELETE` | `/api/stats/system-events/:id/acknowledge` | Clear a system event's acknowledgment (admin only) |
 | `GET` | `/api/logs` | Retrieve server log entries |
 | `GET` | `/api/agents/:hostname/reports` | List backup reports for an agent |
 

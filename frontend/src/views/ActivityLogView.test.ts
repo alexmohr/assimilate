@@ -29,6 +29,9 @@ vi.mock('../composables/useWebSocket', () => ({
 
 import { apiClient } from '../api/client'
 import type { ReportRow } from '../types/report'
+import type { SystemEventSeverity } from '../types/generated'
+import type { CurrentUserResponse } from '../api/auth'
+import { useAuthStore } from '../stores/auth'
 import ActivityLogView from './ActivityLogView.vue'
 
 const mockGet = vi.mocked(apiClient.get)
@@ -51,6 +54,9 @@ interface SystemEvent {
   id: number
   created_at: string
   event_type: string
+  severity: SystemEventSeverity
+  acknowledgeable: boolean
+  acknowledged: boolean
   hostname: string | null
   message: string
 }
@@ -93,6 +99,7 @@ const ACTIVITY_ROWS: ActivityRow[] = [
     finished_at: '2026-01-01T08:04:00Z',
     status: 'warning',
     duration_secs: 240,
+    run_id: 'run-103',
   },
 ]
 
@@ -125,16 +132,22 @@ const SYSTEM_EVENTS: SystemEvent[] = [
   {
     id: 1,
     created_at: '2026-01-01T07:00:00Z',
-    event_type: 'AgentConnected',
+    event_type: 'repo_sync',
+    severity: 'success',
+    acknowledgeable: false,
+    acknowledged: false,
     hostname: 'web-server-01',
-    message: 'Agent connected',
+    message: 'Repository sync completed',
   },
   {
     id: 2,
     created_at: '2026-01-01T06:00:00Z',
-    event_type: 'AgentDisconnected',
+    event_type: 'repo_sync_failed',
+    severity: 'failed',
+    acknowledgeable: true,
+    acknowledged: false,
     hostname: 'db-server-01',
-    message: 'Agent disconnected',
+    message: 'Periodic sync failed',
   },
 ]
 
@@ -145,10 +158,27 @@ function createTestRouter(): ReturnType<typeof createRouter> {
   })
 }
 
-function mountView(): ReturnType<typeof mount> {
+/**
+ * Mounts the view with an optional signed-in user. Acknowledging a system
+ * event is admin-only, so those tests need a store that says so.
+ */
+function mountView(role?: string): ReturnType<typeof mount> {
+  const pinia = createPinia()
+  if (role !== undefined) {
+    useAuthStore(pinia).user = {
+      id: 1,
+      username: 'test-user',
+      role,
+      must_change_password: false,
+      session_expires_at: null,
+      remember_me: false,
+      can_upgrade_agent: false,
+      totp_enabled: false,
+    } as CurrentUserResponse
+  }
   return mount(ActivityLogView, {
     global: {
-      plugins: [createPinia(), createTestRouter()],
+      plugins: [pinia, createTestRouter()],
       stubs: {
         DataTable: { template: '<div class="p-datatable"><slot /><slot name="empty" /></div>' },
         Column: true,
@@ -173,7 +203,8 @@ function setupDefaultMocks(): void {
     // would leak an acknowledged-in-one-test state into every test after it.
     if (url === '/stats/activity')
       return Promise.resolve({ data: ACTIVITY_ROWS.map((r) => ({ ...r })) })
-    if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
+    if (url === '/stats/system-events')
+      return Promise.resolve({ data: SYSTEM_EVENTS.map((e) => ({ ...e })) })
     if (url.startsWith('/agents/') && url.endsWith('/reports'))
       return Promise.resolve({ data: WARNING_MOCK_REPORTS })
     return Promise.resolve({ data: [] })
@@ -194,6 +225,19 @@ async function mountDefault(): Promise<ReturnType<typeof mount>> {
   const wrapper = mountView()
   await flushPromises()
   return wrapper
+}
+
+/** The Acknowledged filter is the only select offering "Only acknowledged". */
+async function setAcknowledgedFilter(
+  wrapper: ReturnType<typeof mount>,
+  value: string,
+): Promise<void> {
+  const select = wrapper
+    .findAll('select.select-input')
+    .find((sel) => sel.findAll('option').some((o) => o.text() === 'Only acknowledged'))
+  expect(select, 'no Acknowledged filter select').toBeDefined()
+  await select!.setValue(value)
+  await flushPromises()
 }
 
 async function mountEmpty(): Promise<ReturnType<typeof mount>> {
@@ -461,15 +505,29 @@ describe('ActivityLogView', () => {
       expect(ackButton(successRow!)).toBeUndefined()
     })
 
-    it('acknowledges the report and swaps the button to Unacknowledge', async () => {
+    it('acknowledges the report and drops it from the default feed', async () => {
       mockPost.mockResolvedValue({ data: undefined })
       const wrapper = await mountDefault()
-      const row = findWarningRow(wrapper)[0]
+      const before = findWarningRow(wrapper).length
 
-      await ackButton(row)!.trigger('click')
+      await ackButton(findWarningRow(wrapper)[0])!.trigger('click')
       await flushPromises()
 
       expect(mockPost).toHaveBeenCalledWith('/stats/activity/103/acknowledge')
+      // The default filter hides acknowledged entries, so the row it was just
+      // applied to leaves the feed rather than sitting there dimmed.
+      expect(findWarningRow(wrapper).length).toBe(before - 1)
+    })
+
+    it('keeps the acknowledged row visible when the filter shows them', async () => {
+      mockPost.mockResolvedValue({ data: undefined })
+      const wrapper = await mountDefault()
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      const row = findWarningRow(wrapper)[0]
+      await ackButton(row)!.trigger('click')
+      await flushPromises()
+
       expect(row.find('.badge--neutral').text()).toBe('Acknowledged')
       expect(row.findAll('button').find((b) => b.text() === 'Unacknowledge')).toBeTruthy()
     })
@@ -493,11 +551,15 @@ describe('ActivityLogView', () => {
             data: ACTIVITY_ROWS.map((r) => (r.id === 103 ? { ...r, acknowledged: true } : r)),
           })
         }
-        if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
+        if (url === '/stats/system-events')
+          return Promise.resolve({ data: SYSTEM_EVENTS.map((e) => ({ ...e })) })
         return Promise.resolve({ data: [] })
       })
       const wrapper = mountView()
       await flushPromises()
+      // An acknowledged row is only on screen at all once the filter asks for
+      // it; the fixture above stands in for that server response.
+      await setAcknowledgedFilter(wrapper, 'all')
 
       const row = findWarningRow(wrapper)[0]
       expect(row.find('.badge--neutral').text()).toBe('Acknowledged')
@@ -522,6 +584,140 @@ describe('ActivityLogView', () => {
       expect(row.findAll('button').find((b) => b.text() === 'Acknowledge')).toBeTruthy()
       expect(row.find('.badge--neutral').exists()).toBe(false)
     })
+
+    it('stacks the row actions in one column instead of spreading them', async () => {
+      const wrapper = await mountDefault()
+      const row = findWarningRow(wrapper)[0]
+
+      const actions = row.find('.run-card-actions')
+      expect(actions.exists()).toBe(true)
+      expect(actions.findAll('button').length).toBeGreaterThan(1)
+      // Every action lives inside the one group; none is a direct child of the
+      // space-between footer, which is what spread them across the card.
+      expect(row.findAll('.run-card-foot > button')).toHaveLength(0)
+    })
+  })
+
+  describe('acknowledged filter', () => {
+    it('asks the server for unacknowledged entries by default', async () => {
+      await mountDefault()
+
+      expect(mockGet).toHaveBeenCalledWith('/stats/activity', {
+        params: expect.objectContaining({ acknowledged: 'unacknowledged' }),
+      })
+      expect(mockGet).toHaveBeenCalledWith('/stats/system-events', {
+        params: expect.objectContaining({ acknowledged: 'unacknowledged' }),
+      })
+    })
+
+    it('refetches with the chosen state when the filter changes', async () => {
+      const wrapper = await mountDefault()
+      mockGet.mockClear()
+
+      await setAcknowledgedFilter(wrapper, 'acknowledged')
+
+      expect(mockGet).toHaveBeenCalledWith('/stats/activity', {
+        params: expect.objectContaining({ acknowledged: 'acknowledged' }),
+      })
+    })
+
+    it('counts a non-default acknowledged filter as an active filter', async () => {
+      const wrapper = await mountDefault()
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      const clearButton = wrapper.findAll('button').find((b) => b.text() === 'Clear')
+      await clearButton!.trigger('click')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenLastCalledWith(
+        '/stats/system-events',
+        expect.objectContaining({
+          params: expect.objectContaining({ acknowledged: 'unacknowledged' }),
+        }),
+      )
+    })
+  })
+
+  describe('acknowledge all', () => {
+    it('acknowledges everything outstanding and reloads the feed', async () => {
+      mockPost.mockResolvedValue({ data: { backup_reports: 2, system_events: 1 } })
+      const wrapper = await mountDefault()
+
+      const button = wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))
+      expect(button).toBeTruthy()
+      await button!.trigger('click')
+      await flushPromises()
+
+      expect(mockPost).toHaveBeenCalledWith('/stats/activity/acknowledge-all')
+    })
+
+    it('hides the button once nothing is left to acknowledge', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity')
+          return Promise.resolve({ data: [ACTIVITY_ROWS[0]].map((r) => ({ ...r })) })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      expect(wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))).toBe(
+        undefined,
+      )
+    })
+  })
+
+  describe('acknowledging system events', () => {
+    function systemAckButton(wrapper: ReturnType<typeof mount>) {
+      return wrapper
+        .findAll('.run-card-system button')
+        .find((b) => b.text() === 'Acknowledge' || b.text() === 'Unacknowledge')
+    }
+
+    it('offers Acknowledge on a failed periodic sync for an admin', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      const button = systemAckButton(wrapper)
+      expect(button).toBeTruthy()
+      expect(button!.text()).toBe('Acknowledge')
+    })
+
+    it('acknowledges the event and drops it from the default feed', async () => {
+      mockPost.mockResolvedValue({ data: undefined })
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+      const before = wrapper.findAll('.run-card-system').length
+
+      await systemAckButton(wrapper)!.trigger('click')
+      await flushPromises()
+
+      expect(mockPost).toHaveBeenCalledWith('/stats/system-events/2/acknowledge')
+      expect(wrapper.findAll('.run-card-system').length).toBe(before - 1)
+    })
+
+    it('hides the action from a non-admin, who the server would reject', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('operator')
+      await flushPromises()
+
+      expect(systemAckButton(wrapper)).toBeUndefined()
+    })
+
+    it('leaves a success event unacknowledgeable', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      const successCard = wrapper
+        .findAll('.run-card-system')
+        .find((c) => c.find('.badge--success').exists())
+      expect(successCard).toBeTruthy()
+      expect(successCard!.findAll('button')).toHaveLength(0)
+    })
   })
 
   describe('system events', () => {
@@ -541,8 +737,8 @@ describe('ActivityLogView', () => {
 
       const systemCards = wrapper.findAll('.run-card-system')
       const messages = systemCards.map((r) => r.find('.run-card-message').text())
-      expect(messages).toContain('Agent connected')
-      expect(messages).toContain('Agent disconnected')
+      expect(messages).toContain('Repository sync completed')
+      expect(messages).toContain('Periodic sync failed')
     })
 
     it('shows only system events when System category is active', async () => {
@@ -749,13 +945,33 @@ describe('ActivityLogView', () => {
   })
 
   describe('system event badges', () => {
-    // One event per arm of the classifier, including an event type it has
-    // never seen: an unclassified event must not borrow the success colour.
-    const SYSTEM_EVENTS = [
-      { type: 'repo_sync', label: 'repo sync', badge: 'badge--success' },
-      { type: 'repo_sync_slow', label: 'repo sync slow', badge: 'badge--warning' },
-      { type: 'repo_sync_failed', label: 'repo sync failed', badge: 'badge--danger' },
-      { type: 'quota_exceeded', label: 'quota exceeded', badge: 'badge--info' },
+    // One event per severity the server can report, including the neutral
+    // 'info' one: it must not borrow the success colour.
+    const SYSTEM_EVENTS: Array<{
+      type: string
+      severity: SystemEventSeverity
+      label: string
+      badge: string
+    }> = [
+      { type: 'repo_sync', severity: 'success', label: 'repo sync', badge: 'badge--success' },
+      {
+        type: 'repo_sync_slow',
+        severity: 'warning',
+        label: 'repo sync slow',
+        badge: 'badge--warning',
+      },
+      {
+        type: 'repo_sync_failed',
+        severity: 'failed',
+        label: 'repo sync failed',
+        badge: 'badge--danger',
+      },
+      {
+        type: 'repo_sync_cancelled',
+        severity: 'info',
+        label: 'repo sync cancelled',
+        badge: 'badge--info',
+      },
     ]
 
     it('colors each system event by what it means', async () => {
@@ -768,6 +984,9 @@ describe('ActivityLogView', () => {
               id: i + 1,
               created_at: `2026-01-01T0${7 - i}:00:00Z`,
               event_type: e.type,
+              severity: e.severity,
+              acknowledgeable: e.severity === 'warning' || e.severity === 'failed',
+              acknowledged: false,
               hostname: null,
               message: e.label,
             })),

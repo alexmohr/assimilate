@@ -4,9 +4,11 @@
 import { apiClient } from './client'
 import type { DashboardOverview } from '../types/dashboard'
 import type {
+  AcknowledgedFilter,
   CalendarDayResponse,
   DashboardSummaryResponse,
   ScheduleCountByAgentResponse,
+  SystemEventSeverity,
 } from '../types/generated'
 
 // NOTE: /stats/health is intentionally not covered by this module - it is
@@ -34,6 +36,7 @@ export interface ActivityFeedParams {
   limit?: number
   schedule_id?: number
   run_id?: string
+  acknowledged?: AcknowledgedFilter
 }
 
 export async function getActivity(params?: ActivityFeedParams): Promise<ActivityEntry[]> {
@@ -86,13 +89,19 @@ export interface SystemEventEntry {
   id: number
   created_at: string
   event_type: string
+  severity: SystemEventSeverity
+  acknowledgeable: boolean
+  acknowledged: boolean
   hostname: string | null
   message: string
 }
 
-export async function getSystemEvents(limit: number): Promise<SystemEventEntry[]> {
+export async function getSystemEvents(
+  limit: number,
+  acknowledged?: AcknowledgedFilter,
+): Promise<SystemEventEntry[]> {
   const response = await apiClient.get<SystemEventEntry[]>('/stats/system-events', {
-    params: { limit },
+    params: { limit, acknowledged },
   })
   return response.data
 }
@@ -132,6 +141,24 @@ export async function acknowledgeActivityEntry(id: number): Promise<void> {
 
 export async function unacknowledgeActivityEntry(id: number): Promise<void> {
   await apiClient.delete(`/stats/activity/${id}/acknowledge`)
+}
+
+export async function acknowledgeSystemEvent(id: number): Promise<void> {
+  await apiClient.post(`/stats/system-events/${id}/acknowledge`)
+}
+
+export async function unacknowledgeSystemEvent(id: number): Promise<void> {
+  await apiClient.delete(`/stats/system-events/${id}/acknowledge`)
+}
+
+export interface AcknowledgeAllResult {
+  backup_reports: number
+  system_events: number
+}
+
+export async function acknowledgeAllActivity(): Promise<AcknowledgeAllResult> {
+  const response = await apiClient.post<AcknowledgeAllResult>('/stats/activity/acknowledge-all')
+  return response.data
 }
 
 export interface CalendarParams {

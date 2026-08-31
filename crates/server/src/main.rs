@@ -726,7 +726,16 @@ fn stats_routes() -> Router<AppState> {
             post(api::stats::acknowledge_activity_entry)
                 .delete(api::stats::unacknowledge_activity_entry),
         )
+        .route(
+            "/api/stats/activity/acknowledge-all",
+            post(api::stats::acknowledge_all_activity),
+        )
         .route("/api/stats/system-events", get(api::stats::system_events))
+        .route(
+            "/api/stats/system-events/{id}/acknowledge",
+            post(api::stats::acknowledge_system_event)
+                .delete(api::stats::unacknowledge_system_event),
+        )
         .route("/api/stats/health", get(api::stats::health))
         .route("/api/stats/trends", get(api::stats::trends))
         .route("/api/stats/storage-trends", get(api::stats::storage_trends))

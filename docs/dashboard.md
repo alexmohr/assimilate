@@ -46,6 +46,8 @@ Findings include the affected agent, schedule, or repository, the reason, an age
 
 A finding reason that comes from an agent or a repository import (Borg output can run to kilobytes of stderr) is normalized to a single line and capped at 200 characters, with an ellipsis marking the cut. Each row additionally clamps the reason to two lines, so one verbose failure cannot stretch the panel. Hovering the reason shows it in full, and the finding's link opens the activity record that carries the untruncated message.
 
+Acknowledging a warning or failed run in the [Activity Log](activity.md#acknowledging-a-warning-or-failure) removes its finding here, dropping the finding count. Because the overdue and never-succeeded states of that same target are consequences of the run just reviewed, they are muted too, until the target's next run files a fresh report. Findings that do not come from the reviewed run — an offline agent with a backup due soon, a quota state, an unassigned agent — are unaffected. The **Last failure** and **Last warning** tiles follow the same rule and fall back to the most recent run still awaiting review.
+
 When no findings exist, the Needs Attention panel is hidden entirely and the panels below it move up to take its place.
 
 ## Protection Coverage

@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search, SlidersHorizontal, Activity, X, ArrowRight } from '@lucide/vue'
+import { Search, SlidersHorizontal, Activity, X, ArrowRight, CheckCheck } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -17,6 +17,9 @@ import {
   getSystemEvents,
   acknowledgeActivityEntry,
   unacknowledgeActivityEntry,
+  acknowledgeSystemEvent,
+  unacknowledgeSystemEvent,
+  acknowledgeAllActivity,
   type ActivityEntry,
   type SystemEventEntry,
 } from '../api/stats'
@@ -30,8 +33,10 @@ import { logger } from '../utils/logger'
 import { extractError } from '../utils/error'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
-import { backupStatusBadgeClass, badgeClass, logLevelTone } from '../utils/badge'
+import { backupStatusBadgeClass, badgeClass, logLevelTone, systemEventTone } from '../utils/badge'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
+import { useAuthStore } from '../stores/auth'
+import type { AcknowledgedFilter } from '../types/generated'
 
 interface ScheduleOption {
   id: number
@@ -67,30 +72,6 @@ function isQueryBackupStatus(value: string): value is 'success' | 'warning' | 'f
   return value === 'success' || value === 'warning' || value === 'failed'
 }
 
-type EventTypeClass = 'success' | 'warning' | 'failed' | 'other'
-
-function classifyEventType(eventType: string): EventTypeClass {
-  switch (eventType) {
-    case 'repo_sync':
-    case 'agent_connected':
-    case 'backup_complete':
-    case 'schedule_reenabled':
-      return 'success'
-    case 'repo_sync_slow':
-    case 'backup_warning':
-    case 'agent_disconnected':
-    case 'schedule_auto_disabled':
-      return 'warning'
-    case 'repo_sync_failed':
-    case 'backup_failed':
-    case 'auth_failed':
-    case 'error':
-      return 'failed'
-    default:
-      return 'other'
-  }
-}
-
 const rows = ref<ActivityEntry[]>([])
 const systemEvents = ref<SystemEventEntry[]>([])
 const agents = ref<Agent[]>([])
@@ -120,6 +101,10 @@ const filterFrom = ref('')
 const filterTo = ref('')
 const filterScheduleId = ref<number | null>(null)
 const filterRunId = ref<string | null>(null)
+// Reviewed problems drop out of the feed by default - the point of
+// acknowledging one is to stop seeing it. The filter brings them back.
+const DEFAULT_ACKNOWLEDGED_FILTER: AcknowledgedFilter = 'unacknowledged'
+const filterAcknowledged = ref<AcknowledgedFilter>(DEFAULT_ACKNOWLEDGED_FILTER)
 
 const logEntries = ref<LogEntry[]>([])
 const logLevel = ref<LogLevel>('')
@@ -148,7 +133,8 @@ const hasActiveFilters = computed((): boolean => {
     filterFrom.value !== '' ||
     filterTo.value !== '' ||
     filterScheduleId.value !== null ||
-    filterRunId.value !== null
+    filterRunId.value !== null ||
+    filterAcknowledged.value !== DEFAULT_ACKNOWLEDGED_FILTER
   )
 })
 
@@ -280,6 +266,10 @@ watch(filterRunId, () => {
   if (activeCategory.value !== 'logs') fetchData(true).catch(logger.error)
 })
 
+watch(filterAcknowledged, () => {
+  if (activeCategory.value !== 'logs') fetchData(true).catch(logger.error)
+})
+
 async function fetchMachines(): Promise<void> {
   agents.value = await listAgents()
 }
@@ -330,11 +320,12 @@ async function fetchData(reset: boolean, preserveExpanded = false): Promise<void
         limit,
         schedule_id: filterScheduleId.value ?? undefined,
         run_id: filterRunId.value ?? undefined,
+        acknowledged: filterAcknowledged.value,
       })
     }
 
     if (cat === 'system' || cat === 'all') {
-      systemEvents.value = await getSystemEvents(limit)
+      systemEvents.value = await getSystemEvents(limit, filterAcknowledged.value)
     }
 
     const totalFetched =
@@ -463,8 +454,23 @@ function isAckable(entry: ActivityEntry): boolean {
   return status === 'warning' || status === 'failed'
 }
 
-const { error: toastError } = useToast()
+const { error: toastError, success: toastSuccess } = useToast()
+const auth = useAuthStore()
 const ackingId = ref<number | null>(null)
+const ackingSystemId = ref<number | null>(null)
+const ackingAll = ref(false)
+
+/** Whether a row with this acknowledgment state still belongs in the feed. */
+function matchesAcknowledgedFilter(acknowledged: boolean): boolean {
+  switch (filterAcknowledged.value) {
+    case 'all':
+      return true
+    case 'unacknowledged':
+      return !acknowledged
+    case 'acknowledged':
+      return acknowledged
+  }
+}
 
 async function toggleAcknowledge(entry: ActivityEntry): Promise<void> {
   ackingId.value = entry.id
@@ -476,6 +482,9 @@ async function toggleAcknowledge(entry: ActivityEntry): Promise<void> {
       await acknowledgeActivityEntry(entry.id)
       entry.acknowledged = true
     }
+    if (!matchesAcknowledgedFilter(entry.acknowledged)) {
+      rows.value = rows.value.filter((r) => r.id !== entry.id)
+    }
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -483,17 +492,58 @@ async function toggleAcknowledge(entry: ActivityEntry): Promise<void> {
   }
 }
 
-function eventTypeClass(eventType: string): string {
-  switch (classifyEventType(eventType)) {
-    case 'success':
-      return badgeClass('success')
-    case 'warning':
-      return badgeClass('warning')
-    case 'failed':
-      return badgeClass('danger')
-    case 'other':
-      return badgeClass('info')
+/**
+ * System events are global rather than repository-scoped, so the server only
+ * lets an admin acknowledge one - hide the button for everyone else instead of
+ * offering an action that would come back 403.
+ */
+function isSystemEventAckable(event: SystemEventEntry): boolean {
+  return event.acknowledgeable && auth.isAdmin
+}
+
+async function toggleSystemAcknowledge(event: SystemEventEntry): Promise<void> {
+  ackingSystemId.value = event.id
+  try {
+    if (event.acknowledged) {
+      await unacknowledgeSystemEvent(event.id)
+      event.acknowledged = false
+    } else {
+      await acknowledgeSystemEvent(event.id)
+      event.acknowledged = true
+    }
+    if (!matchesAcknowledgedFilter(event.acknowledged)) {
+      systemEvents.value = systemEvents.value.filter((e) => e.id !== event.id)
+    }
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    ackingSystemId.value = null
   }
+}
+
+/** Whether anything currently listed still awaits acknowledgment. */
+const hasUnacknowledged = computed((): boolean => {
+  const backups = filtered.value.some((r) => isAckable(r) && !r.acknowledged)
+  const events = systemEvents.value.some((e) => isSystemEventAckable(e) && !e.acknowledged)
+  return backups || events
+})
+
+async function acknowledgeAll(): Promise<void> {
+  ackingAll.value = true
+  try {
+    const result = await acknowledgeAllActivity()
+    const total = result.backup_reports + result.system_events
+    toastSuccess(total === 1 ? 'Acknowledged 1 entry' : `Acknowledged ${total} entries`)
+    await fetchData(true, true)
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    ackingAll.value = false
+  }
+}
+
+function eventBadgeClass(event: SystemEventEntry): string {
+  return badgeClass(systemEventTone(event.severity))
 }
 
 function logRowClass(entry: LogEntry): string {
@@ -509,6 +559,7 @@ function clearFilters(): void {
   filterTo.value = ''
   filterScheduleId.value = null
   filterRunId.value = null
+  filterAcknowledged.value = DEFAULT_ACKNOWLEDGED_FILTER
   logLevel.value = ''
   logSearch.value = ''
 }
@@ -531,6 +582,15 @@ function filterByRun(runId: string): void {
             ? `${logEntries.length} entries`
             : `${unifiedRows.length} entries`
         }}</span>
+        <button
+          v-if="activeCategory !== 'logs' && hasUnacknowledged"
+          class="btn btn-sm btn-ghost"
+          :disabled="ackingAll"
+          @click="acknowledgeAll"
+        >
+          <CheckCheck :size="14" />
+          {{ ackingAll ? 'Acknowledging...' : 'Acknowledge all' }}
+        </button>
       </div>
     </div>
 
@@ -672,6 +732,18 @@ function filterByRun(runId: string): void {
                 <option value="failed">Failed</option>
                 <option value="started">Started</option>
                 <option value="pending">Pending</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label class="filter-label">Acknowledged</label>
+              <select
+                v-model="filterAcknowledged"
+                class="input input-sm select-input"
+              >
+                <option value="unacknowledged">Hidden</option>
+                <option value="all">Shown</option>
+                <option value="acknowledged">Only acknowledged</option>
               </select>
             </div>
 
@@ -856,22 +928,24 @@ function filterByRun(runId: string): void {
                 <span class="run-card-duration">{{
                   formatDuration(row.backup.duration_secs)
                 }}</span>
-                <button
-                  v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
-                  class="btn btn-xs btn-ghost"
-                  title="View all events for this run"
-                  @click.stop="filterByRun(row.backup.run_id)"
-                >
-                  View run
-                </button>
-                <button
-                  v-if="isAckable(row.backup)"
-                  class="btn btn-xs btn-ghost"
-                  :disabled="ackingId === row.backup.id"
-                  @click.stop="toggleAcknowledge(row.backup)"
-                >
-                  {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
-                </button>
+                <div class="run-card-actions">
+                  <button
+                    v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
+                    class="btn btn-xs btn-ghost"
+                    title="View all events for this run"
+                    @click.stop="filterByRun(row.backup.run_id)"
+                  >
+                    View run
+                  </button>
+                  <button
+                    v-if="isAckable(row.backup)"
+                    class="btn btn-xs btn-ghost"
+                    :disabled="ackingId === row.backup.id"
+                    @click.stop="toggleAcknowledge(row.backup)"
+                  >
+                    {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -958,7 +1032,10 @@ function filterByRun(runId: string): void {
           <article
             v-if="row.kind === 'system' && row.event"
             class="panel panel--sectioned run-card run-card-system"
-            :class="{ expanded: expandedSystemId === row.event.id }"
+            :class="{
+              expanded: expandedSystemId === row.event.id,
+              'run-card--acknowledged': row.event.acknowledged,
+            }"
           >
             <div
               class="run-card-summary"
@@ -969,13 +1046,34 @@ function filterByRun(runId: string): void {
                   <span class="run-card-hostname">{{ row.event.hostname ?? '—' }}</span>
                   <span class="run-card-time">{{ formatDateShort(row.event.created_at) }}</span>
                 </div>
-                <span
-                  class="badge"
-                  :class="eventTypeClass(row.event.event_type)"
-                  >{{ formatEventType(row.event.event_type) }}</span
-                >
+                <div class="run-card-badges">
+                  <span
+                    class="badge"
+                    :class="eventBadgeClass(row.event)"
+                    >{{ formatEventType(row.event.event_type) }}</span
+                  >
+                  <span
+                    v-if="row.event.acknowledged"
+                    class="badge badge--neutral"
+                    >Acknowledged</span
+                  >
+                </div>
               </div>
               <p class="run-card-message">{{ row.event.message }}</p>
+              <div
+                v-if="isSystemEventAckable(row.event)"
+                class="run-card-foot"
+              >
+                <div class="run-card-actions">
+                  <button
+                    class="btn btn-xs btn-ghost"
+                    :disabled="ackingSystemId === row.event.id"
+                    @click.stop="toggleSystemAcknowledge(row.event)"
+                  >
+                    {{ row.event.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div
@@ -1112,8 +1210,20 @@ function filterByRun(runId: string): void {
   padding-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: var(--space-5);
+}
+
+/* Stacked in one right-hand column rather than spread across the card: with
+   the buttons as direct children of a space-between row, a second action
+   drifts into the middle of a wide card, nowhere near the run it acts on. */
+.run-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  margin-left: auto;
 }
 
 .run-card-duration {

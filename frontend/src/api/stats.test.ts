@@ -16,6 +16,9 @@ import {
   getDashboardSummary,
   getScheduleCounts,
   getSystemEvents,
+  acknowledgeSystemEvent,
+  unacknowledgeSystemEvent,
+  acknowledgeAllActivity,
 } from './stats'
 
 describe('stats api', () => {
@@ -73,7 +76,41 @@ describe('stats api', () => {
 
     await getSystemEvents(50)
 
-    expect(apiClient.get).toHaveBeenCalledWith('/stats/system-events', { params: { limit: 50 } })
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/system-events', {
+      params: { limit: 50, acknowledged: undefined },
+    })
+  })
+
+  it('gets system events filtered by acknowledgment state', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] })
+
+    await getSystemEvents(50, 'unacknowledged')
+
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/system-events', {
+      params: { limit: 50, acknowledged: 'unacknowledged' },
+    })
+  })
+
+  it('acknowledges and unacknowledges a system event', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: undefined })
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: undefined })
+
+    await acknowledgeSystemEvent(9)
+    await unacknowledgeSystemEvent(9)
+
+    expect(apiClient.post).toHaveBeenCalledWith('/stats/system-events/9/acknowledge')
+    expect(apiClient.delete).toHaveBeenCalledWith('/stats/system-events/9/acknowledge')
+  })
+
+  it('acknowledges everything outstanding at once', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { backup_reports: 3, system_events: 1 },
+    })
+
+    const result = await acknowledgeAllActivity()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/stats/activity/acknowledge-all')
+    expect(result).toEqual({ backup_reports: 3, system_events: 1 })
   })
 
   it('gets the dashboard summary', async () => {

@@ -43,6 +43,9 @@ pub struct TargetRow {
     pub latest_warning: Option<bool>,
     /// Whether the latest backup is still running.
     pub latest_started: Option<bool>,
+    /// Whether someone has already acknowledged the latest backup's warning or
+    /// failure in the Activity Log.
+    pub latest_acknowledged: Option<bool>,
     /// Human-readable message from the latest backup.
     pub latest_message: Option<String>,
     /// When the last successful backup finished.
@@ -129,6 +132,7 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
                COALESCE(latest.status = 'failed', NULL) AS latest_failed,
                COALESCE(latest.status = 'warning', NULL) AS latest_warning,
                COALESCE(latest.status = 'started', NULL) AS latest_started,
+               latest.acknowledged AS "latest_acknowledged?",
                CASE WHEN latest.status = 'warning' THEN latest.warnings[1]
                     ELSE latest.error_message END AS latest_message,
                COALESCE(success.finished_at, NULL) AS last_success_at
@@ -137,7 +141,8 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
         JOIN agents c ON c.id = st.agent_id
         JOIN repos r ON r.id = s.repo_id
         LEFT JOIN LATERAL (
-            SELECT br.id, br.started_at, br.finished_at, br.status, br.error_message, br.warnings
+            SELECT br.id, br.started_at, br.finished_at, br.status, br.error_message,
+                   br.warnings, br.acknowledged
             FROM backup_reports br
             WHERE br.schedule_id = s.id AND br.agent_id = c.id
             ORDER BY br.started_at DESC

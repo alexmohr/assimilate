@@ -655,7 +655,7 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
         repo_id,
     };
 
-    if woke && agent.shutdown_after_backup {
+    if (woke || started_agent) && agent.shutdown_after_backup {
         record_event(
             ctx,
             run_id,
@@ -1222,6 +1222,64 @@ mod tests {
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(event_types, vec!["agent_stop_sent"]);
+    }
+
+    /// Regression test: a host that isn't a persistent boot service needs
+    /// both `wake_enabled` (to power the machine on) and `start_agent_enabled`
+    /// (to bring the agent process up over SSH once it is) -- the WOL wait in
+    /// `ensure_agent_online` times out for exactly this host shape, since the
+    /// agent never reconnects on its own, so `woke` stays `false` even though
+    /// this run is what brought the host up. Shutdown must still fire off the
+    /// `started_agent` flag alone, not require `woke` too.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_agent_power_attempts_shutdown_when_this_run_only_started_the_agent(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = test_repo(&pool).await;
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+                start_agent_enabled: true,
+                stop_agent_after_backup: false,
+                ssh_host: Some(UNREACHABLE_HOST),
+                ssh_port: UNREACHABLE_PORT,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        // The WOL wait timed out (host came up too slowly to reconnect on its
+        // own) but the SSH start succeeded, matching the scenario above.
+        sessions
+            .begin(PowerHostKey::Agent(agent.id), false, true)
+            .await;
+
+        teardown_agent_power(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+        )
+        .await;
+
+        // Shutdown must be attempted -- not the stop-agent branch -- even
+        // though `woke` is false, because `started_agent` alone means this
+        // run is responsible for the host being up.
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["shutdown_sent"]);
     }
 
     #[ignore = "requires DATABASE_URL"]

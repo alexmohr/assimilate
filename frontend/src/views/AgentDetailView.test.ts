@@ -951,6 +951,30 @@ describe('AgentDetailView — power phase badge', () => {
     expect(wrapper.find('.badge--info').exists()).toBe(false)
   })
 
+  // Two agents can share a hostname across different domains, or an
+  // unrelated agent can simply connect elsewhere while this page is open -
+  // either way, its `AgentConnected` must not clear a phase that belongs to
+  // the agent actually shown on this page.
+  it('does not clear the phase when a different agent connects', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+    expect(wrapper.find('.badge--info').exists()).toBe(true)
+
+    wsHandlers['AgentConnected']?.({ hostname: 'some-other-host' })
+    await nextTick()
+
+    expect(wrapper.find('.badge--info').exists()).toBe(true)
+  })
+
   // If the SSH command behind a shutdown/agent-stop attempt fails partway,
   // the agent never disconnects and never reconnects, so neither a
   // `host_offline` RunEvent nor an `AgentConnected` message ever arrives to
@@ -1878,18 +1902,19 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
   // The page is long-lived, so it refetches on anything that could have
   // changed what it is showing rather than waiting for a navigation.
-  it.each([['DataChanged'], ['AgentConnected'], ['AgentDisconnected']])(
-    'refetches on %s',
-    async (event) => {
-      await render()
-      const before = vi.mocked(apiClient.get).mock.calls.length
+  it.each([
+    ['DataChanged', {}],
+    ['AgentConnected', { hostname: 'test-host' }],
+    ['AgentDisconnected', {}],
+  ])('refetches on %s', async (event, payload) => {
+    await render()
+    const before = vi.mocked(apiClient.get).mock.calls.length
 
-      wsHandlers[event]?.({})
-      await flushPromises()
+    wsHandlers[event]?.(payload)
+    await flushPromises()
 
-      expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
-    },
-  )
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
+  })
 
   it('refetches when the socket reconnects', async () => {
     await render()

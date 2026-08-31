@@ -578,7 +578,8 @@ onMounted(() => {
 
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('DataChanged', () => loadAgent().catch(logger.error))
-onMessage('AgentConnected', () => {
+onMessage('AgentConnected', (payload) => {
+  if (payload.hostname !== props.hostname) return
   powerPhase.value = null
   loadAgent().catch(logger.error)
 })

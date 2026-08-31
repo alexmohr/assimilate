@@ -996,6 +996,42 @@ async fn test_update_agent_power_rejects_start_agent_without_ssh_host() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_start_agent_with_empty_service_name() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'power-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": true,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10",
+            "agent_service_name": "   "
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
 async fn test_update_agent_power_rejects_ipv6_broadcast_address() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
@@ -1075,10 +1111,14 @@ async fn test_update_agent_power_accepts_shutdown_after_backup_without_start_age
     server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
         .await
         .unwrap();
+    // shutdown_after_backup always goes over SSH regardless of
+    // start_agent_enabled, so it needs the same recorded last_ssh_user
+    // start_agent_enabled requires -- see the rejection test below.
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'power-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
 
-    // Unlike start_agent_enabled, shutdown_after_backup alone doesn't need a
-    // recorded last_ssh_user (teardown_agent_power falls back to a default
-    // SSH user), so this succeeds once an ssh_host is supplied.
     let req = json_request(
         "PUT",
         "/api/agents/power-host/power",
@@ -1096,6 +1136,38 @@ async fn test_update_agent_power_accepts_shutdown_after_backup_without_start_age
     );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_shutdown_after_backup_without_recorded_ssh_user() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    // No deploy has ever happened for this agent, so last_ssh_user is NULL.
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

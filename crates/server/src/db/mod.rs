@@ -6755,10 +6755,10 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          COALESCE(ris.importing, false) AS \"importing!\", ris.error AS import_error, \
          COALESCE(ris.progress, 0) AS \"import_progress!\", COALESCE(ris.total, 0) AS \
          \"import_total!\", ris.status_message AS import_status_message, rlo.kind AS \
-         last_op_kind, rlo.at AS last_op_at, rlo.by_text AS last_op_by, agg.last_backup_at AS \
-         \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \
-         COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
-         quota_warn_bytes, q.critical_bytes AS quota_critical_bytes, q.warn_action AS \
+         \"last_op_kind?\", rlo.at AS \"last_op_at?\", rlo.by_text AS \"last_op_by?\", \
+         agg.last_backup_at AS \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \
+         \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes \
+         AS quota_warn_bytes, q.critical_bytes AS quota_critical_bytes, q.warn_action AS \
          \"quota_warn_action?\", q.critical_action AS \"quota_critical_action?\", q.enabled AS \
          \"quota_enabled?\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN \
          repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = \
@@ -6794,10 +6794,10 @@ pub async fn get_repo_with_stats(
          COALESCE(ris.importing, false) AS \"importing!\", ris.error AS import_error, \
          COALESCE(ris.progress, 0) AS \"import_progress!\", COALESCE(ris.total, 0) AS \
          \"import_total!\", ris.status_message AS import_status_message, rlo.kind AS \
-         last_op_kind, rlo.at AS last_op_at, rlo.by_text AS last_op_by, agg.last_backup_at AS \
-         \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \
-         COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
-         quota_warn_bytes, q.critical_bytes AS quota_critical_bytes, q.warn_action AS \
+         \"last_op_kind?\", rlo.at AS \"last_op_at?\", rlo.by_text AS \"last_op_by?\", \
+         agg.last_backup_at AS \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \
+         \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes \
+         AS quota_warn_bytes, q.critical_bytes AS quota_critical_bytes, q.warn_action AS \
          \"quota_warn_action?\", q.critical_action AS \"quota_critical_action?\", q.enabled AS \
          \"quota_enabled?\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN \
          repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = \

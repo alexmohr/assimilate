@@ -1264,20 +1264,48 @@ async fn ensure_target_power(
 /// warranted (this session actually woke or started it). A no-op for a host
 /// whose row was never fetched -- see the `is_some()` guards around the
 /// matching `begin()` calls in [`run_sequential_target`].
+///
+/// `power.agent`/`power.repo` are re-fetched here rather than reused as-is:
+/// they were snapshotted before the backup ran, which can take hours, so an
+/// admin toggling `shutdown_after_backup`/`stop_agent_after_backup` mid-run
+/// would otherwise have teardown act on stale settings. Falls back to the
+/// snapshot if the re-fetch itself fails (e.g. the row was deleted
+/// mid-run), so the [`PowerSessionTracker`](crate::power::PowerSessionTracker)
+/// reservation this target holds is still reliably released either way.
 async fn teardown_power_for_target(power: TargetPowerState<'_>) {
-    if let Some(agent) = power.agent {
-        power::teardown_agent_power(power.ctx, agent, power.repo_id, power.run_id).await;
-    }
-    if let Some(repo) = power.repo {
-        power::teardown_repo_power(
-            power.ctx,
-            repo,
-            power.agent_id,
-            power.run_id,
-            power.hostname,
-        )
-        .await;
-    }
+    // Independent hosts, torn down concurrently for the same reason
+    // ensure_target_power wakes them concurrently: one host's SSH round-trip
+    // (up to SSH_ACTION_TIMEOUT) must not add to, rather than overlap, the
+    // other's -- this runs while the success path still holds the per-repo
+    // lock, and on the failure path before signaling tick() to move on to
+    // the next due schedule.
+    tokio::join!(
+        async {
+            if let Some(agent) = power.agent {
+                let fresh = db::get_agent_by_id(power.ctx.pool, agent.id).await.ok();
+                power::teardown_agent_power(
+                    power.ctx,
+                    fresh.as_ref().unwrap_or(agent),
+                    power.repo_id,
+                    power.run_id,
+                )
+                .await;
+            }
+        },
+        async {
+            if let Some(repo) = power.repo {
+                let fresh = db::get_repo_by_id(power.ctx.pool, repo.id).await.ok();
+                power::teardown_repo_power(
+                    power.ctx,
+                    fresh.as_ref().unwrap_or(repo),
+                    power.agent_id,
+                    power.run_id,
+                    power.hostname,
+                )
+                .await;
+            }
+        },
+    );
 }
 
 fn signal_first_target_attempted(triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>) {
@@ -4081,5 +4109,123 @@ esac
                 .await,
             "background_task_tracker must go idle once both targets have completed"
         );
+    }
+
+    /// Regression test: `teardown_power_for_target` must act on the agent's
+    /// *current* `shutdown_after_backup` setting, not the snapshot fetched
+    /// before the (possibly hours-long) backup ran. Simulates an admin
+    /// flipping the setting on mid-run by passing a stale, pre-change row
+    /// alongside a DB that already has the new value.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_power_for_target_uses_current_settings_not_the_pre_run_snapshot(
+        pool: sqlx::PgPool,
+    ) {
+        let inserted = db::insert_agent(&pool, "power-refetch-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
+            "test-pass",
+            &shared::crypto::derive_key(b"test-secret-key-for-scheduler").unwrap(),
+        )
+        .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "power-refetch-repo",
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // The row fetched before the backup ran: shutdown_after_backup off.
+        let stale_agent = db::update_agent_power(
+            &pool,
+            inserted.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: false,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                // Nothing listens here -- the SSH attempt is expected to
+                // fail, only the run-event trail is under test.
+                ssh_host: Some("127.0.0.1"),
+                ssh_port: 1,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        // An admin enables it while the backup is still running.
+        db::update_agent_power(
+            &pool,
+            inserted.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                // Nothing listens here -- the SSH attempt is expected to
+                // fail, only the run-event trail is under test.
+                ssh_host: Some("127.0.0.1"),
+                ssh_port: 1,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new();
+        let sessions = crate::power::PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        sessions
+            .reserve(crate::power::PowerHostKey::Agent(stale_agent.id))
+            .await;
+        sessions
+            .record_outcome(
+                crate::power::PowerHostKey::Agent(stale_agent.id),
+                true,
+                false,
+            )
+            .await;
+
+        teardown_power_for_target(TargetPowerState {
+            ctx: crate::power::PowerCtx {
+                pool: &pool,
+                registry: &registry,
+                ui_broadcast: &bus,
+                power_sessions: &sessions,
+            },
+            agent: Some(&stale_agent),
+            repo: None,
+            agent_id: stale_agent.id,
+            repo_id: repo.id,
+            run_id: "run-1",
+            hostname: "power-refetch-host",
+        })
+        .await;
+
+        // Shutdown must have been attempted -- proving the fresh re-fetch's
+        // shutdown_after_backup=true was used, not the stale snapshot's
+        // false, which would have made teardown a no-op instead.
+        let events = db::run_events::list_run_events(&pool, "run-1", stale_agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["shutdown_sent"]);
     }
 }

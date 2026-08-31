@@ -246,6 +246,24 @@ describe('AgentPowerCard', () => {
     )
   })
 
+  // Silently substituting a default here would let an admin clear the field
+  // to retype a different unit name, save early, and never notice the wrong
+  // value was persisted instead - the server rejects an empty name outright
+  // when start_agent_enabled, same as it does for the other required fields.
+  it('sends an emptied service name as-is rather than substituting the default', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('#power-service-name').setValue('   ')
+
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01/power',
+      expect.objectContaining({ agent_service_name: '' }),
+      { params: {} },
+    )
+  })
+
   it('emits the saved agent so the view can merge it back', async () => {
     const wrapper = mount()
     await expectSavedEmitted(wrapper, [AGENT])

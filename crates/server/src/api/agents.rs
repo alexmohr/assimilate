@@ -443,11 +443,18 @@ pub async fn update_agent_power(
                 .to_owned(),
         ));
     }
-    if req.start_agent_enabled && existing.last_ssh_user.is_none() {
+    if (req.start_agent_enabled || req.wake.shutdown_after_backup)
+        && existing.last_ssh_user.is_none()
+    {
         return Err(ApiError::BadRequest(
-            "deploy the SSH key to this host (Deploy SSH key) before enabling start agent -- no \
-             SSH user on record for it yet"
+            "deploy the SSH key to this host (Deploy SSH key) before enabling start agent or \
+             shutdown after backup -- no SSH user on record for it yet"
                 .to_owned(),
+        ));
+    }
+    if req.start_agent_enabled && req.agent_service_name.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "a service name is required to start the agent process".to_owned(),
         ));
     }
 

@@ -97,7 +97,7 @@ async function save(): Promise<void> {
         stop_agent_after_backup: stopAgentAfterBackup.value,
         ssh_host: sshHost.value.trim() || null,
         ssh_port: sshPort.value,
-        agent_service_name: serviceName.value.trim() || 'assimilate-agent',
+        agent_service_name: serviceName.value.trim(),
       },
       props.agent.domain,
     )

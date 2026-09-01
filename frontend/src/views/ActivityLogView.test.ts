@@ -651,6 +651,20 @@ describe('ActivityLogView', () => {
       expect(mockPost).toHaveBeenCalledWith('/stats/activity/acknowledge-all')
     })
 
+    it('keeps the entries listed when the bulk acknowledge fails', async () => {
+      mockPost.mockRejectedValue(new Error('boom'))
+      const wrapper = await mountDefault()
+
+      const button = wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))
+      await button!.trigger('click')
+      await flushPromises()
+
+      expect(findWarningRow(wrapper).length).toBeGreaterThan(0)
+      expect(
+        wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all')),
+      ).toBeTruthy()
+    })
+
     it('hides the button once nothing is left to acknowledge', async () => {
       mockGet.mockImplementation((url: string) => {
         if (url === '/agents') return Promise.resolve({ data: AGENTS })
@@ -705,6 +719,68 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       expect(systemAckButton(wrapper)).toBeUndefined()
+    })
+
+    it('unacknowledges an already acknowledged event', async () => {
+      mockDelete.mockResolvedValue({ data: undefined })
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events')
+          return Promise.resolve({
+            data: SYSTEM_EVENTS.map((e) => (e.id === 2 ? { ...e, acknowledged: true } : { ...e })),
+          })
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView('admin')
+      await flushPromises()
+      // An acknowledged event only shows up once the filter asks for it.
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      const button = systemAckButton(wrapper)
+      expect(button!.text()).toBe('Unacknowledge')
+      await button!.trigger('click')
+      await flushPromises()
+
+      expect(mockDelete).toHaveBeenCalledWith('/stats/system-events/2/acknowledge')
+      expect(systemAckButton(wrapper)!.text()).toBe('Acknowledge')
+    })
+
+    it('drops an unacknowledged event from the "only acknowledged" view', async () => {
+      mockDelete.mockResolvedValue({ data: undefined })
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events')
+          return Promise.resolve({
+            data: SYSTEM_EVENTS.map((e) => (e.id === 2 ? { ...e, acknowledged: true } : { ...e })),
+          })
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView('admin')
+      await flushPromises()
+      await setAcknowledgedFilter(wrapper, 'acknowledged')
+
+      const before = wrapper.findAll('.run-card-system').length
+      await systemAckButton(wrapper)!.trigger('click')
+      await flushPromises()
+
+      // Clearing the acknowledgment makes it no longer match a view that asks
+      // for acknowledged entries only.
+      expect(wrapper.findAll('.run-card-system').length).toBe(before - 1)
+    })
+
+    it('reports a failure without changing the button state', async () => {
+      mockPost.mockRejectedValue(new Error('forbidden'))
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      await systemAckButton(wrapper)!.trigger('click')
+      await flushPromises()
+
+      expect(systemAckButton(wrapper)!.text()).toBe('Acknowledge')
+      expect(wrapper.findAll('.run-card-system .badge--neutral')).toHaveLength(0)
     })
 
     it('leaves a success event unacknowledgeable', async () => {

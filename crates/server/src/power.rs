@@ -409,8 +409,23 @@ pub async fn ensure_agent_online(
     .await;
 
     if agent.wake_enabled {
+        // `outcome.woke` tracks whether the WOL packet was actually sent,
+        // not whether the host came back online within `wake_timeout_seconds`
+        // -- same reasoning as `started_agent` below: teardown must still
+        // shut down a host that boots slower than the timeout, since this
+        // run is what woke it regardless of how long that took. Without
+        // this, a wake-only host (no start-agent fallback) that's simply
+        // slow to boot would never get shutdown credit on the run that woke
+        // it, and every later run would then find it already connected and
+        // never attempt (or credit) a wake again -- silently and
+        // permanently disabling shutdown_after_backup for that host.
         outcome.woke = wake_agent_host(ctx, agent, target_ids, run_id).await;
-        if outcome.woke {
+        if outcome.woke
+            && wait_for(timeout_duration(agent.wake_timeout_seconds), || {
+                ctx.registry.is_connected(agent.id)
+            })
+            .await
+        {
             record_event(
                 ctx,
                 run_id,
@@ -455,9 +470,12 @@ pub async fn ensure_agent_online(
     outcome
 }
 
-/// Sends the Wake-on-LAN packet for `agent` and waits for it to connect,
-/// logging and returning `false` on any failure along the way (invalid MAC,
-/// send failure) rather than aborting the run.
+/// Sends the Wake-on-LAN packet for `agent`, logging and returning `false`
+/// on any failure along the way (invalid MAC, send failure) rather than
+/// aborting the run. The returned bool reflects only whether the packet was
+/// sent -- callers wait separately for the host to actually come online,
+/// since that outcome must not gate whether this run is on the hook to shut
+/// it back down.
 async fn wake_agent_host(
     ctx: PowerCtx<'_>,
     agent: &AgentRow,
@@ -495,10 +513,7 @@ async fn wake_agent_host(
     )
     .await;
 
-    wait_for(timeout_duration(agent.wake_timeout_seconds), || {
-        ctx.registry.is_connected(agent.id)
-    })
-    .await
+    true
 }
 
 /// Starts `agent`'s systemd unit over SSH, logging and returning `false` on
@@ -625,12 +640,18 @@ pub async fn ensure_repo_online(
     )
     .await;
 
-    outcome.woke = wait_for(timeout_duration(repo.wake_timeout_seconds), || {
+    // `outcome.woke` reflects only that the packet was sent, not that SSH
+    // became reachable within the timeout -- same reasoning as
+    // ensure_agent_online's wake path: teardown must still shut this host
+    // down even if it's simply slow to boot, and a later run's reachability
+    // check succeeding shouldn't be the only way this run gets credit for
+    // having woken it.
+    outcome.woke = true;
+    if wait_for(timeout_duration(repo.wake_timeout_seconds), || {
         repo_reachable(repo)
     })
-    .await;
-
-    if outcome.woke {
+    .await
+    {
         record_event(
             ctx,
             run_id,
@@ -669,7 +690,9 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
         repo_id,
     };
 
-    if (woke || started_agent) && agent.shutdown_after_backup {
+    // The early guard above already ensures woke || started_agent, so
+    // shutdown eligibility here reduces to shutdown_after_backup alone.
+    if agent.shutdown_after_backup {
         record_event(
             ctx,
             run_id,
@@ -1017,7 +1040,12 @@ mod tests {
         )
         .await;
 
-        assert!(!outcome.woke, "the agent never connects in this test");
+        assert!(
+            outcome.woke,
+            "the WOL packet send itself succeeds even though the agent never connects in this \
+             test -- teardown must still credit (and later undo) this run's wake regardless of \
+             how the reconnect wait resolves"
+        );
         assert!(
             !outcome.started_agent,
             "the SSH host refuses the connection"
@@ -1100,7 +1128,12 @@ mod tests {
         )
         .await;
 
-        assert!(!outcome.woke, "the unreachable host never answers SSH");
+        assert!(
+            outcome.woke,
+            "the WOL packet send itself succeeds even though the host never answers SSH in this \
+             test -- teardown must still credit (and later undo) this run's wake regardless of \
+             how the reachability wait resolves"
+        );
 
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await

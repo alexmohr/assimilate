@@ -264,7 +264,7 @@ export type ServerToUi =
        * shared across every target of a multi-target schedule, so a
        * listener showing one specific (agent, repo) pairing needs this
        * -- and `repo_id` below -- to tell its own events apart from a
-       * sibling target's that happens to share the same run_id.
+       * sibling target's that happens to share the same `run_id`.
        */
       agent_id: number;
       /**

@@ -74,6 +74,7 @@ use crate::{
     AppState, config_assembler,
     db::{self, ScheduleParams, ScheduleRow},
     error::{ApiError, ApiJson},
+    power,
     ssh::{self, TestConnectionRequest},
     ws::{completion_bus, ui_broadcast::ActiveBackupSnapshot},
 };
@@ -1254,6 +1255,23 @@ async fn run_manual_target(
 ) {
     let rx = state.completion_bus.subscribe();
 
+    // Reserved for the whole duration of this manual run, before dispatch,
+    // for the same reason the scheduler reserves before its own wake
+    // attempt: a scheduled run sharing this agent's host must not have it
+    // shut down out from under it just because this manual run raced to
+    // finish and release first. Manual dispatch never wakes anything itself
+    // (unlike the scheduler's ensure_target_power) -- it only participates
+    // in the tracker so it can't be the reason a host it's still using gets
+    // torn down, and hands off actual teardown below once it's done.
+    state
+        .power_sessions
+        .reserve(power::PowerHostKey::Agent(target.agent_id))
+        .await;
+    state
+        .power_sessions
+        .reserve(power::PowerHostKey::Repo(repo_id.0))
+        .await;
+
     let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
 
     let command_sent =
@@ -1304,6 +1322,42 @@ async fn run_manual_target(
                 schedule_id,
                 "manual run: agent disconnected before reporting completion"
             );
+        }
+    }
+
+    release_manual_target_power(state, target.agent_id, repo_id.0, run_id, &target.hostname).await;
+}
+
+/// Releases this manual run's `PowerSessionTracker` reservations, tearing
+/// down whichever host(s) this was the last participant on -- mirroring
+/// `scheduler.rs`'s `teardown_power_for_target`, but manual dispatch never
+/// wakes anything itself, so there's no pre-run snapshot to re-fetch: the
+/// current agent/repo rows are simply fetched fresh here. A row fetch
+/// failure is logged and that host's teardown skipped, matching
+/// `ensure_target_power`'s existing best-effort convention.
+async fn release_manual_target_power(
+    state: &AppState,
+    agent_id: i64,
+    repo_id: i64,
+    run_id: &str,
+    hostname: &str,
+) {
+    let power_ctx = power::PowerCtx {
+        pool: &state.pool,
+        registry: &state.registry,
+        ui_broadcast: &state.ui_broadcast,
+        power_sessions: &state.power_sessions,
+    };
+    match db::get_agent_by_id(&state.pool, agent_id).await {
+        Ok(agent) => power::teardown_agent_power(power_ctx, &agent, repo_id, run_id).await,
+        Err(e) => {
+            tracing::warn!(agent_id, error = %e, "manual run: failed to load agent for power teardown");
+        }
+    }
+    match db::get_repo_by_id(&state.pool, repo_id).await {
+        Ok(repo) => power::teardown_repo_power(power_ctx, &repo, agent_id, run_id, hostname).await,
+        Err(e) => {
+            tracing::warn!(repo_id, error = %e, "manual run: failed to load repo for power teardown");
         }
     }
 }
@@ -1419,4 +1473,228 @@ async fn broadcast_manual_backup_started(
         });
     }
     state.ui_broadcast.send(ServerToUi::DataChanged);
+}
+
+#[cfg(test)]
+mod tests {
+    use db::InsertRepoParams;
+
+    use super::*;
+    use crate::{
+        repo_op_tracker::RepoOpTracker,
+        tunnel::TunnelManager,
+        ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    };
+
+    /// Builds an `AppState` around `pool` for tests that only need
+    /// `release_manual_target_power`'s dependencies (pool, registry,
+    /// `ui_broadcast`, `power_sessions`) -- the rest are populated with inert
+    /// defaults, matching `scheduler.rs`'s own test `AppState` boilerplate.
+    fn test_app_state(pool: sqlx::PgPool) -> AppState {
+        let ui_broadcast = UiBroadcast::new();
+        AppState {
+            pool: pool.clone(),
+            encryption_key: shared::crypto::derive_key(b"schedules-power-test-key").unwrap(),
+            registry: AgentRegistry::new(),
+            ui_broadcast: ui_broadcast.clone(),
+            tunnel_manager: TunnelManager::new(
+                pool.clone(),
+                ui_broadcast,
+                "127.0.0.1:0".parse().unwrap(),
+            ),
+            log_buffer: crate::log_buffer::LogBuffer::default(),
+            notification_service: crate::notifications::NotificationService::new(pool),
+            completion_bus: CompletionBus::new(),
+            repo_op_tracker: RepoOpTracker::default(),
+            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
+            repo_lock: crate::RepoLock::default(),
+            import_tasks: crate::ImportTaskRegistry::default(),
+            pending_dryruns: crate::new_pending_map(),
+            pending_restores: crate::new_pending_map(),
+            pending_migrations: crate::new_pending_map(),
+            pending_deletes: crate::new_pending_map(),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
+            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
+            task_registry: shared::task_registry::TaskRegistry::default(),
+            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
+                60,
+                std::time::Duration::from_mins(1),
+            ),
+            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+                480,
+            )),
+            power_sessions: power::PowerSessionTracker::default(),
+        }
+    }
+
+    async fn insert_power_enabled_agent_and_repo(
+        pool: &sqlx::PgPool,
+    ) -> (db::AgentRow, db::RepoRow) {
+        let agent = db::insert_agent(pool, "manual-power-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let agent = db::update_agent_power(
+            pool,
+            agent.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                // Nothing listens here -- the SSH attempt is expected to
+                // fail, only the run-event trail is under test.
+                ssh_host: Some("127.0.0.1"),
+                ssh_port: 1,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+
+        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
+            "test-pass",
+            &shared::crypto::derive_key(b"test-secret-key-for-schedules").unwrap(),
+        )
+        .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name: "manual-power-repo",
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let repo = db::update_repo_power(
+            pool,
+            repo.id,
+            db::RepoPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        (agent, repo)
+    }
+
+    /// Regression test for the "manual Run Now doesn't participate in
+    /// `PowerSessionTracker`" bug: a sole reservation on both hosts must be
+    /// torn down once the manual run releases it, exactly like the
+    /// scheduler's own targets are.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn release_manual_target_power_tears_down_sole_participant(pool: sqlx::PgPool) {
+        let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
+        let state = test_app_state(pool.clone());
+
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
+            .await;
+
+        release_manual_target_power(
+            &state,
+            agent.id,
+            repo.id,
+            "run-manual-1",
+            "manual-power-host",
+        )
+        .await;
+
+        let events = db::run_events::list_run_events(&pool, "run-manual-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(
+            event_types,
+            vec!["shutdown_sent", "shutdown_sent"],
+            "release as the sole participant must attempt shutdown for both the agent and repo \
+             hosts"
+        );
+    }
+
+    /// Regression test for the same bug's other half: releasing while a
+    /// sibling schedule's reservation is still held on both hosts must do
+    /// nothing, since a concurrent run is still relying on them staying up.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn release_manual_target_power_is_a_noop_with_a_sibling_reservation_held(
+        pool: sqlx::PgPool,
+    ) {
+        let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
+        let state = test_app_state(pool.clone());
+
+        // Two reservations on each host, simulating this manual run racing
+        // a concurrent scheduled run that targets the same agent/repo.
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent.id))
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo.id))
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
+            .await;
+
+        release_manual_target_power(
+            &state,
+            agent.id,
+            repo.id,
+            "run-manual-2",
+            "manual-power-host",
+        )
+        .await;
+
+        let events = db::run_events::list_run_events(&pool, "run-manual-2", agent.id, repo.id)
+            .await
+            .unwrap();
+        assert!(
+            events.is_empty(),
+            "release while a sibling reservation is still held must not tear anything down: \
+             {events:?}"
+        );
+    }
 }

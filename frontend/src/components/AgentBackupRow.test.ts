@@ -246,9 +246,11 @@ describe('AgentBackupRow', () => {
 
       wsHandlers['RunEvent']?.({
         run_id: 'run-123',
+        agent_id: 5,
+        repo_id: 10,
         target: 'source',
         event_type: 'wake_sent',
-        message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+        message: 'Sent Wake-on-LAN packet',
         occurred_at: '2026-06-01T09:00:00Z',
       })
       await flushPromises()
@@ -267,9 +269,11 @@ describe('AgentBackupRow', () => {
 
       wsHandlers['RunEvent']?.({
         run_id: 'some-other-run',
+        agent_id: 5,
+        repo_id: 10,
         target: 'source',
         event_type: 'wake_sent',
-        message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+        message: 'Sent Wake-on-LAN packet',
         occurred_at: '2026-06-01T09:00:00Z',
       })
       await flushPromises()
@@ -277,7 +281,33 @@ describe('AgentBackupRow', () => {
       expect(wrapper.text()).toContain('No power-management activity for this run.')
     })
 
-    it('ignores a live RunEvent that arrives before the initial fetch resolves', async () => {
+    // run_id is shared across every target of a multi-target schedule (e.g.
+    // the same agent backing up to two different repos in one schedule
+    // tick), so run_id alone can't tell this row's events apart from a
+    // sibling target's that happens to share it.
+    it('ignores a live RunEvent for the same run but a different target pairing', async () => {
+      const wrapper = mount({
+        report: report({ run_id: 'run-123', agent_id: 5, repo_id: 10 }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-123',
+        agent_id: 5,
+        repo_id: 99, // a different repo on the same agent, same run_id
+        target: 'repository',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+    })
+
+    it('merges a live RunEvent that arrives before the initial fetch resolves, instead of losing it', async () => {
       let resolveFetch: (events: []) => void = () => {}
       vi.mocked(getRunEvents).mockReturnValue(
         new Promise((resolve) => {
@@ -292,20 +322,43 @@ describe('AgentBackupRow', () => {
 
       wsHandlers['RunEvent']?.({
         run_id: 'run-123',
+        agent_id: 5,
+        repo_id: 10,
         target: 'source',
         event_type: 'wake_sent',
-        message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+        message: 'Sent Wake-on-LAN packet',
         occurred_at: '2026-06-01T09:00:00Z',
       })
       resolveFetch([])
       await flushPromises()
 
-      // The event that arrived pre-fetch is dropped rather than racing the
-      // fetch's own (empty) result - a real event recorded after this point
-      // would still arrive over the same WS connection once the fetch
-      // finishes, since the server doesn't miss events either way.
-      expect(wrapper.text()).toContain('No power-management activity for this run.')
-      expect(wrapper.text()).not.toContain('Sent Wake-on-LAN packet')
+      // The event that arrived mid-fetch is buffered and merged in once the
+      // fetch resolves, rather than being silently lost because it arrived
+      // just before the (now-stale) empty response.
+      expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
+      expect(wrapper.text()).not.toContain('No power-management activity for this run.')
+    })
+
+    it('drops a live RunEvent for a row that has never been expanded', async () => {
+      mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: false,
+      })
+
+      // Must not throw or accumulate state for a row that never fetches -
+      // a future expand's own fetch would return the full history anyway.
+      expect(() =>
+        wsHandlers['RunEvent']?.({
+          run_id: 'run-123',
+          agent_id: 5,
+          repo_id: 10,
+          target: 'source',
+          event_type: 'wake_sent',
+          message: 'Sent Wake-on-LAN packet',
+          occurred_at: '2026-06-01T09:00:00Z',
+        }),
+      ).not.toThrow()
     })
 
     it('shows an error state rather than silently hiding the block when the fetch fails', async () => {

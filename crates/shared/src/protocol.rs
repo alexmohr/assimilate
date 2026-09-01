@@ -618,6 +618,16 @@ pub enum ServerToUi {
         /// repository` one, still part of the same run -- belongs to the
         /// agent it's currently showing.
         hostname: String,
+        /// The agent side of this run's target pairing. `run_id` alone is
+        /// shared across every target of a multi-target schedule, so a
+        /// listener showing one specific (agent, repo) pairing needs this
+        /// -- and `repo_id` below -- to tell its own events apart from a
+        /// sibling target's that happens to share the same `run_id`.
+        #[ts(type = "number")]
+        agent_id: i64,
+        /// The repo side of this run's target pairing -- see `agent_id`.
+        #[ts(type = "number")]
+        repo_id: i64,
     },
 }
 
@@ -990,9 +1000,11 @@ mod tests {
             run_id: "run-123".to_owned(),
             target: RunEventTarget::Source,
             event_type: RunEventType::WakeSent,
-            message: "Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44".to_owned(),
+            message: "Sent Wake-on-LAN packet".to_owned(),
             occurred_at: Utc::now(),
             hostname: "web-01".to_owned(),
+            agent_id: 5,
+            repo_id: 10,
         };
         assert_round_trips(&msg);
     }

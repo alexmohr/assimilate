@@ -259,5 +259,17 @@ export type ServerToUi =
        * agent it's currently showing.
        */
       hostname: string;
+      /**
+       * The agent side of this run's target pairing. `run_id` alone is
+       * shared across every target of a multi-target schedule, so a
+       * listener showing one specific (agent, repo) pairing needs this
+       * -- and `repo_id` below -- to tell its own events apart from a
+       * sibling target's that happens to share the same run_id.
+       */
+      agent_id: number;
+      /**
+       * The repo side of this run's target pairing -- see `agent_id`.
+       */
+      repo_id: number;
     };
   };

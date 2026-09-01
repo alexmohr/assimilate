@@ -291,6 +291,8 @@ async fn record_event(
         message,
         occurred_at,
         hostname: hostname.to_owned(),
+        agent_id: target_ids.agent_id,
+        repo_id: target_ids.repo_id,
     });
 }
 

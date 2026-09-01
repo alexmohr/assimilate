@@ -70,6 +70,13 @@ const loadingEvents = ref(false)
 const eventsFetched = ref(false)
 const eventsError = ref(false)
 
+// A live RunEvent that arrives while the initial fetch is still in flight
+// (loadingEvents true, eventsFetched still false) would otherwise be dropped
+// on the floor - it's not in the fetch response (already sent before the
+// event happened) and the live handler below only appends once fetched.
+// Buffered here and merged in once the fetch resolves.
+const bufferedLiveEvents: RunEventResponse[] = []
+
 watch(
   () => props.expanded,
   (expanded) => {
@@ -79,7 +86,8 @@ watch(
     eventsError.value = false
     getRunEvents(runId, props.report.agent_id, props.report.repo_id)
       .then((events) => {
-        runEvents.value = events
+        runEvents.value = [...events, ...bufferedLiveEvents]
+        bufferedLiveEvents.length = 0
         eventsFetched.value = true
       })
       .catch((e: unknown) => {
@@ -105,18 +113,37 @@ watch(
 let nextLiveEventKey = -1
 const { onMessage } = useWebSocket()
 onMessage('RunEvent', (payload) => {
-  if (payload.run_id !== props.report.run_id || !eventsFetched.value) return
-  runEvents.value = [
-    ...runEvents.value,
-    {
-      id: nextLiveEventKey--,
-      run_id: payload.run_id,
-      target: payload.target,
-      event_type: payload.event_type,
-      message: payload.message,
-      occurred_at: payload.occurred_at,
-    },
-  ]
+  // run_id alone isn't enough: it's shared across every target of a
+  // multi-target schedule, so a sibling target's event (e.g. a different
+  // repo on the same agent) would otherwise bleed into this row's timeline
+  // too. Matches the same (run_id, agent_id, repo_id) scoping the initial
+  // fetch already uses.
+  if (
+    payload.run_id !== props.report.run_id ||
+    payload.agent_id !== props.report.agent_id ||
+    payload.repo_id !== props.report.repo_id
+  ) {
+    return
+  }
+  const event: RunEventResponse = {
+    id: nextLiveEventKey--,
+    run_id: payload.run_id,
+    target: payload.target,
+    event_type: payload.event_type,
+    message: payload.message,
+    occurred_at: payload.occurred_at,
+  }
+  if (eventsFetched.value) {
+    runEvents.value = [...runEvents.value, event]
+  } else if (loadingEvents.value) {
+    // Mid-fetch: hold onto it so the initial fetch's .then() above can
+    // merge it in, instead of silently losing it because it arrived just
+    // before the (now-stale) response.
+    bufferedLiveEvents.push(event)
+  }
+  // Otherwise the row has never been expanded (or its fetch already failed)
+  // - nothing to buffer for indefinitely; a future expand's own fetch
+  // returns the full history anyway, this event included.
 })
 </script>
 

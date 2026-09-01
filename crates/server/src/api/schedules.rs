@@ -1352,12 +1352,25 @@ async fn release_manual_target_power(
         Ok(agent) => power::teardown_agent_power(power_ctx, &agent, repo_id, run_id).await,
         Err(e) => {
             tracing::warn!(agent_id, error = %e, "manual run: failed to load agent for power teardown");
+            // teardown_agent_power would otherwise have released this --
+            // without it, the reservation's count never reaches zero again,
+            // permanently disabling shutdown/stop for this host. There's no
+            // fresh row to act on, so this is a best-effort release of the
+            // bookkeeping alone, with no SSH action attempted.
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Agent(agent_id))
+                .await;
         }
     }
     match db::get_repo_by_id(&state.pool, repo_id).await {
         Ok(repo) => power::teardown_repo_power(power_ctx, &repo, agent_id, run_id, hostname).await,
         Err(e) => {
             tracing::warn!(repo_id, error = %e, "manual run: failed to load repo for power teardown");
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Repo(repo_id))
+                .await;
         }
     }
 }
@@ -1695,6 +1708,56 @@ mod tests {
             events.is_empty(),
             "release while a sibling reservation is still held must not tear anything down: \
              {events:?}"
+        );
+    }
+
+    /// Regression test: if the agent/repo row re-fetch inside
+    /// `release_manual_target_power` fails (transient DB error, or the row
+    /// was deleted mid-run), the `PowerSessionTracker` reservation must
+    /// still be released. Otherwise the session's count never returns to
+    /// zero, silently and permanently disabling `shutdown_after_backup`/
+    /// `stop_agent_after_backup` for that host until the server restarts.
+    /// Uses a lazily-connected pool to a nonexistent database (matching
+    /// `scheduler.rs`'s own `run_returns_promptly_when_shutdown_token_is_cancelled`
+    /// test) so both row fetches fail deterministically without needing
+    /// `DATABASE_URL`.
+    #[tokio::test]
+    async fn release_manual_target_power_releases_the_reservation_even_when_the_row_fetch_fails() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let state = test_app_state(pool);
+        let agent_id = 999_999;
+        let repo_id = 888_888;
+
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent_id))
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo_id))
+            .await;
+
+        release_manual_target_power(&state, agent_id, repo_id, "run-manual-leak", "leak-host")
+            .await;
+
+        // If the reservation had leaked (the bug this regresses), this
+        // would be the *first* decrement and return Some(..) instead of
+        // None -- the tracker would still think a participant is present.
+        assert!(
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Agent(agent_id))
+                .await
+                .is_none(),
+            "the agent reservation must already be released by the failed fetch's fallback"
+        );
+        assert!(
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Repo(repo_id))
+                .await
+                .is_none(),
+            "the repo reservation must already be released by the failed fetch's fallback"
         );
     }
 }

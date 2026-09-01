@@ -209,6 +209,15 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
     }
 }
 
+/// Strips the Wake-on-LAN MAC/broadcast address from a response destined for
+/// a viewer who isn't an operator/admin - like `RepoWithStatsResponse.quota`,
+/// these enable remotely powering the host on and shouldn't be embedded for
+/// anyone who can merely see the agent.
+fn redact_wake_secrets(response: &mut AgentResponse) {
+    response.power.wake.wake_mac_address = None;
+    response.power.wake.wake_broadcast_address = None;
+}
+
 #[utoipa::path(
     post,
     path = "/api/agents",
@@ -286,6 +295,11 @@ pub async fn list_agents(
 ) -> Result<Json<Vec<AgentResponse>>, ApiError> {
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
+    // Wake-on-LAN's MAC/broadcast address let anyone who has them power the
+    // host on remotely, so - like `RepoWithStatsResponse.quota` - they're
+    // gated to operators/admins rather than embedded for any viewer who can
+    // merely see the agent.
+    let can_view_wake_secrets = effective.can_delete_repo || effective.can_view_all_repos;
     let include_hidden = query.include_hidden && is_admin;
     let agents = db::list_agents(&state.pool, include_hidden).await?;
     let mut responses = Vec::with_capacity(agents.len());
@@ -301,7 +315,11 @@ pub async fn list_agents(
         {
             continue;
         }
-        responses.push(build_agent_response(&state, a).await);
+        let mut response = build_agent_response(&state, a).await;
+        if !can_view_wake_secrets {
+            redact_wake_secrets(&mut response);
+        }
+        responses.push(response);
     }
     Ok(Json(responses))
 }
@@ -329,12 +347,17 @@ pub async fn list_agents(
 /// Returns an error if the underlying operation fails.
 pub async fn get_agent(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
-    Ok(Json(build_agent_response(&state, agent).await))
+    let mut response = build_agent_response(&state, agent).await;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !(effective.can_delete_repo || effective.can_view_all_repos) {
+        redact_wake_secrets(&mut response);
+    }
+    Ok(Json(response))
 }
 
 #[utoipa::path(

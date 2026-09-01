@@ -53,7 +53,7 @@ A backup run's detail view shows every power-management step recorded around it,
 ![Run detail timeline showing interleaved source and repository power-management events](assets/screenshots/run-timeline.png)
 
 !!! note
-    Only runs dispatched through a schedule carry a timeline. A run triggered outside the normal schedule flow may have no `run_id` to correlate events against, in which case no power-management history is available for it.
+    A manually triggered ("Run Now") run never wakes a host itself, so it rarely records more than a teardown step — typically nothing at all unless it happens to be the last participant releasing a host a concurrent scheduled run woke.
 
 <!--
 SPDX-License-Identifier: Apache-2.0

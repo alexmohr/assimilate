@@ -1410,6 +1410,229 @@ async fn test_update_repo_power_persists_and_returns_settings() {
     assert_eq!(body.get("name").unwrap(), "power-repo-2");
 }
 
+/// Inserts a user with a role granting no elevated permissions at all (no
+/// `can_delete_repo`, no `can_view_all_repos`) and an active session for
+/// them, returning the session cookie value. Used by the wake-secret
+/// redaction regression tests below, which need a viewer who can see an
+/// agent/repo but isn't an operator/admin.
+#[cfg(test)]
+async fn insert_viewer_only_session(pool: &PgPool, label: &str) -> String {
+    let user = server::db::insert_user(pool, &format!("{label}-user"), "hash")
+        .await
+        .unwrap();
+    // `roles` isn't in `clean_tables`'s TRUNCATE list (other tests rely on
+    // migration-seeded roles like "admin" surviving it), so a plain INSERT
+    // here would collide with itself on a second consecutive run of the
+    // suite against one persistent local database - upsert on the unique
+    // `name` instead, matching `create_test_user_and_session`'s own
+    // `ON CONFLICT (username) DO UPDATE` idiom for the same reason.
+    let role_id: i64 = sqlx::query_scalar(
+        "INSERT INTO roles (name, can_create_agent, can_delete_agent, can_delete_own_agent, \
+         can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
+         can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
+         can_manage_tunnels, can_upgrade_agent) VALUES ($1, false, false, false, false, false, \
+         false, false, false, false, false, false, false, false) ON CONFLICT (name) DO UPDATE SET \
+         name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("{label}-role"))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    server::db::set_user_roles(pool, user.id, &[role_id])
+        .await
+        .unwrap();
+
+    let session_id = format!("{label}-session-0000000000000000000");
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(hash_token(&session_id))
+        .bind(user.id)
+        .bind(expires)
+        .execute(pool)
+        .await
+        .unwrap();
+    session_id
+}
+
+#[cfg(test)]
+fn get_request_as(uri: &str, session_id: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("GET")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// Regression test: an agent's Wake-on-LAN MAC/broadcast address let anyone
+/// who has them power the host on remotely, so - like `quota` on repos -
+/// they must be redacted for a viewer who can see the agent but isn't an
+/// operator/admin, in both the list and single-agent responses.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_responses_redact_wake_secrets_for_non_privileged_viewer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "wake-secret-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'wake-secret-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let req = json_request(
+        "PUT",
+        "/api/agents/wake-secret-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": "192.168.1.255",
+                "wake_timeout_seconds": 240,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10",
+            "ssh_port": 2222,
+            "agent_service_name": "assimilate-agent"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let viewer_session = insert_viewer_only_session(&pool, "agent-wake-secret").await;
+
+    let resp = oneshot(
+        &mut app,
+        get_request_as("/api/agents/wake-secret-host", &viewer_session),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let wake = body.get("power").unwrap().get("wake").unwrap();
+    assert!(
+        wake.get("wake_mac_address").unwrap().is_null(),
+        "non-privileged viewer must not see the WOL MAC address: {wake}"
+    );
+    assert!(
+        wake.get("wake_broadcast_address").unwrap().is_null(),
+        "non-privileged viewer must not see the WOL broadcast address: {wake}"
+    );
+    // Non-secret settings must still be visible.
+    assert_eq!(wake.get("wake_enabled").unwrap(), true);
+
+    let resp = oneshot(&mut app, get_request_as("/api/agents", &viewer_session)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let agent = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a.get("hostname").unwrap() == "wake-secret-host")
+        .expect("agent visible to any authenticated viewer");
+    assert!(
+        agent
+            .get("power")
+            .unwrap()
+            .get("wake")
+            .unwrap()
+            .get("wake_mac_address")
+            .unwrap()
+            .is_null(),
+        "list_agents must also redact the MAC address for a non-privileged viewer"
+    );
+}
+
+/// Regression test: same redaction as
+/// [`test_agent_responses_redact_wake_secrets_for_non_privileged_viewer`],
+/// but for a repository's Wake-on-LAN settings.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_repo_responses_redact_wake_secrets_for_non_privileged_viewer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "wake-secret-repo").await;
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": true,
+            "wake_mac_address": "9C:B6:D0:1A:44:7F",
+            "wake_broadcast_address": "192.168.1.255",
+            "wake_timeout_seconds": 240,
+            "shutdown_after_backup": false
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let viewer_session = insert_viewer_only_session(&pool, "repo-wake-secret").await;
+
+    let resp = oneshot(
+        &mut app,
+        get_request_as(&format!("/api/repos/{repo_id}"), &viewer_session),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let power = body.get("power").unwrap();
+    assert!(
+        power.get("wake_mac_address").unwrap().is_null(),
+        "non-privileged viewer must not see the WOL MAC address: {power}"
+    );
+    assert!(power.get("wake_broadcast_address").unwrap().is_null());
+    assert_eq!(power.get("wake_enabled").unwrap(), true);
+
+    let resp = oneshot(&mut app, get_request_as("/api/repos", &viewer_session)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let repo = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r.get("id").unwrap() == repo_id)
+        .expect("repo visible to any authenticated viewer");
+    assert!(
+        repo.get("power")
+            .unwrap()
+            .get("wake_mac_address")
+            .unwrap()
+            .is_null(),
+        "list_repos must also redact the MAC address for a non-privileged viewer"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        get_request_as("/api/repos/stats", &viewer_session),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let repo = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r.get("id").unwrap() == repo_id)
+        .expect("repo visible to any authenticated viewer");
+    assert!(
+        repo.get("power")
+            .unwrap()
+            .get("wake_mac_address")
+            .unwrap()
+            .is_null(),
+        "list_repos_with_stats must also redact the MAC address for a non-privileged viewer"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_list_run_events_returns_chronological_order() {

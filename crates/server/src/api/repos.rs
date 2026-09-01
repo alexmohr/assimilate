@@ -172,6 +172,11 @@ pub async fn list_repos(
     let repos = db::list_all_repos(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
+    // See list_repos_with_stats: Wake-on-LAN's MAC/broadcast address let
+    // anyone who has them power the host on remotely, so they're gated to
+    // operators/admins rather than embedded for any viewer who can merely
+    // see the repo.
+    let can_view_wake_secrets = effective.can_delete_repo || effective.can_view_all_repos;
     let mut visible = Vec::with_capacity(repos.len());
     for repo in repos {
         if is_visible_to_user(
@@ -183,7 +188,12 @@ pub async fn list_repos(
         )
         .await?
         {
-            visible.push(RepoResponse::from(repo));
+            let mut response = RepoResponse::from(repo);
+            if !can_view_wake_secrets {
+                response.power.wake_mac_address = None;
+                response.power.wake_broadcast_address = None;
+            }
+            visible.push(response);
         }
     }
     Ok(Json(visible))
@@ -953,6 +963,12 @@ pub async fn list_repos_with_stats(
             let mut response = RepoWithStatsResponse::from(repo);
             if !can_view_quota {
                 response.quota = None;
+                // Wake-on-LAN's MAC/broadcast address let anyone who has
+                // them power the host on remotely, so they're gated to the
+                // same audience as quota rather than embedded for any
+                // viewer who can merely see the repo.
+                response.power.wake_mac_address = None;
+                response.power.wake_broadcast_address = None;
             }
             visible.push(response);
         }
@@ -993,6 +1009,8 @@ pub async fn get_repo(
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     if !(effective.can_delete_repo || effective.can_view_all_repos) {
         res.quota = None;
+        res.power.wake_mac_address = None;
+        res.power.wake_broadcast_address = None;
     }
     Ok(Json(res))
 }

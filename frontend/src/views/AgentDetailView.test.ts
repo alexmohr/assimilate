@@ -951,10 +951,14 @@ describe('AgentDetailView — power phase badge', () => {
     expect(wrapper.find('.badge--info').exists()).toBe(false)
   })
 
-  // Two agents can share a hostname across different domains, or an
-  // unrelated agent can simply connect elsewhere while this page is open -
-  // either way, its `AgentConnected` must not clear a phase that belongs to
-  // the agent actually shown on this page.
+  // An unrelated agent connecting elsewhere while this page is open must not
+  // clear a phase that belongs to the agent actually shown on this page.
+  // Note: this only covers the different-hostname case. `AgentConnected`
+  // carries no `domain`, so two agents sharing the same hostname across
+  // different domains can still cross-contaminate each other's phase here -
+  // a known, low-impact limitation (self-heals via the safety-net timeout
+  // below) that would need `domain`/`agent_id` added to the WS payload to
+  // close, not something this test can exercise as written.
   it('does not clear the phase when a different agent connects', async () => {
     const wrapper = await mountAgent()
 

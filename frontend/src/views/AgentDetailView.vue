@@ -578,6 +578,12 @@ onMounted(() => {
 
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('DataChanged', () => loadAgent().catch(logger.error))
+// Known limitation: this and the `RunEvent` handler below match on bare
+// hostname only, because neither payload carries a `domain`/`agent_id`.
+// Two agents sharing a hostname across different domains can therefore
+// cross-contaminate each other's transient `powerPhase` badge here. Low
+// impact and self-healing (see POWER_PHASE_TIMEOUT_MS below) - closing it
+// for real needs `domain`/`agent_id` added to the WS payloads.
 onMessage('AgentConnected', (payload) => {
   if (payload.hostname !== props.hostname) return
   powerPhase.value = null

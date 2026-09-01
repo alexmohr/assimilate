@@ -423,8 +423,20 @@ pub async fn ensure_agent_online(
     }
 
     if !ctx.registry.is_connected(agent.id).await && agent.start_agent_enabled {
+        // `started_agent` tracks whether the SSH start command itself
+        // succeeded, not whether the agent went on to reconnect within
+        // `wake_timeout_seconds` -- teardown must stop/shut down what this
+        // run actually started even if the reconnect happens to run long,
+        // rather than silently never undoing it. Waiting for the connect is
+        // still worth doing so the timeline records when it happened, but
+        // its outcome no longer feeds back into that decision.
         outcome.started_agent = start_agent_process(ctx, agent, target_ids, run_id).await;
-        if outcome.started_agent {
+        if outcome.started_agent
+            && wait_for(timeout_duration(agent.wake_timeout_seconds), || {
+                ctx.registry.is_connected(agent.id)
+            })
+            .await
+        {
             record_event(
                 ctx,
                 run_id,
@@ -487,9 +499,12 @@ async fn wake_agent_host(
     .await
 }
 
-/// Starts `agent`'s systemd unit over SSH and waits for it to connect,
-/// logging and returning `false` on any failure along the way rather than
-/// aborting the run.
+/// Starts `agent`'s systemd unit over SSH, logging and returning `false` on
+/// any failure along the way rather than aborting the run. The returned
+/// bool reflects only whether the SSH start command itself succeeded --
+/// callers wait separately for the agent to actually reconnect, since that
+/// outcome must not gate whether this run is on the hook to stop what it
+/// just started.
 async fn start_agent_process(
     ctx: PowerCtx<'_>,
     agent: &AgentRow,
@@ -541,10 +556,7 @@ async fn start_agent_process(
     )
     .await;
 
-    wait_for(timeout_duration(agent.wake_timeout_seconds), || {
-        ctx.registry.is_connected(agent.id)
-    })
-    .await
+    true
 }
 
 /// Makes sure `repo`'s host is reachable over SSH before a backup writes to

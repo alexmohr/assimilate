@@ -4725,19 +4725,42 @@ async fn test_calendar_upcoming_schedule_includes_target_hostname(pool: sqlx::Pg
     let repo_id = insert_test_repo(&pool, "calendar-repo").await;
     insert_test_schedule(&pool, agent_id, repo_id).await;
 
+    // The seeded schedule runs daily at 03:00 UTC, so its next occurrence is
+    // "later today" or "tomorrow" almost always -- except when this test
+    // itself runs on the last day of the month, past 03:00 UTC, where the
+    // only remaining occurrence rolls into next month. Check both months
+    // rather than assuming "this month" always has an upcoming occurrence,
+    // so the test doesn't flake once a month depending on when it runs.
     let now = chrono::Utc::now();
-    let month = format!("{}-{:02}", now.format("%Y"), now.format("%m"));
-    let req = get_request(&format!("/api/stats/calendar?month={month}"));
-    let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::OK);
+    let this_month = format!("{}-{:02}", now.format("%Y"), now.format("%m"));
+    let next_month_date = now
+        .date_naive()
+        .checked_add_months(chrono::Months::new(1))
+        .unwrap();
+    let next_month = format!(
+        "{}-{:02}",
+        next_month_date.format("%Y"),
+        next_month_date.format("%m")
+    );
 
-    let body = body_json(resp).await;
-    let days = body.as_array().unwrap();
-    let scheduled_event = days
-        .iter()
-        .flat_map(|d| d.get("events").and_then(|e| e.as_array()).unwrap())
-        .find(|e| e.get("status").and_then(|s| s.as_str()) == Some("scheduled"));
-    let event = scheduled_event.expect("an upcoming scheduled event for the new schedule");
+    let mut scheduled_event = None;
+    for month in [&this_month, &next_month] {
+        let req = get_request(&format!("/api/stats/calendar?month={month}"));
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        scheduled_event = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|d| d.get("events").and_then(|e| e.as_array()).unwrap().clone())
+            .find(|e| e.get("status").and_then(|s| s.as_str()) == Some("scheduled"));
+        if scheduled_event.is_some() {
+            break;
+        }
+    }
+    let event = scheduled_event
+        .expect("an upcoming scheduled event for the new schedule, in this month or next");
     assert_eq!(
         event.get("hostname").and_then(|h| h.as_str()),
         Some("calendar-host")

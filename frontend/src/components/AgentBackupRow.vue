@@ -10,6 +10,7 @@ import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
 import { logger } from '../utils/logger'
+import { useWebSocket } from '../composables/useWebSocket'
 import BaseSpinner from './BaseSpinner.vue'
 import RunEventTimeline from './RunEventTimeline.vue'
 import type { ReportRow } from '../types/report'
@@ -94,6 +95,29 @@ watch(
   // later toggle.
   { immediate: true },
 )
+
+// Docs promise the timeline updates live while a run is in progress and its
+// detail is open - without this, a step recorded after the initial fetch
+// (e.g. the host coming online, or the eventual shutdown) would only show up
+// once the row is collapsed and re-expanded. Keyed by a synthetic negative
+// id (real rows are a positive bigserial) since the WS payload carries no
+// row id, only enough to render one.
+let nextLiveEventKey = -1
+const { onMessage } = useWebSocket()
+onMessage('RunEvent', (payload) => {
+  if (payload.run_id !== props.report.run_id || !eventsFetched.value) return
+  runEvents.value = [
+    ...runEvents.value,
+    {
+      id: nextLiveEventKey--,
+      run_id: payload.run_id,
+      target: payload.target,
+      event_type: payload.event_type,
+      message: payload.message,
+      occurred_at: payload.occurred_at,
+    },
+  ]
+})
 </script>
 
 <template>

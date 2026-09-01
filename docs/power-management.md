@@ -55,6 +55,10 @@ A backup run's detail view shows every power-management step recorded around it,
 !!! note
     A manually triggered ("Run Now") run never wakes a host itself, so it rarely records more than a teardown step — typically nothing at all unless it happens to be the last participant releasing a host a concurrent scheduled run woke.
 
+## Limitations
+
+Which hosts are currently owed a shutdown (or an agent stop) is tracked only in the server's memory, not persisted to the database. If the server restarts or crashes after a run has woken a host but before that run's teardown step runs, the server has no record on startup that the host is still powered on and pending shutdown — it stays on indefinitely, with no error and nothing in the run timeline to explain why. This is rare in practice (the window is the gap between a wake completing and its backup finishing), but worth knowing if a host you expected to power off is still running after an unplanned server restart: check it manually.
+
 <!--
 SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: 2026 Alexander Mohr

@@ -35,3 +35,10 @@ CREATE TABLE backup_run_events (
 
 CREATE INDEX backup_run_events_run_id_idx ON backup_run_events (run_id);
 CREATE INDEX backup_run_events_target_idx ON backup_run_events (agent_id, repo_id);
+-- Retention (see run_event_retention_days / delete_run_events_before) prunes
+-- this table by occurred_at, the same way system_events is pruned by
+-- created_at (see idx_system_events_created_at in 0001_schema.sql) -- every
+-- reachability check/wake/start/stop/shutdown step for every power-managed
+-- run inserts a row here, so that daily DELETE would otherwise be a full
+-- table scan.
+CREATE INDEX backup_run_events_occurred_at_idx ON backup_run_events (occurred_at);

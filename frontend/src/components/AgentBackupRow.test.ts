@@ -12,6 +12,20 @@ vi.mock('../api/runs', () => ({
   getRunEvents: vi.fn(),
 }))
 
+// Captured WebSocket message handlers - populated during component setup().
+// One row is mounted per test in this file, so a single-handler-per-type
+// map (rather than a list) is enough, matching AgentDetailView.test.ts's
+// mock.
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
+}))
+
 function report(over: Record<string, unknown> = {}): ReportRow {
   return {
     id: 7,
@@ -43,6 +57,7 @@ describe('AgentBackupRow', () => {
   beforeEach(() => {
     vi.mocked(getRunEvents).mockReset()
     vi.mocked(getRunEvents).mockResolvedValue([])
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
   })
 
   it.each([
@@ -215,6 +230,82 @@ describe('AgentBackupRow', () => {
 
       expect(wrapper.text()).toContain('No power-management activity for this run.')
       expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
+    })
+
+    // The docs promise the timeline updates live while the row is open, not
+    // just on expand - a step recorded after the initial (possibly empty)
+    // fetch must still show up without collapsing and re-expanding the row.
+    it('appends a live RunEvent for this run once the initial fetch has completed', async () => {
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-123',
+        target: 'source',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
+      expect(wrapper.text()).not.toContain('No power-management activity for this run.')
+    })
+
+    it('ignores a live RunEvent for a different run', async () => {
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'some-other-run',
+        target: 'source',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+    })
+
+    it('ignores a live RunEvent that arrives before the initial fetch resolves', async () => {
+      let resolveFetch: (events: []) => void = () => {}
+      vi.mocked(getRunEvents).mockReturnValue(
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+      )
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-123',
+        target: 'source',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      resolveFetch([])
+      await flushPromises()
+
+      // The event that arrived pre-fetch is dropped rather than racing the
+      // fetch's own (empty) result - a real event recorded after this point
+      // would still arrive over the same WS connection once the fetch
+      // finishes, since the server doesn't miss events either way.
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+      expect(wrapper.text()).not.toContain('Sent Wake-on-LAN packet')
     })
 
     it('shows an error state rather than silently hiding the block when the fetch fails', async () => {

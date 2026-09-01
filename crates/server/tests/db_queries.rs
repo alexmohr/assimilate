@@ -9740,3 +9740,344 @@ async fn replacing_one_archive_leaves_other_archives_untouched(pool: PgPool) {
     assert_eq!(replaced.first().unwrap().path, "dir/c");
     assert_eq!(untouched.first().unwrap().path, "dir/b");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn agent_power_defaults_to_disabled(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "power-default-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    assert!(!agent.wake_enabled);
+    assert!(agent.wake_mac_address.is_none());
+    assert_eq!(agent.wake_timeout_seconds, 180);
+    assert!(!agent.shutdown_after_backup);
+    assert!(!agent.start_agent_enabled);
+    assert!(!agent.stop_agent_after_backup);
+    assert_eq!(agent.agent_service_name, "assimilate-agent");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_agent_power_persists_all_fields(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let updated = db::update_agent_power(
+        &pool,
+        agent.id,
+        db::AgentPowerPatch {
+            wake_enabled: true,
+            wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+            wake_broadcast_address: Some("192.168.1.255"),
+            wake_timeout_seconds: 240,
+            shutdown_after_backup: true,
+            start_agent_enabled: true,
+            stop_agent_after_backup: true,
+            ssh_host: Some("192.168.1.10"),
+            ssh_port: 2222,
+            agent_service_name: "custom-agent",
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(updated.wake_enabled);
+    assert_eq!(
+        updated.wake_mac_address.as_deref(),
+        Some("3C:97:0E:2B:9A:44")
+    );
+    assert_eq!(
+        updated.wake_broadcast_address.as_deref(),
+        Some("192.168.1.255")
+    );
+    assert_eq!(updated.wake_timeout_seconds, 240);
+    assert!(updated.shutdown_after_backup);
+    assert!(updated.start_agent_enabled);
+    assert!(updated.stop_agent_after_backup);
+    assert_eq!(updated.ssh_host.as_deref(), Some("192.168.1.10"));
+    assert_eq!(updated.ssh_port, 2222);
+    assert_eq!(updated.agent_service_name, "custom-agent");
+
+    // update_agent_power must not touch backup-default fields it doesn't own.
+    assert_eq!(updated.hostname, "power-host");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_agent_power_rejects_shutdown_without_wake_at_the_db_layer(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "power-check-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let err = db::update_agent_power(
+        &pool,
+        agent.id,
+        db::AgentPowerPatch {
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: true,
+            start_agent_enabled: false,
+            stop_agent_after_backup: false,
+            ssh_host: None,
+            ssh_port: 22,
+            agent_service_name: "assimilate-agent",
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(err, server::error::ApiError::Database(_)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_repo_power_persists_all_fields(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let updated = db::update_repo_power(
+        &pool,
+        repo.id,
+        db::RepoPowerPatch {
+            wake_enabled: true,
+            wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+            wake_broadcast_address: Some("192.168.1.255"),
+            wake_timeout_seconds: 240,
+            shutdown_after_backup: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(updated.wake_enabled);
+    assert_eq!(
+        updated.wake_mac_address.as_deref(),
+        Some("9C:B6:D0:1A:44:7F")
+    );
+    assert_eq!(updated.wake_timeout_seconds, 240);
+    assert!(updated.shutdown_after_backup);
+    // update_repo_power must not touch fields it doesn't own.
+    assert_eq!(updated.name, repo.name);
+    assert_eq!(updated.ssh_host, repo.ssh_host);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_repo_by_id_includes_power_fields(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    db::update_repo_power(
+        &pool,
+        repo.id,
+        db::RepoPowerPatch {
+            wake_enabled: true,
+            wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    let fetched = db::get_repo_by_id(&pool, repo.id).await.unwrap();
+    assert!(fetched.wake_enabled);
+    assert_eq!(
+        fetched.wake_mac_address.as_deref(),
+        Some("9C:B6:D0:1A:44:7F")
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn run_events_list_in_chronological_order(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let run_id = "test-run-123";
+
+    db::run_events::insert_run_event(
+        &pool,
+        run_id,
+        agent.id,
+        repo.id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::ReachabilityCheck,
+        "Checked agent -- no response",
+    )
+    .await
+    .unwrap();
+    db::run_events::insert_run_event(
+        &pool,
+        run_id,
+        agent.id,
+        repo.id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::WakeSent,
+        "Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44",
+    )
+    .await
+    .unwrap();
+    db::run_events::insert_run_event(
+        &pool,
+        run_id,
+        agent.id,
+        repo.id,
+        shared::types::RunEventTarget::Repository,
+        shared::types::RunEventType::WakeSent,
+        "Sent Wake-on-LAN packet to 9C:B6:D0:1A:44:7F",
+    )
+    .await
+    .unwrap();
+
+    let events = db::run_events::list_run_events(&pool, run_id, agent.id, repo.id)
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events.first().unwrap().event_type, "reachability_check");
+    assert_eq!(events.get(1).unwrap().event_type, "wake_sent");
+    assert_eq!(events.get(1).unwrap().target, "source");
+    assert_eq!(events.get(2).unwrap().target, "repository");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn run_events_for_unrelated_run_id_are_not_returned(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-host-a", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    db::run_events::insert_run_event(
+        &pool,
+        "run-a",
+        agent.id,
+        repo.id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::WakeSent,
+        "message for run a",
+    )
+    .await
+    .unwrap();
+
+    let events = db::run_events::list_run_events(&pool, "run-b", agent.id, repo.id)
+        .await
+        .unwrap();
+    assert!(events.is_empty());
+}
+
+// A multi-target schedule shares one run_id across every target pairing it
+// fans out to (see the backup_run_events migration), so run_id alone can't
+// scope a query to one pairing's events - list_run_events must also filter
+// by agent_id/repo_id, or a run detail view for one target would show
+// another target's power-management timeline mixed in with its own.
+#[sqlx::test(migrations = "./migrations")]
+async fn run_events_are_scoped_to_their_own_target_pairing_within_a_shared_run_id(pool: PgPool) {
+    let agent_a = db::insert_agent(&pool, "run-events-target-a", None, "hash", None, None)
+        .await
+        .unwrap();
+    let agent_b = db::insert_agent(&pool, "run-events-target-b", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let run_id = "shared-run-id";
+
+    db::run_events::insert_run_event(
+        &pool,
+        run_id,
+        agent_a.id,
+        repo.id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::WakeSent,
+        "message for target a",
+    )
+    .await
+    .unwrap();
+    db::run_events::insert_run_event(
+        &pool,
+        run_id,
+        agent_b.id,
+        repo.id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::WakeSent,
+        "message for target b",
+    )
+    .await
+    .unwrap();
+
+    let events_for_a = db::run_events::list_run_events(&pool, run_id, agent_a.id, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(events_for_a.len(), 1);
+    assert_eq!(
+        events_for_a.first().unwrap().message,
+        "message for target a"
+    );
+
+    let events_for_b = db::run_events::list_run_events(&pool, run_id, agent_b.id, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(events_for_b.len(), 1);
+    assert_eq!(
+        events_for_b.first().unwrap().message,
+        "message for target b"
+    );
+}
+
+#[cfg(test)]
+async fn insert_test_run_event(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    occurred_at: DateTime<Utc>,
+) {
+    sqlx::query!(
+        "INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, \
+         occurred_at) VALUES ('retention-test-run', $1, $2, 'source', 'wake_sent', 'test event', \
+         $3)",
+        agent_id,
+        repo_id,
+        occurred_at,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_run_events_before_deletes_old(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-retention-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let old = Utc::now().checked_sub_signed(Duration::days(120)).unwrap();
+    insert_test_run_event(&pool, agent.id, repo.id, old).await;
+
+    let cutoff = Utc::now().checked_sub_signed(Duration::days(90)).unwrap();
+    let deleted = db::run_events::delete_run_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1, "run event older than cutoff must be deleted");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_run_events_before_keeps_recent(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "run-events-retention-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let before_insert = Utc::now();
+    insert_test_run_event(&pool, agent.id, repo.id, before_insert).await;
+
+    let cutoff = before_insert
+        .checked_sub_signed(Duration::seconds(1))
+        .unwrap();
+    let deleted = db::run_events::delete_run_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 0,
+        "run event created after cutoff must not be deleted"
+    );
+
+    let events = db::run_events::list_run_events(&pool, "retention-test-run", agent.id, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+}

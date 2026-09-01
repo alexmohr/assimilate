@@ -27,6 +27,20 @@ const AGENT = {
   default_pre_backup_commands: [],
   default_post_backup_commands: [],
   default_file_change_patterns_raw: '',
+  power: {
+    wake: {
+      wake_enabled: false,
+      wake_mac_address: null,
+      wake_broadcast_address: null,
+      wake_timeout_seconds: 180,
+      shutdown_after_backup: false,
+    },
+    start_agent_enabled: false,
+    stop_agent_after_backup: false,
+    ssh_host: null,
+    ssh_port: 22,
+    agent_service_name: 'assimilate-agent',
+  },
 } as unknown as AgentRow
 
 function mount(props: Record<string, unknown> = {}) {
@@ -59,7 +73,7 @@ describe('AgentSettingsTab', () => {
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults', 'Hostname aliases', 'Tags', 'Danger zone'])
+    ).toEqual(['Identity', 'Backup defaults', 'Hostname aliases', 'Power', 'Tags', 'Danger zone'])
   })
 
   // Tags and the danger zone are admin-only, so they are absent rather than
@@ -78,6 +92,7 @@ describe('AgentSettingsTab', () => {
   it.each([
     ['danger', 'AgentDangerZone'],
     ['tags', 'EntityTags'],
+    ['power', 'AgentPowerCard'],
   ])('does not render the %s pane for a non-admin who asks for it', (section, component) => {
     const wrapper = mount({ isAdmin: false, section })
     expect(wrapper.findComponent({ name: component }).exists()).toBe(false)
@@ -97,6 +112,17 @@ describe('AgentSettingsTab', () => {
       true,
     )
     expect(mount({ section: 'tags' }).findComponent({ name: 'EntityTags' }).exists()).toBe(true)
+    expect(mount({ section: 'power' }).findComponent({ name: 'AgentPowerCard' }).exists()).toBe(
+      true,
+    )
+  })
+
+  it('forwards a saved agent from the power form', async () => {
+    const wrapper = mount({ section: 'power' })
+    wrapper.findComponent({ name: 'AgentPowerCard' }).vm.$emit('saved', AGENT)
+    await flushPromises()
+
+    expect(wrapper.emitted('saved')).toEqual([[AGENT]])
   })
 
   it('marks the current section', () => {

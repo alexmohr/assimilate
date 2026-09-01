@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, run_id, agent_id, repo_id, target, event_type, message, occurred_at FROM backup_run_events WHERE run_id = $1 AND agent_id = $2 AND repo_id = $3 ORDER BY occurred_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "target",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "occurred_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5cac4677e563d7041417dc42efb332fb995112a7db4371bfcc3c09629dd709dc"
+}

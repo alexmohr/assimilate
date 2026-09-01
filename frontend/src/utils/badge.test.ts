@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  agentPowerPhase,
   backupStatusBadgeClass,
   backupStatusTone,
   badgeClass,
@@ -10,6 +11,7 @@ import {
   thresholdTone,
   type BadgeTone,
 } from './badge'
+import type { RunEventType } from '../types/generated'
 
 const TONES: BadgeTone[] = ['success', 'warning', 'danger', 'info', 'accent', 'neutral']
 
@@ -88,4 +90,30 @@ describe('logLevelTone', () => {
     expect(logLevelTone('trace')).toBe('neutral')
     expect(logLevelTone('')).toBe('neutral')
   })
+})
+
+describe('agentPowerPhase', () => {
+  // One case per RunEventType arm, so a new event type added to the union
+  // without a phase mapping shows up here rather than silently falling
+  // through to the type checker only.
+  it.each([
+    ['reachability_check', { label: 'Checking...', tone: 'neutral' }],
+    ['wake_sent', { label: 'Waking host...', tone: 'info' }],
+    ['host_online', { label: 'Waking host...', tone: 'info' }],
+    ['agent_start_sent', { label: 'Starting agent...', tone: 'info' }],
+    ['shutdown_sent', { label: 'Shutting down...', tone: 'neutral' }],
+    ['agent_stop_sent', { label: 'Shutting down...', tone: 'neutral' }],
+  ] as [RunEventType, { label: string; tone: BadgeTone }][])(
+    'maps %s to %o',
+    (eventType, phase) => {
+      expect(agentPowerPhase(eventType)).toEqual(phase)
+    },
+  )
+
+  it.each(['agent_connected', 'host_offline', 'agent_stopped'] as RunEventType[])(
+    'maps %s to null, ending the transient phase',
+    (eventType) => {
+      expect(agentPowerPhase(eventType)).toBeNull()
+    },
+  )
 })

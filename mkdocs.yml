@@ -52,6 +52,7 @@ nav:
   - SSH Agent Forwarding: ssh-agent-forwarding.md
   - Agent Management: agents.md
   - Repository Management: repositories.md
+  - Power Management: power-management.md
   - Scheduling & Retention: scheduling.md
   - Archive Browsing: archives.md
   - Restoring Files: restore.md

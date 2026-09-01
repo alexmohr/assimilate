@@ -111,6 +111,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
             60,
             std::time::Duration::from_mins(1),
         ),
+        power_sessions: server::power::PowerSessionTracker::default(),
     }
 }
 
@@ -158,6 +159,10 @@ fn test_app_core_routes() -> Router<server::AppState> {
             get(server::api::reports::list_reports),
         )
         .route(
+            "/api/agents/{hostname}/power",
+            put(server::api::agents::update_agent_power),
+        )
+        .route(
             "/api/agents/{hostname}/reports/failed",
             delete(server::api::reports::delete_failed_reports),
         )
@@ -184,6 +189,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             get(server::api::repos::get_repo)
                 .put(server::api::repos::update_repo)
                 .delete(server::api::repos::delete_repo),
+        )
+        .route(
+            "/api/repos/{repo_id}/power",
+            put(server::api::repos::update_repo_power),
         )
         .route(
             "/api/repos/{repo_id}/archives",
@@ -276,6 +285,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
         .route("/api/stats/calendar", get(server::api::stats::calendar))
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
         .route("/api/logs", get(server::api::logs::get_logs))
+        .route(
+            "/api/runs/{run_id}/events",
+            get(server::api::reports::list_run_events),
+        )
         .route(
             "/api/notifications/channels",
             get(server::api::notifications::list_channels)
@@ -656,11 +669,11 @@ async fn clean_tables(pool: &PgPool) {
          notification_deliveries, notification_rules, ssh_tunnels, agent_hostname_patterns, \
          agent_tags, schedule_targets, per_agent_excludes, per_agent_commands, \
          per_agent_file_change_patterns, archive_dirs, archive_tags, archive_index_jobs, \
-         archive_paths, archives, backup_sources, backup_reports, canary_results, repo_tags, \
-         repo_stats, repo_import_state, repo_last_op, repo_quotas, repo_relocation_pending_hosts, \
-         schedules, dismissed_dashboard_findings, push_subscriptions, api_tokens, sessions, \
-         user_roles, user_groups, repo_permissions, totp_attempts, users, groups, tags, repos, \
-         agents, notification_channels CASCADE",
+         archive_paths, archives, backup_sources, backup_run_events, backup_reports, \
+         canary_results, repo_tags, repo_stats, repo_import_state, repo_last_op, repo_quotas, \
+         repo_relocation_pending_hosts, schedules, dismissed_dashboard_findings, \
+         push_subscriptions, api_tokens, sessions, user_roles, user_groups, repo_permissions, \
+         totp_attempts, users, groups, tags, repos, agents, notification_channels CASCADE",
     )
     .execute(pool)
     .await
@@ -821,6 +834,881 @@ async fn test_agent_crud() {
     let body = body_json(resp).await;
     assert!(body.is_object());
     assert_eq!(body.get("hostname").unwrap(), "test-host-1");
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_wake_enabled_without_mac() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": null,
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_malformed_mac_even_with_wake_disabled() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    // The UI keeps a MAC typed while wake was on in the form even after the
+    // toggle is switched off, so this combination must not be able to reach
+    // the DB's unconditional CHECK constraint as an opaque 500.
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": "not-a-mac",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_malformed_broadcast_address() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": "not-an-ip",
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_shutdown_without_wake() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_start_agent_without_ssh_host() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": true,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_start_agent_with_empty_service_name() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'power-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": true,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10",
+            "agent_service_name": "   "
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_ipv6_broadcast_address() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    // Wake-on-LAN has no real IPv6 equivalent (IPv6 uses multicast, not
+    // broadcast), and send_wol_packet binds an IPv4-only UdpSocket, so a
+    // syntactically valid IPv6 address must still be rejected here rather
+    // than persisting and failing silently at wake time.
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": "::1",
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_shutdown_after_backup_without_ssh_host() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    // A wake-only host (agent already runs as a persistent service, so
+    // start_agent_enabled stays off) still needs an SSH destination to shut
+    // the host down -- shutdown always goes over SSH.
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": null
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_accepts_shutdown_after_backup_without_start_agent_given_ssh_host()
+{
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    // shutdown_after_backup always goes over SSH regardless of
+    // start_agent_enabled, so it needs the same recorded last_ssh_user
+    // start_agent_enabled requires -- see the rejection test below.
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'power-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_shutdown_after_backup_without_recorded_ssh_user() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    // No deploy has ever happened for this agent, so last_ssh_user is NULL.
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_start_agent_without_recorded_ssh_user() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    // No deploy has ever happened for this agent, so last_ssh_user is NULL.
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": true,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_rejects_ssh_port_out_of_range() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'power-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": null,
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": true,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10",
+            "ssh_port": 99999
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_persists_and_returns_nested_settings() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'power-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": "192.168.1.255",
+                "wake_timeout_seconds": 240,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": true,
+            "stop_agent_after_backup": true,
+            "ssh_host": "192.168.1.10",
+            "ssh_port": 2222,
+            "agent_service_name": "assimilate-agent"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let power = body.get("power").unwrap();
+    assert_eq!(
+        power.get("wake").unwrap().get("wake_enabled").unwrap(),
+        true
+    );
+    assert_eq!(
+        power.get("wake").unwrap().get("wake_mac_address").unwrap(),
+        "3C:97:0E:2B:9A:44"
+    );
+    assert_eq!(power.get("start_agent_enabled").unwrap(), true);
+    assert_eq!(power.get("ssh_port").unwrap(), 2222);
+
+    // Round-trips through a fresh GET, not just the PUT response.
+    let req = get_request("/api/agents/power-host");
+    let resp = oneshot(&mut app, req).await;
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("power")
+            .unwrap()
+            .get("wake")
+            .unwrap()
+            .get("wake_enabled")
+            .unwrap(),
+        true
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_repo_power_rejects_wake_enabled_without_mac() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "power-repo-1").await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": true,
+            "wake_mac_address": null,
+            "wake_broadcast_address": null,
+            "shutdown_after_backup": false
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_repo_power_rejects_malformed_mac_even_with_wake_disabled() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "power-repo-2").await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": false,
+            "wake_mac_address": "not-a-mac",
+            "wake_broadcast_address": null,
+            "shutdown_after_backup": false
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_repo_power_rejects_malformed_broadcast_address() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "power-repo-3").await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": false,
+            "wake_mac_address": null,
+            "wake_broadcast_address": "not-an-ip",
+            "shutdown_after_backup": false
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_repo_power_persists_and_returns_settings() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "power-repo-2").await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": true,
+            "wake_mac_address": "9C:B6:D0:1A:44:7F",
+            "wake_broadcast_address": "192.168.1.255",
+            "wake_timeout_seconds": 240,
+            "shutdown_after_backup": true
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("power").unwrap().get("wake_enabled").unwrap(),
+        true
+    );
+    assert_eq!(
+        body.get("power").unwrap().get("wake_mac_address").unwrap(),
+        "9C:B6:D0:1A:44:7F"
+    );
+    // update_repo_power must not touch fields it doesn't own.
+    assert_eq!(body.get("name").unwrap(), "power-repo-2");
+}
+
+/// Inserts a user with a role granting no elevated permissions at all (no
+/// `can_delete_repo`, no `can_view_all_repos`) and an active session for
+/// them, returning the session cookie value. Used by the wake-secret
+/// redaction regression tests below, which need a viewer who can see an
+/// agent/repo but isn't an operator/admin.
+#[cfg(test)]
+async fn insert_viewer_only_session(pool: &PgPool, label: &str) -> String {
+    let user = server::db::insert_user(pool, &format!("{label}-user"), "hash")
+        .await
+        .unwrap();
+    // `roles` isn't in `clean_tables`'s TRUNCATE list (other tests rely on
+    // migration-seeded roles like "admin" surviving it), so a plain INSERT
+    // here would collide with itself on a second consecutive run of the
+    // suite against one persistent local database - upsert on the unique
+    // `name` instead, matching `create_test_user_and_session`'s own
+    // `ON CONFLICT (username) DO UPDATE` idiom for the same reason.
+    let role_id: i64 = sqlx::query_scalar(
+        "INSERT INTO roles (name, can_create_agent, can_delete_agent, can_delete_own_agent, \
+         can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
+         can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
+         can_manage_tunnels, can_upgrade_agent) VALUES ($1, false, false, false, false, false, \
+         false, false, false, false, false, false, false, false) ON CONFLICT (name) DO UPDATE SET \
+         name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("{label}-role"))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    server::db::set_user_roles(pool, user.id, &[role_id])
+        .await
+        .unwrap();
+
+    let session_id = format!("{label}-session-0000000000000000000");
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(hash_token(&session_id))
+        .bind(user.id)
+        .bind(expires)
+        .execute(pool)
+        .await
+        .unwrap();
+    session_id
+}
+
+#[cfg(test)]
+fn get_request_as(uri: &str, session_id: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("GET")
+        .header("cookie", format!("session={session_id}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// Regression test: an agent's Wake-on-LAN MAC/broadcast address let anyone
+/// who has them power the host on remotely, so - like `quota` on repos -
+/// they must be redacted for a viewer who can see the agent but isn't an
+/// operator/admin, in both the list and single-agent responses.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_responses_redact_wake_secrets_for_non_privileged_viewer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    server::db::insert_agent(&pool, "wake-secret-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'wake-secret-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let req = json_request(
+        "PUT",
+        "/api/agents/wake-secret-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": true,
+                "wake_mac_address": "3C:97:0E:2B:9A:44",
+                "wake_broadcast_address": "192.168.1.255",
+                "wake_timeout_seconds": 240,
+                "shutdown_after_backup": false
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": "192.168.1.10",
+            "ssh_port": 2222,
+            "agent_service_name": "assimilate-agent"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let viewer_session = insert_viewer_only_session(&pool, "agent-wake-secret").await;
+
+    let resp = oneshot(
+        &mut app,
+        get_request_as("/api/agents/wake-secret-host", &viewer_session),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let wake = body.get("power").unwrap().get("wake").unwrap();
+    assert!(
+        wake.get("wake_mac_address").unwrap().is_null(),
+        "non-privileged viewer must not see the WOL MAC address: {wake}"
+    );
+    assert!(
+        wake.get("wake_broadcast_address").unwrap().is_null(),
+        "non-privileged viewer must not see the WOL broadcast address: {wake}"
+    );
+    // Non-secret settings must still be visible.
+    assert_eq!(wake.get("wake_enabled").unwrap(), true);
+
+    let resp = oneshot(&mut app, get_request_as("/api/agents", &viewer_session)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let agent = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a.get("hostname").unwrap() == "wake-secret-host")
+        .expect("agent visible to any authenticated viewer");
+    assert!(
+        agent
+            .get("power")
+            .unwrap()
+            .get("wake")
+            .unwrap()
+            .get("wake_mac_address")
+            .unwrap()
+            .is_null(),
+        "list_agents must also redact the MAC address for a non-privileged viewer"
+    );
+}
+
+/// Regression test: same redaction as
+/// [`test_agent_responses_redact_wake_secrets_for_non_privileged_viewer`],
+/// but for a repository's Wake-on-LAN settings.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_repo_responses_redact_wake_secrets_for_non_privileged_viewer() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "wake-secret-repo").await;
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": true,
+            "wake_mac_address": "9C:B6:D0:1A:44:7F",
+            "wake_broadcast_address": "192.168.1.255",
+            "wake_timeout_seconds": 240,
+            "shutdown_after_backup": false
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let viewer_session = insert_viewer_only_session(&pool, "repo-wake-secret").await;
+
+    let resp = oneshot(
+        &mut app,
+        get_request_as(&format!("/api/repos/{repo_id}"), &viewer_session),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let power = body.get("power").unwrap();
+    assert!(
+        power.get("wake_mac_address").unwrap().is_null(),
+        "non-privileged viewer must not see the WOL MAC address: {power}"
+    );
+    assert!(power.get("wake_broadcast_address").unwrap().is_null());
+    assert_eq!(power.get("wake_enabled").unwrap(), true);
+
+    let resp = oneshot(&mut app, get_request_as("/api/repos", &viewer_session)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let repo = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r.get("id").unwrap() == repo_id)
+        .expect("repo visible to any authenticated viewer");
+    assert!(
+        repo.get("power")
+            .unwrap()
+            .get("wake_mac_address")
+            .unwrap()
+            .is_null(),
+        "list_repos must also redact the MAC address for a non-privileged viewer"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        get_request_as("/api/repos/stats", &viewer_session),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let repo = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r.get("id").unwrap() == repo_id)
+        .expect("repo visible to any authenticated viewer");
+    assert!(
+        repo.get("power")
+            .unwrap()
+            .get("wake_mac_address")
+            .unwrap()
+            .is_null(),
+        "list_repos_with_stats must also redact the MAC address for a non-privileged viewer"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_list_run_events_returns_chronological_order() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent = server::db::insert_agent(&pool, "run-events-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "run-events-repo").await;
+
+    server::db::run_events::insert_run_event(
+        &pool,
+        "run-xyz",
+        agent.id,
+        repo_id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::ReachabilityCheck,
+        "Checked agent -- no response",
+    )
+    .await
+    .unwrap();
+    server::db::run_events::insert_run_event(
+        &pool,
+        "run-xyz",
+        agent.id,
+        repo_id,
+        shared::types::RunEventTarget::Source,
+        shared::types::RunEventType::WakeSent,
+        "Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44",
+    )
+    .await
+    .unwrap();
+
+    let req = get_request(&format!(
+        "/api/runs/run-xyz/events?agent_id={}&repo_id={repo_id}",
+        agent.id
+    ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let events = body.as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events.first().unwrap().get("event_type").unwrap(),
+        "reachability_check"
+    );
+    assert_eq!(
+        events.get(1).unwrap().get("event_type").unwrap(),
+        "wake_sent"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_list_run_events_for_unknown_run_returns_empty_array() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent = server::db::insert_agent(&pool, "run-events-host-2", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "run-events-repo-2").await;
+
+    let req = get_request(&format!(
+        "/api/runs/does-not-exist/events?agent_id={}&repo_id={repo_id}",
+        agent.id
+    ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -4060,19 +4948,42 @@ async fn test_calendar_upcoming_schedule_includes_target_hostname(pool: sqlx::Pg
     let repo_id = insert_test_repo(&pool, "calendar-repo").await;
     insert_test_schedule(&pool, agent_id, repo_id).await;
 
+    // The seeded schedule runs daily at 03:00 UTC, so its next occurrence is
+    // "later today" or "tomorrow" almost always -- except when this test
+    // itself runs on the last day of the month, past 03:00 UTC, where the
+    // only remaining occurrence rolls into next month. Check both months
+    // rather than assuming "this month" always has an upcoming occurrence,
+    // so the test doesn't flake once a month depending on when it runs.
     let now = chrono::Utc::now();
-    let month = format!("{}-{:02}", now.format("%Y"), now.format("%m"));
-    let req = get_request(&format!("/api/stats/calendar?month={month}"));
-    let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::OK);
+    let this_month = format!("{}-{:02}", now.format("%Y"), now.format("%m"));
+    let next_month_date = now
+        .date_naive()
+        .checked_add_months(chrono::Months::new(1))
+        .unwrap();
+    let next_month = format!(
+        "{}-{:02}",
+        next_month_date.format("%Y"),
+        next_month_date.format("%m")
+    );
 
-    let body = body_json(resp).await;
-    let days = body.as_array().unwrap();
-    let scheduled_event = days
-        .iter()
-        .flat_map(|d| d.get("events").and_then(|e| e.as_array()).unwrap())
-        .find(|e| e.get("status").and_then(|s| s.as_str()) == Some("scheduled"));
-    let event = scheduled_event.expect("an upcoming scheduled event for the new schedule");
+    let mut scheduled_event = None;
+    for month in [&this_month, &next_month] {
+        let req = get_request(&format!("/api/stats/calendar?month={month}"));
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        scheduled_event = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|d| d.get("events").and_then(|e| e.as_array()).unwrap().clone())
+            .find(|e| e.get("status").and_then(|s| s.as_str()) == Some("scheduled"));
+        if scheduled_event.is_some() {
+            break;
+        }
+    }
+    let event = scheduled_event
+        .expect("an upcoming scheduled event for the new schedule, in this month or next");
     assert_eq!(
         event.get("hostname").and_then(|h| h.as_str()),
         Some("calendar-host")
@@ -6717,6 +7628,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "failed_report_retention_days": 200,
         "system_event_retention_days": 30,
         "notification_delivery_retention_days": 15,
+        "run_event_retention_days": 45,
         "timezone": "UTC",
         "borg_query_timeout_secs": 120,
         "session_idle_timeout_minutes": 60,
@@ -6732,6 +7644,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         body.get("notification_delivery_retention_days").unwrap(),
         15
     );
+    assert_eq!(body.get("run_event_retention_days").unwrap(), 45);
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
@@ -6765,6 +7678,11 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         "omitted field must echo the persisted value, not a request-derived default"
     );
     assert_eq!(
+        body.get("run_event_retention_days").unwrap(),
+        45,
+        "omitted field must echo the persisted value, not a request-derived default"
+    );
+    assert_eq!(
         body.get("session_idle_timeout_minutes").unwrap(),
         60,
         "omitted field must echo the persisted value, not a request-derived default"
@@ -6792,6 +7710,7 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
         body.get("notification_delivery_retention_days").unwrap(),
         15
     );
+    assert_eq!(body.get("run_event_retention_days").unwrap(), 45);
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);

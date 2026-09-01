@@ -32,7 +32,9 @@ use super::{
     permissions::is_visible_to_user,
 };
 use crate::{
-    AppState, RepoLock, archive_index,
+    AppState, RepoLock,
+    api::agents::UpdateHostWakeRequest,
+    archive_index,
     borg::Borg,
     config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
@@ -56,6 +58,13 @@ impl From<RepoRow> for RepoResponse {
             owner_id: row.owner_id,
             visibility: row.visibility.parse().unwrap_or_default(),
             sync_schedule: row.sync_schedule,
+            power: shared::responses::HostWakeSettingsResponse {
+                wake_enabled: row.wake_enabled,
+                wake_mac_address: row.wake_mac_address,
+                wake_broadcast_address: row.wake_broadcast_address,
+                wake_timeout_seconds: row.wake_timeout_seconds,
+                shutdown_after_backup: row.shutdown_after_backup,
+            },
         }
     }
 }
@@ -107,6 +116,13 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
                     .unwrap_or_default(),
                 enabled,
             }),
+            power: shared::responses::HostWakeSettingsResponse {
+                wake_enabled: row.wake_enabled,
+                wake_mac_address: row.wake_mac_address,
+                wake_broadcast_address: row.wake_broadcast_address,
+                wake_timeout_seconds: row.wake_timeout_seconds,
+                shutdown_after_backup: row.shutdown_after_backup,
+            },
         }
     }
 }
@@ -156,6 +172,11 @@ pub async fn list_repos(
     let repos = db::list_all_repos(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
+    // See list_repos_with_stats: Wake-on-LAN's MAC/broadcast address let
+    // anyone who has them power the host on remotely, so they're gated to
+    // operators/admins rather than embedded for any viewer who can merely
+    // see the repo.
+    let can_view_wake_secrets = effective.can_delete_repo || effective.can_view_all_repos;
     let mut visible = Vec::with_capacity(repos.len());
     for repo in repos {
         if is_visible_to_user(
@@ -167,7 +188,12 @@ pub async fn list_repos(
         )
         .await?
         {
-            visible.push(RepoResponse::from(repo));
+            let mut response = RepoResponse::from(repo);
+            if !can_view_wake_secrets {
+                response.power.wake_mac_address = None;
+                response.power.wake_broadcast_address = None;
+            }
+            visible.push(response);
         }
     }
     Ok(Json(visible))
@@ -635,6 +661,56 @@ pub async fn update_repo(
 }
 
 #[utoipa::path(
+    put,
+    path = "/api/repos/{repo_id}/power",
+    tag = "Repositories",
+    operation_id = "updateRepoPower",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    request_body = UpdateHostWakeRequest,
+    responses(
+        (status = 200, description = "Updated repository", body = RepoResponse),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// Update a repository's power-management settings (admin only).
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::NotFound`]: the repository does not exist
+pub async fn update_repo_power(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+    ApiJson(req): ApiJson<UpdateHostWakeRequest>,
+) -> Result<Json<RepoResponse>, ApiError> {
+    crate::api::agents::validate_host_wake(&req)?;
+
+    // Confirms the repository exists before writing to it.
+    db::get_repo_connection(&state.pool, repo_id).await?;
+
+    let repo = db::update_repo_power(
+        &state.pool,
+        repo_id,
+        db::RepoPowerPatch {
+            wake_enabled: req.wake_enabled,
+            wake_mac_address: req.wake_mac_address.as_deref(),
+            wake_broadcast_address: req.wake_broadcast_address.as_deref(),
+            wake_timeout_seconds: req.wake_timeout_seconds,
+            shutdown_after_backup: req.shutdown_after_backup,
+        },
+    )
+    .await?;
+    Ok(Json(RepoResponse::from(repo)))
+}
+
+#[utoipa::path(
     delete,
     path = "/api/repos/{repo_id}",
     tag = "Repositories",
@@ -887,6 +963,12 @@ pub async fn list_repos_with_stats(
             let mut response = RepoWithStatsResponse::from(repo);
             if !can_view_quota {
                 response.quota = None;
+                // Wake-on-LAN's MAC/broadcast address let anyone who has
+                // them power the host on remotely, so they're gated to the
+                // same audience as quota rather than embedded for any
+                // viewer who can merely see the repo.
+                response.power.wake_mac_address = None;
+                response.power.wake_broadcast_address = None;
             }
             visible.push(response);
         }
@@ -927,6 +1009,8 @@ pub async fn get_repo(
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     if !(effective.can_delete_repo || effective.can_view_all_repos) {
         res.quota = None;
+        res.power.wake_mac_address = None;
+        res.power.wake_broadcast_address = None;
     }
     Ok(Json(res))
 }
@@ -4270,6 +4354,11 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
@@ -4291,6 +4380,11 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
@@ -4311,6 +4405,11 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);
@@ -4354,6 +4453,11 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(resp.last_op_kind, None);
@@ -4397,6 +4501,11 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert_eq!(
@@ -4736,6 +4845,11 @@ mod tests {
             quota_warn_action: None,
             quota_critical_action: None,
             quota_enabled: None,
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         assert!(resp.quota.is_none());
@@ -4779,6 +4893,11 @@ mod tests {
             quota_warn_action: Some("bogus_action".into()),
             quota_critical_action: Some("block_backups".into()),
             quota_enabled: Some(true),
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: false,
         };
         let resp = RepoWithStatsResponse::from(row);
         let quota = resp.quota.expect("quota should be present");

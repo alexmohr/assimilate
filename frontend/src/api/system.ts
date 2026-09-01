@@ -32,6 +32,7 @@ export interface UpdateSettingsRequest {
   failed_report_retention_days: number
   system_event_retention_days: number
   notification_delivery_retention_days: number
+  run_event_retention_days: number
   timezone: string | undefined
   borg_query_timeout_secs: number
   session_idle_timeout_minutes: number

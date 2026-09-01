@@ -144,6 +144,89 @@ export async function clickButtonWithText(
 }
 
 /**
+ * Opens an `EditableSection`-backed card's edit form via its one Edit
+ * button - always the card's first button in view mode. Shared by every
+ * card built on that component (`AgentDefaultsCard`, `AgentPowerCard`,
+ * `RepoPowerCard`, ...), whose view/edit/save shell is otherwise identical.
+ */
+export async function startEditingSection(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+): Promise<void> {
+  await wrapper.find('button').trigger('click')
+}
+
+/**
+ * Clicks an `EditableSection` card's Save/Cancel button by its exact label
+ * and waits for the resulting save request to settle. Exact match (not
+ * `clickButtonWithText`'s substring one) so "Save" doesn't also match a
+ * "Save changes" button elsewhere in the same card.
+ */
+export async function clickSectionButton(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  label: string,
+): Promise<void> {
+  const button = wrapper.findAll('button').find((b) => b.text().trim() === label)
+  if (!button) throw new Error(`no "${label}" button on the card`)
+  await button.trigger('click')
+  await flushPromises()
+}
+
+/**
+ * Drives an `EditableSection` card's edit-then-Save flow and asserts it
+ * emitted `saved` with the given args, so the parent view can merge the
+ * result back in. Shared by every card built on that component.
+ */
+export async function expectSavedEmitted(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  expectedArgs: unknown[],
+): Promise<void> {
+  await startEditingSection(wrapper)
+  await clickSectionButton(wrapper, 'Save')
+  expect(wrapper.emitted('saved')).toEqual([expectedArgs])
+}
+
+/**
+ * Drives an `EditableSection` card's edit-then-Save flow expecting the save
+ * request to have been mocked to fail, and asserts the card stays in edit
+ * mode with the API's error message shown - proven by a field that only
+ * exists in edit mode still being present. Shared by every card built on
+ * that component.
+ */
+export async function expectSaveErrorKeepsEditing(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  errorMessage: string,
+  survivingFieldSelector: string,
+): Promise<void> {
+  await startEditingSection(wrapper)
+  await clickSectionButton(wrapper, 'Save')
+  expect(wrapper.find('.form-error').text()).toContain(errorMessage)
+  expect(wrapper.find(survivingFieldSelector).exists()).toBe(true)
+}
+
+/**
+ * Toggles the `ToggleSwitch` at `toggleIndex` off then on and saves,
+ * asserting the save request's body (found regardless of how many
+ * further positional args that card's update call takes) matches
+ * `bodyMatcher` - the shared "a value hidden by its parent toggle must not
+ * silently resubmit once the toggle is switched back on" regression shape
+ * used by `AgentPowerCard` and `RepoPowerCard`.
+ */
+export async function expectToggleOffThenOnResetsDependentOnSave(
+  wrapper: VueWrapper<ComponentPublicInstance>,
+  toggleIndex: number,
+  putMock: ReturnType<typeof vi.fn>,
+  bodyMatcher: unknown,
+): Promise<void> {
+  await startEditingSection(wrapper)
+  const toggle = wrapper.findAllComponents({ name: 'ToggleSwitch' })[toggleIndex]!
+  await toggle.vm.$emit('update:modelValue', false)
+  await toggle.vm.$emit('update:modelValue', true)
+  await flushPromises()
+  await clickSectionButton(wrapper, 'Save')
+  expect(putMock.mock.calls.at(-1)?.[1]).toEqual(bodyMatcher)
+}
+
+/**
  * Drives the common "row action opens a ConfirmDeleteDialog" flow: opens it via the row's
  * first `.btn-danger-text` button, dismisses it via the close button and asserts the delete
  * API was not called, then reopens and confirms, asserting the delete API was called with

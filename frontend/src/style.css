@@ -1050,6 +1050,10 @@
     color: var(--text-muted);
   }
 
+  .field-hint-error {
+    color: var(--danger);
+  }
+
   /* A field whose control sits beside its label rather than under it. Used
      for toggles, where a full-width column wastes a whole row. */
   .field-inline {
@@ -1057,6 +1061,21 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-6);
+  }
+
+  /* The title-plus-hint pair inside a `.field-inline`, for a toggle whose
+     effect needs more than `.toggle-row-label`'s one line to explain. */
+  .field-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .field-title {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
   }
 
   /* A label sharing its row with a secondary control, e.g. a "show

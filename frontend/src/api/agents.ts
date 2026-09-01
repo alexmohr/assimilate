@@ -32,6 +32,24 @@ export interface UpdateAgentRequest {
   default_file_change_patterns_raw?: string
 }
 
+/** A host's wake-before-backup settings, shared by agent and repo hosts. */
+export interface UpdateHostWakeRequest {
+  wake_enabled: boolean
+  wake_mac_address: string | null
+  wake_broadcast_address: string | null
+  wake_timeout_seconds: number
+  shutdown_after_backup: boolean
+}
+
+export interface UpdateAgentPowerRequest {
+  wake: UpdateHostWakeRequest
+  start_agent_enabled: boolean
+  stop_agent_after_backup: boolean
+  ssh_host: string | null
+  ssh_port: number
+  agent_service_name: string
+}
+
 export type MergeAgentResult = MergeAgentResponse
 
 export interface ServiceUnitPreviewRequest {
@@ -108,6 +126,17 @@ export async function updateAgent(
   domain?: string | null,
 ): Promise<AgentRow> {
   const response = await apiClient.put<AgentRow>(`/agents/${hostname}`, data, {
+    params: domainParams(domain),
+  })
+  return response.data
+}
+
+export async function updateAgentPower(
+  hostname: string,
+  data: UpdateAgentPowerRequest,
+  domain?: string | null,
+): Promise<AgentRow> {
+  const response = await apiClient.put<AgentRow>(`/agents/${hostname}/power`, data, {
     params: domainParams(domain),
   })
   return response.data

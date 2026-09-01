@@ -1,14 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { getRunEvents } from '../api/runs'
 import AgentBackupRow from './AgentBackupRow.vue'
 import type { ReportRow } from '../types/report'
+
+vi.mock('../api/runs', () => ({
+  getRunEvents: vi.fn(),
+}))
+
+// Captured WebSocket message handlers - populated during component setup().
+// One row is mounted per test in this file, so a single-handler-per-type
+// map (rather than a list) is enough, matching AgentDetailView.test.ts's
+// mock.
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
+}))
 
 function report(over: Record<string, unknown> = {}): ReportRow {
   return {
     id: 7,
+    agent_id: 5,
     repo_id: 10,
     repo_name: 'server-daily',
     schedule_id: 100,
@@ -23,6 +44,7 @@ function report(over: Record<string, unknown> = {}): ReportRow {
     error_message: null,
     warnings: [],
     archive_name: 'web-01-2026-06-01',
+    run_id: null,
     ...over,
   } as unknown as ReportRow
 }
@@ -32,6 +54,12 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('AgentBackupRow', () => {
+  beforeEach(() => {
+    vi.mocked(getRunEvents).mockReset()
+    vi.mocked(getRunEvents).mockResolvedValue([])
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+  })
+
   it.each([
     ['success', 'success'],
     ['warning', 'warning'],
@@ -147,6 +175,217 @@ describe('AgentBackupRow', () => {
         report: report({ status: 'failed', error_message: 'Connection refused' }),
       })
       expect(wrapper.find('button[aria-expanded]').exists()).toBe(false)
+    })
+  })
+
+  // A run tied to a power-management timeline is worth offering to expand
+  // even when it succeeded with no warnings - most runs have wake/start
+  // disabled and simply won't have recorded anything, but a viewer can't
+  // know that without a way to look.
+  describe('power management timeline', () => {
+    it('offers the toggle for a clean run that has a run_id', () => {
+      const wrapper = mount({ report: report({ run_id: 'run-123' }), showDetail: true })
+      expect(wrapper.find('button[aria-expanded]').exists()).toBe(true)
+    })
+
+    it('does not fetch events until the row is expanded', () => {
+      mount({ report: report({ run_id: 'run-123' }), showDetail: true, expanded: false })
+      expect(getRunEvents).not.toHaveBeenCalled()
+    })
+
+    it('fetches and renders the timeline once expanded', async () => {
+      vi.mocked(getRunEvents).mockResolvedValue([
+        {
+          id: 1,
+          run_id: 'run-123',
+          target: 'source',
+          event_type: 'wake_sent',
+          message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+          occurred_at: '2026-06-01T09:00:00Z',
+        },
+      ])
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(getRunEvents).toHaveBeenCalledWith('run-123', 5, 10)
+      expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
+    })
+
+    // Most runs have wake/start disabled and record no power-management
+    // events at all - that must not read as "the toggle does nothing", since
+    // the toggle offers itself on every run with a run_id (the vast
+    // majority), not just power-managed ones.
+    it('shows an empty-state message rather than nothing when a run recorded no events', async () => {
+      vi.mocked(getRunEvents).mockResolvedValue([])
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+      expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
+    })
+
+    // The docs promise the timeline updates live while the row is open, not
+    // just on expand - a step recorded after the initial (possibly empty)
+    // fetch must still show up without collapsing and re-expanding the row.
+    it('appends a live RunEvent for this run once the initial fetch has completed', async () => {
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-123',
+        agent_id: 5,
+        repo_id: 10,
+        target: 'source',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
+      expect(wrapper.text()).not.toContain('No power-management activity for this run.')
+    })
+
+    it('ignores a live RunEvent for a different run', async () => {
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'some-other-run',
+        agent_id: 5,
+        repo_id: 10,
+        target: 'source',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+    })
+
+    // run_id is shared across every target of a multi-target schedule (e.g.
+    // the same agent backing up to two different repos in one schedule
+    // tick), so run_id alone can't tell this row's events apart from a
+    // sibling target's that happens to share it.
+    it('ignores a live RunEvent for the same run but a different target pairing', async () => {
+      const wrapper = mount({
+        report: report({ run_id: 'run-123', agent_id: 5, repo_id: 10 }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-123',
+        agent_id: 5,
+        repo_id: 99, // a different repo on the same agent, same run_id
+        target: 'repository',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No power-management activity for this run.')
+    })
+
+    it('merges a live RunEvent that arrives before the initial fetch resolves, instead of losing it', async () => {
+      let resolveFetch: (events: []) => void = () => {}
+      vi.mocked(getRunEvents).mockReturnValue(
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+      )
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-123',
+        agent_id: 5,
+        repo_id: 10,
+        target: 'source',
+        event_type: 'wake_sent',
+        message: 'Sent Wake-on-LAN packet',
+        occurred_at: '2026-06-01T09:00:00Z',
+      })
+      resolveFetch([])
+      await flushPromises()
+
+      // The event that arrived mid-fetch is buffered and merged in once the
+      // fetch resolves, rather than being silently lost because it arrived
+      // just before the (now-stale) empty response.
+      expect(wrapper.text()).toContain('Sent Wake-on-LAN packet')
+      expect(wrapper.text()).not.toContain('No power-management activity for this run.')
+    })
+
+    it('drops a live RunEvent for a row that has never been expanded', async () => {
+      mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: false,
+      })
+
+      // Must not throw or accumulate state for a row that never fetches -
+      // a future expand's own fetch would return the full history anyway.
+      expect(() =>
+        wsHandlers['RunEvent']?.({
+          run_id: 'run-123',
+          agent_id: 5,
+          repo_id: 10,
+          target: 'source',
+          event_type: 'wake_sent',
+          message: 'Sent Wake-on-LAN packet',
+          occurred_at: '2026-06-01T09:00:00Z',
+        }),
+      ).not.toThrow()
+    })
+
+    it('shows an error state rather than silently hiding the block when the fetch fails', async () => {
+      vi.mocked(getRunEvents).mockRejectedValue(new Error('network error'))
+      const wrapper = mount({
+        report: report({ run_id: 'run-123' }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(getRunEvents).toHaveBeenCalledWith('run-123', 5, 10)
+      expect(wrapper.text()).toContain('Power management')
+      expect(wrapper.text()).toContain("Couldn't load power-management activity for this run.")
+      expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
+    })
+
+    it('does not render a timeline section for a run with no run_id', async () => {
+      const wrapper = mount({
+        report: report({ status: 'failed', error_message: 'boom', run_id: null }),
+        showDetail: true,
+        expanded: true,
+      })
+      await flushPromises()
+
+      expect(getRunEvents).not.toHaveBeenCalled()
+      expect(wrapper.findComponent({ name: 'RunEventTimeline' }).exists()).toBe(false)
     })
   })
 })

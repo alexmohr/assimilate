@@ -6,7 +6,9 @@ use axum::{
     extract::{Path, Query, State},
 };
 use serde::Deserialize;
-use shared::responses::{DeleteFailedReportsResponse, FailedReportCountResponse, ReportResponse};
+use shared::responses::{
+    DeleteFailedReportsResponse, FailedReportCountResponse, ReportResponse, RunEventResponse,
+};
 use tracing::warn;
 
 use super::{
@@ -42,6 +44,7 @@ mod tests {
             borg_version: None,
             archive_name: None,
             borg_command: None,
+            run_id: None,
         }
     }
 
@@ -103,6 +106,7 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
         hostname: Some(hostname),
         repo_name: Some(row.repo_name),
         schedule_name: row.schedule_name,
+        run_id: row.run_id,
     }
 }
 
@@ -156,6 +160,73 @@ pub async fn list_reports(
             .map(|r| row_to_report_response(r, hostname_clone.clone()))
             .collect();
     Ok(Json(reports))
+}
+
+fn row_to_run_event_response(row: db::run_events::RunEventRow) -> RunEventResponse {
+    RunEventResponse {
+        id: row.id,
+        run_id: row.run_id,
+        target: row.target.parse().unwrap_or_else(|_| {
+            warn!(raw_target = %row.target, "failed to parse run event target, defaulting to Source");
+            shared::types::RunEventTarget::default()
+        }),
+        event_type: row.event_type.parse().unwrap_or_else(|_| {
+            warn!(
+                raw_event_type = %row.event_type,
+                "failed to parse run event type, defaulting to ReachabilityCheck"
+            );
+            shared::types::RunEventType::default()
+        }),
+        message: row.message,
+        occurred_at: row.occurred_at,
+    }
+}
+
+/// Query parameters for listing a run's power-management timeline.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ListRunEventsQuery {
+    /// The target pairing's agent ID -- `run_id` alone spans every target of
+    /// a multi-target schedule, so this plus `repo_id` narrows to one.
+    pub agent_id: i64,
+    /// The target pairing's repository ID.
+    pub repo_id: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/runs/{run_id}/events",
+    tag = "Reports",
+    operation_id = "listRunEvents",
+    params(
+        ("run_id" = String, Path, description = "Run ID, shared across one fan-out"),
+        ("agent_id" = i64, Query, description = "The target pairing's agent ID"),
+        ("repo_id" = i64, Query, description = "The target pairing's repository ID"),
+    ),
+    responses(
+        (status = 200, description = "The run's power timeline", body = Vec<RunEventResponse>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// List a run's power-management timeline (reachability checks, wakes,
+/// agent start/stop, shutdowns) for one target pairing, in chronological
+/// order.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn list_run_events(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(run_id): Path<String>,
+    Query(query): Query<ListRunEventsQuery>,
+) -> Result<Json<Vec<RunEventResponse>>, ApiError> {
+    let events =
+        db::run_events::list_run_events(&state.pool, &run_id, query.agent_id, query.repo_id)
+            .await?
+            .into_iter()
+            .map(row_to_run_event_response)
+            .collect();
+    Ok(Json(events))
 }
 
 #[utoipa::path(

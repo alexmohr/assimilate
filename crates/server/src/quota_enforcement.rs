@@ -141,6 +141,7 @@ mod tests {
             session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
                 480,
             )),
+            power_sessions: crate::power::PowerSessionTracker::default(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),

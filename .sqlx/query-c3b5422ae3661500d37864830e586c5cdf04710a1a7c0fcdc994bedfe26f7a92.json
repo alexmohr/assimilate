@@ -1,0 +1,196 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents WHERE hostname = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_git_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "agent_build_time",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "agent_commit_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "default_backup_paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 12,
+        "name": "default_exclude_patterns",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 13,
+        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 14,
+        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 15,
+        "name": "default_file_change_patterns_raw",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "agent_token_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "is_hidden",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "domain",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "wake_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 21,
+        "name": "wake_mac_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 22,
+        "name": "wake_broadcast_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 23,
+        "name": "wake_timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 24,
+        "name": "shutdown_after_backup",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 25,
+        "name": "start_agent_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 26,
+        "name": "stop_agent_after_backup",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 27,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 28,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 29,
+        "name": "agent_service_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c3b5422ae3661500d37864830e586c5cdf04710a1a7c0fcdc994bedfe26f7a92"
+}

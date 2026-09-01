@@ -10,6 +10,7 @@ import EntityTags from './EntityTags.vue'
 import RepoBorgConsole from './RepoBorgConsole.vue'
 import RepoDangerZone from './RepoDangerZone.vue'
 import RepoOverviewCard from './RepoOverviewCard.vue'
+import RepoPowerCard from './RepoPowerCard.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
 import type { RepoSettingsSection } from '../utils/repoSettings'
@@ -41,6 +42,7 @@ const sections = computed<SettingsSections<RepoSettingsSection>>(() => [
   { id: 'repository', label: 'Repository' },
   ...(props.isAdmin
     ? [
+        { id: 'power', label: 'Power' } as const,
         { id: 'quota', label: 'Storage quota' } as const,
         { id: 'tags', label: 'Tags' } as const,
         { id: 'console', label: 'Borg console' } as const,
@@ -63,6 +65,13 @@ const sections = computed<SettingsSections<RepoSettingsSection>>(() => [
       :repo="repo"
       :is-admin="isAdmin"
       :current-op="currentOp"
+      @saved="emit('changed')"
+    />
+
+    <RepoPowerCard
+      v-else-if="currentSection === 'power'"
+      :repo="repo"
+      :is-admin="isAdmin"
       @saved="emit('changed')"
     />
 

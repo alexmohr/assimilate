@@ -9,7 +9,8 @@ use crate::{
     protocol::{RepoOpKind, TunnelStatus},
     types::{
         BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
-        FindingStatus, IndexStatus, OnFailure, QuotaAction, ScheduleType, SearchEntry, Visibility,
+        FindingStatus, IndexStatus, OnFailure, QuotaAction, RunEventTarget, RunEventType,
+        ScheduleType, SearchEntry, Visibility,
     },
 };
 
@@ -231,6 +232,53 @@ pub struct AgentResponse {
     /// Optional DNS domain, set by an admin to disambiguate agents that
     /// share an OS hostname across different networks.
     pub domain: Option<String>,
+    /// Power-management settings: waking this agent's host before a backup,
+    /// and starting/stopping the agent process itself over SSH.
+    pub power: AgentPowerSettingsResponse,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// An agent's power-management settings: waking its host before a backup,
+/// and starting/stopping the agent process itself over SSH.
+pub struct AgentPowerSettingsResponse {
+    /// Whether/how to wake this agent's host before a backup.
+    pub wake: HostWakeSettingsResponse,
+    /// Whether to start the agent process over SSH before a backup if it
+    /// isn't already connected once the host is up.
+    pub start_agent_enabled: bool,
+    /// Whether to stop the agent process after the backup, but only if this
+    /// run is what started it.
+    pub stop_agent_after_backup: bool,
+    /// SSH hostname used to start/stop the agent process and to shut the
+    /// host down, required when `start_agent_enabled`.
+    pub ssh_host: Option<String>,
+    /// SSH port for `ssh_host`.
+    pub ssh_port: i32,
+    /// Name of the systemd unit managing the agent process.
+    pub agent_service_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Whether/how to wake a host (an agent's, or a repository's) before a
+/// backup, and shut it back down afterward. Shared shape -- a repository
+/// host's `power` field *is* one of these directly, since it has no
+/// agent-process settings to nest it under.
+pub struct HostWakeSettingsResponse {
+    /// Whether to send a Wake-on-LAN packet before a backup if the host
+    /// isn't already reachable.
+    pub wake_enabled: bool,
+    /// MAC address to wake, required when `wake_enabled`.
+    pub wake_mac_address: Option<String>,
+    /// Broadcast address the magic packet is sent to (defaults to the
+    /// global broadcast address when unset).
+    pub wake_broadcast_address: Option<String>,
+    /// How long to wait for the host to come online after waking it.
+    pub wake_timeout_seconds: i32,
+    /// Whether to shut the host down after the backup, but only if this run
+    /// is what woke it.
+    pub shutdown_after_backup: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -340,6 +388,9 @@ pub struct RepoResponse {
     pub visibility: Visibility,
     /// sync schedule.
     pub sync_schedule: Option<String>,
+    /// Power-management settings: waking the host this repository lives on
+    /// before a backup writes to it.
+    pub power: HostWakeSettingsResponse,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -430,6 +481,9 @@ pub struct RepoWithStatsResponse {
     pub current_op: Option<crate::protocol::ActiveRepoOp>,
     /// This repository's own storage quota, if one is configured.
     pub quota: Option<RepoQuotaSummaryResponse>,
+    /// Power-management settings: waking the host this repository lives on
+    /// before a backup writes to it.
+    pub power: HostWakeSettingsResponse,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -456,6 +510,26 @@ pub struct RepoQuotaSummaryResponse {
 pub struct RepoWithStatsListResponse {
     /// List of repositories.
     pub repos: Vec<RepoWithStatsResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// One step of a run's power-management timeline (reachability check, wake,
+/// agent start, shutdown).
+pub struct RunEventResponse {
+    #[ts(type = "number")]
+    /// Unique identifier.
+    pub id: i64,
+    /// Correlates to the run's `backup_reports.run_id`.
+    pub run_id: String,
+    /// Which host this event happened to.
+    pub target: RunEventTarget,
+    /// What happened.
+    pub event_type: RunEventType,
+    /// Human-readable description of the event.
+    pub message: String,
+    /// When the event occurred.
+    pub occurred_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -744,6 +818,9 @@ pub struct ReportResponse {
     pub repo_name: Option<String>,
     /// Name of the schedule.
     pub schedule_name: Option<String>,
+    /// Correlates to this run's power-management timeline, fetched via
+    /// `GET /api/runs/{run_id}/events`, when one was recorded.
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1131,6 +1208,9 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Number of days to retain notification delivery-attempt history.
     pub notification_delivery_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain a run's power-management event timeline.
+    pub run_event_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]

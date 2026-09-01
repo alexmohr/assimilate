@@ -11,6 +11,7 @@ import EntityTags from './EntityTags.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
+import AgentPowerCard from './AgentPowerCard.vue'
 import AgentDangerZone from './AgentDangerZone.vue'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
@@ -58,6 +59,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
   { id: 'aliases', label: 'Hostname aliases' },
   ...(props.isAdmin
     ? [
+        { id: 'power', label: 'Power' } as const,
         { id: 'tags', label: 'Tags' } as const,
         { id: 'danger', label: 'Danger zone', danger: true } as const,
       ]
@@ -141,6 +143,13 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       :hostname="agent.hostname"
       :domain="agent.domain"
       :can-edit="!isImported"
+    />
+
+    <AgentPowerCard
+      v-else-if="currentSection === 'power'"
+      :agent="agent"
+      :can-edit="!isImported"
+      @saved="emit('saved', $event)"
     />
 
     <EntityTags

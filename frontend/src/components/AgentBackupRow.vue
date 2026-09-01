@@ -4,11 +4,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { getRunEvents } from '../api/runs'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
+import { logger } from '../utils/logger'
+import { useWebSocket } from '../composables/useWebSocket'
+import BaseSpinner from './BaseSpinner.vue'
+import RunEventTimeline from './RunEventTimeline.vue'
 import type { ReportRow } from '../types/report'
+import type { RunEventResponse } from '../types/generated'
 
 /**
  * One backup run, as a single line, following the same grammar as
@@ -43,11 +49,102 @@ const warnings = computed(() => props.report.warnings ?? [])
 /**
  * Warnings are shown for a warned run and errors for a failed one. A warned
  * run can also carry an `error_message` describing the warning it was
- * downgraded from, which would otherwise be rendered twice.
+ * downgraded from, which would otherwise be rendered twice. A run tied to a
+ * power-management timeline is always worth offering to expand, even before
+ * its events have loaded - `run_id` alone doesn't say whether any were
+ * actually recorded (most runs have wake/start disabled and record none).
  */
 const hasDetail = computed(
-  () => warnings.value.length > 0 || (props.report.error_message !== null && !isSuccess.value),
+  () =>
+    warnings.value.length > 0 ||
+    (props.report.error_message !== null && !isSuccess.value) ||
+    props.report.run_id !== null,
 )
+
+const runEvents = ref<RunEventResponse[]>([])
+const loadingEvents = ref(false)
+// Most runs have wake/start disabled and record no power-management events at
+// all, so an empty result is the common case, not a failure - distinguished
+// from a fetch that errored (surfaced below) so expanding a run always
+// shows *something* rather than a toggle that silently does nothing.
+const eventsFetched = ref(false)
+const eventsError = ref(false)
+
+// A live RunEvent that arrives while the initial fetch is still in flight
+// (loadingEvents true, eventsFetched still false) would otherwise be dropped
+// on the floor - it's not in the fetch response (already sent before the
+// event happened) and the live handler below only appends once fetched.
+// Buffered here and merged in once the fetch resolves.
+const bufferedLiveEvents: RunEventResponse[] = []
+
+watch(
+  () => props.expanded,
+  (expanded) => {
+    const runId = props.report.run_id
+    if (!expanded || !runId || eventsFetched.value || loadingEvents.value) return
+    loadingEvents.value = true
+    eventsError.value = false
+    getRunEvents(runId, props.report.agent_id, props.report.repo_id)
+      .then((events) => {
+        runEvents.value = [...events, ...bufferedLiveEvents]
+        bufferedLiveEvents.length = 0
+        eventsFetched.value = true
+      })
+      .catch((e: unknown) => {
+        logger.error('failed to load run events', e)
+        eventsError.value = true
+      })
+      .finally(() => {
+        loadingEvents.value = false
+      })
+  },
+  // A report can arrive already expanded (a deep link pins a specific run),
+  // and that first render deserves its timeline fetched too, not just a
+  // later toggle.
+  { immediate: true },
+)
+
+// Docs promise the timeline updates live while a run is in progress and its
+// detail is open - without this, a step recorded after the initial fetch
+// (e.g. the host coming online, or the eventual shutdown) would only show up
+// once the row is collapsed and re-expanded. Keyed by a synthetic negative
+// id (real rows are a positive bigserial) since the WS payload carries no
+// row id, only enough to render one.
+let nextLiveEventKey = -1
+const { onMessage } = useWebSocket()
+onMessage('RunEvent', (payload) => {
+  // run_id alone isn't enough: it's shared across every target of a
+  // multi-target schedule, so a sibling target's event (e.g. a different
+  // repo on the same agent) would otherwise bleed into this row's timeline
+  // too. Matches the same (run_id, agent_id, repo_id) scoping the initial
+  // fetch already uses.
+  if (
+    payload.run_id !== props.report.run_id ||
+    payload.agent_id !== props.report.agent_id ||
+    payload.repo_id !== props.report.repo_id
+  ) {
+    return
+  }
+  const event: RunEventResponse = {
+    id: nextLiveEventKey--,
+    run_id: payload.run_id,
+    target: payload.target,
+    event_type: payload.event_type,
+    message: payload.message,
+    occurred_at: payload.occurred_at,
+  }
+  if (eventsFetched.value) {
+    runEvents.value = [...runEvents.value, event]
+  } else if (loadingEvents.value) {
+    // Mid-fetch: hold onto it so the initial fetch's .then() above can
+    // merge it in, instead of silently losing it because it arrived just
+    // before the (now-stale) response.
+    bufferedLiveEvents.push(event)
+  }
+  // Otherwise the row has never been expanded (or its fetch already failed)
+  // - nothing to buffer for indefinitely; a future expand's own fetch
+  // returns the full history anyway, this event included.
+})
 </script>
 
 <template>
@@ -134,6 +231,36 @@ const hasDetail = computed(
     >
       <strong class="group-label group-label--danger detail-label">Error</strong>
       <pre class="detail-output detail-output--danger">{{ report.error_message }}</pre>
+    </div>
+    <div
+      v-if="report.run_id && (loadingEvents || eventsFetched || eventsError)"
+      class="detail-block"
+    >
+      <strong class="group-label detail-label">Power management</strong>
+      <div
+        v-if="loadingEvents"
+        class="loading-row"
+      >
+        <BaseSpinner size="sm" />
+      </div>
+      <p
+        v-else-if="eventsError"
+        class="field-hint field-hint-error"
+      >
+        Couldn't load power-management activity for this run.
+      </p>
+      <p
+        v-else-if="runEvents.length === 0"
+        class="field-hint"
+      >
+        No power-management activity for this run.
+      </p>
+      <RunEventTimeline
+        v-else
+        :events="runEvents"
+        :source-label="report.hostname ?? 'source'"
+        :repository-label="report.repo_name ?? 'repository'"
+      />
     </div>
   </div>
 </template>

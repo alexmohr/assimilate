@@ -388,6 +388,79 @@ pub enum OnFailure {
     Continue,
 }
 
+/// Which host a [`RunEventType`] happened to, for a run that may involve both
+/// the backup source (the agent's host) and the repository host.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum RunEventTarget {
+    /// The host running the agent that reads the backup source.
+    #[default]
+    Source,
+    /// The host the repository lives on.
+    Repository,
+}
+
+/// One step of a run's power-management sequence (reachability check, wake,
+/// agent start, shutdown), recorded to `backup_run_events` and shown as the
+/// run detail timeline.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum RunEventType {
+    /// The host/agent was checked for reachability before doing anything else.
+    #[default]
+    ReachabilityCheck,
+    /// A Wake-on-LAN packet was sent because the host didn't respond.
+    WakeSent,
+    /// The host came back online after being woken.
+    HostOnline,
+    /// The agent process was started over SSH because it still wasn't
+    /// connected once the host came up.
+    AgentStartSent,
+    /// The agent connected after being started.
+    AgentConnected,
+    /// The agent process was stopped over SSH because this run started it,
+    /// leaving the host itself running.
+    AgentStopSent,
+    /// The agent process finished stopping. Distinct from `HostOffline`
+    /// (which follows `ShutdownSent`) since the host itself stays up here --
+    /// only the agent process was stopped, not the machine.
+    AgentStopped,
+    /// A shutdown command was sent because this run woke the host.
+    ShutdownSent,
+    /// The host went offline after being shut down.
+    HostOffline,
+}
+
 /// Action taken when a repo or server quota threshold (warn/critical) is breached.
 #[derive(
     Debug,

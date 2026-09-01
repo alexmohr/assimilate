@@ -17,6 +17,7 @@ use crate::{
     api::repos::sync_existing_archives,
     config_assembler, db,
     db::DueScheduleRow,
+    power,
     repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
     ws::{
@@ -121,6 +122,7 @@ async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::C
             repo_op_tracker: &state.repo_op_tracker,
             ui_broadcast: &state.ui_broadcast,
             background_task_tracker: &state.background_task_tracker,
+            power_sessions: &state.power_sessions,
             notification_service: &state.notification_service,
             task_registry: &state.task_registry,
         })
@@ -557,12 +559,15 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         30,
     )
     .await?;
+    let run_event_days =
+        retention_days_setting(pool, "run_event_retention_days", legacy_retention, 90).await?;
 
     let mut events_deleted: u64 = 0;
     let mut reports_deleted: u64 = 0;
     let mut archive_reports_deleted: u64 = 0;
     let mut login_attempts_deleted: u64 = 0;
     let mut notification_deliveries_deleted: u64 = 0;
+    let mut run_events_deleted: u64 = 0;
 
     if let Some(cutoff) =
         Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
@@ -604,11 +609,20 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             db::delete_notification_deliveries_before(pool, cutoff).await?;
     }
 
+    if run_event_days > 0 {
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(run_event_days))
+        else {
+            return Ok(());
+        };
+        run_events_deleted = db::run_events::delete_run_events_before(pool, cutoff).await?;
+    }
+
     if events_deleted > 0
         || reports_deleted > 0
         || archive_reports_deleted > 0
         || login_attempts_deleted > 0
         || notification_deliveries_deleted > 0
+        || run_events_deleted > 0
     {
         tracing::info!(
             events_deleted,
@@ -616,10 +630,12 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
             archive_reports_deleted,
             login_attempts_deleted,
             notification_deliveries_deleted,
+            run_events_deleted,
             report_days,
             failed_days,
             event_days,
             notification_delivery_days,
+            run_event_days,
             "retention cleanup completed"
         );
     }
@@ -642,6 +658,7 @@ struct TickDeps<'a> {
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
     background_task_tracker: &'a crate::background_tasks::BackgroundTaskTracker,
+    power_sessions: &'a crate::power::PowerSessionTracker,
     notification_service: &'a crate::notifications::NotificationService,
     task_registry: &'a shared::task_registry::TaskRegistry,
 }
@@ -657,6 +674,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
         repo_op_tracker,
         ui_broadcast,
         background_task_tracker,
+        power_sessions,
         notification_service,
         task_registry,
     } = *deps;
@@ -737,6 +755,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
             repo_lock: repo_lock.clone(),
             repo_op_tracker: repo_op_tracker.clone(),
             ui_broadcast: ui_broadcast.clone(),
+            power_sessions: power_sessions.clone(),
             notification_service: notification_service.clone(),
             task_registry: task_registry.clone(),
             schedule_id,
@@ -812,6 +831,7 @@ struct SequentialExecution {
     repo_lock: RepoLock,
     repo_op_tracker: RepoOpTracker,
     ui_broadcast: UiBroadcast,
+    power_sessions: crate::power::PowerSessionTracker,
     notification_service: crate::notifications::NotificationService,
     task_registry: shared::task_registry::TaskRegistry,
     schedule_id: i64,
@@ -839,6 +859,7 @@ struct SequentialTargetCtx<'a> {
     repo_lock: &'a RepoLock,
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
+    power_sessions: &'a crate::power::PowerSessionTracker,
     notification_service: &'a crate::notifications::NotificationService,
     task_registry: &'a shared::task_registry::TaskRegistry,
     schedule_id: i64,
@@ -849,6 +870,17 @@ struct SequentialTargetCtx<'a> {
     tz: chrono_tz::Tz,
     run_id: &'a str,
     missed_backup_threshold: i32,
+}
+
+impl<'a> SequentialTargetCtx<'a> {
+    fn power_ctx(&self) -> power::PowerCtx<'a> {
+        power::PowerCtx {
+            pool: self.pool,
+            registry: self.registry,
+            ui_broadcast: self.ui_broadcast,
+            power_sessions: self.power_sessions,
+        }
+    }
 }
 
 enum TargetControl {
@@ -866,6 +898,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         repo_lock,
         repo_op_tracker,
         ui_broadcast,
+        power_sessions,
         notification_service,
         task_registry,
         schedule_id,
@@ -895,6 +928,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         repo_lock: &repo_lock,
         repo_op_tracker: &repo_op_tracker,
         ui_broadcast: &ui_broadcast,
+        power_sessions: &power_sessions,
         notification_service: &notification_service,
         task_registry: &task_registry,
         schedule_id,
@@ -997,6 +1031,26 @@ async fn run_sequential_target(
     // Subscribe before sending so we don't miss the completion event.
     let rx = ctx.completion_bus.subscribe();
 
+    // Make sure the source and repository hosts are reachable before anything
+    // else that assumes they are, waking each independently and concurrently
+    // (one being slow doesn't hold up the other). Every target that reaches
+    // here is matched by exactly one `teardown_power_for_target` call on
+    // every exit path below, so a host this run wakes is never left running
+    // because of an early return. Done before acquiring the repo lock below,
+    // since waking doesn't touch the repo itself - a slow wake (up to
+    // wake_timeout_seconds) must not hold the lock and block an unrelated,
+    // already-reachable target from starting.
+    let (agent_row, repo_row) = ensure_target_power(ctx, target).await;
+    let power = TargetPowerState {
+        ctx: ctx.power_ctx(),
+        agent: agent_row.as_ref(),
+        repo: repo_row.as_ref(),
+        agent_id: target.agent_id,
+        repo_id: target.repo_id,
+        run_id: ctx.run_id,
+        hostname: &target.hostname,
+    };
+
     // Acquire the per-repo lock to prevent concurrent backups across schedules.
     let _repo_guard = ctx.repo_lock.acquire(target.repo_id).await;
 
@@ -1006,36 +1060,34 @@ async fn run_sequential_target(
 
     match push_pre_run_config(ctx, target).await {
         PreRunConfigOutcome::Sent => {}
+        // recorded_failure is not guarded on marked_triggered: an earlier target in
+        // this same tick succeeding must not suppress recording a later target's
+        // failure - each is a distinct target that can fail independently, and a
+        // schedule with `on_failure: Continue` processes every target regardless of
+        // earlier outcomes.
         PreRunConfigOutcome::AgentUnreachable => {
-            // recorded_failure is not guarded on marked_triggered: an earlier target
-            // in this same tick succeeding must not suppress recording a later
-            // target's failure - each is a distinct target that can fail
-            // independently, and a schedule with `on_failure: Continue` processes
-            // every target regardless of earlier outcomes.
-            return fail_target(
+            return fail_target_with_teardown(
                 ctx,
-                target.agent_id,
-                target.repo_id,
-                &target.hostname,
+                power,
+                target,
                 true,
                 recorded_failure,
                 triggered_tx,
             )
             .await;
         }
+        // A persistent config-assembly error (e.g. a corrupted encrypted passphrase)
+        // is just as capable of retrying forever on every tick as an unreachable
+        // agent - route it through the same backoff/auto-disable path rather than
+        // leaving next_run_at untouched. Passed as a local/data failure (not
+        // agent_unreachable), so the disable it may cause won't be silently cleared
+        // by an unrelated agent reconnect - see the doc comment on
+        // db::record_schedule_failure.
         PreRunConfigOutcome::ConfigError => {
-            // A persistent config-assembly error (e.g. a corrupted encrypted
-            // passphrase) is just as capable of retrying forever on every tick as
-            // an unreachable agent - route it through the same backoff/auto-disable
-            // path rather than leaving next_run_at untouched. Passed as a local/data
-            // failure (not agent_unreachable), so the disable it may cause won't be
-            // silently cleared by an unrelated agent reconnect - see the doc comment
-            // on db::record_schedule_failure.
-            return fail_target(
+            return fail_target_with_teardown(
                 ctx,
-                target.agent_id,
-                target.repo_id,
-                &target.hostname,
+                power,
+                target,
                 false,
                 recorded_failure,
                 triggered_tx,
@@ -1050,37 +1102,7 @@ async fn run_sequential_target(
 
     match ctx.registry.send_to(target.agent_id, msg).await {
         Ok(()) => {
-            tracing::info!(
-                hostname = %target.hostname,
-                repo_id = target.repo_id,
-                action,
-                schedule_id,
-                "sequential: triggered"
-            );
-            // Mark the repo as actively in use for the lifetime of the lock guard
-            // (not just while the agent happens to be reporting progress), so the
-            // repo detail page can show that it's locked right now rather than
-            // only ever showing the last completed operation.
-            ctx.repo_op_tracker
-                .set(
-                    target.repo_id,
-                    repo_op_kind_for(schedule_type),
-                    target.hostname.clone(),
-                    Some(target.agent_id),
-                )
-                .await;
-            ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
-                repo_id: target.repo_id,
-                op: ctx.repo_op_tracker.get(target.repo_id).await,
-            });
-            if !*marked_triggered {
-                mark_schedule_triggered_once(ctx, marked_triggered).await;
-            }
-            // Signal tick() only now that mark_schedule_triggered_once's DB write (if
-            // any) has completed - matching fail_target's record-before-signal order,
-            // so a caller unblocked by this signal and immediately reading the
-            // schedule row back can't race this write. See the doc comment above
-            // fail_target for the full race explanation.
+            record_target_dispatched(ctx, target, schedule_type, action, marked_triggered).await;
             signal_first_target_attempted(triggered_tx);
         }
         Err(e) => {
@@ -1092,11 +1114,10 @@ async fn run_sequential_target(
                 error = %e,
                 "sequential: agent not connected, skipping target"
             );
-            return fail_target(
+            return fail_target_with_teardown(
                 ctx,
-                target.agent_id,
-                target.repo_id,
-                &target.hostname,
+                power,
+                target,
                 true,
                 recorded_failure,
                 triggered_tx,
@@ -1105,7 +1126,236 @@ async fn run_sequential_target(
         }
     }
 
-    await_target_completion(ctx, target, rx).await
+    let control = await_target_completion(ctx, target, rx).await;
+    teardown_power_for_target(power).await;
+    control
+}
+
+/// Records a successfully dispatched target: logs it, marks the repo as
+/// actively in use for the lifetime of the lock guard (not just while the
+/// agent happens to be reporting progress, so the repo detail page can show
+/// it's locked right now rather than only ever showing the last completed
+/// operation), and marks the schedule triggered. Split out of
+/// [`run_sequential_target`] purely to keep that function's line count down.
+async fn record_target_dispatched(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+    schedule_type: ScheduleType,
+    action: &str,
+    marked_triggered: &mut bool,
+) {
+    let schedule_id = ctx.schedule_id;
+    tracing::info!(
+        hostname = %target.hostname,
+        repo_id = target.repo_id,
+        action,
+        schedule_id,
+        "sequential: triggered"
+    );
+    ctx.repo_op_tracker
+        .set(
+            target.repo_id,
+            repo_op_kind_for(schedule_type),
+            target.hostname.clone(),
+            Some(target.agent_id),
+        )
+        .await;
+    ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
+        repo_id: target.repo_id,
+        op: ctx.repo_op_tracker.get(target.repo_id).await,
+    });
+    if !*marked_triggered {
+        mark_schedule_triggered_once(ctx, marked_triggered).await;
+    }
+}
+
+/// The rows and reachability context [`run_sequential_target`] needs to pass
+/// on to [`teardown_power_for_target`] once it's done with a target,
+/// bundled to keep both functions' argument counts down.
+struct TargetPowerState<'a> {
+    ctx: power::PowerCtx<'a>,
+    agent: Option<&'a db::AgentRow>,
+    repo: Option<&'a db::RepoRow>,
+    /// This target's pairing, independent of whether `agent`/`repo` above
+    /// were actually fetched -- teardown needs the sibling ID even when its
+    /// own row lookup failed.
+    agent_id: i64,
+    repo_id: i64,
+    run_id: &'a str,
+    hostname: &'a str,
+}
+
+/// [`fail_target`], but first tears down anything this target's own
+/// [`ensure_target_power`] call turned on -- the shared tail of every
+/// pre-dispatch failure path in [`run_sequential_target`].
+async fn fail_target_with_teardown(
+    ctx: &SequentialTargetCtx<'_>,
+    power: TargetPowerState<'_>,
+    target: &DueScheduleRow,
+    agent_unreachable: bool,
+    recorded_failure: &mut bool,
+    triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> TargetControl {
+    teardown_power_for_target(power).await;
+    fail_target(
+        ctx,
+        target.agent_id,
+        target.repo_id,
+        &target.hostname,
+        agent_unreachable,
+        recorded_failure,
+        triggered_tx,
+    )
+    .await
+}
+
+/// Fetches the source and repository host rows, makes sure each is
+/// reachable (waking it first if it's configured to and isn't already), and
+/// registers this target's participation in each host's
+/// [`PowerSessionTracker`](crate::power::PowerSessionTracker) session.
+/// Returns the rows (or `None` for one the DB lookup failed for) so the
+/// caller can pass them on to [`teardown_power_for_target`] later. The two
+/// hosts are checked concurrently -- one being slow to wake doesn't hold up
+/// the other.
+async fn ensure_target_power(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+) -> (Option<db::AgentRow>, Option<db::RepoRow>) {
+    let power_ctx = ctx.power_ctx();
+    let agent_row = match db::get_agent_by_id(ctx.pool, target.agent_id).await {
+        Ok(row) => Some(row),
+        Err(e) => {
+            tracing::warn!(
+                agent_id = target.agent_id,
+                error = %e,
+                "sequential: failed to load agent for power management, skipping wake"
+            );
+            None
+        }
+    };
+    let repo_row = match db::get_repo_by_id(ctx.pool, target.repo_id).await {
+        Ok(row) => Some(row),
+        Err(e) => {
+            tracing::warn!(
+                repo_id = target.repo_id,
+                error = %e,
+                "sequential: failed to load repo for power management, skipping wake"
+            );
+            None
+        }
+    };
+
+    // Reserve both hosts *before* attempting to reach them, not once the
+    // attempt resolves: two targets concurrently waking the same host must
+    // both be counted for the whole waking window, or the one that resolves
+    // first can tear the host down (see teardown_power_for_target) while the
+    // other is still relying on it being up.
+    if agent_row.is_some() {
+        ctx.power_sessions
+            .reserve(power::PowerHostKey::Agent(target.agent_id))
+            .await;
+    }
+    if repo_row.is_some() {
+        ctx.power_sessions
+            .reserve(power::PowerHostKey::Repo(target.repo_id))
+            .await;
+    }
+
+    let (agent_outcome, repo_outcome) = tokio::join!(
+        async {
+            match &agent_row {
+                Some(agent) => {
+                    power::ensure_agent_online(power_ctx, agent, target.repo_id, ctx.run_id).await
+                }
+                None => power::AgentPowerOutcome::default(),
+            }
+        },
+        async {
+            match &repo_row {
+                Some(repo) => {
+                    power::ensure_repo_online(
+                        power_ctx,
+                        repo,
+                        target.agent_id,
+                        ctx.run_id,
+                        &target.hostname,
+                    )
+                    .await
+                }
+                None => power::RepoPowerOutcome::default(),
+            }
+        },
+    );
+
+    if agent_row.is_some() {
+        ctx.power_sessions
+            .record_outcome(
+                power::PowerHostKey::Agent(target.agent_id),
+                agent_outcome.woke,
+                agent_outcome.started_agent,
+            )
+            .await;
+    }
+    if repo_row.is_some() {
+        ctx.power_sessions
+            .record_outcome(
+                power::PowerHostKey::Repo(target.repo_id),
+                repo_outcome.woke,
+                false,
+            )
+            .await;
+    }
+    (agent_row, repo_row)
+}
+
+/// Shuts down / stops each of `agent_row`/`repo_row`'s hosts if this run's
+/// [`PowerSessionTracker`](crate::power::PowerSessionTracker) says it's both
+/// safe (no other concurrently-running target still relying on the host) and
+/// warranted (this session actually woke or started it). A no-op for a host
+/// whose row was never fetched -- see the `is_some()` guards around the
+/// matching `begin()` calls in [`run_sequential_target`].
+///
+/// `power.agent`/`power.repo` are re-fetched here rather than reused as-is:
+/// they were snapshotted before the backup ran, which can take hours, so an
+/// admin toggling `shutdown_after_backup`/`stop_agent_after_backup` mid-run
+/// would otherwise have teardown act on stale settings. Falls back to the
+/// snapshot if the re-fetch itself fails (e.g. the row was deleted
+/// mid-run), so the [`PowerSessionTracker`](crate::power::PowerSessionTracker)
+/// reservation this target holds is still reliably released either way.
+async fn teardown_power_for_target(power: TargetPowerState<'_>) {
+    // Independent hosts, torn down concurrently for the same reason
+    // ensure_target_power wakes them concurrently: one host's SSH round-trip
+    // (up to SSH_ACTION_TIMEOUT) must not add to, rather than overlap, the
+    // other's -- this runs while the success path still holds the per-repo
+    // lock, and on the failure path before signaling tick() to move on to
+    // the next due schedule.
+    tokio::join!(
+        async {
+            if let Some(agent) = power.agent {
+                let fresh = db::get_agent_by_id(power.ctx.pool, agent.id).await.ok();
+                power::teardown_agent_power(
+                    power.ctx,
+                    fresh.as_ref().unwrap_or(agent),
+                    power.repo_id,
+                    power.run_id,
+                )
+                .await;
+            }
+        },
+        async {
+            if let Some(repo) = power.repo {
+                let fresh = db::get_repo_by_id(power.ctx.pool, repo.id).await.ok();
+                power::teardown_repo_power(
+                    power.ctx,
+                    fresh.as_ref().unwrap_or(repo),
+                    power.agent_id,
+                    power.run_id,
+                    power.hostname,
+                )
+                .await;
+            }
+        },
+    );
 }
 
 fn signal_first_target_attempted(triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>) {
@@ -1533,6 +1783,7 @@ mod tests {
             session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
                 480,
             )),
+            power_sessions: crate::power::PowerSessionTracker::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 
@@ -2005,6 +2256,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
             notification_service: &crate::notifications::NotificationService::new(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
@@ -2056,6 +2308,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
             notification_service: &crate::notifications::NotificationService::new(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
@@ -2126,6 +2379,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
             notification_service: &crate::notifications::NotificationService::new(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
@@ -2181,6 +2435,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
             notification_service: &crate::notifications::NotificationService::new(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
@@ -2236,6 +2491,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
                 notification_service: &crate::notifications::NotificationService::new(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
@@ -2336,6 +2592,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
                 notification_service: &notification_service,
                 task_registry: &task_registry,
             })
@@ -2405,6 +2662,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
                 notification_service: &crate::notifications::NotificationService::new(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
@@ -2492,6 +2750,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
             notification_service: &crate::notifications::NotificationService::new(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
@@ -2573,6 +2832,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
                 notification_service: &crate::notifications::NotificationService::new(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
@@ -2848,6 +3108,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &ui_broadcast,
             background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
             notification_service: &crate::notifications::NotificationService::new(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
@@ -2868,6 +3129,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &ui_broadcast,
                 background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
                 notification_service: &crate::notifications::NotificationService::new(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
@@ -3504,6 +3766,7 @@ esac
                 repo_op_tracker: &RepoOpTracker::default(),
                 ui_broadcast: &UiBroadcast::new(),
                 background_task_tracker: &background_task_tracker,
+                power_sessions: &crate::power::PowerSessionTracker::default(),
                 notification_service: &crate::notifications::NotificationService::new(pool.clone()),
                 task_registry: &shared::task_registry::TaskRegistry::default(),
             })
@@ -3907,6 +4170,7 @@ esac
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
             background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
             notification_service: &crate::notifications::NotificationService::new(pool.clone()),
             task_registry: &shared::task_registry::TaskRegistry::default(),
         })
@@ -3973,5 +4237,124 @@ esac
                 .await,
             "background_task_tracker must go idle once both targets have completed"
         );
+    }
+
+    /// Regression test: `teardown_power_for_target` must act on the agent's
+    /// *current* `shutdown_after_backup` setting, not the snapshot fetched
+    /// before the (possibly hours-long) backup ran. Simulates an admin
+    /// flipping the setting on mid-run by passing a stale, pre-change row
+    /// alongside a DB that already has the new value.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn teardown_power_for_target_uses_current_settings_not_the_pre_run_snapshot(
+        pool: sqlx::PgPool,
+    ) {
+        let inserted = db::insert_agent(&pool, "power-refetch-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
+            "test-pass",
+            &shared::crypto::derive_key(b"test-secret-key-for-scheduler").unwrap(),
+        )
+        .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "power-refetch-repo",
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // The row fetched before the backup ran: shutdown_after_backup off.
+        let stale_agent = db::update_agent_power(
+            &pool,
+            inserted.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: false,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                // Nothing listens here -- the SSH attempt is expected to
+                // fail, only the run-event trail is under test.
+                ssh_host: Some("127.0.0.1"),
+                ssh_port: 1,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        // An admin enables it while the backup is still running.
+        db::update_agent_power(
+            &pool,
+            inserted.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                // Nothing listens here -- the SSH attempt is expected to
+                // fail, only the run-event trail is under test.
+                ssh_host: Some("127.0.0.1"),
+                ssh_port: 1,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new();
+        let sessions = crate::power::PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        sessions
+            .reserve(crate::power::PowerHostKey::Agent(stale_agent.id))
+            .await;
+        sessions
+            .record_outcome(
+                crate::power::PowerHostKey::Agent(stale_agent.id),
+                true,
+                false,
+            )
+            .await;
+
+        teardown_power_for_target(TargetPowerState {
+            ctx: crate::power::PowerCtx {
+                pool: &pool,
+                registry: &registry,
+                ui_broadcast: &bus,
+                power_sessions: &sessions,
+            },
+            agent: Some(&stale_agent),
+            repo: None,
+            agent_id: stale_agent.id,
+            repo_id: repo.id,
+            run_id: "run-1",
+            hostname: "power-refetch-host",
+        })
+        .await;
+
+        // Shutdown must have been attempted -- proving the fresh re-fetch's
+        // shutdown_after_backup=true was used, not the stale snapshot's
+        // false, which would have made teardown a no-op instead.
+        let events = db::run_events::list_run_events(&pool, "run-1", stale_agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["shutdown_sent"]);
     }
 }

@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatDate, relativeTime } from '../utils/format'
+import { badgeClass, type AgentPowerPhase } from '../utils/badge'
 import DetailHeader from './DetailHeader.vue'
 import OverflowMenu from './OverflowMenu.vue'
 import type { AgentRow } from '../types/agent'
@@ -23,6 +24,13 @@ import type { AgentRow } from '../types/agent'
  */
 const props = defineProps<{
   agent: AgentRow
+  /**
+   * The transient wake/start/shutdown phase to show instead of the usual
+   * Online/Offline badge, derived from this run's live event stream. `null`
+   * outside of a wake-enabled run, which is when this is unchanged from
+   * today.
+   */
+  powerPhase: AgentPowerPhase | null
   /** Non-null when a newer agent build is available and may be deployed. */
   deployLabel: string | null
   /** True once the agent has been deployed at least once and the caller may redeploy it. */
@@ -75,6 +83,14 @@ const canRestart = computed(
         class="badge badge--neutral"
         >Imported</span
       >
+      <span
+        v-else-if="powerPhase"
+        class="badge badge--pulse"
+        :class="badgeClass(powerPhase.tone)"
+      >
+        <span class="badge-dot" />
+        {{ powerPhase.label }}
+      </span>
       <span
         v-else
         class="badge"

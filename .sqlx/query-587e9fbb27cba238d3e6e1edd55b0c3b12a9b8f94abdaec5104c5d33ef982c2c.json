@@ -1,0 +1,118 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, r.shutdown_after_backup FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "compression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "encryption",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "sync_schedule",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "wake_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "wake_mac_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "wake_broadcast_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "wake_timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 16,
+        "name": "shutdown_after_backup",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "587e9fbb27cba238d3e6e1edd55b0c3b12a9b8f94abdaec5104c5d33ef982c2c"
+}

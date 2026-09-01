@@ -29,6 +29,9 @@ pub mod middleware;
 pub mod notifications;
 /// `OpenAPI` (utoipa) documentation struct.
 pub mod openapi;
+/// Waking, starting, stopping, and shutting down power-managed hosts around
+/// a backup.
+pub mod power;
 /// Quota enforcement logic run after each backup.
 pub mod quota_enforcement;
 /// IP-based rate limiter middleware.
@@ -235,6 +238,10 @@ pub struct AppState {
     /// Cached session idle timeout in minutes (default 480/8h).
     /// Read from `system_settings` on startup and refreshed when the admin updates it.
     pub session_idle_timeout_minutes: Arc<AtomicI64>,
+    /// Reference-counts how many concurrently running targets rely on each
+    /// power-managed host being up, so a host woken for one schedule isn't
+    /// shut down out from under another schedule still using it.
+    pub power_sessions: power::PowerSessionTracker,
 }
 
 impl AppState {

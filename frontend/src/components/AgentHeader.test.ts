@@ -26,6 +26,7 @@ function mount(agentOverrides: Record<string, unknown> = {}, props: Record<strin
   return renderWithPlugins(AgentHeader, {
     props: {
       agent: { ...AGENT, ...agentOverrides },
+      powerPhase: null,
       deployLabel: null,
       canRedeploy: false,
       restartLoading: false,
@@ -54,6 +55,21 @@ describe('AgentHeader', () => {
 
   it('marks a disconnected agent offline', () => {
     expect(mount({ is_connected: false }).find('.badge--neutral').text()).toContain('Offline')
+  })
+
+  // A live power phase takes over the status badge - whether the agent is
+  // still reporting itself online (mid shutdown) or not yet (mid wake).
+  it('shows the power phase instead of Online/Offline while one is in flight', () => {
+    const wrapper = mount({}, { powerPhase: { label: 'Waking host...', tone: 'info' } })
+    const badge = wrapper.find('.badge--info')
+    expect(badge.text()).toContain('Waking host...')
+    expect(badge.classes()).toContain('badge--pulse')
+    expect(wrapper.find('.badge--success').exists()).toBe(false)
+  })
+
+  it('falls back to Online/Offline once the power phase clears', () => {
+    const wrapper = mount({ is_connected: true }, { powerPhase: null })
+    expect(wrapper.find('.badge--success').text()).toContain('Online')
   })
 
   // The row used to hold up to eight identical ghost buttons. Now it holds

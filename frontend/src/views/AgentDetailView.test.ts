@@ -867,6 +867,147 @@ describe('AgentDetailView — backup progress', () => {
   })
 })
 
+describe('AgentDetailView — power phase badge', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+  })
+
+  async function mountAgent(): Promise<VueWrapper<ComponentPublicInstance>> {
+    setupApi([], [{ id: 10, name: 'server-daily' }])
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('shows the phase label from a source-target RunEvent for this host', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+
+    expect(wrapper.find('.badge--info').text()).toContain('Waking host...')
+  })
+
+  it('ignores a RunEvent for a different agent', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'other-host',
+    })
+    await nextTick()
+
+    expect(wrapper.text()).not.toContain('Waking host...')
+  })
+
+  it('ignores a repository-target RunEvent for this same run', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'repository',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+
+    expect(wrapper.text()).not.toContain('Waking host...')
+  })
+
+  it('clears the phase and shows Online once the agent actually connects', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+    expect(wrapper.find('.badge--info').exists()).toBe(true)
+
+    wsHandlers['AgentConnected']?.({ hostname: 'test-host' })
+    await nextTick()
+
+    expect(wrapper.find('.badge--info').exists()).toBe(false)
+  })
+
+  // An unrelated agent connecting elsewhere while this page is open must not
+  // clear a phase that belongs to the agent actually shown on this page.
+  // Note: this only covers the different-hostname case. `AgentConnected`
+  // carries no `domain`, so two agents sharing the same hostname across
+  // different domains can still cross-contaminate each other's phase here -
+  // a known, low-impact limitation (self-heals via the safety-net timeout
+  // below) that would need `domain`/`agent_id` added to the WS payload to
+  // close, not something this test can exercise as written.
+  it('does not clear the phase when a different agent connects', async () => {
+    const wrapper = await mountAgent()
+
+    wsHandlers['RunEvent']?.({
+      run_id: 'run-1',
+      target: 'source',
+      event_type: 'wake_sent',
+      message: 'Sent Wake-on-LAN packet',
+      occurred_at: '2026-06-01T03:00:00Z',
+      hostname: 'test-host',
+    })
+    await nextTick()
+    expect(wrapper.find('.badge--info').exists()).toBe(true)
+
+    wsHandlers['AgentConnected']?.({ hostname: 'some-other-host' })
+    await nextTick()
+
+    expect(wrapper.find('.badge--info').exists()).toBe(true)
+  })
+
+  // If the SSH command behind a shutdown/agent-stop attempt fails partway,
+  // the agent never disconnects and never reconnects, so neither a
+  // `host_offline` RunEvent nor an `AgentConnected` message ever arrives to
+  // clear the phase - it would otherwise stay stuck forever.
+  it('clears a stuck phase on its own after the safety-net timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = await mountAgent()
+
+      wsHandlers['RunEvent']?.({
+        run_id: 'run-1',
+        target: 'source',
+        event_type: 'shutdown_sent',
+        message: 'Shutting down host',
+        occurred_at: '2026-06-01T03:00:00Z',
+        hostname: 'test-host',
+      })
+      await nextTick()
+      expect(wrapper.text()).toContain('Shutting down...')
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+      expect(wrapper.text()).not.toContain('Shutting down...')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 async function openDefaultsSettings(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
   const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
   await router.push({ query: { tab: 'settings', section: 'defaults' } })
@@ -1765,18 +1906,19 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
   // The page is long-lived, so it refetches on anything that could have
   // changed what it is showing rather than waiting for a navigation.
-  it.each([['DataChanged'], ['AgentConnected'], ['AgentDisconnected']])(
-    'refetches on %s',
-    async (event) => {
-      await render()
-      const before = vi.mocked(apiClient.get).mock.calls.length
+  it.each([
+    ['DataChanged', {}],
+    ['AgentConnected', { hostname: 'test-host' }],
+    ['AgentDisconnected', {}],
+  ])('refetches on %s', async (event, payload) => {
+    await render()
+    const before = vi.mocked(apiClient.get).mock.calls.length
 
-      wsHandlers[event]?.({})
-      await flushPromises()
+    wsHandlers[event]?.(payload)
+    await flushPromises()
 
-      expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
-    },
-  )
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
+  })
 
   it('refetches when the socket reconnects', async () => {
     await render()

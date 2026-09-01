@@ -1176,6 +1176,78 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     Ok(())
 }
 
+/// Action to take on a remote systemd unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SystemctlAction {
+    /// Start the unit if it isn't already running.
+    Start,
+    /// Stop the unit if it's running.
+    Stop,
+}
+
+impl SystemctlAction {
+    const fn as_verb(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+        }
+    }
+}
+
+/// Starts or stops a systemd unit on a remote host, connecting with the
+/// server's own SSH key (the same one "Deploy SSH key" installs on the
+/// host). Used to bring the agent process up before a backup on hosts where
+/// it doesn't run as a persistent service, and to stop it again afterward.
+///
+/// # Errors
+///
+/// Returns an error if the connection fails or the remote command exits
+/// non-zero.
+pub(crate) async fn set_systemd_service(
+    host: &str,
+    user: &str,
+    port: u16,
+    service_name: &str,
+    action: SystemctlAction,
+) -> Result<(), SshError> {
+    let session = connect_with_key(host, user, port, None).await?;
+    let cmd = format!(
+        "systemctl {} {}",
+        action.as_verb(),
+        shell_escape(service_name)
+    );
+    let (exit_code, _, stderr) = exec_with_sudo_fallback(&session, &cmd, None).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "systemctl {} {service_name} failed (exit {exit_code}): {stderr}",
+            action.as_verb(),
+        )));
+    }
+    Ok(())
+}
+
+/// Shuts a remote host down over SSH, connecting with the server's own SSH
+/// key. Used after a backup to power off a host this run woke.
+///
+/// # Errors
+///
+/// Returns an error if the connection fails or the remote command exits
+/// non-zero.
+pub(crate) async fn shutdown_host(host: &str, user: &str, port: u16) -> Result<(), SshError> {
+    let session = connect_with_key(host, user, port, None).await?;
+    // Backgrounded and detached from the session: `shutdown -h now` run in the
+    // foreground would tear down the SSH connection out from under this exec
+    // and never report an exit status, since the host goes down mid-command.
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, "nohup shutdown -h now >/dev/null 2>&1 &", None).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "shutdown failed (exit {exit_code}): {stderr}"
+        )));
+    }
+    Ok(())
+}
+
 /// Parameters for reading a single file's contents from a remote host over SSH.
 pub struct ReadFileParams<'a> {
     /// Hostname or IP address of the remote machine to read from.

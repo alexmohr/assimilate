@@ -7,7 +7,14 @@
  * handing it back down, rather than passing a wide `string` around. Mirrors
  * `agentSettings.ts`.
  */
-export const REPO_SETTINGS_SECTIONS = ['repository', 'quota', 'tags', 'console', 'danger'] as const
+export const REPO_SETTINGS_SECTIONS = [
+  'repository',
+  'power',
+  'quota',
+  'tags',
+  'console',
+  'danger',
+] as const
 
 export type RepoSettingsSection = (typeof REPO_SETTINGS_SECTIONS)[number]
 

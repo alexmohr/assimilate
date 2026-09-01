@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { apiClient } from './client'
+import type { UpdateHostWakeRequest } from './agents'
 import type { Repo, RepoWithStats } from '../types/repo'
 import type {
   BreakLockResponse,
@@ -79,6 +80,11 @@ export interface UpdateRepoRequest {
 
 export async function updateRepo(id: number, data: UpdateRepoRequest): Promise<void> {
   await apiClient.put(`/repos/${id}`, data)
+}
+
+export async function updateRepoPower(id: number, data: UpdateHostWakeRequest): Promise<Repo> {
+  const response = await apiClient.put<Repo>(`/repos/${id}/power`, data)
+  return response.data
 }
 
 export async function deleteRepo(id: number): Promise<void> {

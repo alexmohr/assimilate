@@ -7,7 +7,8 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 
 use crate::types::{
-    AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, SearchEntry,
+    AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, RunEventTarget,
+    RunEventType, SearchEntry,
 };
 
 /// The kind of repository operation being performed.
@@ -598,6 +599,36 @@ pub enum ServerToUi {
         /// The log line content.
         line: String,
     },
+    /// One step of a run's power-management timeline (reachability check,
+    /// wake, agent start, shutdown), pushed live so an open run detail view
+    /// updates without polling.
+    RunEvent {
+        /// Correlates to the run's `backup_reports.run_id`.
+        run_id: String,
+        /// Which host this event happened to.
+        target: RunEventTarget,
+        /// What happened.
+        event_type: RunEventType,
+        /// Human-readable description of the event.
+        message: String,
+        /// When the event occurred.
+        occurred_at: DateTime<Utc>,
+        /// The hostname of the agent this run's schedule targets, so a
+        /// listener can tell whether an event -- including a `target:
+        /// repository` one, still part of the same run -- belongs to the
+        /// agent it's currently showing.
+        hostname: String,
+        /// The agent side of this run's target pairing. `run_id` alone is
+        /// shared across every target of a multi-target schedule, so a
+        /// listener showing one specific (agent, repo) pairing needs this
+        /// -- and `repo_id` below -- to tell its own events apart from a
+        /// sibling target's that happens to share the same `run_id`.
+        #[ts(type = "number")]
+        agent_id: i64,
+        /// The repo side of this run's target pairing -- see `agent_id`.
+        #[ts(type = "number")]
+        repo_id: i64,
+    },
 }
 
 #[cfg(test)]
@@ -959,6 +990,21 @@ mod tests {
         let msg = ServerToUi::ArchiveDeleted {
             repo_id: 7,
             archive_name: "server-daily-2024-01-01T02:00:00".to_owned(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_ui_run_event_round_trips() {
+        let msg = ServerToUi::RunEvent {
+            run_id: "run-123".to_owned(),
+            target: RunEventTarget::Source,
+            event_type: RunEventType::WakeSent,
+            message: "Sent Wake-on-LAN packet".to_owned(),
+            occurred_at: Utc::now(),
+            hostname: "web-01".to_owned(),
+            agent_id: 5,
+            repo_id: 10,
         };
         assert_round_trips(&msg);
     }

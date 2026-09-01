@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   listAgents,
@@ -37,6 +37,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { agentPowerPhase, type AgentPowerPhase } from '../utils/badge'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
@@ -562,6 +563,7 @@ async function confirmCleanFailedReports(): Promise<void> {
 }
 
 watch([() => props.hostname, routeDomain], () => {
+  powerPhase.value = null
   loadAgent()
 })
 onMounted(() => {
@@ -576,8 +578,51 @@ onMounted(() => {
 
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('DataChanged', () => loadAgent().catch(logger.error))
-onMessage('AgentConnected', () => loadAgent().catch(logger.error))
+// Known limitation: this and the `RunEvent` handler below match on bare
+// hostname only, because neither payload carries a `domain`/`agent_id`.
+// Two agents sharing a hostname across different domains can therefore
+// cross-contaminate each other's transient `powerPhase` badge here. Low
+// impact and self-healing (see POWER_PHASE_TIMEOUT_MS below) - closing it
+// for real needs `domain`/`agent_id` added to the WS payloads.
+onMessage('AgentConnected', (payload) => {
+  if (payload.hostname !== props.hostname) return
+  powerPhase.value = null
+  loadAgent().catch(logger.error)
+})
 onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
+
+/**
+ * The transient phase `AgentHeader` shows in place of Online/Offline while
+ * this host is being reached or powered down around a backup - derived
+ * entirely from the run's own event stream rather than a dedicated "current
+ * phase" field, matching how the run detail timeline is built. Only events
+ * about this agent's own host move the needle: a `repository`-target event
+ * belongs to the same run but says nothing about this page's host.
+ */
+const powerPhase = ref<AgentPowerPhase | null>(null)
+
+// Safety net for a phase that never resolves - e.g. a shutdown/agent-stop
+// attempt whose SSH command fails partway (the host never goes offline, the
+// agent never disconnects, so neither a `host_offline` RunEvent nor an
+// `AgentConnected` message ever arrives to clear it). Generous relative to
+// the server's own wake/shutdown timeouts so it never fires during a normal
+// wait, just as a last resort against a badge stuck forever.
+const POWER_PHASE_TIMEOUT_MS = 5 * 60 * 1000
+let powerPhaseTimeout: ReturnType<typeof setTimeout> | undefined
+watch(powerPhase, (phase) => {
+  clearTimeout(powerPhaseTimeout)
+  if (phase) {
+    powerPhaseTimeout = setTimeout(() => {
+      powerPhase.value = null
+    }, POWER_PHASE_TIMEOUT_MS)
+  }
+})
+onUnmounted(() => clearTimeout(powerPhaseTimeout))
+
+onMessage('RunEvent', (payload) => {
+  if (payload.hostname !== props.hostname || payload.target !== 'source') return
+  powerPhase.value = agentPowerPhase(payload.event_type)
+})
 
 interface ArchiveProgressData {
   nfiles: number
@@ -710,6 +755,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     <template v-else-if="agent">
       <AgentHeader
         :agent="agent"
+        :power-phase="powerPhase"
         :deploy-label="headerDeployLabel"
         :can-redeploy="canRedeploy"
         :restart-loading="restartLoading"

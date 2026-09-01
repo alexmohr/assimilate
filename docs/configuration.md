@@ -46,6 +46,7 @@ System settings are stored in the database and managed through the UI or the `/a
 | `failed_report_retention_days` | `365` | Days to keep failed/archive-less backup reports. `0` = keep forever. To clear an agent's failed reports immediately rather than waiting on this window, use **Clean up failed backups** in its [header overflow menu](agents.md#schedules-and-backups). |
 | `system_event_retention_days` | `retention_days` (or `90`) | Days to keep system event log entries. `0` = keep forever. |
 | `notification_delivery_retention_days` | `retention_days` (or `30`) | Days to keep notification delivery-attempt history (the `notification_deliveries` debug/retry log). `0` = keep forever. |
+| `run_event_retention_days` | `retention_days` (or `90`) | Days to keep a run's [power-management](power-management.md) event timeline (the `backup_run_events` table). `0` = keep forever. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
 | `session_idle_timeout_minutes` | `480` | Number of minutes of inactivity before a session is automatically revoked. Must be a positive integer; the idle timeout cannot currently be disabled. Does not apply to "Remember Me" sessions, which are bounded only by their 7-day absolute expiry. |
 

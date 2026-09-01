@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { expect, loginAsAdmin, test } from './fixtures'
-import type { Page } from '@playwright/test'
+import type { Locator, Page, Route } from '@playwright/test'
 
 function makeWarningReport(): object {
   return {
@@ -33,7 +33,7 @@ function makeWarningReport(): object {
   }
 }
 
-function makeActivityRow(): object {
+function makeActivityRow(acknowledged = false): object {
   return {
     id: 9999,
     hostname: 'web-server-01',
@@ -45,45 +45,81 @@ function makeActivityRow(): object {
     schedule_id: null,
     schedule_name: null,
     run_id: null,
+    acknowledged,
   }
+}
+
+function makeSyncFailedEvent(acknowledged = false): object {
+  return {
+    id: 4242,
+    created_at: new Date().toISOString(),
+    event_type: 'repo_sync_failed',
+    severity: 'failed',
+    acknowledgeable: true,
+    acknowledged,
+    hostname: 'web-server-01',
+    message: 'Repository sync failed: connection refused',
+  }
+}
+
+function json(route: Route, payload: unknown): Promise<void> {
+  return route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(payload),
+  })
+}
+
+/**
+ * Stubs everything the Activity Log loads on mount. `activity` and
+ * `systemEvents` receive the `acknowledged` filter the view asked for, so a
+ * test can mirror the server's own "hidden unless you ask" behavior.
+ */
+async function stubActivityLog(
+  page: Page,
+  handlers: {
+    activity?: (acknowledged: string | null) => unknown
+    systemEvents?: (acknowledged: string | null) => unknown
+    reports?: () => unknown
+  } = {},
+): Promise<void> {
+  const { activity = () => [], systemEvents = () => [], reports } = handlers
+  const filterOf = (route: Route): string | null =>
+    new URL(route.request().url()).searchParams.get('acknowledged')
+
+  await page.route('**/api/agents', (route) => json(route, []))
+  await page.route('**/api/schedules', (route) => json(route, []))
+  await page.route('**/api/stats/activity?**', (route) => json(route, activity(filterOf(route))))
+  await page.route('**/api/stats/system-events**', (route) =>
+    json(route, systemEvents(filterOf(route))),
+  )
+  if (reports) {
+    await page.route('**/api/agents/web-server-01/reports**', (route) => json(route, reports()))
+  }
+}
+
+/** The Acknowledged filter is the only select offering "Only acknowledged". */
+function acknowledgedFilter(page: Page): Locator {
+  return page
+    .locator('select.select-input')
+    .filter({ has: page.locator('option', { hasText: 'Only acknowledged' }) })
+}
+
+function warningRows(page: Page): Locator {
+  return page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
 }
 
 test('expands warning report row and shows warning messages', async ({ page }: { page: Page }) => {
   await loginAsAdmin(page)
-
-  await page.route('**/api/agents', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-
-  await page.route('**/api/schedules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-
-  await page.route('**/api/stats/activity**', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify([makeActivityRow()]),
-    }),
-  )
-
-  await page.route('**/api/stats/system-events**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-
-  const reportsUrl = '**/api/agents/web-server-01/reports**'
-  await page.route(reportsUrl, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify([makeWarningReport()]),
-    }),
-  )
+  await stubActivityLog(page, {
+    activity: () => [makeActivityRow()],
+    reports: () => [makeWarningReport()],
+  })
 
   await page.goto('/activity')
   await page.waitForTimeout(1000)
 
-  const warningRow = page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
+  const warningRow = warningRows(page)
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
 
   await warningRow.first().locator('.run-card-summary').click()
@@ -105,27 +141,12 @@ test('acknowledges a warning row, hides it, and can undo it via the filter', asy
 }) => {
   await loginAsAdmin(page)
 
-  await page.route('**/api/agents', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/schedules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/stats/system-events**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-
   // The server hides acknowledged entries unless the caller asks for them, so
-  // the mock has to honour the filter for the round trip to mean anything.
+  // the stub has to honour the filter for the round trip to mean anything.
   let acknowledged = false
-  await page.route('**/api/stats/activity?**', (route) => {
-    const filter = new URL(route.request().url()).searchParams.get('acknowledged')
-    const visible = filter === 'unacknowledged' ? !acknowledged : true
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(visible ? [{ ...makeActivityRow(), acknowledged }] : []),
-    })
+  await stubActivityLog(page, {
+    activity: (filter) =>
+      filter === 'unacknowledged' && acknowledged ? [] : [makeActivityRow(acknowledged)],
   })
   let ackRequests = 0
   await page.route('**/api/stats/activity/9999/acknowledge', async (route) => {
@@ -137,21 +158,17 @@ test('acknowledges a warning row, hides it, and can undo it via the filter', asy
   await page.goto('/activity')
   await page.waitForTimeout(1000)
 
-  const warningRow = page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
+  const warningRow = warningRows(page)
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
 
   await warningRow.first().getByRole('button', { name: 'Acknowledge' }).click()
   await expect(warningRow).toHaveCount(0, { timeout: 10_000 })
 
-  const acknowledgedFilter = page
-    .locator('select.select-input')
-    .filter({ has: page.locator('option', { hasText: 'Only acknowledged' }) })
-  await acknowledgedFilter.selectOption('all')
+  await acknowledgedFilter(page).selectOption('all')
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
   await expect(warningRow.first().getByText('Acknowledged')).toBeVisible()
 
-  const unackButton = warningRow.first().getByRole('button', { name: 'Unacknowledge' })
-  await unackButton.click()
+  await warningRow.first().getByRole('button', { name: 'Unacknowledge' }).click()
   await expect(warningRow.first().getByText('Acknowledged')).not.toBeVisible({ timeout: 10_000 })
   await expect(warningRow.first().getByRole('button', { name: 'Acknowledge' })).toBeVisible()
   expect(ackRequests).toBe(2)
@@ -164,40 +181,10 @@ test('acknowledges a failed periodic sync and clears it from the feed', async ({
 }) => {
   await loginAsAdmin(page)
 
-  await page.route('**/api/agents', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/schedules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/stats/activity**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-
   let acknowledged = false
-  await page.route('**/api/stats/system-events**', (route) => {
-    const filter = new URL(route.request().url()).searchParams.get('acknowledged')
-    const visible = filter === 'unacknowledged' ? !acknowledged : true
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(
-        visible
-          ? [
-              {
-                id: 4242,
-                created_at: new Date().toISOString(),
-                event_type: 'repo_sync_failed',
-                severity: 'failed',
-                acknowledgeable: true,
-                acknowledged,
-                hostname: 'web-server-01',
-                message: 'Repository sync failed: connection refused',
-              },
-            ]
-          : [],
-      ),
-    })
+  await stubActivityLog(page, {
+    systemEvents: (filter) =>
+      filter === 'unacknowledged' && acknowledged ? [] : [makeSyncFailedEvent(acknowledged)],
   })
   await page.route('**/api/stats/system-events/4242/acknowledge', async (route) => {
     acknowledged = route.request().method() === 'POST'
@@ -217,37 +204,19 @@ test('acknowledges a failed periodic sync and clears it from the feed', async ({
 test('acknowledges everything outstanding in one click', async ({ page }: { page: Page }) => {
   await loginAsAdmin(page)
 
-  await page.route('**/api/agents', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/schedules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/stats/system-events**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-
   let acknowledgedAll = false
-  await page.route('**/api/stats/activity?**', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(acknowledgedAll ? [] : [{ ...makeActivityRow(), acknowledged: false }]),
-    }),
-  )
+  await stubActivityLog(page, {
+    activity: () => (acknowledgedAll ? [] : [makeActivityRow()]),
+  })
   await page.route('**/api/stats/activity/acknowledge-all', async (route) => {
     acknowledgedAll = true
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ backup_reports: 1, system_events: 0 }),
-    })
+    await json(route, { backup_reports: 1, system_events: 0 })
   })
 
   await page.goto('/activity')
   await page.waitForTimeout(1000)
 
-  const warningRow = page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
+  const warningRow = warningRows(page)
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
 
   await page.getByRole('button', { name: 'Acknowledge all' }).click()

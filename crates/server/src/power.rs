@@ -488,7 +488,7 @@ async fn wake_agent_host(
         target_ids,
         RunEventTarget::Source,
         RunEventType::WakeSent,
-        format!("Sent Wake-on-LAN packet to {mac}"),
+        "Sent Wake-on-LAN packet",
         &agent.hostname,
     )
     .await;
@@ -618,7 +618,7 @@ pub async fn ensure_repo_online(
         target_ids,
         RunEventTarget::Repository,
         RunEventType::WakeSent,
-        format!("Sent Wake-on-LAN packet to {mac}"),
+        "Sent Wake-on-LAN packet",
         hostname,
     )
     .await;
@@ -1026,6 +1026,16 @@ mod tests {
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+        // Regression: the WakeSent message must not embed the MAC address --
+        // list_run_events has no per-viewer permission gate, and this
+        // message is broadcast unfiltered to every connected UI client, so
+        // it must not leak what the settings response already redacts for
+        // non-privileged viewers.
+        let wake_sent_message = &events.get(1).unwrap().message;
+        assert!(
+            !wake_sent_message.contains("3C:97:0E:2B:9A:44"),
+            "WakeSent message must not contain the MAC address: {wake_sent_message}"
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -1095,6 +1105,13 @@ mod tests {
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+        // Same regression as ensure_agent_online's WakeSent message: must
+        // not embed the MAC address.
+        let wake_sent_message = &events.get(1).unwrap().message;
+        assert!(
+            !wake_sent_message.contains("9C:B6:D0:1A:44:7F"),
+            "WakeSent message must not contain the MAC address: {wake_sent_message}"
+        );
     }
 
     #[tokio::test]

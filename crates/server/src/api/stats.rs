@@ -926,14 +926,22 @@ struct AcknowledgeScope {
 /// `can_delete_repo` (what `RequireAdmin` checks) clears everything, otherwise
 /// a repo needs an explicit `can_modify_schedules` grant. `can_view_all_repos`
 /// deliberately does not widen this - it only ever synthesises a view-only
-/// permission, which fails that check. Reading the user's permissions in one
-/// query keeps this at two round trips instead of one per candidate repo.
+/// permission, which fails that check.
+///
+/// Reading the user's permissions in one query keeps this to a bounded number
+/// of round trips rather than one per candidate repository. The caller's
+/// permissions and the candidate list do not depend on each other, so they are
+/// fetched concurrently; only a non-admin needs the third query, and it cannot
+/// start until `can_delete_repo` has ruled out the bypass. Both bulk endpoints
+/// call this, and `/activity/outstanding` runs on every Activity Log load.
 async fn acknowledge_scope(
     pool: &sqlx::PgPool,
     auth: &AuthUser,
 ) -> Result<AcknowledgeScope, ApiError> {
-    let effective = db::get_effective_permissions(pool, auth.user_id).await?;
-    let candidates = db::repos_with_unacknowledged_reports(pool).await?;
+    let (effective, candidates) = tokio::try_join!(
+        db::get_effective_permissions(pool, auth.user_id),
+        db::repos_with_unacknowledged_reports(pool),
+    )?;
 
     if effective.can_delete_repo {
         return Ok(AcknowledgeScope {

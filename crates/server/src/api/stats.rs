@@ -993,13 +993,19 @@ pub async fn outstanding_acknowledgements(
     auth: AuthUser,
 ) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
     let scope = acknowledge_scope(&state.pool, &auth).await?;
-    let backup_reports =
-        db::count_unacknowledged_reports_in_repos(&state.pool, &scope.repos).await?;
-    let system_events = if scope.system_events {
-        db::count_unacknowledged_system_events(&state.pool).await?
-    } else {
-        0
-    };
+    // Two independent counts, and this runs on every Activity Log load, so
+    // they go together rather than one after the other. A caller who cannot
+    // acknowledge system events issues no query for them at all.
+    let (backup_reports, system_events) = tokio::try_join!(
+        db::count_unacknowledged_reports_in_repos(&state.pool, &scope.repos),
+        async {
+            if scope.system_events {
+                db::count_unacknowledged_system_events(&state.pool).await
+            } else {
+                Ok(0)
+            }
+        },
+    )?;
 
     Ok(Json(AcknowledgementCountsResponse {
         backup_reports,

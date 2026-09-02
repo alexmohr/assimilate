@@ -1931,6 +1931,36 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
     expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
   })
+
+  // Regression test: a background refetch used to run through the same
+  // loading flag as the initial load, which unmounted and remounted the
+  // whole page - discarding any edit in progress in a settings form. A
+  // background refresh must update the page in place instead.
+  it('does not show the loading spinner or remount the page on a background refetch', async () => {
+    const wrapper = await render()
+    const detailNameEl = wrapper.find('.detail-name').element
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.find('.spinner-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').element).toBe(detailNameEl)
+  })
+
+  it('logs and keeps showing the page when a background refetch fails', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.reject(new Error('network error'))
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith('background agent refresh failed', expect.any(Error))
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').exists()).toBe(true)
+  })
 })
 
 // Two agents can share an OS hostname if they're in different domains; the

@@ -11,6 +11,18 @@ async function openFirstSchedule(page: Page): Promise<string> {
   return '1'
 }
 
+// Shared by both Run-now toast tests below, which don't care about report
+// content - only that Run now (not Cancel backup) is the visible action.
+async function mockEmptyReports(page: Page, id: string): Promise<void> {
+  await page.route(`**/api/schedules/${id}/reports**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ reports: [], total: 0 }),
+    }),
+  )
+}
+
 // Minimal report row that satisfies the view's status checks.
 function makeReport(status: 'started' | 'pending' | 'success' | 'cancelled'): object {
   return {
@@ -110,13 +122,7 @@ test('Run now shows a success toast when the API accepts the request', async ({ 
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
 
-  await page.route(`**/api/schedules/${id}/reports**`, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ reports: [], total: 0 }),
-    }),
-  )
+  await mockEmptyReports(page, id)
   await page.route(`**/api/schedules/${id}/run`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
   )
@@ -133,13 +139,7 @@ test('Run now shows an error toast when the API rejects the request', async ({ p
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
 
-  await page.route(`**/api/schedules/${id}/reports**`, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ reports: [], total: 0 }),
-    }),
-  )
+  await mockEmptyReports(page, id)
   await page.route(`**/api/schedules/${id}/run`, (route) =>
     route.fulfill({
       status: 409,

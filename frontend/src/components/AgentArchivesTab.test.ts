@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { mockWebSocket, resetWsHandlers, wsHandlers } from '../test-utils/sharedMocks'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { Repo } from '../types/repo'
 
@@ -12,14 +13,7 @@ vi.mock('../api/archives', () => ({
   listRepoArchives: (repoId: number) => mockListRepoArchives(repoId),
 }))
 
-const wsHandlers: Record<string, (payload: unknown) => void> = {}
-vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (payload: unknown) => void) => {
-      wsHandlers[type] = cb
-    },
-  }),
-}))
+vi.mock('../composables/useWebSocket', () => mockWebSocket())
 
 vi.mock('./ArchiveExplorer.vue', () => ({
   default: {
@@ -69,7 +63,7 @@ function mount(props: Record<string, unknown> = {}) {
 describe('AgentArchivesTab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+    resetWsHandlers()
   })
 
   it('shows a message when the agent backs up to no repository yet', () => {

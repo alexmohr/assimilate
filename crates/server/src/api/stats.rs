@@ -1033,9 +1033,15 @@ pub async fn acknowledge_system_event(
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
         (status = 404, description = "Not found"),
+        (status = 422, description = "Event type reports nothing to review"),
     )
 )]
 /// Clear a previously acknowledged system event.
+///
+/// Validates the event type the same way [`acknowledge_system_event`] does, so
+/// the two directions of the same toggle answer identically: an informational
+/// event that can never carry an acknowledgement is rejected rather than
+/// silently reported as cleared.
 ///
 /// # Errors
 ///
@@ -1045,6 +1051,7 @@ pub async fn unacknowledge_system_event(
     RequireAdmin(_admin): RequireAdmin,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    db::get_acknowledgeable_system_event_type(&state.pool, id).await?;
     db::set_system_event_acknowledged(&state.pool, id, false).await?;
     Ok(StatusCode::NO_CONTENT)
 }

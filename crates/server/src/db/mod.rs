@@ -6328,6 +6328,18 @@ pub async fn set_system_event_acknowledged(
     Ok(())
 }
 
+/// The backup report statuses that carry something to acknowledge, as the
+/// bind parameters the bulk acknowledgment queries pass to `status IN (..)`.
+///
+/// Shared so the acknowledge, the "which repositories are affected" lookup and
+/// the count can never disagree about what counts as outstanding.
+fn acknowledgeable_report_statuses() -> [String; 2] {
+    [
+        BackupStatus::Warning.to_string(),
+        BackupStatus::Failed.to_string(),
+    ]
+}
+
 /// Acknowledges every unacknowledged warning/failed backup report belonging to
 /// one of `repo_ids`, and reports how many rows that touched.
 ///
@@ -6342,8 +6354,7 @@ pub async fn acknowledge_backup_reports_in_repos(
     pool: &PgPool,
     repo_ids: &[i64],
 ) -> Result<u64, ApiError> {
-    let warning = BackupStatus::Warning.to_string();
-    let failed = BackupStatus::Failed.to_string();
+    let [warning, failed] = acknowledgeable_report_statuses();
     Ok(sqlx::query!(
         "UPDATE backup_reports SET acknowledged = true WHERE acknowledged = false AND repo_id = \
          ANY($1) AND status IN ($2, $3)",
@@ -6364,8 +6375,7 @@ pub async fn acknowledge_backup_reports_in_repos(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
-    let warning = BackupStatus::Warning.to_string();
-    let failed = BackupStatus::Failed.to_string();
+    let [warning, failed] = acknowledgeable_report_statuses();
     sqlx::query_scalar!(
         "SELECT DISTINCT repo_id FROM backup_reports WHERE acknowledged = false AND status IN \
          ($1, $2) ORDER BY repo_id",
@@ -6392,8 +6402,7 @@ pub async fn count_unacknowledged_reports_in_repos(
     pool: &PgPool,
     repo_ids: &[i64],
 ) -> Result<i64, ApiError> {
-    let warning = BackupStatus::Warning.to_string();
-    let failed = BackupStatus::Failed.to_string();
+    let [warning, failed] = acknowledgeable_report_statuses();
     Ok(sqlx::query_scalar!(
         "SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false AND repo_id = ANY($1) AND \
          status IN ($2, $3)",

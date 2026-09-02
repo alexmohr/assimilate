@@ -7419,6 +7419,124 @@ async fn acknowledge_all_leaves_repos_the_caller_may_not_touch_alone() {
     assert_eq!(unacknowledged, 1);
 }
 
+/// The realistic middle case between the two extremes the other bulk tests
+/// cover: a non-admin holding `can_modify_schedules` on one repository but not
+/// on another that also has outstanding reports. This is the
+/// `granted.contains(repo_id)` filter itself - the bulk endpoint must
+/// acknowledge exactly the granted repository and leave the other alone, and
+/// the outstanding count must agree with what it did.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_all_reaches_only_the_repos_the_caller_was_granted() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "ack-all-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "ack-all-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('ack-all-partial-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for repo_id in [granted_repo, ungranted_repo] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), 'failed', true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = non_admin_get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body.get("backup_reports").unwrap(),
+        1,
+        "only the granted repo's report is within the caller's reach"
+    );
+
+    let req = non_admin_post_request_without_body("/api/stats/activity/acknowledge-all");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 1);
+    assert_eq!(
+        body.get("system_events").unwrap(),
+        0,
+        "a non-admin never acknowledges global system events"
+    );
+
+    let acknowledged_repos: Vec<i64> = sqlx::query_scalar(
+        "SELECT repo_id FROM backup_reports WHERE acknowledged = true ORDER BY repo_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        acknowledged_repos,
+        vec![granted_repo],
+        "the repo the caller holds no can_modify_schedules grant on must be untouched"
+    );
+}
+
+/// Both directions of the acknowledgment toggle validate the event type the
+/// same way, so an informational event is rejected rather than reported as
+/// cleared.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn unacknowledging_an_informational_system_event_is_rejected() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let event_id: i64 = sqlx::query_scalar(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync', 'nothing wrong') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/stats/system-events/{event_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an event type that reports nothing to review cannot be unacknowledged either"
+    );
+
+    let missing = delete_request("/api/stats/system-events/999999/acknowledge");
+    let resp = oneshot(&mut app, missing).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 /// The Acknowledge all button is driven by this endpoint rather than by the
 /// rows on screen, so it must report what the bulk endpoint would act on -
 /// including for a caller who may not act on anything.

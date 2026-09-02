@@ -49,7 +49,7 @@ It appears whenever anything is left for you to acknowledge — deliberately reg
 
 ### Acknowledging a system event
 
-A system event that reports a problem — a failed or slow periodic repository sync, an auto-disabled schedule, a locked account — can be acknowledged the same way. System events are global rather than repository-scoped, so only an admin can acknowledge one. Events that report normal operation (a completed sync, a cancelled sync) have no Acknowledge button.
+A system event that reports a problem — a failed or slow periodic repository sync, an auto-disabled schedule, a locked account — can be acknowledged the same way. System events are global rather than repository-scoped, so only an admin can acknowledge one. Events that report normal operation (a completed sync, a cancelled sync) have no Acknowledge button, and the API rejects an attempt to acknowledge or unacknowledge one.
 
 ## Filters
 

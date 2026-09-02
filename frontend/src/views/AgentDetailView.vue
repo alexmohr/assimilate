@@ -409,8 +409,13 @@ async function fetchAgent(): Promise<void> {
 async function loadAgent(): Promise<void> {
   // Cleared up front (rather than left to `fetchAgent`) so a hostname/domain
   // change doesn't briefly show the *previous* host's stale disambiguation
-  // picker while this fresh load is still in flight behind the spinner.
+  // picker, or breadcrumb domain hint, while this fresh load is still in
+  // flight behind the spinner - and, if it fails, doesn't leave either
+  // showing the old host's data next to the "not found" error banner.
+  // `refreshAgent` below must NOT do this: a background refresh is meant to
+  // leave the last-good `agent` on screen on failure, not clear it.
   ambiguousMatches.value = []
+  agent.value = null
   await run(fetchAgent)
 }
 

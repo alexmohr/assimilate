@@ -2030,6 +2030,36 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     expect(wrapper.find('.error-banner').exists()).toBe(false)
     expect(wrapper.find('.detail-name').exists()).toBe(true)
   })
+
+  // Regression test: unlike a background refresh, a genuine navigation to a
+  // hostname that doesn't resolve goes through loadAgent()'s spinner/error
+  // path, not refreshAgent()'s "preserve last-good state" one - so it must
+  // still clear stale data. The agent-detail route has no `:key`, so the
+  // same component instance (and its `agent` ref) is reused across a
+  // hostname change; without resetting `agent.value` up front, the
+  // breadcrumb's domain hint (which reads `agent.value` directly) would
+  // keep showing the previous host's domain next to the new, nonexistent
+  // one, right beside the "not found" error banner.
+  it('clears the stale breadcrumb domain hint when navigating to a host that is not found', async () => {
+    const wrapper = await render({ domain: 'a.example.com' })
+    expect(wrapper.find('.detail-breadcrumb .muted').text()).toBe('(a.example.com)')
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    // The route itself has no `:key`, so a real navigation reuses this same
+    // component instance and only updates its `hostname` prop - reproduced
+    // here the same way, rather than through `$router.push`, since this
+    // view is mounted directly with static props rather than under a
+    // `<RouterView>` in this test harness.
+    await wrapper.setProps({ hostname: 'nonexistent-host' })
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
+    expect(wrapper.find('.detail-breadcrumb .muted').exists()).toBe(false)
+  })
 })
 
 // Two agents can share an OS hostname if they're in different domains; the

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, 'backup_success', true)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6a9586478c631bc7a5c27c25240992d43e610d848209d2ad1119809517be7ab5"
+}

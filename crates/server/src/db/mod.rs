@@ -4768,6 +4768,7 @@ pub async fn list_reports_for_agent(
     agent_id: i64,
     target: Option<&str>,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     if let Some(target_name) = target {
         sqlx::query_as!(
@@ -4779,10 +4780,11 @@ pub async fn list_reports_for_agent(
              br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
              br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
              schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = $2 ORDER by \
-             br.started_at DESC LIMIT $3",
+             br.started_at DESC LIMIT $3 OFFSET $4",
             agent_id,
             target_name,
             limit,
+            offset,
         )
         .fetch_all(pool)
         .await
@@ -4797,9 +4799,10 @@ pub async fn list_reports_for_agent(
              br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
              br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
              schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at \
-             DESC LIMIT $2",
+             DESC LIMIT $2 OFFSET $3",
             agent_id,
             limit,
+            offset,
         )
         .fetch_all(pool)
         .await
@@ -4810,10 +4813,48 @@ pub async fn list_reports_for_agent(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_reports_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+    target: Option<&str>,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = if let Some(target_name) = target {
+        sqlx::query_as!(
+            CountRow,
+            "SELECT COUNT(*) as count FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
+             WHERE br.agent_id = $1 AND r.name = $2",
+            agent_id,
+            target_name,
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::Database)?
+    } else {
+        sqlx::query_as!(
+            CountRow,
+            "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1",
+            agent_id,
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::Database)?
+    };
+    Ok(row.count.unwrap_or(0))
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_reports_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     sqlx::query_as!(
         ReportRow,
@@ -4823,13 +4864,34 @@ pub async fn list_reports_for_schedule(
          br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
          br.warnings, br.borg_version, br.archive_name, br.borg_command, br.run_id FROM \
          backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+         br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2 OFFSET $3",
         schedule_id,
         limit,
+        offset,
     )
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_reports_for_schedule(pool: &PgPool, schedule_id: i64) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM backup_reports WHERE schedule_id = $1",
+        schedule_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
 }
 
 /// # Errors

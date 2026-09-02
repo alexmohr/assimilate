@@ -6,7 +6,9 @@ import type { Page } from '@playwright/test'
 
 /**
  * The agent detail page: a persistent header, then Overview / Schedules /
- * Backups / Settings. Configuration lives behind the Settings tab so the
+ * Backups / Logs / Settings. Backups is the archive browser; Logs is the
+ * flat run history (any status, expandable warnings/errors) that used to
+ * live under Backups. Configuration lives behind the Settings tab so the
  * landing tab can answer the operational question instead.
  */
 
@@ -121,9 +123,9 @@ test.describe('Agent detail', () => {
     expect(deployBody).toMatchObject({ force: true, ssh_host: '10.0.0.9' })
   })
 
-  test('backups are one line per run and expand their failure output', async ({ page }) => {
+  test('logs are one line per run and expand their failure output', async ({ page }) => {
     await openAgent(page)
-    await page.getByRole('tab', { name: /Backups/ }).click()
+    await page.getByRole('tab', { name: /Logs/ }).click()
     await page.waitForLoadState('networkidle')
 
     const rows = page.locator('[id^="report-"]')
@@ -146,7 +148,7 @@ test.describe('Agent detail', () => {
   // detail" with no way out to the archive browser.
   test('a warned run still links through to its archive', async ({ page }) => {
     await openAgent(page)
-    await page.getByRole('tab', { name: /Backups/ }).click()
+    await page.getByRole('tab', { name: /Logs/ }).click()
     await page.waitForLoadState('networkidle')
 
     const warning = page.locator('.segmented-option', { hasText: /^Warning/ })
@@ -172,7 +174,7 @@ test.describe('Agent detail', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeFailedReport(9996)]),
+        body: JSON.stringify({ reports: [makeFailedReport(9996)], total: 1 }),
       }),
     )
     // Registered second so it wins for the more specific URL: the count
@@ -189,12 +191,57 @@ test.describe('Agent detail', () => {
 
     await page.getByRole('button', { name: 'View error' }).first().click()
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=backups.*report=9996/)
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=logs.*report=9996/)
     await expect(page.locator('#report-9996.agent-row--highlighted')).toBeVisible()
     await expect(page.locator('.detail-output--danger')).toContainText('connection refused')
   })
 
-  test('settings is a fourth tab with its own sub-nav', async ({ page }) => {
+  // The Backups tab used to be this same run log; it's the archive browser
+  // now, consistent with a repository's and a schedule's own Backups tab.
+  test('backups is the archive browser, grouped by repository', async ({ page }) => {
+    await openAgent(page)
+    await page.getByRole('tab', { name: /^Backups/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.locator('[id^="report-"]')).toHaveCount(0)
+    await expect(page.getByText('server-daily').first()).toBeVisible()
+    await expect(page.locator('.archive-row').first()).toBeVisible()
+  })
+
+  // db-server-01 also writes into server-daily via the multi-host schedule
+  // (see seed-demo.sh), so its Backups tab has more than one repository
+  // section - what makes the per-repository grouping visible at all.
+  test('an agent backing up to more than one repository gets one archive section each', async ({
+    page,
+  }) => {
+    await openAgent(page, 'db-server-01')
+    await page.getByRole('tab', { name: /^Backups/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.getByText('database-hourly').first()).toBeVisible()
+    await expect(page.getByText('server-daily').first()).toBeVisible()
+  })
+
+  test('logs tab offers to load more once there are more runs than the first page', async ({
+    page,
+  }) => {
+    // database-hourly backs up every hour, so db-server-01 has well over 50
+    // runs in the demo seed - the one host guaranteed to exceed the first page.
+    await openAgent(page, 'db-server-01')
+    await page.getByRole('tab', { name: /Logs/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    const loadMore = page.getByRole('button', { name: /^Load \d+ more$/ })
+    await expect(loadMore).toBeVisible()
+    const before = await page.locator('[id^="report-"]').count()
+
+    await loadMore.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect.poll(async () => page.locator('[id^="report-"]').count()).toBeGreaterThan(before)
+  })
+
+  test('settings is a fifth tab with its own sub-nav', async ({ page }) => {
     await openAgent(page)
     await page.getByRole('tab', { name: 'Settings' }).click()
 
@@ -257,7 +304,7 @@ test.describe('Agent detail', () => {
     await expect(page.getByRole('button', { name: 'Merge into...' })).toBeVisible()
 
     const tabs = page.getByRole('tab')
-    await expect(tabs).toHaveCount(4)
+    await expect(tabs).toHaveCount(5)
 
     await page.getByRole('tab', { name: /Schedules/ }).click()
     await expect(page.locator('.empty-title')).toHaveText('No schedules yet')
@@ -273,7 +320,7 @@ test.describe('Agent detail', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeRunningReport(9998)]),
+        body: JSON.stringify({ reports: [makeRunningReport(9998)], total: 1 }),
       }),
     )
     await page.reload()
@@ -302,7 +349,7 @@ test.describe('Agent detail', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeFailedReport(9997)]),
+        body: JSON.stringify({ reports: [makeFailedReport(9997)], total: 1 }),
       }),
     )
     // The menu label and dialog count come from a separate, unbounded count

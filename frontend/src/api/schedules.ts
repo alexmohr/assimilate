@@ -3,11 +3,11 @@
 
 import { apiClient } from './client'
 import type { ScheduleFailureAction, ScheduleRow, ScheduleType } from '../types/schedule'
-import type { ReportRow } from '../types/report'
 import type {
   DeleteFailedReportsResponse,
   FailedReportCountResponse,
   HookCommand,
+  ReportListResponse,
   ScheduleBackupSourcesResponse,
   ScheduleTargetResponse,
   HealthSummaryResponse,
@@ -130,9 +130,10 @@ export async function getScheduleBackupSources(
 export async function listScheduleReports(
   id: number | string,
   limit?: number,
-): Promise<ReportRow[]> {
-  const response = await apiClient.get<ReportRow[]>(`/schedules/${id}/reports`, {
-    params: { limit },
+  offset?: number,
+): Promise<ReportListResponse> {
+  const response = await apiClient.get<ReportListResponse>(`/schedules/${id}/reports`, {
+    params: { limit, offset },
   })
   return response.data
 }

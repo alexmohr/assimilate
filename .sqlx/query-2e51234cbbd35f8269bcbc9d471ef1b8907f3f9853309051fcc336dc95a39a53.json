@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT auto_disabled_by_agent_id FROM schedules WHERE id = $1",
+  "query": "SELECT COUNT(*) as count FROM backup_reports WHERE schedule_id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "auto_disabled_by_agent_id",
+        "name": "count",
         "type_info": "Int8"
       }
     ],
@@ -15,8 +15,8 @@
       ]
     },
     "nullable": [
-      true
+      null
     ]
   },
-  "hash": "fc24f3093b88b37cc06e06ff64762f1c9b5b24345dcd7a48b4210a04698c4afc"
+  "hash": "2e51234cbbd35f8269bcbc9d471ef1b8907f3f9853309051fcc336dc95a39a53"
 }

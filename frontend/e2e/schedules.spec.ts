@@ -441,7 +441,7 @@ test.describe('Schedules management', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeFailedReport(9995, 1)]),
+        body: JSON.stringify({ reports: [makeFailedReport(9995, 1)], total: 1 }),
       }),
     )
     // Registered second so it wins for the more specific URL: the count
@@ -458,7 +458,7 @@ test.describe('Schedules management', () => {
 
     await page.getByRole('button', { name: 'View error' }).first().click()
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=backups.*report=9995/)
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=logs.*report=9995/)
   })
 
   // The other half of the same preview row: a run that produced an archive
@@ -588,16 +588,23 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('server-daily').first()).toBeVisible()
   })
 
-  test('schedule detail Logs link navigates to activity log filtered by schedule', async ({
-    page,
-  }) => {
+  // Logs used to be an overflow-menu link out to the Activity page; it's an
+  // in-page tab now, the same run-history view an agent's own Logs tab
+  // renders, so there is no "More schedule actions" item for it any more.
+  test('schedule detail Logs tab shows the run history in place', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
     await page.getByRole('button', { name: 'More schedule actions' }).click()
-    await page.getByRole('menuitem', { name: 'Logs' }).click()
-    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1/)
+    await expect(page.getByRole('menuitem', { name: 'Logs' })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
+    await page.getByRole('tab', { name: /Logs/ }).click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.locator('[id^="report-"]').first()).toBeVisible()
+    await expect(page).toHaveURL(/\/schedules\/1\?.*tab=logs/)
   })
 
   // Failed run history has no archive behind it, so an admin should be able
@@ -618,7 +625,7 @@ test.describe('Schedules management', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([makeFailedReport(9997, 1)]),
+        body: JSON.stringify({ reports: [makeFailedReport(9997, 1)], total: 1 }),
       }),
     )
     await page.route('**/api/schedules/1/reports/failed/count**', (route) =>

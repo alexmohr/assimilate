@@ -547,14 +547,14 @@ describe('HostsView issue rows', () => {
     expect(overdueChip.text()).toContain('1 overdue')
   })
 
-  it('navigates to the backups tab filtered to failed when the failed chip is clicked', async () => {
+  it('navigates to the logs tab filtered to failed when the failed chip is clicked', async () => {
     const { wrapper, router } = await mountWithHealth()
 
     await wrapper.find('.entity-issue-chip.sev-danger').trigger('click')
     await flushPromises()
 
     expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
-    expect(router.currentRoute.value.query).toMatchObject({ tab: 'backups', status: 'failed' })
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'logs', status: 'failed' })
   })
 
   it('navigates to the schedules tab filtered to overdue when the overdue chip is clicked', async () => {

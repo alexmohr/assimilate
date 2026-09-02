@@ -300,9 +300,7 @@ function agentIssues(agent: AgentRow): EntityIssue[] {
 
 function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue'): void {
   const query =
-    kind === 'failed'
-      ? { tab: 'backups', status: 'failed' }
-      : { tab: 'schedules', health: 'overdue' }
+    kind === 'failed' ? { tab: 'logs', status: 'failed' } : { tab: 'schedules', health: 'overdue' }
   router.push({
     path: `/agents/${agent.hostname}`,
     query: { ...query, ...domainParams(agent.domain) },

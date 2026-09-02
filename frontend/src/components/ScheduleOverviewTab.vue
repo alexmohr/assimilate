@@ -55,7 +55,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   retry: [agentId: number]
-  openBackups: []
+  openLogs: []
   openArchive: [report: ReportRow]
   openReportDetail: [report: ReportRow]
 }>()
@@ -255,7 +255,7 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
         <button
           class="section-link"
           type="button"
-          @click="emit('openBackups')"
+          @click="emit('openLogs')"
         >
           View all {{ settledReports.length }}
         </button>

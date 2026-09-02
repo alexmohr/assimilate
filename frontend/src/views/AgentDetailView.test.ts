@@ -1376,6 +1376,31 @@ describe('AgentDetailView - identity, token and merge', () => {
 
     expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(false)
   })
+
+  // Regression test: MergeAgentDialog operates on the currently-resolved
+  // `agent`. If a background refresh discovers a second agent now sharing
+  // this hostname while the dialog is open, it must close rather than keep
+  // running against the now-ambiguous/stale agent.
+  it('closes the merge dialog if a background refresh makes the host ambiguous', async () => {
+    const wrapper = await render({ is_imported: true })
+    await clickButton(wrapper, 'Merge into...')
+    expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(true)
+
+    const otherAgent = { ...mockAgent, id: 2, domain: 'b.example.com' }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents')
+        return Promise.resolve({ data: [{ ...mockAgent, is_imported: true }, otherAgent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('More than one host is named')
+    expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(false)
+  })
 })
 
 describe('AgentDetailView - tab bar and list controls', () => {
@@ -1743,6 +1768,27 @@ describe('AgentDetailView - tab structure and settings', () => {
       .mock.calls.find(([active]) => (active as { value: boolean }).value === true)
     expect(registration).toBeDefined()
     registration![1]()
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  // Regression test: the SSH key dialog is gated `v-if="agent"` and hands
+  // `agent.hostname` straight to the panel inside it. If this host drops out
+  // of the list entirely during a background refresh (renamed/merged/deleted
+  // from another session), `agent` is deliberately left at its last-good
+  // value so the page behind the dialog doesn't blank - but that must not
+  // leave the dialog itself open and acting on the now-orphaned agent.
+  it('closes the SSH key dialog if a background refresh can no longer find the host', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
     await flushPromises()
 
     expect(openModals(wrapper)).toHaveLength(0)

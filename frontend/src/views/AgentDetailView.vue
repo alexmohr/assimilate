@@ -358,6 +358,19 @@ function toggleReport(r: ReportRow): void {
   expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
 
+// SSH-key deploy, merge and redeploy all operate on the currently-resolved
+// `agent` object and are gated `v-if="agent"` (merge/redeploy additionally
+// on their own `show*` flag). Once the host can no longer be uniquely
+// resolved - ambiguous, or gone entirely - keeping one of these open would
+// mean it silently keeps acting on a stale/orphaned agent, so close them
+// alongside `agent`/`ambiguousMatches` rather than relying on `v-if="agent"`
+// alone (which only helps when `agent.value` is actually nulled).
+function closeAgentScopedModals(): void {
+  showDeploySshKey.value = false
+  showMergeDialog.value = false
+  showDeployDialog.value = false
+}
+
 // A background refresh (see `refreshAgent` below) must leave the last-good
 // `agent` on screen if this throws or the host briefly drops out of the
 // list, rather than blanking the page - so `agent`/`ambiguousMatches` are
@@ -379,11 +392,13 @@ async function fetchAgent(): Promise<void> {
     // while the picker below asks which one is meant.
     agent.value = null
     ambiguousMatches.value = matches
+    closeAgentScopedModals()
     return
   } else {
     resolved = matches[0] ?? null
   }
   if (!resolved) {
+    closeAgentScopedModals()
     throw new Error(`Agent "${props.hostname}" not found`)
   }
   ambiguousMatches.value = []

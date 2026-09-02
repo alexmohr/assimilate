@@ -2162,6 +2162,31 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.text()).toContain('Host B')
   })
 
+  // Regression test: the picker must not get stuck forever if a background
+  // refresh goes straight from "ambiguous" to "gone entirely" (e.g. both
+  // duplicate-hostname agents were merged/deleted elsewhere between
+  // refreshes) - this hits the "not found" throw path directly, skipping
+  // the single-match branch the previous test exercises.
+  it('clears the picker once a background refresh finds no match at all', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.find('.entity-card').exists()).toBe(false)
+  })
+
   // Regression test: the reverse transition. If a background refetch turns a
   // previously-resolved single match ambiguous (a duplicate-hostname agent
   // appearing elsewhere), the picker takes over correctly - but `agent`

@@ -373,9 +373,12 @@ function closeAgentScopedModals(): void {
 
 // A background refresh (see `refreshAgent` below) must leave the last-good
 // `agent` on screen if this throws or the host briefly drops out of the
-// list, rather than blanking the page - so `agent`/`ambiguousMatches` are
-// only written once a match (or a genuine ambiguity) is confirmed, never on
-// the "not found" path.
+// list, rather than blanking the page - so `agent` is only written once a
+// match is confirmed, never on the "not found" path. `ambiguousMatches` is
+// the one exception: it IS cleared on "not found" too, since at that point
+// there is definitely no ambiguity left to show - leaving it would strand
+// the disambiguation picker on screen (with stale, dead candidates) if a
+// background refresh goes straight from "ambiguous" to "gone entirely".
 async function fetchAgent(): Promise<void> {
   const agentRows = await listAgents()
   allAgents.value = agentRows
@@ -398,6 +401,7 @@ async function fetchAgent(): Promise<void> {
     resolved = matches[0] ?? null
   }
   if (!resolved) {
+    ambiguousMatches.value = []
     closeAgentScopedModals()
     throw new Error(`Agent "${props.hostname}" not found`)
   }

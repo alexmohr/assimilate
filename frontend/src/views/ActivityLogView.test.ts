@@ -176,7 +176,10 @@ function createTestRouter(): ReturnType<typeof createRouter> {
  * Mounts the view with an optional signed-in user. Acknowledging a system
  * event is admin-only, so those tests need a store that says so.
  */
-function mountView(role?: string): ReturnType<typeof mount> {
+function mountView(
+  role?: string,
+  router?: ReturnType<typeof createRouter>,
+): ReturnType<typeof mount> {
   const pinia = createPinia()
   if (role !== undefined) {
     useAuthStore(pinia).user = {
@@ -192,7 +195,7 @@ function mountView(role?: string): ReturnType<typeof mount> {
   }
   return mount(ActivityLogView, {
     global: {
-      plugins: [pinia, createTestRouter()],
+      plugins: [pinia, router ?? createTestRouter()],
       stubs: {
         DataTable: {
           name: 'DataTable',
@@ -1041,6 +1044,121 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       expect((statusSelect?.element as HTMLSelectElement).value).toBe('all')
+    })
+  })
+
+  describe('deep links from the dashboard', () => {
+    // A Needs Attention finding links here with ?status=..., which is how a
+    // user reaches the run they are about to acknowledge. The status is
+    // untrusted query text, so it is validated before it reaches the filter.
+    async function mountAtQuery(
+      query: Record<string, string>,
+    ): Promise<ReturnType<typeof mountView>> {
+      setupDefaultMocks()
+      const router = createTestRouter()
+      await router.push({ path: '/', query })
+      await router.isReady()
+      const wrapper = mountView(undefined, router)
+      await flushPromises()
+      return wrapper
+    }
+
+    function statusSelect(
+      wrapper: ReturnType<typeof mountView>,
+    ): ReturnType<typeof wrapper.findAll>[number] | undefined {
+      return wrapper
+        .findAll('select.select-input')
+        .find((sel) => sel.findAll('option').some((o) => o.text() === 'Failed'))
+    }
+
+    it('applies a status the dashboard linked to', async () => {
+      const wrapper = await mountAtQuery({ status: 'failed' })
+
+      expect((statusSelect(wrapper)?.element as HTMLSelectElement).value).toBe('failed')
+    })
+
+    it('ignores a status the backend would never report', async () => {
+      const wrapper = await mountAtQuery({ status: 'not-a-status' })
+
+      expect((statusSelect(wrapper)?.element as HTMLSelectElement).value).toBe('all')
+    })
+  })
+
+  describe('date filters', () => {
+    // Rows a week apart, so From and To each have something to exclude.
+    const DATED_ROWS = [
+      { ...ACTIVITY_ROWS[0], id: 201, started_at: '2026-03-01T10:00:00Z' },
+      { ...ACTIVITY_ROWS[0], id: 202, started_at: '2026-03-08T10:00:00Z' },
+      { ...ACTIVITY_ROWS[0], id: 203, started_at: '2026-03-15T10:00:00Z' },
+    ]
+
+    function mountWithDatedRows(): ReturnType<typeof mountView> {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: DATED_ROWS })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse())
+        return Promise.resolve({ data: [] })
+      })
+      return mountView()
+    }
+
+    function visibleRunCount(wrapper: ReturnType<typeof mountView>): number {
+      return wrapper.findAll('.run-card:not(.run-card-system) .run-card-summary').length
+    }
+
+    it('drops runs that started before the From date', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+      expect(visibleRunCount(wrapper)).toBe(3)
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      expect(dateInputs.length).toBe(2)
+      await dateInputs[0]!.setValue('2026-03-08')
+      await flushPromises()
+
+      expect(visibleRunCount(wrapper)).toBe(2)
+    })
+
+    it('drops runs that started after the To date, to the end of that day', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      await dateInputs[1]!.setValue('2026-03-08')
+      await flushPromises()
+
+      // The 8th itself is kept: To is inclusive through 23:59:59 local.
+      expect(visibleRunCount(wrapper)).toBe(2)
+    })
+
+    it('combines both bounds to a single day', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      await dateInputs[0]!.setValue('2026-03-08')
+      await dateInputs[1]!.setValue('2026-03-08')
+      await flushPromises()
+
+      expect(visibleRunCount(wrapper)).toBe(1)
+    })
+
+    it('counts a date bound as an active filter that Clear resets', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      await dateInputs[0]!.setValue('2026-03-08')
+      await flushPromises()
+      expect(visibleRunCount(wrapper)).toBe(2)
+
+      const clearButton = wrapper.findAll('button').find((b) => b.text() === 'Clear')
+      expect(clearButton, 'a date bound must count as an active filter').toBeTruthy()
+      await clearButton!.trigger('click')
+      await flushPromises()
+
+      expect(visibleRunCount(wrapper)).toBe(3)
     })
   })
 

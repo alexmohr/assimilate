@@ -8,10 +8,11 @@ import {
   backupStatusTone,
   badgeClass,
   logLevelTone,
+  systemEventTone,
   thresholdTone,
   type BadgeTone,
 } from './badge'
-import type { RunEventType } from '../types/generated'
+import type { RunEventType, SystemEventSeverity } from '../types/generated'
 
 const TONES: BadgeTone[] = ['success', 'warning', 'danger', 'info', 'accent', 'neutral']
 
@@ -116,4 +117,19 @@ describe('agentPowerPhase', () => {
       expect(agentPowerPhase(eventType)).toBeNull()
     },
   )
+})
+
+describe('systemEventTone', () => {
+  it('maps every severity the server can report', () => {
+    expect(systemEventTone('success')).toBe('success')
+    expect(systemEventTone('warning')).toBe('warning')
+    expect(systemEventTone('failed')).toBe('danger')
+    expect(systemEventTone('info')).toBe('info')
+  })
+
+  // A tab left open across a deploy that adds a severity variant would
+  // otherwise get `undefined` back and render a broken tone class.
+  it('falls back to a neutral tone for a severity it does not know', () => {
+    expect(systemEventTone('nonsense' as SystemEventSeverity)).toBe('neutral')
+  })
 })

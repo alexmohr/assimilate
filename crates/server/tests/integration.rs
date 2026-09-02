@@ -271,6 +271,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
     Router::new()
         .route("/api/stats/storage", get(server::api::stats::storage))
         .route("/api/stats/activity", get(server::api::stats::activity))
+        .route(
+            "/api/stats/dashboard-overview",
+            get(server::api::stats::dashboard_overview),
+        )
         .route("/api/stats/health", get(server::api::stats::health))
         .route("/api/stats/summary", get(server::api::stats::summary))
         .route(
@@ -281,6 +285,23 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
             "/api/stats/activity/{id}/acknowledge",
             post(server::api::stats::acknowledge_activity_entry)
                 .delete(server::api::stats::unacknowledge_activity_entry),
+        )
+        .route(
+            "/api/stats/activity/acknowledge-all",
+            post(server::api::stats::acknowledge_all_activity),
+        )
+        .route(
+            "/api/stats/activity/outstanding",
+            get(server::api::stats::outstanding_acknowledgements),
+        )
+        .route(
+            "/api/stats/system-events",
+            get(server::api::stats::system_events),
+        )
+        .route(
+            "/api/stats/system-events/{id}/acknowledge",
+            post(server::api::stats::acknowledge_system_event)
+                .delete(server::api::stats::unacknowledge_system_event),
         )
         .route("/api/stats/calendar", get(server::api::stats::calendar))
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
@@ -7130,6 +7151,668 @@ async fn acknowledge_activity_entry_rejects_a_successful_report() {
         !acknowledged,
         "the rejected request must not have flipped the acknowledged flag"
     );
+}
+
+/// The whole point of acknowledging: the entry stops showing up in the feed
+/// unless the caller explicitly asks for acknowledged ones.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn activity_feed_hides_acknowledged_entries_behind_a_filter() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "ack-filter-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('ack-filter-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let req = get_request("/api/stats/activity?acknowledged=unacknowledged");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(
+        rows.as_array().unwrap().is_empty(),
+        "an acknowledged run must not come back in the default Activity Log feed"
+    );
+
+    let req = get_request("/api/stats/activity?acknowledged=acknowledged");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+
+    // No filter at all still means "everything", so the dashboard's own
+    // history queries are unaffected.
+    let req = get_request("/api/stats/activity");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_and_unacknowledge_a_failed_periodic_sync() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let event_id: i64 = sqlx::query_scalar(
+        "INSERT INTO system_events (event_type, hostname, message) VALUES ('repo_sync_failed', \
+         'sync-host', 'Periodic sync failed') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = get_request("/api/stats/system-events");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let event = rows.as_array().unwrap().first().unwrap();
+    assert_eq!(event.get("severity").unwrap(), "failed");
+    assert_eq!(event.get("acknowledgeable").unwrap(), true);
+    assert_eq!(event.get("acknowledged").unwrap(), false);
+
+    let req =
+        post_request_without_body(&format!("/api/stats/system-events/{event_id}/acknowledge"));
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let req = get_request("/api/stats/system-events?acknowledged=unacknowledged");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 0);
+
+    let req = delete_request(&format!("/api/stats/system-events/{event_id}/acknowledge"));
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let req = get_request("/api/stats/system-events?acknowledged=unacknowledged");
+    let resp = oneshot(&mut app, req).await;
+    let rows: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_system_event_rejects_an_informational_event_and_a_non_admin() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let ok_id: i64 = sqlx::query_scalar(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync', 'Synced') RETURNING \
+         id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let failed_id: i64 = sqlx::query_scalar(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync_failed', 'Sync \
+         failed') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/stats/system-events/{ok_id}/acknowledge"));
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a successful sync has nothing to review"
+    );
+
+    let req = non_admin_post_request_without_body(&format!(
+        "/api/stats/system-events/{failed_id}/acknowledge"
+    ));
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::FORBIDDEN,
+        "system events are global, so only an admin acknowledges one"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_all_clears_every_outstanding_warning_and_failure() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "ack-all-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('ack-all-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for status in ["failed", "warning", "success"] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), $3, true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync_failed', 'Periodic \
+         sync failed'), ('repo_sync', 'Synced')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body("/api/stats/activity/acknowledge-all");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 2);
+    assert_eq!(body.get("system_events").unwrap(), 1);
+
+    let unacknowledged: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false AND status IN ('failed', \
+         'warning')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(unacknowledged, 0);
+
+    let success_untouched: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE acknowledged = true AND status = 'success'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(success_untouched, 0);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_all_leaves_repos_the_caller_may_not_touch_alone() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "ack-all-forbidden-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('ack-all-forbidden-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched) \
+         VALUES ($1, $2, NOW(), NOW(), 'failed', true)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO system_events (event_type, message) VALUES ('repo_sync_failed', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = non_admin_post_request_without_body("/api/stats/activity/acknowledge-all");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body.get("backup_reports").unwrap(),
+        0,
+        "bulk acknowledge must not reach a repo the caller cannot acknowledge one-by-one"
+    );
+    assert_eq!(
+        body.get("system_events").unwrap(),
+        0,
+        "system events stay untouched for a non-admin"
+    );
+
+    let unacknowledged: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(unacknowledged, 1);
+}
+
+/// `acknowledge_scope` re-derives `check_repo_permission(.., |p|
+/// p.can_modify_schedules)`'s rule rather than calling it, so that the bulk
+/// endpoints can resolve the whole reach in two queries instead of one per
+/// repository. That trade buys speed at the cost of a rule living in two
+/// places, so this pins the two against each other on one fixture: for every
+/// repository, the bulk endpoint acknowledges it if and only if the per-entry
+/// endpoint would have let the same caller acknowledge it alone. A future
+/// change to either rule that does not reach the other fails here.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn bulk_and_per_entry_acknowledge_agree_on_who_may_touch_what() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "agreement-granted-repo").await;
+    let view_only_repo = insert_test_repo(&pool, "agreement-view-only-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "agreement-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('agreement-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // A grant that carries can_modify_schedules, and one that deliberately
+    // does not - the case a `can_view_all_repos`-style view permission
+    // produces, which must not widen either path.
+    for (repo_id, can_modify) in [(granted_repo, true), (view_only_repo, false)] {
+        sqlx::query(
+            "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) \
+             VALUES ($1, $2, true, $3)",
+        )
+        .bind(user_id)
+        .bind(repo_id)
+        .bind(can_modify)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // One failed report per repository, kept so we can ask the per-entry
+    // endpoint about each one individually.
+    let mut report_ids = Vec::new();
+    for repo_id in [granted_repo, view_only_repo, ungranted_repo] {
+        let report_id: i64 = sqlx::query_scalar(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), 'failed', true) RETURNING id",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        report_ids.push((repo_id, report_id));
+    }
+
+    // What the per-entry endpoint (check_repo_permission) allows, one at a time.
+    let mut per_entry_allows = Vec::new();
+    for (repo_id, report_id) in &report_ids {
+        let req = non_admin_post_request_without_body(&format!(
+            "/api/stats/activity/{report_id}/acknowledge"
+        ));
+        let status = oneshot(&mut app, req).await.status();
+        assert!(
+            status == StatusCode::NO_CONTENT || status == StatusCode::FORBIDDEN,
+            "unexpected per-entry status {status} for repo {repo_id}"
+        );
+        per_entry_allows.push((*repo_id, status == StatusCode::NO_CONTENT));
+    }
+    assert_eq!(
+        per_entry_allows,
+        vec![
+            (granted_repo, true),
+            (view_only_repo, false),
+            (ungranted_repo, false)
+        ],
+        "per-entry acknowledge must follow the can_modify_schedules grant"
+    );
+
+    // Reset, then let the bulk endpoint decide the same question in one go.
+    sqlx::query("UPDATE backup_reports SET acknowledged = false")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let req = non_admin_post_request_without_body("/api/stats/activity/acknowledge-all");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let mut bulk_allows: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT repo_id, acknowledged FROM backup_reports ORDER BY repo_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    bulk_allows.sort_by_key(|(repo_id, _)| *repo_id);
+    let mut expected = per_entry_allows.clone();
+    expected.sort_by_key(|(repo_id, _)| *repo_id);
+    assert_eq!(
+        bulk_allows, expected,
+        "acknowledge_scope and check_repo_permission must agree on every repository"
+    );
+}
+
+/// The realistic middle case between the two extremes the other bulk tests
+/// cover: a non-admin holding `can_modify_schedules` on one repository but not
+/// on another that also has outstanding reports. This is the
+/// `granted.contains(repo_id)` filter itself - the bulk endpoint must
+/// acknowledge exactly the granted repository and leave the other alone, and
+/// the outstanding count must agree with what it did.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_all_reaches_only_the_repos_the_caller_was_granted() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "ack-all-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "ack-all-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('ack-all-partial-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for repo_id in [granted_repo, ungranted_repo] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), 'failed', true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = non_admin_get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body.get("backup_reports").unwrap(),
+        1,
+        "only the granted repo's report is within the caller's reach"
+    );
+
+    let req = non_admin_post_request_without_body("/api/stats/activity/acknowledge-all");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 1);
+    assert_eq!(
+        body.get("system_events").unwrap(),
+        0,
+        "a non-admin never acknowledges global system events"
+    );
+
+    let acknowledged_repos: Vec<i64> = sqlx::query_scalar(
+        "SELECT repo_id FROM backup_reports WHERE acknowledged = true ORDER BY repo_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        acknowledged_repos,
+        vec![granted_repo],
+        "the repo the caller holds no can_modify_schedules grant on must be untouched"
+    );
+}
+
+/// Both directions of the acknowledgment toggle validate the event type the
+/// same way, so an informational event is rejected rather than reported as
+/// cleared.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn unacknowledging_an_informational_system_event_is_rejected() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let event_id: i64 = sqlx::query_scalar(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync', 'nothing wrong') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/stats/system-events/{event_id}/acknowledge"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an event type that reports nothing to review cannot be unacknowledged either"
+    );
+
+    let missing = delete_request("/api/stats/system-events/999999/acknowledge");
+    let resp = oneshot(&mut app, missing).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// The Acknowledge all button is driven by this endpoint rather than by the
+/// rows on screen, so it must report what the bulk endpoint would act on -
+/// including for a caller who may not act on anything.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn outstanding_acknowledgements_report_the_callers_own_reach() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "outstanding-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('outstanding-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for status in ["failed", "warning", "success"] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), $3, true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync_failed', 'boom'), \
+         ('repo_sync', 'fine')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 2);
+    assert_eq!(body.get("system_events").unwrap(), 1);
+
+    // A caller with no repo permission and no admin rights has nothing to
+    // clear, so the button must not appear for them.
+    let req = non_admin_get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 0);
+    assert_eq!(body.get("system_events").unwrap(), 0);
+
+    // After the bulk acknowledge there is nothing left to report.
+    let req = post_request_without_body("/api/stats/activity/acknowledge-all");
+    assert_eq!(oneshot(&mut app, req).await.status(), StatusCode::OK);
+
+    let req = get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 0);
+    assert_eq!(body.get("system_events").unwrap(), 0);
+}
+
+/// The dashboard's "error count" is the Needs Attention finding list, so an
+/// acknowledged failure has to drop out of it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledging_a_failed_run_drops_its_dashboard_finding() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "ack-finding-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('ack-finding-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id: i64 = sqlx::query_scalar(
+        "INSERT INTO schedules (repo_id, name, cron_expression, enabled) VALUES ($1, \
+         'ack-finding-schedule', '0 3 * * *', true) RETURNING id",
+    )
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO schedule_targets (schedule_id, agent_id) VALUES ($1, $2)")
+        .bind(schedule_id)
+        .bind(agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+         status, error_message, matched) VALUES ($1, $2, $3, NOW(), NOW(), 'failed', 'boom', \
+         true) RETURNING id",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind(schedule_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let req = get_request("/api/stats/dashboard-overview");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let before = body.get("summary").unwrap().get("needs_attention").unwrap();
+    assert!(
+        body.get("findings")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f.get("kind").unwrap() == "backup_failed"),
+        "expected a backup_failed finding before acknowledging, got {body}"
+    );
+    let before = before.as_i64().unwrap();
+
+    let req = post_request_without_body(&format!("/api/stats/activity/{report_id}/acknowledge"));
+    assert_eq!(
+        oneshot(&mut app, req).await.status(),
+        StatusCode::NO_CONTENT
+    );
+
+    let req = get_request("/api/stats/dashboard-overview");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let after = body
+        .get("summary")
+        .unwrap()
+        .get("needs_attention")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    assert!(
+        after < before,
+        "acknowledging must reduce the dashboard error count ({before} -> {after})"
+    );
+    assert!(
+        !body
+            .get("findings")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f.get("kind").unwrap() == "backup_failed"),
+    );
+
+    // The "Last failure" tile follows the same rule.
+    let req = get_request("/api/stats/summary");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(body.get("last_failure_at").unwrap().is_null());
 }
 
 // -- archive resync reliability --

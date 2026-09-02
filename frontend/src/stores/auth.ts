@@ -23,9 +23,18 @@ const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000
 // is the one built-in role the UI special-cases.
 const ADMIN_ROLE_NAME = 'admin'
 
+// The server reports every role a user holds in one field, comma-joined
+// (`get_user_role_string`), so a user granted both "admin" and another role
+// arrives as "admin,operator". Membership, not whole-string equality, is what
+// decides whether they are an admin.
+function holdsRole(roles: string | undefined, role: string): boolean {
+  if (roles === undefined) return false
+  return roles.split(',').some((name) => name.trim() === role)
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<CurrentUserResponse | null>(null)
-  const isAdmin = computed(() => user.value?.role === ADMIN_ROLE_NAME)
+  const isAdmin = computed(() => holdsRole(user.value?.role, ADMIN_ROLE_NAME))
   const canUpgradeAgent = computed(() => user.value?.can_upgrade_agent ?? false)
   const loading = ref(false)
   const sessionExpiresAt = ref<string | null>(null)

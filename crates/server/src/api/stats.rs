@@ -20,10 +20,13 @@ use shared::{
         StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
         TrendEntryResponse,
     },
-    types::{FindingKind, FindingSeverity, FindingStatus},
+    types::{AcknowledgedFilter, FindingKind, FindingSeverity, FindingStatus},
 };
 
-use super::{auth::AuthUser, permissions::check_repo_permission};
+use super::{
+    auth::{AuthUser, RequireAdmin},
+    permissions::check_repo_permission,
+};
 use crate::{AppState, db, error::ApiError};
 
 /// Computes `(part / total) * 100.0` without using `as` casts.
@@ -88,6 +91,11 @@ pub struct ActivityQuery {
     pub schedule_id: Option<i64>,
     /// Filter by run ID.
     pub run_id: Option<String>,
+    /// Which acknowledgment state to return. Defaults to every entry; the
+    /// Activity Log asks for `unacknowledged` so a reviewed problem drops out
+    /// of the feed.
+    #[serde(default)]
+    pub acknowledged: AcknowledgedFilter,
 }
 
 /// Health status of a repository's storage quota.
@@ -376,6 +384,57 @@ fn dashboard_upcoming_schedules(
         .collect()
 }
 
+/// How long after a scheduled run may pass before the target counts as
+/// overdue - enough slack that a run merely starting late is not a finding.
+const RUN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
+
+/// When the run following `after` stops being merely late and leaves the
+/// target overdue, per `cron_expression`.
+///
+/// The single definition of "overdue", shared by the dashboard's Needs
+/// Attention finding and the health endpoint, so the two cannot end up
+/// disagreeing about whether the same target is late.
+///
+/// Returns `None` for a cron expression that will not parse, which keeps a
+/// malformed schedule from being reported as overdue forever.
+fn run_deadline_after(
+    cron_expression: &str,
+    after: chrono::DateTime<Utc>,
+    timezone: chrono_tz::Tz,
+) -> Option<chrono::DateTime<Utc>> {
+    shared::schedule::calculate_next_run(cron_expression, after, timezone)
+        .ok()
+        .and_then(|expected| expected.checked_add_signed(RUN_GRACE))
+}
+
+/// Whether an acknowledgment on the target's latest report still speaks for
+/// the schedule's own overdue state.
+///
+/// Reviewing a run settles what was known when that run finished; it does not
+/// sign off on the target's future. So the overdue and never-succeeded
+/// findings are muted only until the run that should have followed the
+/// reviewed one comes and goes without a report - after that the target is
+/// overdue on a new cycle and says so again.
+///
+/// The bound matters because nothing clears `latest_acknowledged` but a fresh
+/// report: unbounded, a host that went silent right after an acknowledged
+/// failure would drop off the Needs Attention panel permanently, which is the
+/// one outcome the panel exists to prevent. A target with no reviewed report
+/// to date from is therefore not covered either - the findings show.
+fn acknowledgment_covers_schedule(
+    target: &db::dashboard::TargetRow,
+    now: chrono::DateTime<Utc>,
+    timezone: chrono_tz::Tz,
+) -> bool {
+    if target.latest_acknowledged != Some(true) {
+        return false;
+    }
+    target
+        .latest_finished_at
+        .and_then(|reviewed| run_deadline_after(&target.cron_expression, reviewed, timezone))
+        .is_some_and(|covered_until| now <= covered_until)
+}
+
 fn target_finding(
     target: &db::dashboard::TargetRow,
     connected: &HashSet<i64>,
@@ -387,14 +446,20 @@ fn target_finding(
         return None;
     }
 
+    // Only a warning or failed run can carry an acknowledgment, so this is
+    // true exactly when someone has already reviewed this target's latest
+    // problem. The findings that describe that report - the failure and the
+    // warning - stay muted until the next run files a fresh report.
+    let latest_acknowledged = target.latest_acknowledged == Some(true);
+
     let overdue_at = target.last_success_at.and_then(|last_success| {
-        shared::schedule::calculate_next_run(&target.cron_expression, last_success, timezone)
-            .ok()
-            .and_then(|expected| expected.checked_add_signed(chrono::Duration::minutes(30)))
+        run_deadline_after(&target.cron_expression, last_success, timezone)
     });
 
+    let acknowledgment_covers_schedule = acknowledgment_covers_schedule(target, now, timezone);
+
     let (kind, severity, status, reason, occurred_at, deadline, destination) =
-        if target.latest_failed == Some(true) {
+        if target.latest_failed == Some(true) && !latest_acknowledged {
             (
                 FindingKind::BackupFailed,
                 FindingSeverity::Critical,
@@ -406,7 +471,9 @@ fn target_finding(
                     report_id: target.latest_report_id?,
                 },
             )
-        } else if overdue_at.is_some_and(|deadline| now > deadline) {
+        } else if !acknowledgment_covers_schedule
+            && overdue_at.is_some_and(|deadline| now > deadline)
+        {
             (
                 FindingKind::ScheduleTargetOverdue,
                 FindingSeverity::Critical,
@@ -418,7 +485,7 @@ fn target_finding(
                     schedule_id: target.schedule_id,
                 },
             )
-        } else if target.latest_warning == Some(true) {
+        } else if target.latest_warning == Some(true) && !latest_acknowledged {
             (
                 FindingKind::BackupWarning,
                 FindingSeverity::Warning,
@@ -433,7 +500,10 @@ fn target_finding(
                     report_id: target.latest_report_id?,
                 },
             )
-        } else if target.last_success_at.is_none() && target.schedule_last_run_at.is_some() {
+        } else if !acknowledgment_covers_schedule
+            && target.last_success_at.is_none()
+            && target.schedule_last_run_at.is_some()
+        {
             (
                 FindingKind::ScheduleTargetNeverSucceeded,
                 FindingSeverity::Critical,
@@ -754,28 +824,18 @@ pub async fn activity(
     _auth: AuthUser,
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<db::ActivityRow>>, ApiError> {
+    let filters = db::ActivityFeedFilters {
+        repo_id: query.repo_id,
+        hostname: query.hostname.as_deref(),
+        schedule_id: query.schedule_id,
+        run_id: query.run_id.as_deref(),
+        acknowledged: query.acknowledged,
+    };
     let rows = if let Some(days) = query.days {
-        db::get_activity_feed_days(
-            &state.pool,
-            days,
-            query.repo_id,
-            query.hostname.as_deref(),
-            query.schedule_id,
-            query.run_id.as_deref(),
-            query.limit_per_schedule,
-        )
-        .await?
+        db::get_activity_feed_days(&state.pool, days, query.limit_per_schedule, filters).await?
     } else {
         let limit = query.limit.unwrap_or(20);
-        db::get_activity_feed(
-            &state.pool,
-            limit,
-            query.repo_id,
-            query.hostname.as_deref(),
-            query.schedule_id,
-            query.run_id.as_deref(),
-        )
-        .await?
+        db::get_activity_feed(&state.pool, limit, filters).await?
     };
     Ok(Json(rows))
 }
@@ -840,6 +900,225 @@ pub async fn unacknowledge_activity_entry(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Counts of acknowledgeable entries, used both for what a bulk acknowledge
+/// just muted and for what is still outstanding.
+#[derive(Debug, Clone, Copy, serde::Serialize, utoipa::ToSchema)]
+pub struct AcknowledgementCountsResponse {
+    /// Warning/failed backup reports.
+    pub backup_reports: i64,
+    /// Warning/failed system events.
+    pub system_events: i64,
+}
+
+/// How far a bulk acknowledge reaches for one caller: the repositories whose
+/// outstanding reports they may acknowledge, and whether they may acknowledge
+/// the (repository-less) system events.
+struct AcknowledgeScope {
+    repos: Vec<i64>,
+    system_events: bool,
+}
+
+/// Resolves that reach once, so the "what is outstanding" and "acknowledge it
+/// all" endpoints can never disagree about what the caller is allowed to
+/// touch.
+///
+/// Mirrors `check_repo_permission(.., |p| p.can_modify_schedules)` exactly:
+/// `can_delete_repo` (what `RequireAdmin` checks) clears everything, otherwise
+/// a repo needs an explicit `can_modify_schedules` grant. `can_view_all_repos`
+/// deliberately does not widen this - it only ever synthesises a view-only
+/// permission, which fails that check.
+///
+/// Reading the user's permissions in one query keeps this to a bounded number
+/// of round trips rather than one per candidate repository. The caller's
+/// permissions and the candidate list do not depend on each other, so they are
+/// fetched concurrently; only a non-admin needs the third query, and it cannot
+/// start until `can_delete_repo` has ruled out the bypass. Both bulk endpoints
+/// call this, and `/activity/outstanding` runs on every Activity Log load.
+async fn acknowledge_scope(
+    pool: &sqlx::PgPool,
+    auth: &AuthUser,
+) -> Result<AcknowledgeScope, ApiError> {
+    let (effective, candidates) = tokio::try_join!(
+        db::get_effective_permissions(pool, auth.user_id),
+        db::repos_with_unacknowledged_reports(pool),
+    )?;
+
+    if effective.can_delete_repo {
+        return Ok(AcknowledgeScope {
+            repos: candidates,
+            system_events: true,
+        });
+    }
+
+    let granted: HashSet<i64> = db::list_repo_permissions_for_user(pool, auth.user_id)
+        .await?
+        .into_iter()
+        .filter(|permission| permission.can_modify_schedules)
+        .map(|permission| permission.repo_id)
+        .collect();
+
+    Ok(AcknowledgeScope {
+        repos: candidates
+            .into_iter()
+            .filter(|repo_id| granted.contains(repo_id))
+            .collect(),
+        system_events: false,
+    })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/activity/outstanding",
+    tag = "Statistics",
+    operation_id = "getOutstandingAcknowledgements",
+    responses(
+        (status = 200, description = "Counts still awaiting acknowledgement",
+            body = AcknowledgementCountsResponse),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// How much this caller could still acknowledge, regardless of any filter the
+/// Activity Log happens to be showing.
+///
+/// The feed itself is paged and filtered, so counting what is on screen would
+/// hide the "Acknowledge all" button precisely when a narrow filter is
+/// hiding the problems it exists to clear. This reports the same set that
+/// endpoint would act on.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn outstanding_acknowledgements(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
+    let scope = acknowledge_scope(&state.pool, &auth).await?;
+    // Two independent counts, and this runs on every Activity Log load, so
+    // they go together rather than one after the other. A caller who cannot
+    // acknowledge system events issues no query for them at all.
+    let (backup_reports, system_events) = tokio::try_join!(
+        db::count_unacknowledged_reports_in_repos(&state.pool, &scope.repos),
+        async {
+            if scope.system_events {
+                db::count_unacknowledged_system_events(&state.pool).await
+            } else {
+                Ok(0)
+            }
+        },
+    )?;
+
+    Ok(Json(AcknowledgementCountsResponse {
+        backup_reports,
+        system_events,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/stats/activity/acknowledge-all",
+    tag = "Statistics",
+    responses(
+        (status = 200, description = "Counts of what was acknowledged",
+            body = AcknowledgementCountsResponse),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// Acknowledge every outstanding warning or failure at once.
+///
+/// Backup reports are acknowledged only for repositories the caller may
+/// already acknowledge one-by-one, so this can never mute more than the
+/// per-entry endpoint would. System events are not repo-scoped, so only an
+/// admin acknowledges those; for anyone else they are left untouched rather
+/// than failing the whole call.
+///
+/// Both writes share one transaction, so a call the client sees fail leaves
+/// nothing half-acknowledged.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn acknowledge_all_activity(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
+    let scope = acknowledge_scope(&state.pool, &auth).await?;
+    let (backup_reports, system_events) =
+        db::acknowledge_all_outstanding(&state.pool, &scope.repos, scope.system_events).await?;
+
+    Ok(Json(AcknowledgementCountsResponse {
+        backup_reports: i64::try_from(backup_reports).unwrap_or(i64::MAX),
+        system_events: i64::try_from(system_events).unwrap_or(i64::MAX),
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/stats/system-events/{id}/acknowledge",
+    tag = "Statistics",
+    operation_id = "acknowledgeSystemEvent",
+    params(("id" = i64, Path, description = "System event ID")),
+    responses(
+        (status = 204, description = "Acknowledged"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Event type reports nothing to review"),
+    )
+)]
+/// Acknowledge a system event that reports a problem - a failed periodic
+/// repository sync, an auto-disabled schedule, a locked account.
+///
+/// System events are global rather than repository-scoped, so unlike a backup
+/// report there is no per-repo permission to check against; acknowledging one
+/// is admin-only.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn acknowledge_system_event(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    db::get_acknowledgeable_system_event_type(&state.pool, id).await?;
+    db::set_system_event_acknowledged(&state.pool, id, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/stats/system-events/{id}/acknowledge",
+    tag = "Statistics",
+    operation_id = "unacknowledgeSystemEvent",
+    params(("id" = i64, Path, description = "System event ID")),
+    responses(
+        (status = 204, description = "Unacknowledged"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Event type reports nothing to review"),
+    )
+)]
+/// Clear a previously acknowledged system event.
+///
+/// Validates the event type the same way [`acknowledge_system_event`] does, so
+/// the two directions of the same toggle answer identically: an informational
+/// event that can never carry an acknowledgement is rejected rather than
+/// silently reported as cleared.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn unacknowledge_system_event(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    db::get_acknowledgeable_system_event_type(&state.pool, id).await?;
+    db::set_system_event_acknowledged(&state.pool, id, false).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[utoipa::path(
     get,
     path = "/api/stats/system-events",
@@ -862,7 +1141,7 @@ pub async fn system_events(
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<db::SystemEventRow>>, ApiError> {
     let limit = query.limit.unwrap_or(50);
-    let rows = db::get_system_events(&state.pool, limit).await?;
+    let rows = db::get_system_events(&state.pool, limit, query.acknowledged).await?;
     Ok(Json(rows))
 }
 
@@ -922,13 +1201,7 @@ fn is_overdue(
     let Some(cron_expr) = cron_expression else {
         return false;
     };
-    let grace = chrono::Duration::minutes(30);
-    let Ok(expected_next) = shared::schedule::calculate_next_run(cron_expr, last, tz) else {
-        return false;
-    };
-    expected_next
-        .checked_add_signed(grace)
-        .is_some_and(|deadline| Utc::now() > deadline)
+    run_deadline_after(cron_expr, last, tz).is_some_and(|deadline| Utc::now() > deadline)
 }
 
 /// Query parameters for backup trends.
@@ -1527,10 +1800,13 @@ mod tests {
             repo_name: "repo-a".to_owned(),
             latest_report_id: Some(42),
             latest_started_at: None,
-            latest_finished_at: None,
+            // `backup_reports.finished_at` is NOT NULL, so any target with a
+            // latest report has one. Recent, as a just-filed report would be.
+            latest_finished_at: Some(chrono::Utc::now()),
             latest_failed: Some(false),
             latest_warning: Some(false),
             latest_started: Some(false),
+            latest_acknowledged: Some(false),
             latest_message: None,
             last_success_at: Some(chrono::Utc::now()),
         }
@@ -1584,6 +1860,167 @@ mod tests {
             finding.destination,
             super::DashboardDestinationResponse::Activity { report_id } if report_id == 42
         ));
+    }
+
+    #[test]
+    fn target_finding_drops_an_acknowledged_failure() {
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_message = Some("boom".to_owned());
+        target.latest_acknowledged = Some(true);
+        let (now, due_soon) = now_and_due_soon();
+
+        assert!(
+            super::target_finding(
+                &target,
+                &std::collections::HashSet::new(),
+                now,
+                due_soon,
+                chrono_tz::UTC,
+            )
+            .is_none(),
+            "an acknowledged failure must stop counting against Needs Attention"
+        );
+    }
+
+    #[test]
+    fn target_finding_drops_an_acknowledged_warning() {
+        let mut target = base_target_row();
+        target.latest_warning = Some(true);
+        target.latest_acknowledged = Some(true);
+        let (now, due_soon) = now_and_due_soon();
+
+        assert!(
+            super::target_finding(
+                &target,
+                &std::collections::HashSet::new(),
+                now,
+                due_soon,
+                chrono_tz::UTC,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn an_acknowledgment_stops_covering_a_target_that_then_goes_silent() {
+        // Regression: `latest_acknowledged` is only ever cleared by a fresh
+        // report, so a host that dies right after its failure was reviewed
+        // used to drop off Needs Attention permanently - the failure muted by
+        // the acknowledgment, the overdue state muted along with it, and no
+        // report ever arriving to re-arm either. A target that keeps missing
+        // runs has to come back.
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_acknowledged = Some(true);
+        // Reviewed a month ago; the daily schedule has missed ~30 runs since.
+        let reviewed = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::days(30))
+            .expect("timestamp in range");
+        target.latest_finished_at = Some(reviewed);
+        target.last_success_at = Some(reviewed);
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("a target that kept missing runs must come back to the panel");
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetOverdue);
+    }
+
+    #[test]
+    fn an_acknowledgment_still_covers_a_target_within_its_next_run_window() {
+        // The other side of the bound: acknowledging a failure has to actually
+        // quieten the target now, or the count never drops - it just swaps
+        // backup_failed for overdue.
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_acknowledged = Some(true);
+        // Reviewed moments ago, so the next daily run is still ahead.
+        target.latest_finished_at = Some(chrono::Utc::now());
+        target.last_success_at = Some(
+            chrono::Utc::now()
+                .checked_sub_signed(chrono::Duration::days(30))
+                .expect("timestamp in range"),
+        );
+        let (now, due_soon) = now_and_due_soon();
+
+        assert!(
+            super::target_finding(
+                &target,
+                &std::collections::HashSet::new(),
+                now,
+                due_soon,
+                chrono_tz::UTC,
+            )
+            .is_none(),
+            "a freshly acknowledged failure must not leave the overdue finding behind"
+        );
+    }
+
+    #[test]
+    fn acknowledging_a_failure_also_mutes_the_overdue_state_it_left_behind() {
+        // Without this the count would not actually drop: the same target
+        // simply swaps its backup_failed finding for the overdue one that
+        // failure caused.
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.last_success_at = Some(
+            chrono::Utc::now()
+                .checked_sub_signed(chrono::Duration::days(30))
+                .expect("timestamp in range"),
+        );
+        let (now, due_soon) = now_and_due_soon();
+
+        let before = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a finding while unacknowledged");
+        assert_eq!(before.kind, FindingKind::BackupFailed);
+
+        target.latest_acknowledged = Some(true);
+        assert!(
+            super::target_finding(
+                &target,
+                &std::collections::HashSet::new(),
+                now,
+                due_soon,
+                chrono_tz::UTC,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn target_finding_still_warns_about_an_offline_host_after_an_acknowledgment() {
+        // The offline-and-due-soon finding does not come from the latest
+        // report, so acknowledging that report must not mute it.
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_acknowledged = Some(true);
+        let (now, due_soon) = now_and_due_soon();
+        target.next_run_at = Some(
+            now.checked_add_signed(chrono::Duration::minutes(30))
+                .unwrap(),
+        );
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a host_offline_due_soon finding");
+        assert_eq!(finding.kind, FindingKind::HostOfflineDueSoon);
     }
 
     #[test]
@@ -1718,6 +2155,56 @@ mod tests {
         )
         .expect("expected a schedule_target_never_succeeded finding");
 
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetNeverSucceeded);
+    }
+
+    /// The never-succeeded branch shares `acknowledgment_covers_schedule` with
+    /// the overdue one, so it needs the same three cases: muted right after a
+    /// review, still muted while the next run is ahead, and back once that run
+    /// has come and gone with nothing filed.
+    fn never_succeeded_target(reviewed_ago: chrono::Duration) -> crate::db::dashboard::TargetRow {
+        let mut target = base_target_row();
+        target.last_success_at = None;
+        target.schedule_last_run_at = Some(chrono::Utc::now());
+        target.latest_failed = Some(true);
+        target.latest_acknowledged = Some(true);
+        target.latest_finished_at = chrono::Utc::now().checked_sub_signed(reviewed_ago);
+        target
+    }
+
+    #[test]
+    fn acknowledging_a_failure_also_mutes_the_never_succeeded_state_it_left_behind() {
+        let target = never_succeeded_target(chrono::Duration::minutes(1));
+        let (now, due_soon) = now_and_due_soon();
+
+        assert!(
+            super::target_finding(
+                &target,
+                &std::collections::HashSet::new(),
+                now,
+                due_soon,
+                chrono_tz::UTC,
+            )
+            .is_none(),
+            "a freshly acknowledged failure must not leave the never-succeeded finding behind"
+        );
+    }
+
+    #[test]
+    fn a_never_succeeded_target_comes_back_once_the_acknowledgment_stops_covering_it() {
+        // Reviewed a month ago on a daily schedule, and still nothing has ever
+        // succeeded - the target has to be visible again.
+        let target = never_succeeded_target(chrono::Duration::days(30));
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("a target that has still never succeeded must come back to the panel");
         assert_eq!(finding.kind, FindingKind::ScheduleTargetNeverSucceeded);
     }
 

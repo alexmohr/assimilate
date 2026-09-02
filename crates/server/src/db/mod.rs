@@ -18,7 +18,9 @@ pub mod tags;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::{BackupStatus, ScheduleType, SystemEventType};
+use shared::types::{
+    AcknowledgedFilter, BackupStatus, ScheduleType, SystemEventSeverity, SystemEventType,
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -4859,16 +4861,29 @@ pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, Api
     .map_err(ApiError::Database)
 }
 
+/// The filters an activity-feed query narrows on. Both feed queries take the
+/// same set, and passing them one by one outgrew a readable argument list.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ActivityFeedFilters<'a> {
+    /// Only runs against this repository.
+    pub repo_id: Option<i64>,
+    /// Only runs from this agent hostname.
+    pub hostname: Option<&'a str>,
+    /// Only runs of this schedule.
+    pub schedule_id: Option<i64>,
+    /// Only runs belonging to this run ID.
+    pub run_id: Option<&'a str>,
+    /// Which acknowledgment state to return.
+    pub acknowledged: AcknowledgedFilter,
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_activity_feed(
     pool: &PgPool,
     limit: i64,
-    repo_id: Option<i64>,
-    hostname: Option<&str>,
-    schedule_id: Option<i64>,
-    run_id: Option<&str>,
+    filters: ActivityFeedFilters<'_>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
     sqlx::query_as!(
         ActivityRow,
@@ -4879,12 +4894,13 @@ pub async fn get_activity_feed(
          LEFT JOIN schedules s ON s.id = br.schedule_id WHERE a.is_hidden = false AND \
          a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND \
          ($1::bigint IS NULL OR br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND \
-         ($3::bigint IS NULL OR br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) \
-         ORDER BY br.started_at DESC LIMIT $5",
-        repo_id,
-        hostname,
-        schedule_id,
-        run_id,
+         ($3::bigint IS NULL OR br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) AND \
+         ($5::bool IS NULL OR br.acknowledged = $5) ORDER BY br.started_at DESC LIMIT $6",
+        filters.repo_id,
+        filters.hostname,
+        filters.schedule_id,
+        filters.run_id,
+        filters.acknowledged.as_sql_predicate(),
         limit,
     )
     .fetch_all(pool)
@@ -6175,6 +6191,13 @@ pub struct SystemEventRow {
     pub created_at: DateTime<Utc>,
     /// Event type.
     pub event_type: SystemEventType,
+    /// How the event reads - drives the badge and whether it can be
+    /// acknowledged.
+    pub severity: SystemEventSeverity,
+    /// Whether this event reports a problem a human can acknowledge.
+    pub acknowledgeable: bool,
+    /// Whether a human has acknowledged this event.
+    pub acknowledged: bool,
     /// Hostname the event relates to, if any.
     pub hostname: Option<String>,
     /// Human-readable event message.
@@ -6206,10 +6229,15 @@ pub async fn insert_system_event(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEventRow>, ApiError> {
+pub async fn get_system_events(
+    pool: &PgPool,
+    limit: i64,
+    acknowledged_filter: AcknowledgedFilter,
+) -> Result<Vec<SystemEventRow>, ApiError> {
     let rows = sqlx::query!(
-        "SELECT id, created_at, event_type, hostname, message FROM system_events ORDER BY \
-         created_at DESC LIMIT $1",
+        "SELECT id, created_at, event_type, hostname, message, acknowledged FROM system_events \
+         WHERE ($1::bool IS NULL OR acknowledged = $1) ORDER BY created_at DESC LIMIT $2",
+        acknowledged_filter.as_sql_predicate(),
         limit,
     )
     .fetch_all(pool)
@@ -6218,11 +6246,14 @@ pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEv
 
     Ok(rows
         .into_iter()
-        .filter_map(|r| match r.event_type.parse() {
+        .filter_map(|r| match r.event_type.parse::<SystemEventType>() {
             Ok(event_type) => Some(SystemEventRow {
                 id: r.id,
                 created_at: r.created_at,
                 event_type,
+                severity: event_type.severity(),
+                acknowledgeable: event_type.is_acknowledgeable(),
+                acknowledged: r.acknowledged,
                 hostname: r.hostname,
                 message: r.message,
             }),
@@ -6237,6 +6268,261 @@ pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEv
             }
         })
         .collect())
+}
+
+/// Looks up a system event's type so the caller can reject acknowledging one
+/// that reports nothing to review.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if no event has this id,
+/// [`ApiError::Unprocessable`] if the event's type is not acknowledgeable, and
+/// [`ApiError::Database`] if the query fails.
+pub async fn get_acknowledgeable_system_event_type(
+    pool: &PgPool,
+    id: i64,
+) -> Result<SystemEventType, ApiError> {
+    let raw = sqlx::query_scalar!("SELECT event_type FROM system_events WHERE id = $1", id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::Database)?
+        .ok_or_else(|| ApiError::NotFound(format!("system event id '{id}' not found")))?;
+
+    let event_type = raw.parse::<SystemEventType>().map_err(|e| {
+        ApiError::Unprocessable(format!("system event {id} has an unknown type: {e}"))
+    })?;
+    if !event_type.is_acknowledgeable() {
+        return Err(ApiError::Unprocessable(format!(
+            "system event {id} cannot be acknowledged: only warning or failed events can be \
+             reviewed"
+        )));
+    }
+    Ok(event_type)
+}
+
+/// Sets or clears the acknowledged flag on a system event. Like a backup
+/// report's flag, this is shared across all users rather than scoped to
+/// whoever clicked it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if no event has this id, or
+/// [`ApiError::Database`] if the query fails.
+pub async fn set_system_event_acknowledged(
+    pool: &PgPool,
+    id: i64,
+    acknowledged: bool,
+) -> Result<(), ApiError> {
+    let rows_affected = sqlx::query!(
+        "UPDATE system_events SET acknowledged = $1 WHERE id = $2",
+        acknowledged,
+        id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    if rows_affected == 0 {
+        return Err(ApiError::NotFound(format!("system event {id} not found")));
+    }
+    Ok(())
+}
+
+/// The backup report statuses that carry something to acknowledge, as the
+/// bind parameters the bulk acknowledgment queries pass to `status IN (..)`.
+///
+/// Shared so the acknowledge, the "which repositories are affected" lookup and
+/// the count can never disagree about what counts as outstanding.
+fn acknowledgeable_report_statuses() -> [String; 2] {
+    [
+        BackupStatus::Warning.to_string(),
+        BackupStatus::Failed.to_string(),
+    ]
+}
+
+#[cfg(test)]
+mod acknowledgeable_status_tests {
+    use super::{BackupStatus, acknowledgeable_report_statuses};
+
+    /// The bulk queries bind these strings while the per-report check calls
+    /// [`BackupStatus::is_acknowledgeable`]; this pins the two to the same set.
+    #[test]
+    fn bound_statuses_are_exactly_the_acknowledgeable_ones() {
+        let bound = acknowledgeable_report_statuses();
+        for status in [
+            BackupStatus::Success,
+            BackupStatus::Warning,
+            BackupStatus::Failed,
+        ] {
+            assert_eq!(
+                bound.contains(&status.to_string()),
+                status.is_acknowledgeable(),
+                "{status} disagrees between the bulk filter and is_acknowledgeable"
+            );
+        }
+    }
+}
+
+/// The system event types that report a problem, as the bind parameter the
+/// bulk acknowledgment queries pass to `event_type = ANY(..)`.
+///
+/// The system-event counterpart to [`acknowledgeable_report_statuses`], shared
+/// for the same reason: a change to which [`SystemEventType`] variants are
+/// acknowledgeable must reach every query at once rather than depending on
+/// whoever makes it remembering there is more than one call site.
+fn acknowledgeable_system_event_types() -> Vec<String> {
+    SystemEventType::ALL
+        .iter()
+        .filter(|event_type| event_type.is_acknowledgeable())
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Acknowledges every unacknowledged warning/failed backup report belonging to
+/// one of `repo_ids`, and reports how many rows that touched.
+///
+/// The caller narrows `repo_ids` to the repositories the user may act on, so
+/// a bulk acknowledge can never reach further than the same user's per-report
+/// acknowledge would.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn acknowledge_backup_reports_in_repos<'e, E>(
+    executor: E,
+    repo_ids: &[i64],
+) -> Result<u64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let [warning, failed] = acknowledgeable_report_statuses();
+    Ok(sqlx::query!(
+        "UPDATE backup_reports SET acknowledged = true WHERE acknowledged = false AND repo_id = \
+         ANY($1) AND status IN ($2, $3)",
+        repo_ids,
+        warning,
+        failed,
+    )
+    .execute(executor)
+    .await
+    .map_err(ApiError::Database)?
+    .rows_affected())
+}
+
+/// The repositories that still hold at least one unacknowledged warning or
+/// failed backup report, so the caller can permission-check just those.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
+    let [warning, failed] = acknowledgeable_report_statuses();
+    sqlx::query_scalar!(
+        "SELECT DISTINCT repo_id FROM backup_reports WHERE acknowledged = false AND status IN \
+         ($1, $2) ORDER BY repo_id",
+        warning,
+        failed,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// Counts the unacknowledged warning/failed backup reports belonging to one of
+/// `repo_ids`, so the UI can tell whether a bulk acknowledge would do anything
+/// without first loading the feed.
+///
+/// Deliberately mirrors [`acknowledge_backup_reports_in_repos`]'s filter, so
+/// "the button is shown" and "the button would acknowledge something" can
+/// never disagree.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_unacknowledged_reports_in_repos(
+    pool: &PgPool,
+    repo_ids: &[i64],
+) -> Result<i64, ApiError> {
+    let [warning, failed] = acknowledgeable_report_statuses();
+    Ok(sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false AND repo_id = ANY($1) AND \
+         status IN ($2, $3)",
+        repo_ids,
+        warning,
+        failed,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .unwrap_or(0))
+}
+
+/// Counts the unacknowledged system events whose type reports a problem, the
+/// counterpart to [`count_unacknowledged_reports_in_repos`] for the events an
+/// admin can acknowledge.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_unacknowledged_system_events(pool: &PgPool) -> Result<i64, ApiError> {
+    let acknowledgeable = acknowledgeable_system_event_types();
+    Ok(sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM system_events WHERE acknowledged = false AND event_type = ANY($1)",
+        &acknowledgeable,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .unwrap_or(0))
+}
+
+/// Acknowledges every unacknowledged system event whose type reports a
+/// problem, and reports how many rows that touched.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn acknowledge_all_system_events<'e, E>(executor: E) -> Result<u64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let acknowledgeable = acknowledgeable_system_event_types();
+    Ok(sqlx::query!(
+        "UPDATE system_events SET acknowledged = true WHERE acknowledged = false AND event_type = \
+         ANY($1)",
+        &acknowledgeable,
+    )
+    .execute(executor)
+    .await
+    .map_err(ApiError::Database)?
+    .rows_affected())
+}
+
+/// Acknowledges everything the caller may retire in one step - the warning and
+/// failed backup reports in `repo_ids`, and, when `include_system_events`, the
+/// problem-reporting system events - and reports the two counts.
+///
+/// One transaction, so a request the client sees fail leaves nothing
+/// half-acknowledged: without it a failure on the second write would return
+/// 500 while the first had already committed.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn acknowledge_all_outstanding(
+    pool: &PgPool,
+    repo_ids: &[i64],
+    include_system_events: bool,
+) -> Result<(u64, u64), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let backup_reports = acknowledge_backup_reports_in_repos(&mut *tx, repo_ids).await?;
+    let system_events = if include_system_events {
+        acknowledge_all_system_events(&mut *tx).await?
+    } else {
+        0
+    };
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok((backup_reports, system_events))
 }
 
 /// # Errors
@@ -6567,10 +6853,10 @@ pub async fn get_ackable_backup_report_repo_id(pool: &PgPool, id: i64) -> Result
     .map_err(ApiError::Database)?
     .ok_or_else(|| ApiError::NotFound(format!("report id '{id}' not found")))?;
 
-    let ackable = matches!(
-        row.status.parse::<BackupStatus>(),
-        Ok(BackupStatus::Warning | BackupStatus::Failed)
-    );
+    let ackable = row
+        .status
+        .parse::<BackupStatus>()
+        .is_ok_and(BackupStatus::is_acknowledgeable);
     if !ackable {
         return Err(ApiError::Unprocessable(format!(
             "report {id} cannot be acknowledged: only warning or failed runs can be reviewed"
@@ -7093,6 +7379,10 @@ pub struct DashboardSummaryRow {
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
+    // The last_failure_*/last_warning_* CTEs skip acknowledged reports: once someone has
+    // reviewed a warning or failure in the Activity Log, the dashboard's "Last failure" and
+    // "Last warning" tiles fall back to the most recent one still awaiting review.
+    //
     // Rewritten from ~18 independent correlated "last matching row" subqueries (each a
     // full sort of the filtered backup_reports rows, run on every dashboard load) into a
     // handful of CTEs that each scan/sort once. Every CTE's WHERE clause is copied verbatim
@@ -7114,22 +7404,23 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1 ), last_failure_general AS ( \
          SELECT br.finished_at, br.error_message, br.repo_id, r.name AS repo_name FROM \
          backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = 'failed' AND \
-         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1 ), \
-         last_failure_scheduled AS ( SELECT br.schedule_id, s.cron_expression AS schedule_name \
-         FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE br.status = \
-         'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT \
-         1 ), last_warning_general AS ( SELECT br.finished_at, br.warnings[1] AS warning_message, \
-         br.repo_id, r.name AS repo_name FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
-         WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1 ), last_warning_scheduled AS ( SELECT br.schedule_id, \
+         br.acknowledged = false AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
+         br.finished_at DESC LIMIT 1 ), last_failure_scheduled AS ( SELECT br.schedule_id, \
          s.cron_expression AS schedule_name FROM backup_reports br JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' \
-         ORDER BY br.finished_at DESC LIMIT 1 ) SELECT (SELECT COUNT(*) FROM agents WHERE \
-         is_hidden = false) AS \"total_agents!\", (SELECT COUNT(*) FROM repos) AS \
-         \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE enabled = true) AS \
-         \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \"total_schedules!\", \
-         COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 AS \
-         \"total_storage_bytes!\", last_success_at.finished_at AS last_backup_at, \
+         br.schedule_id WHERE br.status = 'failed' AND br.acknowledged = false AND br.finished_at \
+         > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1 ), last_warning_general AS \
+         ( SELECT br.finished_at, br.warnings[1] AS warning_message, br.repo_id, r.name AS \
+         repo_name FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = \
+         'warning' AND br.acknowledged = false AND br.finished_at > '1970-01-01T00:00:00Z' ORDER \
+         BY br.finished_at DESC LIMIT 1 ), last_warning_scheduled AS ( SELECT br.schedule_id, \
+         s.cron_expression AS schedule_name FROM backup_reports br JOIN schedules s ON s.id = \
+         br.schedule_id WHERE br.status = 'warning' AND br.acknowledged = false AND \
+         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1 ) SELECT \
+         (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS \"total_agents!\", (SELECT \
+         COUNT(*) FROM repos) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE enabled \
+         = true) AS \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \
+         \"total_schedules!\", COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 \
+         AS \"total_storage_bytes!\", last_success_at.finished_at AS last_backup_at, \
          next_backup_row.next_run_at AS next_backup_at, last_backup_row.schedule_id AS \
          last_backup_schedule_id, last_success_row.repo_id AS last_backup_repo_id, \
          last_success_row.archive_name AS last_backup_archive_name, next_backup_row.id AS \
@@ -7190,14 +7481,11 @@ pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdown
 pub async fn get_activity_feed_days(
     pool: &PgPool,
     days: i64,
-    repo_id: Option<i64>,
-    hostname: Option<&str>,
-    schedule_id: Option<i64>,
-    run_id: Option<&str>,
     // Caps rows *per schedule*, not the result set overall - a plain global
     // LIMIT would let one frequently-running schedule's reports crowd out
     // every row belonging to a less-frequent one in the ranked window.
     per_schedule_limit: Option<i64>,
+    filters: ActivityFeedFilters<'_>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
     sqlx::query_as!(
         ActivityRow,
@@ -7213,13 +7501,14 @@ pub async fn get_activity_feed_days(
          'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > \
          NOW() - make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
          ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
-         AND ($5::text IS NULL OR br.run_id = $5) ) ranked WHERE $6::bigint IS NULL OR rn <= $6 \
-         ORDER BY started_at DESC",
+         AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) \
+         ) ranked WHERE $7::bigint IS NULL OR rn <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
-        repo_id,
-        hostname,
-        schedule_id,
-        run_id,
+        filters.repo_id,
+        filters.hostname,
+        filters.schedule_id,
+        filters.run_id,
+        filters.acknowledged.as_sql_predicate(),
         per_schedule_limit,
     )
     .fetch_all(pool)

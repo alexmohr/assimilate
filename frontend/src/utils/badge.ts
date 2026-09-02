@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { normalizeBackupStatus } from './backupStatus'
-import type { RunEventType } from '../types/generated'
+import type { RunEventType, SystemEventSeverity } from '../types/generated'
 
 /**
  * The tones the shared `.badge` component supports. Defined in
@@ -33,6 +33,29 @@ export function backupStatusTone(rawStatus: string): BadgeTone {
 
 export function backupStatusBadgeClass(rawStatus: string): string {
   return badgeClass(backupStatusTone(rawStatus))
+}
+
+/**
+ * Tone for a system event. The severity comes from the server, which derives
+ * it from the event type - the same value decides whether the event can be
+ * acknowledged, so the badge and the button can never disagree.
+ */
+export function systemEventTone(severity: SystemEventSeverity): BadgeTone {
+  switch (severity) {
+    case 'success':
+      return 'success'
+    case 'warning':
+      return 'warning'
+    case 'failed':
+      return 'danger'
+    case 'info':
+      return 'info'
+    // Exhaustive over the current union, so this is unreachable at compile
+    // time. It guards the deploy-skew case instead: a tab left open while the
+    // server gains a new severity would otherwise render an undefined tone.
+    default:
+      return 'neutral'
+  }
 }
 
 /** Tone for a quota / capacity threshold. */

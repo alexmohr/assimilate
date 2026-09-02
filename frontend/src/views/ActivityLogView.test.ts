@@ -29,6 +29,9 @@ vi.mock('../composables/useWebSocket', () => ({
 
 import { apiClient } from '../api/client'
 import type { ReportRow } from '../types/report'
+import type { SystemEventSeverity } from '../types/generated'
+import type { CurrentUserResponse } from '../api/auth'
+import { useAuthStore } from '../stores/auth'
 import ActivityLogView from './ActivityLogView.vue'
 
 const mockGet = vi.mocked(apiClient.get)
@@ -51,6 +54,9 @@ interface SystemEvent {
   id: number
   created_at: string
   event_type: string
+  severity: SystemEventSeverity
+  acknowledgeable: boolean
+  acknowledged: boolean
   hostname: string | null
   message: string
 }
@@ -93,6 +99,7 @@ const ACTIVITY_ROWS: ActivityRow[] = [
     finished_at: '2026-01-01T08:04:00Z',
     status: 'warning',
     duration_secs: 240,
+    run_id: 'run-103',
   },
 ]
 
@@ -125,18 +132,38 @@ const SYSTEM_EVENTS: SystemEvent[] = [
   {
     id: 1,
     created_at: '2026-01-01T07:00:00Z',
-    event_type: 'AgentConnected',
+    event_type: 'repo_sync',
+    severity: 'success',
+    acknowledgeable: false,
+    acknowledged: false,
     hostname: 'web-server-01',
-    message: 'Agent connected',
+    message: 'Repository sync completed',
   },
   {
     id: 2,
     created_at: '2026-01-01T06:00:00Z',
-    event_type: 'AgentDisconnected',
+    event_type: 'repo_sync_failed',
+    severity: 'failed',
+    acknowledgeable: true,
+    acknowledged: false,
     hostname: 'db-server-01',
-    message: 'Agent disconnected',
+    message: 'Periodic sync failed',
   },
 ]
+
+/**
+ * Counts the Acknowledge all button reads. Served by every mock below: the
+ * button is deliberately driven by this unfiltered server signal rather than
+ * by the rows on screen.
+ */
+function outstandingResponse(
+  backup_reports = 0,
+  system_events = 0,
+): {
+  data: { backup_reports: number; system_events: number }
+} {
+  return { data: { backup_reports, system_events } }
+}
 
 function createTestRouter(): ReturnType<typeof createRouter> {
   return createRouter({
@@ -145,12 +172,38 @@ function createTestRouter(): ReturnType<typeof createRouter> {
   })
 }
 
-function mountView(): ReturnType<typeof mount> {
+/**
+ * Mounts the view with an optional signed-in user. Acknowledging a system
+ * event is admin-only, so those tests need a store that says so.
+ */
+function mountView(
+  role?: string,
+  router?: ReturnType<typeof createRouter>,
+): ReturnType<typeof mount> {
+  const pinia = createPinia()
+  if (role !== undefined) {
+    useAuthStore(pinia).user = {
+      id: 1,
+      username: 'test-user',
+      role,
+      must_change_password: false,
+      session_expires_at: null,
+      remember_me: false,
+      can_upgrade_agent: false,
+      totp_enabled: false,
+    } as CurrentUserResponse
+  }
   return mount(ActivityLogView, {
     global: {
-      plugins: [createPinia(), createTestRouter()],
+      plugins: [pinia, router ?? createTestRouter()],
       stubs: {
-        DataTable: { template: '<div class="p-datatable"><slot /><slot name="empty" /></div>' },
+        DataTable: {
+          name: 'DataTable',
+          // `rowClass` is declared so a test can exercise the callback the
+          // view passes down; the real DataTable calls it per rendered row.
+          props: ['value', 'rowClass'],
+          template: '<div class="p-datatable"><slot /><slot name="empty" /></div>',
+        },
         Column: true,
         BaseSpinner: { template: '<div class="spinner" />' },
         EmptyState: {
@@ -173,7 +226,9 @@ function setupDefaultMocks(): void {
     // would leak an acknowledged-in-one-test state into every test after it.
     if (url === '/stats/activity')
       return Promise.resolve({ data: ACTIVITY_ROWS.map((r) => ({ ...r })) })
-    if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
+    if (url === '/stats/system-events')
+      return Promise.resolve({ data: SYSTEM_EVENTS.map((e) => ({ ...e })) })
+    if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse(2, 1))
     if (url.startsWith('/agents/') && url.endsWith('/reports'))
       return Promise.resolve({ data: WARNING_MOCK_REPORTS })
     return Promise.resolve({ data: [] })
@@ -185,6 +240,7 @@ function mockEmptyData(): void {
     if (url === '/agents') return Promise.resolve({ data: [] })
     if (url === '/stats/activity') return Promise.resolve({ data: [] })
     if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+    if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse())
     return Promise.resolve({ data: [] })
   })
 }
@@ -194,6 +250,19 @@ async function mountDefault(): Promise<ReturnType<typeof mount>> {
   const wrapper = mountView()
   await flushPromises()
   return wrapper
+}
+
+/** The Acknowledged filter is the only select offering "Only acknowledged". */
+async function setAcknowledgedFilter(
+  wrapper: ReturnType<typeof mount>,
+  value: string,
+): Promise<void> {
+  const select = wrapper
+    .findAll('select.select-input')
+    .find((sel) => sel.findAll('option').some((o) => o.text() === 'Only acknowledged'))
+  expect(select, 'no Acknowledged filter select').toBeDefined()
+  await select!.setValue(value)
+  await flushPromises()
 }
 
 async function mountEmpty(): Promise<ReturnType<typeof mount>> {
@@ -461,15 +530,29 @@ describe('ActivityLogView', () => {
       expect(ackButton(successRow!)).toBeUndefined()
     })
 
-    it('acknowledges the report and swaps the button to Unacknowledge', async () => {
+    it('acknowledges the report and drops it from the default feed', async () => {
       mockPost.mockResolvedValue({ data: undefined })
       const wrapper = await mountDefault()
-      const row = findWarningRow(wrapper)[0]
+      const before = findWarningRow(wrapper).length
 
-      await ackButton(row)!.trigger('click')
+      await ackButton(findWarningRow(wrapper)[0])!.trigger('click')
       await flushPromises()
 
       expect(mockPost).toHaveBeenCalledWith('/stats/activity/103/acknowledge')
+      // The default filter hides acknowledged entries, so the row it was just
+      // applied to leaves the feed rather than sitting there dimmed.
+      expect(findWarningRow(wrapper).length).toBe(before - 1)
+    })
+
+    it('keeps the acknowledged row visible when the filter shows them', async () => {
+      mockPost.mockResolvedValue({ data: undefined })
+      const wrapper = await mountDefault()
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      const row = findWarningRow(wrapper)[0]
+      await ackButton(row)!.trigger('click')
+      await flushPromises()
+
       expect(row.find('.badge--neutral').text()).toBe('Acknowledged')
       expect(row.findAll('button').find((b) => b.text() === 'Unacknowledge')).toBeTruthy()
     })
@@ -493,11 +576,15 @@ describe('ActivityLogView', () => {
             data: ACTIVITY_ROWS.map((r) => (r.id === 103 ? { ...r, acknowledged: true } : r)),
           })
         }
-        if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
+        if (url === '/stats/system-events')
+          return Promise.resolve({ data: SYSTEM_EVENTS.map((e) => ({ ...e })) })
         return Promise.resolve({ data: [] })
       })
       const wrapper = mountView()
       await flushPromises()
+      // An acknowledged row is only on screen at all once the filter asks for
+      // it; the fixture above stands in for that server response.
+      await setAcknowledgedFilter(wrapper, 'all')
 
       const row = findWarningRow(wrapper)[0]
       expect(row.find('.badge--neutral').text()).toBe('Acknowledged')
@@ -522,6 +609,281 @@ describe('ActivityLogView', () => {
       expect(row.findAll('button').find((b) => b.text() === 'Acknowledge')).toBeTruthy()
       expect(row.find('.badge--neutral').exists()).toBe(false)
     })
+
+    it('stacks the row actions in one column instead of spreading them', async () => {
+      const wrapper = await mountDefault()
+      const row = findWarningRow(wrapper)[0]
+
+      const actions = row.find('.run-card-actions')
+      expect(actions.exists()).toBe(true)
+      expect(actions.findAll('button').length).toBeGreaterThan(1)
+      // Every action lives inside the one group; none is a direct child of the
+      // space-between footer, which is what spread them across the card.
+      expect(row.findAll('.run-card-foot > button')).toHaveLength(0)
+    })
+  })
+
+  describe('acknowledged filter', () => {
+    it('asks the server for unacknowledged entries by default', async () => {
+      await mountDefault()
+
+      expect(mockGet).toHaveBeenCalledWith('/stats/activity', {
+        params: expect.objectContaining({ acknowledged: 'unacknowledged' }),
+      })
+      expect(mockGet).toHaveBeenCalledWith('/stats/system-events', {
+        params: expect.objectContaining({ acknowledged: 'unacknowledged' }),
+      })
+    })
+
+    it('refetches with the chosen state when the filter changes', async () => {
+      const wrapper = await mountDefault()
+      mockGet.mockClear()
+
+      await setAcknowledgedFilter(wrapper, 'acknowledged')
+
+      expect(mockGet).toHaveBeenCalledWith('/stats/activity', {
+        params: expect.objectContaining({ acknowledged: 'acknowledged' }),
+      })
+    })
+
+    it('counts a non-default acknowledged filter as an active filter', async () => {
+      const wrapper = await mountDefault()
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      const clearButton = wrapper.findAll('button').find((b) => b.text() === 'Clear')
+      await clearButton!.trigger('click')
+      await flushPromises()
+
+      // Not `toHaveBeenLastCalledWith`: the outstanding-counts probe now
+      // trails every feed load.
+      expect(mockGet).toHaveBeenCalledWith(
+        '/stats/system-events',
+        expect.objectContaining({
+          params: expect.objectContaining({ acknowledged: 'unacknowledged' }),
+        }),
+      )
+    })
+  })
+
+  describe('acknowledge all', () => {
+    it('acknowledges everything outstanding and reloads the feed', async () => {
+      mockPost.mockResolvedValue({ data: { backup_reports: 2, system_events: 1 } })
+      const wrapper = await mountDefault()
+
+      const button = wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))
+      expect(button).toBeTruthy()
+      await button!.trigger('click')
+      await flushPromises()
+
+      expect(mockPost).toHaveBeenCalledWith('/stats/activity/acknowledge-all')
+    })
+
+    it('shows the button on the Backup tab when only system events are outstanding', async () => {
+      // Regression: the button used to be gated on the rows currently loaded,
+      // and the Backup tab never loads system events - so an outstanding sync
+      // failure could not be cleared from the tab a dashboard finding link
+      // drops you on.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse(0, 1))
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      const backupBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'Backup')
+      await backupBtn?.trigger('click')
+      await flushPromises()
+
+      expect(
+        wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all')),
+      ).toBeTruthy()
+    })
+
+    it('keeps the button while a narrowing filter hides every outstanding row', async () => {
+      // Regression: filtering to Status=success emptied the visible rows, and
+      // the button vanished even though warnings and failures were still
+      // outstanding elsewhere.
+      const wrapper = await mountDefault()
+
+      const statusSelect = wrapper
+        .findAll('select.select-input')
+        .find((sel) => sel.findAll('option').some((o) => o.text() === 'Started'))
+      await statusSelect!.setValue('success')
+      await flushPromises()
+
+      expect(findWarningRow(wrapper)).toHaveLength(0)
+      expect(
+        wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all')),
+      ).toBeTruthy()
+    })
+
+    it('keeps the entries listed when the bulk acknowledge fails', async () => {
+      mockPost.mockRejectedValue(new Error('boom'))
+      const wrapper = await mountDefault()
+
+      const button = wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))
+      await button!.trigger('click')
+      await flushPromises()
+
+      expect(findWarningRow(wrapper).length).toBeGreaterThan(0)
+      expect(
+        wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all')),
+      ).toBeTruthy()
+    })
+
+    it('keeps the feed usable when the outstanding count cannot be loaded', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity')
+          return Promise.resolve({ data: ACTIVITY_ROWS.map((r) => ({ ...r })) })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.reject(new Error('boom'))
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      // The probe failing must not take the feed down with it; the button
+      // simply stays hidden because nothing is known to be outstanding.
+      expect(findWarningRow(wrapper).length).toBeGreaterThan(0)
+      expect(wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))).toBe(
+        undefined,
+      )
+    })
+
+    it('hides the button once nothing is left to acknowledge', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity')
+          return Promise.resolve({ data: [ACTIVITY_ROWS[0]].map((r) => ({ ...r })) })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse())
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      expect(wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))).toBe(
+        undefined,
+      )
+    })
+  })
+
+  describe('acknowledging system events', () => {
+    function systemAckButton(wrapper: ReturnType<typeof mount>) {
+      return wrapper
+        .findAll('.run-card-system button')
+        .find((b) => b.text() === 'Acknowledge' || b.text() === 'Unacknowledge')
+    }
+
+    it('offers Acknowledge on a failed periodic sync for an admin', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      const button = systemAckButton(wrapper)
+      expect(button).toBeTruthy()
+      expect(button!.text()).toBe('Acknowledge')
+    })
+
+    it('acknowledges the event and drops it from the default feed', async () => {
+      mockPost.mockResolvedValue({ data: undefined })
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+      const before = wrapper.findAll('.run-card-system').length
+
+      await systemAckButton(wrapper)!.trigger('click')
+      await flushPromises()
+
+      expect(mockPost).toHaveBeenCalledWith('/stats/system-events/2/acknowledge')
+      expect(wrapper.findAll('.run-card-system').length).toBe(before - 1)
+    })
+
+    it('hides the action from a non-admin, who the server would reject', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('operator')
+      await flushPromises()
+
+      expect(systemAckButton(wrapper)).toBeUndefined()
+    })
+
+    it('unacknowledges an already acknowledged event', async () => {
+      mockDelete.mockResolvedValue({ data: undefined })
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events')
+          return Promise.resolve({
+            data: SYSTEM_EVENTS.map((e) => (e.id === 2 ? { ...e, acknowledged: true } : { ...e })),
+          })
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView('admin')
+      await flushPromises()
+      // An acknowledged event only shows up once the filter asks for it.
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      const button = systemAckButton(wrapper)
+      expect(button!.text()).toBe('Unacknowledge')
+      await button!.trigger('click')
+      await flushPromises()
+
+      expect(mockDelete).toHaveBeenCalledWith('/stats/system-events/2/acknowledge')
+      expect(systemAckButton(wrapper)!.text()).toBe('Acknowledge')
+    })
+
+    it('drops an unacknowledged event from the "only acknowledged" view', async () => {
+      mockDelete.mockResolvedValue({ data: undefined })
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events')
+          return Promise.resolve({
+            data: SYSTEM_EVENTS.map((e) => (e.id === 2 ? { ...e, acknowledged: true } : { ...e })),
+          })
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView('admin')
+      await flushPromises()
+      await setAcknowledgedFilter(wrapper, 'acknowledged')
+
+      const before = wrapper.findAll('.run-card-system').length
+      await systemAckButton(wrapper)!.trigger('click')
+      await flushPromises()
+
+      // Clearing the acknowledgment makes it no longer match a view that asks
+      // for acknowledged entries only.
+      expect(wrapper.findAll('.run-card-system').length).toBe(before - 1)
+    })
+
+    it('reports a failure without changing the button state', async () => {
+      mockPost.mockRejectedValue(new Error('forbidden'))
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      await systemAckButton(wrapper)!.trigger('click')
+      await flushPromises()
+
+      expect(systemAckButton(wrapper)!.text()).toBe('Acknowledge')
+      expect(wrapper.findAll('.run-card-system .badge--neutral')).toHaveLength(0)
+    })
+
+    it('leaves a success event unacknowledgeable', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      const successCard = wrapper
+        .findAll('.run-card-system')
+        .find((c) => c.find('.badge--success').exists())
+      expect(successCard).toBeTruthy()
+      expect(successCard!.findAll('button')).toHaveLength(0)
+    })
   })
 
   describe('system events', () => {
@@ -541,8 +903,8 @@ describe('ActivityLogView', () => {
 
       const systemCards = wrapper.findAll('.run-card-system')
       const messages = systemCards.map((r) => r.find('.run-card-message').text())
-      expect(messages).toContain('Agent connected')
-      expect(messages).toContain('Agent disconnected')
+      expect(messages).toContain('Repository sync completed')
+      expect(messages).toContain('Periodic sync failed')
     })
 
     it('shows only system events when System category is active', async () => {
@@ -685,6 +1047,121 @@ describe('ActivityLogView', () => {
     })
   })
 
+  describe('deep links from the dashboard', () => {
+    // A Needs Attention finding links here with ?status=..., which is how a
+    // user reaches the run they are about to acknowledge. The status is
+    // untrusted query text, so it is validated before it reaches the filter.
+    async function mountAtQuery(
+      query: Record<string, string>,
+    ): Promise<ReturnType<typeof mountView>> {
+      setupDefaultMocks()
+      const router = createTestRouter()
+      await router.push({ path: '/', query })
+      await router.isReady()
+      const wrapper = mountView(undefined, router)
+      await flushPromises()
+      return wrapper
+    }
+
+    function statusSelect(
+      wrapper: ReturnType<typeof mountView>,
+    ): ReturnType<typeof wrapper.findAll>[number] | undefined {
+      return wrapper
+        .findAll('select.select-input')
+        .find((sel) => sel.findAll('option').some((o) => o.text() === 'Failed'))
+    }
+
+    it('applies a status the dashboard linked to', async () => {
+      const wrapper = await mountAtQuery({ status: 'failed' })
+
+      expect((statusSelect(wrapper)?.element as HTMLSelectElement).value).toBe('failed')
+    })
+
+    it('ignores a status the backend would never report', async () => {
+      const wrapper = await mountAtQuery({ status: 'not-a-status' })
+
+      expect((statusSelect(wrapper)?.element as HTMLSelectElement).value).toBe('all')
+    })
+  })
+
+  describe('date filters', () => {
+    // Rows a week apart, so From and To each have something to exclude.
+    const DATED_ROWS = [
+      { ...ACTIVITY_ROWS[0], id: 201, started_at: '2026-03-01T10:00:00Z' },
+      { ...ACTIVITY_ROWS[0], id: 202, started_at: '2026-03-08T10:00:00Z' },
+      { ...ACTIVITY_ROWS[0], id: 203, started_at: '2026-03-15T10:00:00Z' },
+    ]
+
+    function mountWithDatedRows(): ReturnType<typeof mountView> {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: DATED_ROWS })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse())
+        return Promise.resolve({ data: [] })
+      })
+      return mountView()
+    }
+
+    function visibleRunCount(wrapper: ReturnType<typeof mountView>): number {
+      return wrapper.findAll('.run-card:not(.run-card-system) .run-card-summary').length
+    }
+
+    it('drops runs that started before the From date', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+      expect(visibleRunCount(wrapper)).toBe(3)
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      expect(dateInputs.length).toBe(2)
+      await dateInputs[0]!.setValue('2026-03-08')
+      await flushPromises()
+
+      expect(visibleRunCount(wrapper)).toBe(2)
+    })
+
+    it('drops runs that started after the To date, to the end of that day', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      await dateInputs[1]!.setValue('2026-03-08')
+      await flushPromises()
+
+      // The 8th itself is kept: To is inclusive through 23:59:59 local.
+      expect(visibleRunCount(wrapper)).toBe(2)
+    })
+
+    it('combines both bounds to a single day', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      await dateInputs[0]!.setValue('2026-03-08')
+      await dateInputs[1]!.setValue('2026-03-08')
+      await flushPromises()
+
+      expect(visibleRunCount(wrapper)).toBe(1)
+    })
+
+    it('counts a date bound as an active filter that Clear resets', async () => {
+      const wrapper = mountWithDatedRows()
+      await flushPromises()
+
+      const dateInputs = wrapper.findAll('input.date-input')
+      await dateInputs[0]!.setValue('2026-03-08')
+      await flushPromises()
+      expect(visibleRunCount(wrapper)).toBe(2)
+
+      const clearButton = wrapper.findAll('button').find((b) => b.text() === 'Clear')
+      expect(clearButton, 'a date bound must count as an active filter').toBeTruthy()
+      await clearButton!.trigger('click')
+      await flushPromises()
+
+      expect(visibleRunCount(wrapper)).toBe(3)
+    })
+  })
+
   describe('load more', () => {
     it('shows Load more button when hasMore is true', async () => {
       mockGet.mockImplementation((url: string) => {
@@ -704,12 +1181,40 @@ describe('ActivityLogView', () => {
       expect(loadMore).toBeDefined()
     })
 
-    it('does not show Load more when data is fewer than page size', async () => {
-      setupDefaultMocks()
+    it('does not re-probe the outstanding counts when paging further back', async () => {
+      // Paging into history cannot change what is still outstanding, so the
+      // extra round trip would be pure waste. A filter change still re-probes,
+      // because another session may have acknowledged something meanwhile.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity')
+          return Promise.resolve({
+            data: Array.from({ length: 50 }, (_, i) => ({ ...ACTIVITY_ROWS[0], id: i + 1 })),
+          })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse(2, 1))
+        return Promise.resolve({ data: [] })
+      })
+
       const wrapper = mountView()
       await flushPromises()
 
-      expect(wrapper.findAll('button').some((b) => b.text() === 'Load more')).toBe(false)
+      const outstandingCalls = (): number =>
+        mockGet.mock.calls.filter((call) => call[0] === '/stats/activity/outstanding').length
+      const afterMount = outstandingCalls()
+      expect(afterMount).toBeGreaterThan(0)
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Load more')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(outstandingCalls()).toBe(afterMount)
+
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      expect(outstandingCalls()).toBeGreaterThan(afterMount)
     })
   })
 
@@ -746,16 +1251,75 @@ describe('ActivityLogView', () => {
       expect(levelSelect?.exists()).toBe(true)
       expect(wrapper.find('input.search-input').exists()).toBe(true)
     })
+
+    it('gives each log row a class carrying its level in lower case', async () => {
+      // The row class reaches the table as a callback, so rendering alone
+      // never runs it - the level modifier is what colours the row, and it
+      // has to survive the server reporting the level in upper case.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/logs')
+          return Promise.resolve({
+            data: [
+              {
+                timestamp: '2026-01-01T10:00:00Z',
+                level: 'ERROR',
+                target: 'server',
+                message: 'Boom',
+              },
+            ],
+          })
+        return Promise.resolve({ data: [] })
+      })
+
+      const wrapper = mountView()
+      await flushPromises()
+
+      const logsBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'Server Logs')
+      await logsBtn?.trigger('click')
+      await flushPromises()
+
+      const table = wrapper
+        .findAllComponents({ name: 'DataTable' })
+        .find((t) => typeof t.props('rowClass') === 'function')
+      expect(table).toBeTruthy()
+
+      const rowClass = table!.props('rowClass') as (entry: { level: string }) => string
+      expect(rowClass({ level: 'ERROR' })).toBe('log-entry-row log-level-error')
+      expect(rowClass({ level: 'warn' })).toBe('log-entry-row log-level-warn')
+    })
   })
 
   describe('system event badges', () => {
-    // One event per arm of the classifier, including an event type it has
-    // never seen: an unclassified event must not borrow the success colour.
-    const SYSTEM_EVENTS = [
-      { type: 'repo_sync', label: 'repo sync', badge: 'badge--success' },
-      { type: 'repo_sync_slow', label: 'repo sync slow', badge: 'badge--warning' },
-      { type: 'repo_sync_failed', label: 'repo sync failed', badge: 'badge--danger' },
-      { type: 'quota_exceeded', label: 'quota exceeded', badge: 'badge--info' },
+    // One event per severity the server can report, including the neutral
+    // 'info' one: it must not borrow the success colour.
+    const SYSTEM_EVENTS: Array<{
+      type: string
+      severity: SystemEventSeverity
+      label: string
+      badge: string
+    }> = [
+      { type: 'repo_sync', severity: 'success', label: 'repo sync', badge: 'badge--success' },
+      {
+        type: 'repo_sync_slow',
+        severity: 'warning',
+        label: 'repo sync slow',
+        badge: 'badge--warning',
+      },
+      {
+        type: 'repo_sync_failed',
+        severity: 'failed',
+        label: 'repo sync failed',
+        badge: 'badge--danger',
+      },
+      {
+        type: 'repo_sync_cancelled',
+        severity: 'info',
+        label: 'repo sync cancelled',
+        badge: 'badge--info',
+      },
     ]
 
     it('colors each system event by what it means', async () => {
@@ -768,6 +1332,9 @@ describe('ActivityLogView', () => {
               id: i + 1,
               created_at: `2026-01-01T0${7 - i}:00:00Z`,
               event_type: e.type,
+              severity: e.severity,
+              acknowledgeable: e.severity === 'warning' || e.severity === 'failed',
+              acknowledged: false,
               hostname: null,
               message: e.label,
             })),

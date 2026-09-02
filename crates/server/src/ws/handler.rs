@@ -1919,7 +1919,9 @@ mod tests {
     use shared::{
         crypto::{derive_key, encrypt_passphrase},
         protocol::AgentToServer,
-        types::{AgentId, BackupReport, BackupStatus, QuotaAction, RepoId, ReportId},
+        types::{
+            AcknowledgedFilter, AgentId, BackupReport, BackupStatus, QuotaAction, RepoId, ReportId,
+        },
     };
     use sqlx::PgPool;
     use tokio::time::timeout;
@@ -2343,7 +2345,7 @@ exit 0
         );
 
         // A security_violation event was logged
-        let events = crate::db::get_system_events(&pool, 10)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -2414,7 +2416,7 @@ exit 0
         handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
 
         // Verify a security_violation was logged (BackupLog is guarded)
-        let events = crate::db::get_system_events(&pool, 10)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -2442,7 +2444,7 @@ exit 0
 
         handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
 
-        let events = crate::db::get_system_events(&pool, 10)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -2471,7 +2473,7 @@ exit 0
 
         handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
 
-        let events = crate::db::get_system_events(&pool, 10)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -3072,7 +3074,7 @@ exit 0
         assert!(reenabled.enabled);
         assert!(!reenabled.auto_disabled_agent_unreachable);
 
-        let events = crate::db::get_system_events(&pool, 10)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
             .await
             .expect("get system events");
         let event = events

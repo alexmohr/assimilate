@@ -644,8 +644,23 @@ INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
     (NOW() - interval '3 minutes', 'repo_sync', 'media-store-01', 'Repository sync completed'),
     (NOW() - interval '2 days', 'repo_sync_slow', 'media-store-01', 'Repository sync took longer than the warning threshold'),
     (NOW() - interval '7 days', 'repo_sync_failed', 'web-server-01', 'Repository sync failed: repository lock could not be acquired'),
+    (NOW() - interval '9 days', 'repo_sync_failed', 'db-server-01', 'Repository sync failed: connection refused'),
     (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token');
 SQL
+
+echo "==> Acknowledging the older failed sync, so both system-event states exist..."
+# One acknowledged and one still-open sync failure: the acknowledged one is
+# hidden until the Activity Log's Acknowledged filter asks for it, which is
+# exactly what that filter's screenshot needs to show.
+DB01_SYNC_EVENT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT id FROM system_events
+     WHERE event_type = 'repo_sync_failed' AND hostname = 'db-server-01'
+     ORDER BY created_at DESC LIMIT 1")
+if [ -z "$DB01_SYNC_EVENT_ID" ]; then
+    echo "expected a db-server-01 repo_sync_failed event to acknowledge, found none" >&2
+    exit 1
+fi
+api POST "/api/stats/system-events/$DB01_SYNC_EVENT_ID/acknowledge" > /dev/null
 
 echo "==> Adding audit log entries..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
@@ -814,7 +829,8 @@ SQL
 echo "==> Acknowledging that warning, so the Activity Log demonstrates both states..."
 # The remaining seeded failures/warnings (db-server-01's outage below, the
 # hourly failure, the failed-report-cleanup targets) stay unacknowledged, so
-# the activity screenshot shows an Acknowledged badge next to a still-open one.
+# the activity screenshot shows what still needs attention, while switching
+# the Acknowledged filter to Shown reveals this reviewed one alongside them.
 WEB01_WARNING_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
     "SELECT id FROM backup_reports
      WHERE agent_id = (SELECT id FROM agents WHERE hostname = 'web-server-01')

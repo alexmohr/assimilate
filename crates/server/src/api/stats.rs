@@ -967,6 +967,9 @@ pub async fn outstanding_acknowledgements(
 /// admin acknowledges those; for anyone else they are left untouched rather
 /// than failing the whole call.
 ///
+/// Both writes share one transaction, so a call the client sees fail leaves
+/// nothing half-acknowledged.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -975,12 +978,8 @@ pub async fn acknowledge_all_activity(
     auth: AuthUser,
 ) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
     let scope = acknowledge_scope(&state.pool, &auth).await?;
-    let backup_reports = db::acknowledge_backup_reports_in_repos(&state.pool, &scope.repos).await?;
-    let system_events = if scope.system_events {
-        db::acknowledge_all_system_events(&state.pool).await?
-    } else {
-        0
-    };
+    let (backup_reports, system_events) =
+        db::acknowledge_all_outstanding(&state.pool, &scope.repos, scope.system_events).await?;
 
     Ok(Json(AcknowledgementCountsResponse {
         backup_reports: i64::try_from(backup_reports).unwrap_or(i64::MAX),

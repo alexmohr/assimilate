@@ -2383,6 +2383,69 @@ async fn acknowledgeable_system_event_type_rejects_an_informational_event(pool: 
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn acknowledge_all_outstanding_commits_both_writes_together(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "atomic-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo_with_host(&pool, "atomic-ack-repo", "atomic.local").await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Failed,
+    )
+    .await;
+    db::insert_system_event(&pool, SystemEventType::RepoSyncFailed, None, "sync failed")
+        .await
+        .unwrap();
+
+    let (reports, events) = db::acknowledge_all_outstanding(&pool, &[repo.id], true)
+        .await
+        .unwrap();
+    assert_eq!((reports, events), (1, 1));
+
+    // Both sides of the transaction are visible afterwards.
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        db::count_unacknowledged_system_events(&pool).await.unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acknowledge_all_outstanding_leaves_system_events_alone_for_a_non_admin(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "scoped-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo_with_host(&pool, "scoped-ack-repo", "scoped.local").await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Warning,
+    )
+    .await;
+    db::insert_system_event(&pool, SystemEventType::RepoSyncFailed, None, "sync failed")
+        .await
+        .unwrap();
+
+    let (reports, events) = db::acknowledge_all_outstanding(&pool, &[repo.id], false)
+        .await
+        .unwrap();
+    assert_eq!((reports, events), (1, 0));
+    assert_eq!(
+        db::count_unacknowledged_system_events(&pool).await.unwrap(),
+        1,
+        "a caller who may not acknowledge system events must leave them outstanding"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn acknowledge_all_system_events_skips_the_ones_with_nothing_to_review(pool: PgPool) {
     for (event_type, message) in [
         (SystemEventType::RepoSyncFailed, "sync failed"),

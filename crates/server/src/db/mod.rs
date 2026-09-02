@@ -6365,10 +6365,13 @@ fn acknowledgeable_system_event_types() -> Vec<String> {
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn acknowledge_backup_reports_in_repos(
-    pool: &PgPool,
+pub async fn acknowledge_backup_reports_in_repos<'e, E>(
+    executor: E,
     repo_ids: &[i64],
-) -> Result<u64, ApiError> {
+) -> Result<u64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     let [warning, failed] = acknowledgeable_report_statuses();
     Ok(sqlx::query!(
         "UPDATE backup_reports SET acknowledged = true WHERE acknowledged = false AND repo_id = \
@@ -6377,7 +6380,7 @@ pub async fn acknowledge_backup_reports_in_repos(
         warning,
         failed,
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?
     .rows_affected())
@@ -6456,17 +6459,47 @@ pub async fn count_unacknowledged_system_events(pool: &PgPool) -> Result<i64, Ap
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn acknowledge_all_system_events(pool: &PgPool) -> Result<u64, ApiError> {
+pub async fn acknowledge_all_system_events<'e, E>(executor: E) -> Result<u64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     let acknowledgeable = acknowledgeable_system_event_types();
     Ok(sqlx::query!(
         "UPDATE system_events SET acknowledged = true WHERE acknowledged = false AND event_type = \
          ANY($1)",
         &acknowledgeable,
     )
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(ApiError::Database)?
     .rows_affected())
+}
+
+/// Acknowledges everything the caller may retire in one step - the warning and
+/// failed backup reports in `repo_ids`, and, when `include_system_events`, the
+/// problem-reporting system events - and reports the two counts.
+///
+/// One transaction, so a request the client sees fail leaves nothing
+/// half-acknowledged: without it a failure on the second write would return
+/// 500 while the first had already committed.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn acknowledge_all_outstanding(
+    pool: &PgPool,
+    repo_ids: &[i64],
+    include_system_events: bool,
+) -> Result<(u64, u64), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let backup_reports = acknowledge_backup_reports_in_repos(&mut *tx, repo_ids).await?;
+    let system_events = if include_system_events {
+        acknowledge_all_system_events(&mut *tx).await?
+    } else {
+        0
+    };
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok((backup_reports, system_events))
 }
 
 /// # Errors

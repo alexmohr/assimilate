@@ -2401,4 +2401,35 @@ describe('AgentDetailView - clean up failed backups', () => {
     expect(mockToastError).toHaveBeenCalled()
     expect(openModals(wrapper)).toHaveLength(1)
   })
+
+  // Regression test: unlike the SSH-key/merge/deploy dialogs, this one isn't
+  // gated `v-if="agent"` in the template, so it would otherwise stay open
+  // with a stale `failedReportCount` (and silently no-op on delete, since
+  // confirmCleanFailedReports returns early once `agent.value` is null) if
+  // a background refresh discovers the host is now ambiguous while it's
+  // open.
+  it('closes the cleanup dialog if a background refresh makes the host ambiguous', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(1)
+
+    const otherAgent = { ...mockAgent, id: 2, domain: 'b.example.com' }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent, otherAgent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('More than one host is named')
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
 })

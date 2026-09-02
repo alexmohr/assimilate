@@ -725,6 +725,26 @@ describe('ActivityLogView', () => {
       ).toBeTruthy()
     })
 
+    it('keeps the feed usable when the outstanding count cannot be loaded', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity')
+          return Promise.resolve({ data: ACTIVITY_ROWS.map((r) => ({ ...r })) })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.reject(new Error('boom'))
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      // The probe failing must not take the feed down with it; the button
+      // simply stays hidden because nothing is known to be outstanding.
+      expect(findWarningRow(wrapper).length).toBeGreaterThan(0)
+      expect(wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all'))).toBe(
+        undefined,
+      )
+    })
+
     it('hides the button once nothing is left to acknowledge', async () => {
       mockGet.mockImplementation((url: string) => {
         if (url === '/agents') return Promise.resolve({ data: AGENTS })

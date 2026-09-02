@@ -194,7 +194,13 @@ function mountView(role?: string): ReturnType<typeof mount> {
     global: {
       plugins: [pinia, createTestRouter()],
       stubs: {
-        DataTable: { template: '<div class="p-datatable"><slot /><slot name="empty" /></div>' },
+        DataTable: {
+          name: 'DataTable',
+          // `rowClass` is declared so a test can exercise the callback the
+          // view passes down; the real DataTable calls it per rendered row.
+          props: ['value', 'rowClass'],
+          template: '<div class="p-datatable"><slot /><slot name="empty" /></div>',
+        },
         Column: true,
         BaseSpinner: { template: '<div class="spinner" />' },
         EmptyState: {
@@ -1126,6 +1132,45 @@ describe('ActivityLogView', () => {
         .find((s) => s.findAll('option').some((o) => o.text() === 'Error'))
       expect(levelSelect?.exists()).toBe(true)
       expect(wrapper.find('input.search-input').exists()).toBe(true)
+    })
+
+    it('gives each log row a class carrying its level in lower case', async () => {
+      // The row class reaches the table as a callback, so rendering alone
+      // never runs it - the level modifier is what colours the row, and it
+      // has to survive the server reporting the level in upper case.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/logs')
+          return Promise.resolve({
+            data: [
+              {
+                timestamp: '2026-01-01T10:00:00Z',
+                level: 'ERROR',
+                target: 'server',
+                message: 'Boom',
+              },
+            ],
+          })
+        return Promise.resolve({ data: [] })
+      })
+
+      const wrapper = mountView()
+      await flushPromises()
+
+      const logsBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'Server Logs')
+      await logsBtn?.trigger('click')
+      await flushPromises()
+
+      const table = wrapper
+        .findAllComponents({ name: 'DataTable' })
+        .find((t) => typeof t.props('rowClass') === 'function')
+      expect(table).toBeTruthy()
+
+      const rowClass = table!.props('rowClass') as (entry: { level: string }) => string
+      expect(rowClass({ level: 'ERROR' })).toBe('log-entry-row log-level-error')
+      expect(rowClass({ level: 'warn' })).toBe('log-entry-row log-level-warn')
     })
   })
 

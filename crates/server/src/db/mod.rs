@@ -6340,6 +6340,29 @@ fn acknowledgeable_report_statuses() -> [String; 2] {
     ]
 }
 
+#[cfg(test)]
+mod acknowledgeable_status_tests {
+    use super::{BackupStatus, acknowledgeable_report_statuses};
+
+    /// The bulk queries bind these strings while the per-report check calls
+    /// [`BackupStatus::is_acknowledgeable`]; this pins the two to the same set.
+    #[test]
+    fn bound_statuses_are_exactly_the_acknowledgeable_ones() {
+        let bound = acknowledgeable_report_statuses();
+        for status in [
+            BackupStatus::Success,
+            BackupStatus::Warning,
+            BackupStatus::Failed,
+        ] {
+            assert_eq!(
+                bound.contains(&status.to_string()),
+                status.is_acknowledgeable(),
+                "{status} disagrees between the bulk filter and is_acknowledgeable"
+            );
+        }
+    }
+}
+
 /// The system event types that report a problem, as the bind parameter the
 /// bulk acknowledgment queries pass to `event_type = ANY(..)`.
 ///
@@ -6830,10 +6853,10 @@ pub async fn get_ackable_backup_report_repo_id(pool: &PgPool, id: i64) -> Result
     .map_err(ApiError::Database)?
     .ok_or_else(|| ApiError::NotFound(format!("report id '{id}' not found")))?;
 
-    let ackable = matches!(
-        row.status.parse::<BackupStatus>(),
-        Ok(BackupStatus::Warning | BackupStatus::Failed)
-    );
+    let ackable = row
+        .status
+        .parse::<BackupStatus>()
+        .is_ok_and(BackupStatus::is_acknowledgeable);
     if !ackable {
         return Err(ApiError::Unprocessable(format!(
             "report {id} cannot be acknowledged: only warning or failed runs can be reviewed"

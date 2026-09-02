@@ -384,6 +384,53 @@ fn dashboard_upcoming_schedules(
         .collect()
 }
 
+/// How long after a scheduled run may pass before the target counts as
+/// overdue - enough slack that a run merely starting late is not a finding.
+const RUN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
+
+/// When the run following `after` stops being merely late and leaves the
+/// target overdue, per this target's cron expression.
+///
+/// Returns `None` for a cron expression that will not parse, which keeps a
+/// malformed schedule from being reported as overdue forever.
+fn run_deadline_after(
+    target: &db::dashboard::TargetRow,
+    after: chrono::DateTime<Utc>,
+    timezone: chrono_tz::Tz,
+) -> Option<chrono::DateTime<Utc>> {
+    shared::schedule::calculate_next_run(&target.cron_expression, after, timezone)
+        .ok()
+        .and_then(|expected| expected.checked_add_signed(RUN_GRACE))
+}
+
+/// Whether an acknowledgment on the target's latest report still speaks for
+/// the schedule's own overdue state.
+///
+/// Reviewing a run settles what was known when that run finished; it does not
+/// sign off on the target's future. So the overdue and never-succeeded
+/// findings are muted only until the run that should have followed the
+/// reviewed one comes and goes without a report - after that the target is
+/// overdue on a new cycle and says so again.
+///
+/// The bound matters because nothing clears `latest_acknowledged` but a fresh
+/// report: unbounded, a host that went silent right after an acknowledged
+/// failure would drop off the Needs Attention panel permanently, which is the
+/// one outcome the panel exists to prevent. A target with no reviewed report
+/// to date from is therefore not covered either - the findings show.
+fn acknowledgment_covers_schedule(
+    target: &db::dashboard::TargetRow,
+    now: chrono::DateTime<Utc>,
+    timezone: chrono_tz::Tz,
+) -> bool {
+    if target.latest_acknowledged != Some(true) {
+        return false;
+    }
+    target
+        .latest_finished_at
+        .and_then(|reviewed| run_deadline_after(target, reviewed, timezone))
+        .is_some_and(|covered_until| now <= covered_until)
+}
+
 fn target_finding(
     target: &db::dashboard::TargetRow,
     connected: &HashSet<i64>,
@@ -397,18 +444,15 @@ fn target_finding(
 
     // Only a warning or failed run can carry an acknowledgment, so this is
     // true exactly when someone has already reviewed this target's latest
-    // problem. Every finding below that is derived from that report - the
-    // failure itself, the warning, and the overdue/never-succeeded state it
-    // leaves behind - stays muted until the next run files a fresh report.
-    // A finding that does not depend on it (an offline host with a run due
-    // soon) is unaffected.
+    // problem. The findings that describe that report - the failure and the
+    // warning - stay muted until the next run files a fresh report.
     let latest_acknowledged = target.latest_acknowledged == Some(true);
 
-    let overdue_at = target.last_success_at.and_then(|last_success| {
-        shared::schedule::calculate_next_run(&target.cron_expression, last_success, timezone)
-            .ok()
-            .and_then(|expected| expected.checked_add_signed(chrono::Duration::minutes(30)))
-    });
+    let overdue_at = target
+        .last_success_at
+        .and_then(|last_success| run_deadline_after(target, last_success, timezone));
+
+    let acknowledgment_covers_schedule = acknowledgment_covers_schedule(target, now, timezone);
 
     let (kind, severity, status, reason, occurred_at, deadline, destination) =
         if target.latest_failed == Some(true) && !latest_acknowledged {
@@ -423,7 +467,9 @@ fn target_finding(
                     report_id: target.latest_report_id?,
                 },
             )
-        } else if !latest_acknowledged && overdue_at.is_some_and(|deadline| now > deadline) {
+        } else if !acknowledgment_covers_schedule
+            && overdue_at.is_some_and(|deadline| now > deadline)
+        {
             (
                 FindingKind::ScheduleTargetOverdue,
                 FindingSeverity::Critical,
@@ -450,7 +496,7 @@ fn target_finding(
                     report_id: target.latest_report_id?,
                 },
             )
-        } else if !latest_acknowledged
+        } else if !acknowledgment_covers_schedule
             && target.last_success_at.is_none()
             && target.schedule_last_run_at.is_some()
         {
@@ -1742,7 +1788,9 @@ mod tests {
             repo_name: "repo-a".to_owned(),
             latest_report_id: Some(42),
             latest_started_at: None,
-            latest_finished_at: None,
+            // `backup_reports.finished_at` is NOT NULL, so any target with a
+            // latest report has one. Recent, as a just-filed report would be.
+            latest_finished_at: Some(chrono::Utc::now()),
             latest_failed: Some(false),
             latest_warning: Some(false),
             latest_started: Some(false),
@@ -1839,6 +1887,66 @@ mod tests {
                 chrono_tz::UTC,
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn an_acknowledgment_stops_covering_a_target_that_then_goes_silent() {
+        // Regression: `latest_acknowledged` is only ever cleared by a fresh
+        // report, so a host that dies right after its failure was reviewed
+        // used to drop off Needs Attention permanently - the failure muted by
+        // the acknowledgment, the overdue state muted along with it, and no
+        // report ever arriving to re-arm either. A target that keeps missing
+        // runs has to come back.
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_acknowledged = Some(true);
+        // Reviewed a month ago; the daily schedule has missed ~30 runs since.
+        let reviewed = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::days(30))
+            .expect("timestamp in range");
+        target.latest_finished_at = Some(reviewed);
+        target.last_success_at = Some(reviewed);
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("a target that kept missing runs must come back to the panel");
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetOverdue);
+    }
+
+    #[test]
+    fn an_acknowledgment_still_covers_a_target_within_its_next_run_window() {
+        // The other side of the bound: acknowledging a failure has to actually
+        // quieten the target now, or the count never drops - it just swaps
+        // backup_failed for overdue.
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_acknowledged = Some(true);
+        // Reviewed moments ago, so the next daily run is still ahead.
+        target.latest_finished_at = Some(chrono::Utc::now());
+        target.last_success_at = Some(
+            chrono::Utc::now()
+                .checked_sub_signed(chrono::Duration::days(30))
+                .expect("timestamp in range"),
+        );
+        let (now, due_soon) = now_and_due_soon();
+
+        assert!(
+            super::target_finding(
+                &target,
+                &std::collections::HashSet::new(),
+                now,
+                due_soon,
+                chrono_tz::UTC,
+            )
+            .is_none(),
+            "a freshly acknowledged failure must not leave the overdue finding behind"
         );
     }
 

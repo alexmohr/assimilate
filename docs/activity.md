@@ -37,7 +37,7 @@ Acknowledging a run also removes it from the dashboard:
 
 - its **Needs attention** finding disappears, so the finding count drops
 - the **Last failure** / **Last warning** tiles fall back to the most recent run still awaiting review
-- an acknowledged failure no longer leaves the schedule target flagged as overdue or never-succeeded — the target is muted until its next run files a fresh report, which is flagged again if it fails too
+- an acknowledged failure no longer leaves the schedule target flagged as overdue or never-succeeded — the target is muted until its next run, whose fresh report is flagged again if it fails too. The mute is bounded: if that run never happens, the target is overdue on a new cycle and returns to the dashboard, so a host that goes silent after a review cannot stay hidden
 
 The success-rate ring is history rather than a to-do list, so it keeps counting every run, acknowledged or not.
 

@@ -517,6 +517,20 @@ pub enum BackupStatus {
     Failed,
 }
 
+impl BackupStatus {
+    /// Whether a run in this state can be acknowledged. Only a run that
+    /// reports a problem can be - a success has nothing to review, so muting
+    /// it would just hide history.
+    ///
+    /// The counterpart to [`SystemEventType::is_acknowledgeable`], and the one
+    /// definition of the rule: the per-report endpoint, the bulk acknowledge
+    /// and the outstanding counts all derive from it.
+    #[must_use]
+    pub const fn is_acknowledgeable(self) -> bool {
+        matches!(self, Self::Warning | Self::Failed)
+    }
+}
+
 impl FromStr for BackupStatus {
     type Err = String;
 

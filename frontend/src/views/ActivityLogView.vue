@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Search, SlidersHorizontal, Activity, X, ArrowRight, CheckCheck } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
@@ -460,6 +460,12 @@ function isAckable(entry: ActivityEntry): boolean {
 
 const { error: toastError, success: toastSuccess } = useToast()
 const auth = useAuthStore()
+/** The two calls that flip one entry's acknowledgement, either way round. */
+interface AcknowledgeEndpoints {
+  acknowledge: (id: number) => Promise<void>
+  unacknowledge: (id: number) => Promise<void>
+}
+
 const ackingId = ref<number | null>(null)
 const ackingSystemId = ref<number | null>(null)
 const ackingAll = ref(false)
@@ -476,25 +482,39 @@ function matchesAcknowledgedFilter(acknowledged: boolean): boolean {
   }
 }
 
-async function toggleAcknowledge(entry: ActivityEntry): Promise<void> {
-  ackingId.value = entry.id
+/**
+ * Both acknowledge toggles are the same small state machine: mark the row
+ * busy, flip it server-side, drop it from the feed when the active filter no
+ * longer wants it, re-probe what is outstanding, and surface any failure.
+ * Shared so the backup and system-event paths cannot drift apart.
+ */
+async function toggleAcknowledged<T extends { id: number; acknowledged: boolean }>(
+  entry: T,
+  busy: Ref<number | null>,
+  list: Ref<T[]>,
+  endpoints: AcknowledgeEndpoints,
+): Promise<void> {
+  busy.value = entry.id
   try {
-    if (entry.acknowledged) {
-      await unacknowledgeActivityEntry(entry.id)
-      entry.acknowledged = false
-    } else {
-      await acknowledgeActivityEntry(entry.id)
-      entry.acknowledged = true
-    }
-    if (!matchesAcknowledgedFilter(entry.acknowledged)) {
-      rows.value = rows.value.filter((r) => r.id !== entry.id)
+    const next = !entry.acknowledged
+    await (next ? endpoints.acknowledge(entry.id) : endpoints.unacknowledge(entry.id))
+    entry.acknowledged = next
+    if (!matchesAcknowledgedFilter(next)) {
+      list.value = list.value.filter((item) => item.id !== entry.id)
     }
     await refreshOutstanding()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
-    ackingId.value = null
+    busy.value = null
   }
+}
+
+function toggleAcknowledge(entry: ActivityEntry): Promise<void> {
+  return toggleAcknowledged(entry, ackingId, rows, {
+    acknowledge: acknowledgeActivityEntry,
+    unacknowledge: unacknowledgeActivityEntry,
+  })
 }
 
 /**
@@ -506,25 +526,11 @@ function isSystemEventAckable(event: SystemEventEntry): boolean {
   return event.acknowledgeable && auth.isAdmin
 }
 
-async function toggleSystemAcknowledge(event: SystemEventEntry): Promise<void> {
-  ackingSystemId.value = event.id
-  try {
-    if (event.acknowledged) {
-      await unacknowledgeSystemEvent(event.id)
-      event.acknowledged = false
-    } else {
-      await acknowledgeSystemEvent(event.id)
-      event.acknowledged = true
-    }
-    if (!matchesAcknowledgedFilter(event.acknowledged)) {
-      systemEvents.value = systemEvents.value.filter((e) => e.id !== event.id)
-    }
-    await refreshOutstanding()
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    ackingSystemId.value = null
-  }
+function toggleSystemAcknowledge(event: SystemEventEntry): Promise<void> {
+  return toggleAcknowledged(event, ackingSystemId, systemEvents, {
+    acknowledge: acknowledgeSystemEvent,
+    unacknowledge: unacknowledgeSystemEvent,
+  })
 }
 
 /**
@@ -1165,8 +1171,9 @@ function filterByRun(runId: string): void {
   border-color: var(--text-muted);
 }
 
-/* Stays in the list rather than disappearing - this only dims it so the
-   history remains scrollable and the toggle is easy to find again. */
+/* Only reachable once the Acknowledged filter is showing reviewed entries -
+   under the default they leave the feed instead. Dimmed so they read as
+   already dealt with next to the entries that still need attention. */
 .run-card--acknowledged {
   opacity: 0.6;
 }

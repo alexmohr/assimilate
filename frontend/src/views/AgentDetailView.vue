@@ -358,27 +358,43 @@ function toggleReport(r: ReportRow): void {
   expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
 
+async function fetchAgent(): Promise<void> {
+  const agentRows = await listAgents()
+  allAgents.value = agentRows
+  const matches = agentRows.filter((m) => m.hostname === props.hostname)
+  const domain = routeDomain.value
+  if (domain !== undefined) {
+    agent.value = matches.find((m) => (m.domain ?? '') === domain) ?? null
+  } else if (matches.length > 1) {
+    ambiguousMatches.value = matches
+    agent.value = null
+    return
+  } else {
+    agent.value = matches[0] ?? null
+  }
+  if (!agent.value) {
+    throw new Error(`Agent "${props.hostname}" not found`)
+  }
+  await loadTabData()
+}
+
 async function loadAgent(): Promise<void> {
   ambiguousMatches.value = []
-  await run(async () => {
-    const agentRows = await listAgents()
-    allAgents.value = agentRows
-    const matches = agentRows.filter((m) => m.hostname === props.hostname)
-    const domain = routeDomain.value
-    if (domain !== undefined) {
-      agent.value = matches.find((m) => (m.domain ?? '') === domain) ?? null
-    } else if (matches.length > 1) {
-      ambiguousMatches.value = matches
-      agent.value = null
-      return
-    } else {
-      agent.value = matches[0] ?? null
-    }
-    if (!agent.value) {
-      throw new Error(`Agent "${props.hostname}" not found`)
-    }
-    await loadTabData()
-  })
+  await run(fetchAgent)
+}
+
+/**
+ * Re-fetches agent data in the background (WS-driven updates, reconnects)
+ * without toggling `loading` - that would unmount and remount the whole
+ * settings tab, discarding any in-progress edit in it. See `refreshRepo` in
+ * RepoDetailView.vue for the same pattern.
+ */
+async function refreshAgent(): Promise<void> {
+  try {
+    await fetchAgent()
+  } catch (e: unknown) {
+    logger.error('background agent refresh failed', e)
+  }
 }
 
 async function loadTabData(): Promise<void> {
@@ -577,7 +593,7 @@ onMounted(() => {
 })
 
 const { onMessage, status: wsStatus } = useWebSocket()
-onMessage('DataChanged', () => loadAgent().catch(logger.error))
+onMessage('DataChanged', () => refreshAgent())
 // Known limitation: this and the `RunEvent` handler below match on bare
 // hostname only, because neither payload carries a `domain`/`agent_id`.
 // Two agents sharing a hostname across different domains can therefore
@@ -587,9 +603,9 @@ onMessage('DataChanged', () => loadAgent().catch(logger.error))
 onMessage('AgentConnected', (payload) => {
   if (payload.hostname !== props.hostname) return
   powerPhase.value = null
-  loadAgent().catch(logger.error)
+  refreshAgent()
 })
-onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
+onMessage('AgentDisconnected', () => refreshAgent())
 
 /**
  * The transient phase `AgentHeader` shows in place of Online/Offline while
@@ -672,7 +688,7 @@ onMessage('BackupCompleted', (payload) => {
   if (payload.hostname === props.hostname) {
     activeBackups.value = activeBackups.value.filter((b) => b.targetName !== payload.target_name)
   }
-  loadAgent().catch(logger.error)
+  refreshAgent()
 })
 
 onMessage('BackupLog', (payload) => {
@@ -693,7 +709,7 @@ onMessage('BackupLog', (payload) => {
 
 watch(wsStatus, (newStatus, oldStatus) => {
   if (newStatus === 'connected' && oldStatus !== 'connected') {
-    loadAgent().catch(logger.error)
+    refreshAgent()
   }
 })
 </script>

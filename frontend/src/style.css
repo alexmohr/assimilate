@@ -1063,6 +1063,13 @@
     gap: var(--space-6);
   }
 
+  /* When the label side is a title-plus-hint pair (`.field-body`), centering
+     against the whole two-line block leaves the toggle sitting low relative
+     to the title. Align it with the title's line instead. */
+  .field-inline:has(.field-body) {
+    align-items: flex-start;
+  }
+
   /* The title-plus-hint pair inside a `.field-inline`, for a toggle whose
      effect needs more than `.toggle-row-label`'s one line to explain. */
   .field-body {

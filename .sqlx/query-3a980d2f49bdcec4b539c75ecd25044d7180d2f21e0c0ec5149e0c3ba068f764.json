@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notification_deliveries (channel_id, event_type, status, attempted_at) VALUES ($1, 'backup_success', 'sent', $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3a980d2f49bdcec4b539c75ecd25044d7180d2f21e0c0ec5149e0c3ba068f764"
+}

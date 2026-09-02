@@ -20,6 +20,7 @@ import {
   acknowledgeSystemEvent,
   unacknowledgeSystemEvent,
   acknowledgeAllActivity,
+  getOutstandingAcknowledgements,
   type ActivityEntry,
   type SystemEventEntry,
 } from '../api/stats'
@@ -336,6 +337,7 @@ async function fetchData(reset: boolean, preserveExpanded = false): Promise<void
           : systemEvents.value.length
     hasMore.value = totalFetched >= limit
     offset.value += PAGE_SIZE
+    await refreshOutstanding()
   } finally {
     loading.value = false
     loadingMore.value = false
@@ -485,6 +487,7 @@ async function toggleAcknowledge(entry: ActivityEntry): Promise<void> {
     if (!matchesAcknowledgedFilter(entry.acknowledged)) {
       rows.value = rows.value.filter((r) => r.id !== entry.id)
     }
+    await refreshOutstanding()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -514,6 +517,7 @@ async function toggleSystemAcknowledge(event: SystemEventEntry): Promise<void> {
     if (!matchesAcknowledgedFilter(event.acknowledged)) {
       systemEvents.value = systemEvents.value.filter((e) => e.id !== event.id)
     }
+    await refreshOutstanding()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -521,12 +525,28 @@ async function toggleSystemAcknowledge(event: SystemEventEntry): Promise<void> {
   }
 }
 
-/** Whether anything currently listed still awaits acknowledgment. */
-const hasUnacknowledged = computed((): boolean => {
-  const backups = filtered.value.some((r) => isAckable(r) && !r.acknowledged)
-  const events = systemEvents.value.some((e) => isSystemEventAckable(e) && !e.acknowledged)
-  return backups || events
-})
+/**
+ * How much is still outstanding server-side, independent of the category tab
+ * and every filter. Deriving this from the rows on screen would hide the
+ * button exactly when it is most useful: the feed only loads the active
+ * category, is capped at a page, and is narrowed further by the machine /
+ * target / status / date filters, so a view showing nothing acknowledgeable
+ * says nothing about what is left elsewhere.
+ */
+const outstanding = ref({ backup_reports: 0, system_events: 0 })
+
+async function refreshOutstanding(): Promise<void> {
+  try {
+    outstanding.value = await getOutstandingAcknowledgements()
+  } catch (e: unknown) {
+    logger.error('failed to load outstanding acknowledgements', e)
+  }
+}
+
+/** Whether a bulk acknowledge would actually do anything for this user. */
+const hasUnacknowledged = computed(
+  (): boolean => outstanding.value.backup_reports + outstanding.value.system_events > 0,
+)
 
 async function acknowledgeAll(): Promise<void> {
   ackingAll.value = true

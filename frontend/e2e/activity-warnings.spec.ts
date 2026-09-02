@@ -81,15 +81,22 @@ async function stubActivityLog(
     activity?: (acknowledged: string | null) => unknown
     systemEvents?: (acknowledged: string | null) => unknown
     reports?: () => unknown
+    outstanding?: () => { backup_reports: number; system_events: number }
   } = {},
 ): Promise<void> {
-  const { activity = () => [], systemEvents = () => [], reports } = handlers
+  const {
+    activity = () => [],
+    systemEvents = () => [],
+    reports,
+    outstanding = () => ({ backup_reports: 0, system_events: 0 }),
+  } = handlers
   const filterOf = (route: Route): string | null =>
     new URL(route.request().url()).searchParams.get('acknowledged')
 
   await page.route('**/api/agents', (route) => json(route, []))
   await page.route('**/api/schedules', (route) => json(route, []))
   await page.route('**/api/stats/activity?**', (route) => json(route, activity(filterOf(route))))
+  await page.route('**/api/stats/activity/outstanding', (route) => json(route, outstanding()))
   await page.route('**/api/stats/system-events**', (route) =>
     json(route, systemEvents(filterOf(route))),
   )
@@ -207,6 +214,8 @@ test('acknowledges everything outstanding in one click', async ({ page }: { page
   let acknowledgedAll = false
   await stubActivityLog(page, {
     activity: () => (acknowledgedAll ? [] : [makeActivityRow()]),
+    // The button is driven by this unfiltered count, not by the rows.
+    outstanding: () => ({ backup_reports: acknowledgedAll ? 0 : 1, system_events: 0 }),
   })
   await page.route('**/api/stats/activity/acknowledge-all', async (route) => {
     acknowledgedAll = true

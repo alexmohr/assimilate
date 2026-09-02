@@ -268,6 +268,7 @@ See [Access Control](access-control.md) for roles, groups, and permissions manag
 | `GET` | `/api/stats/activity` | Backup activity entries (`?acknowledged=all\|unacknowledged\|acknowledged`) |
 | `POST` / `DELETE` | `/api/stats/activity/{id}/acknowledge` | Acknowledge or clear a warning/failed run |
 | `POST` | `/api/stats/activity/acknowledge-all` | Acknowledge every outstanding warning and failure the caller may act on |
+| `GET` | `/api/stats/activity/outstanding` | Counts still awaiting acknowledgement, scoped to the caller's permissions |
 | `GET` | `/api/stats/system-events` | System event log (same `?acknowledged=` filter) |
 | `POST` / `DELETE` | `/api/stats/system-events/{id}/acknowledge` | Acknowledge or clear a problem system event (admin only) |
 | `GET` | `/api/stats/trends` | Backup success/failure trends |

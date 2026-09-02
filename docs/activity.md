@@ -43,7 +43,9 @@ The success-rate ring is history rather than a to-do list, so it keeps counting 
 
 ### Acknowledging everything at once
 
-**Acknowledge all**, in the page header, marks every outstanding warning and failure as reviewed in one step. It appears only while something is left to acknowledge, and it reaches exactly as far as acknowledging each entry by hand would: backup runs only in repositories you may modify schedules for, and system events only if you are an admin.
+**Acknowledge all**, in the page header, marks every outstanding warning and failure as reviewed in one step. It reaches exactly as far as acknowledging each entry by hand would: backup runs only in repositories you may modify schedules for, and system events only if you are an admin.
+
+It appears whenever anything is left for you to acknowledge — deliberately regardless of the tab and filters in effect, since it acts on the same unfiltered set. A narrow filter showing nothing acknowledgeable does not mean there is nothing left, so gating the button on what happens to be on screen would hide it exactly when it is most useful.
 
 ### Acknowledging a system event
 
@@ -117,6 +119,7 @@ The activity view loads entries in pages. Click **Load more** at the bottom to f
 | `POST` | `/api/stats/activity/:id/acknowledge` | Acknowledge a backup run's warning or failure |
 | `DELETE` | `/api/stats/activity/:id/acknowledge` | Clear a run's acknowledgment |
 | `POST` | `/api/stats/activity/acknowledge-all` | Acknowledge every outstanding warning and failure the caller may act on |
+| `GET` | `/api/stats/activity/outstanding` | Count what the caller could still acknowledge, ignoring feed filters |
 | `GET` | `/api/stats/system-events` | List system events (same `?acknowledged=` filter) |
 | `POST` | `/api/stats/system-events/:id/acknowledge` | Acknowledge a system event that reports a problem (admin only) |
 | `DELETE` | `/api/stats/system-events/:id/acknowledge` | Clear a system event's acknowledgment (admin only) |

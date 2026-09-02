@@ -151,13 +151,28 @@ export async function unacknowledgeSystemEvent(id: number): Promise<void> {
   await apiClient.delete(`/stats/system-events/${id}/acknowledge`)
 }
 
-export interface AcknowledgeAllResult {
+/**
+ * Counts of acknowledgeable entries - what a bulk acknowledge just muted, or
+ * what is still outstanding.
+ */
+export interface AcknowledgementCounts {
   backup_reports: number
   system_events: number
 }
 
-export async function acknowledgeAllActivity(): Promise<AcknowledgeAllResult> {
-  const response = await apiClient.post<AcknowledgeAllResult>('/stats/activity/acknowledge-all')
+export async function acknowledgeAllActivity(): Promise<AcknowledgementCounts> {
+  const response = await apiClient.post<AcknowledgementCounts>('/stats/activity/acknowledge-all')
+  return response.data
+}
+
+/**
+ * What this user could still acknowledge, ignoring whatever filter the feed is
+ * showing. The feed is paged and filtered, so counting the rows on screen
+ * would hide the Acknowledge all button exactly when a narrow filter is hiding
+ * the problems it exists to clear.
+ */
+export async function getOutstandingAcknowledgements(): Promise<AcknowledgementCounts> {
+  const response = await apiClient.get<AcknowledgementCounts>('/stats/activity/outstanding')
   return response.data
 }
 

@@ -730,6 +730,10 @@ fn stats_routes() -> Router<AppState> {
             "/api/stats/activity/acknowledge-all",
             post(api::stats::acknowledge_all_activity),
         )
+        .route(
+            "/api/stats/activity/outstanding",
+            get(api::stats::outstanding_acknowledgements),
+        )
         .route("/api/stats/system-events", get(api::stats::system_events))
         .route(
             "/api/stats/system-events/{id}/acknowledge",

@@ -6377,6 +6377,59 @@ pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>
     .map_err(ApiError::Database)
 }
 
+/// Counts the unacknowledged warning/failed backup reports belonging to one of
+/// `repo_ids`, so the UI can tell whether a bulk acknowledge would do anything
+/// without first loading the feed.
+///
+/// Deliberately mirrors [`acknowledge_backup_reports_in_repos`]'s filter, so
+/// "the button is shown" and "the button would acknowledge something" can
+/// never disagree.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_unacknowledged_reports_in_repos(
+    pool: &PgPool,
+    repo_ids: &[i64],
+) -> Result<i64, ApiError> {
+    let warning = BackupStatus::Warning.to_string();
+    let failed = BackupStatus::Failed.to_string();
+    Ok(sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false AND repo_id = ANY($1) AND \
+         status IN ($2, $3)",
+        repo_ids,
+        warning,
+        failed,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .unwrap_or(0))
+}
+
+/// Counts the unacknowledged system events whose type reports a problem, the
+/// counterpart to [`count_unacknowledged_reports_in_repos`] for the events an
+/// admin can acknowledge.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn count_unacknowledged_system_events(pool: &PgPool) -> Result<i64, ApiError> {
+    let acknowledgeable: Vec<String> = SystemEventType::ALL
+        .iter()
+        .filter(|event_type| event_type.is_acknowledgeable())
+        .map(ToString::to_string)
+        .collect();
+    Ok(sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM system_events WHERE acknowledged = false AND event_type = ANY($1)",
+        &acknowledgeable,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .unwrap_or(0))
+}
+
 /// Acknowledges every unacknowledged system event whose type reports a
 /// problem, and reports how many rows that touched.
 ///

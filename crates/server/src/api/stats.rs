@@ -850,14 +850,103 @@ pub async fn unacknowledge_activity_entry(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Response body for a bulk acknowledge, so the caller can report what it
-/// actually muted.
+/// Counts of acknowledgeable entries, used both for what a bulk acknowledge
+/// just muted and for what is still outstanding.
 #[derive(Debug, Clone, Copy, serde::Serialize, utoipa::ToSchema)]
-pub struct AcknowledgeAllResponse {
-    /// Number of warning/failed backup reports acknowledged.
+pub struct AcknowledgementCountsResponse {
+    /// Warning/failed backup reports.
     pub backup_reports: i64,
-    /// Number of warning/failed system events acknowledged.
+    /// Warning/failed system events.
     pub system_events: i64,
+}
+
+/// How far a bulk acknowledge reaches for one caller: the repositories whose
+/// outstanding reports they may acknowledge, and whether they may acknowledge
+/// the (repository-less) system events.
+struct AcknowledgeScope {
+    repos: Vec<i64>,
+    system_events: bool,
+}
+
+/// Resolves that reach once, so the "what is outstanding" and "acknowledge it
+/// all" endpoints can never disagree about what the caller is allowed to
+/// touch.
+///
+/// Mirrors `check_repo_permission(.., |p| p.can_modify_schedules)` exactly:
+/// `can_delete_repo` (what `RequireAdmin` checks) clears everything, otherwise
+/// a repo needs an explicit `can_modify_schedules` grant. `can_view_all_repos`
+/// deliberately does not widen this - it only ever synthesises a view-only
+/// permission, which fails that check. Reading the user's permissions in one
+/// query keeps this at two round trips instead of one per candidate repo.
+async fn acknowledge_scope(
+    pool: &sqlx::PgPool,
+    auth: &AuthUser,
+) -> Result<AcknowledgeScope, ApiError> {
+    let effective = db::get_effective_permissions(pool, auth.user_id).await?;
+    let candidates = db::repos_with_unacknowledged_reports(pool).await?;
+
+    if effective.can_delete_repo {
+        return Ok(AcknowledgeScope {
+            repos: candidates,
+            system_events: true,
+        });
+    }
+
+    let granted: HashSet<i64> = db::list_repo_permissions_for_user(pool, auth.user_id)
+        .await?
+        .into_iter()
+        .filter(|permission| permission.can_modify_schedules)
+        .map(|permission| permission.repo_id)
+        .collect();
+
+    Ok(AcknowledgeScope {
+        repos: candidates
+            .into_iter()
+            .filter(|repo_id| granted.contains(repo_id))
+            .collect(),
+        system_events: false,
+    })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/activity/outstanding",
+    tag = "Statistics",
+    operation_id = "getOutstandingAcknowledgements",
+    responses(
+        (status = 200, description = "Counts still awaiting acknowledgement",
+            body = AcknowledgementCountsResponse),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// How much this caller could still acknowledge, regardless of any filter the
+/// Activity Log happens to be showing.
+///
+/// The feed itself is paged and filtered, so counting what is on screen would
+/// hide the "Acknowledge all" button precisely when a narrow filter is
+/// hiding the problems it exists to clear. This reports the same set that
+/// endpoint would act on.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn outstanding_acknowledgements(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
+    let scope = acknowledge_scope(&state.pool, &auth).await?;
+    let backup_reports =
+        db::count_unacknowledged_reports_in_repos(&state.pool, &scope.repos).await?;
+    let system_events = if scope.system_events {
+        db::count_unacknowledged_system_events(&state.pool).await?
+    } else {
+        0
+    };
+
+    Ok(Json(AcknowledgementCountsResponse {
+        backup_reports,
+        system_events,
+    }))
 }
 
 #[utoipa::path(
@@ -866,7 +955,7 @@ pub struct AcknowledgeAllResponse {
     tag = "Statistics",
     responses(
         (status = 200, description = "Counts of what was acknowledged",
-            body = AcknowledgeAllResponse),
+            body = AcknowledgementCountsResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -884,30 +973,16 @@ pub struct AcknowledgeAllResponse {
 pub async fn acknowledge_all_activity(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> Result<Json<AcknowledgeAllResponse>, ApiError> {
-    let candidate_repos = db::repos_with_unacknowledged_reports(&state.pool).await?;
-    let mut permitted = Vec::with_capacity(candidate_repos.len());
-    for repo_id in candidate_repos {
-        if check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_modify_schedules)
-            .await
-            .is_ok()
-        {
-            permitted.push(repo_id);
-        }
-    }
-    let backup_reports = db::acknowledge_backup_reports_in_repos(&state.pool, &permitted).await?;
-
-    // `can_delete_repo` is what `RequireAdmin` itself checks, so this grants
-    // the bulk path exactly the same reach as acknowledging a system event
-    // one at a time.
-    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    let system_events = if effective.can_delete_repo {
+) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
+    let scope = acknowledge_scope(&state.pool, &auth).await?;
+    let backup_reports = db::acknowledge_backup_reports_in_repos(&state.pool, &scope.repos).await?;
+    let system_events = if scope.system_events {
         db::acknowledge_all_system_events(&state.pool).await?
     } else {
         0
     };
 
-    Ok(Json(AcknowledgeAllResponse {
+    Ok(Json(AcknowledgementCountsResponse {
         backup_reports: i64::try_from(backup_reports).unwrap_or(i64::MAX),
         system_events: i64::try_from(system_events).unwrap_or(i64::MAX),
     }))

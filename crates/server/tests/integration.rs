@@ -291,6 +291,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
             post(server::api::stats::acknowledge_all_activity),
         )
         .route(
+            "/api/stats/activity/outstanding",
+            get(server::api::stats::outstanding_acknowledgements),
+        )
+        .route(
             "/api/stats/system-events",
             get(server::api::stats::system_events),
         )
@@ -7413,6 +7417,75 @@ async fn acknowledge_all_leaves_repos_the_caller_may_not_touch_alone() {
             .await
             .unwrap();
     assert_eq!(unacknowledged, 1);
+}
+
+/// The Acknowledge all button is driven by this endpoint rather than by the
+/// rows on screen, so it must report what the bulk endpoint would act on -
+/// including for a caller who may not act on anything.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn outstanding_acknowledgements_report_the_callers_own_reach() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "outstanding-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('outstanding-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for status in ["failed", "warning", "success"] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), $3, true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync_failed', 'boom'), \
+         ('repo_sync', 'fine')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 2);
+    assert_eq!(body.get("system_events").unwrap(), 1);
+
+    // A caller with no repo permission and no admin rights has nothing to
+    // clear, so the button must not appear for them.
+    let req = non_admin_get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 0);
+    assert_eq!(body.get("system_events").unwrap(), 0);
+
+    // After the bulk acknowledge there is nothing left to report.
+    let req = post_request_without_body("/api/stats/activity/acknowledge-all");
+    assert_eq!(oneshot(&mut app, req).await.status(), StatusCode::OK);
+
+    let req = get_request("/api/stats/activity/outstanding");
+    let resp = oneshot(&mut app, req).await;
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 0);
+    assert_eq!(body.get("system_events").unwrap(), 0);
 }
 
 /// The dashboard's "error count" is the Needs Attention finding list, so an

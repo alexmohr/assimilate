@@ -151,6 +151,20 @@ const SYSTEM_EVENTS: SystemEvent[] = [
   },
 ]
 
+/**
+ * Counts the Acknowledge all button reads. Served by every mock below: the
+ * button is deliberately driven by this unfiltered server signal rather than
+ * by the rows on screen.
+ */
+function outstandingResponse(
+  backup_reports = 0,
+  system_events = 0,
+): {
+  data: { backup_reports: number; system_events: number }
+} {
+  return { data: { backup_reports, system_events } }
+}
+
 function createTestRouter(): ReturnType<typeof createRouter> {
   return createRouter({
     history: createMemoryHistory(),
@@ -205,6 +219,7 @@ function setupDefaultMocks(): void {
       return Promise.resolve({ data: ACTIVITY_ROWS.map((r) => ({ ...r })) })
     if (url === '/stats/system-events')
       return Promise.resolve({ data: SYSTEM_EVENTS.map((e) => ({ ...e })) })
+    if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse(2, 1))
     if (url.startsWith('/agents/') && url.endsWith('/reports'))
       return Promise.resolve({ data: WARNING_MOCK_REPORTS })
     return Promise.resolve({ data: [] })
@@ -216,6 +231,7 @@ function mockEmptyData(): void {
     if (url === '/agents') return Promise.resolve({ data: [] })
     if (url === '/stats/activity') return Promise.resolve({ data: [] })
     if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+    if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse())
     return Promise.resolve({ data: [] })
   })
 }
@@ -629,7 +645,9 @@ describe('ActivityLogView', () => {
       await clearButton!.trigger('click')
       await flushPromises()
 
-      expect(mockGet).toHaveBeenLastCalledWith(
+      // Not `toHaveBeenLastCalledWith`: the outstanding-counts probe now
+      // trails every feed load.
+      expect(mockGet).toHaveBeenCalledWith(
         '/stats/system-events',
         expect.objectContaining({
           params: expect.objectContaining({ acknowledged: 'unacknowledged' }),
@@ -649,6 +667,48 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       expect(mockPost).toHaveBeenCalledWith('/stats/activity/acknowledge-all')
+    })
+
+    it('shows the button on the Backup tab when only system events are outstanding', async () => {
+      // Regression: the button used to be gated on the rows currently loaded,
+      // and the Backup tab never loads system events - so an outstanding sync
+      // failure could not be cleared from the tab a dashboard finding link
+      // drops you on.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse(0, 1))
+        return Promise.resolve({ data: [] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+
+      const backupBtn = wrapper.findAll('.segmented-option').find((b) => b.text() === 'Backup')
+      await backupBtn?.trigger('click')
+      await flushPromises()
+
+      expect(
+        wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all')),
+      ).toBeTruthy()
+    })
+
+    it('keeps the button while a narrowing filter hides every outstanding row', async () => {
+      // Regression: filtering to Status=success emptied the visible rows, and
+      // the button vanished even though warnings and failures were still
+      // outstanding elsewhere.
+      const wrapper = await mountDefault()
+
+      const statusSelect = wrapper
+        .findAll('select.select-input')
+        .find((sel) => sel.findAll('option').some((o) => o.text() === 'Started'))
+      await statusSelect!.setValue('success')
+      await flushPromises()
+
+      expect(findWarningRow(wrapper)).toHaveLength(0)
+      expect(
+        wrapper.findAll('button').find((b) => b.text().includes('Acknowledge all')),
+      ).toBeTruthy()
     })
 
     it('keeps the entries listed when the bulk acknowledge fails', async () => {
@@ -671,6 +731,7 @@ describe('ActivityLogView', () => {
         if (url === '/stats/activity')
           return Promise.resolve({ data: [ACTIVITY_ROWS[0]].map((r) => ({ ...r })) })
         if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse())
         return Promise.resolve({ data: [] })
       })
       const wrapper = mountView()

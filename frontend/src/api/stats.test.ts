@@ -19,6 +19,7 @@ import {
   acknowledgeSystemEvent,
   unacknowledgeSystemEvent,
   acknowledgeAllActivity,
+  getOutstandingAcknowledgements,
 } from './stats'
 
 describe('stats api', () => {
@@ -100,6 +101,15 @@ describe('stats api', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/stats/system-events/9/acknowledge')
     expect(apiClient.delete).toHaveBeenCalledWith('/stats/system-events/9/acknowledge')
+  })
+
+  it('reads the outstanding acknowledgement counts', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { backup_reports: 4, system_events: 2 } })
+
+    const result = await getOutstandingAcknowledgements()
+
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/activity/outstanding')
+    expect(result).toEqual({ backup_reports: 4, system_events: 2 })
   })
 
   it('acknowledges everything outstanding at once', async () => {

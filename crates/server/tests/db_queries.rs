@@ -2202,6 +2202,92 @@ async fn acknowledge_backup_reports_in_repos_only_touches_listed_repos(pool: PgP
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn outstanding_counts_track_what_a_bulk_acknowledge_would_touch(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "outstanding-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
+            .await
+            .unwrap(),
+        0
+    );
+
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Failed,
+    )
+    .await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Warning,
+    )
+    .await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+
+    // Only the warning and the failure count - the success is not reviewable.
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
+            .await
+            .unwrap(),
+        2
+    );
+    // A repo the caller may not touch contributes nothing.
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[])
+            .await
+            .unwrap(),
+        0
+    );
+
+    let acknowledged = db::acknowledge_backup_reports_in_repos(&pool, &[repo.id])
+        .await
+        .unwrap();
+    assert_eq!(acknowledged, 2);
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
+            .await
+            .unwrap(),
+        0,
+        "the count must fall to zero once the bulk acknowledge has run"
+    );
+
+    assert_eq!(
+        db::count_unacknowledged_system_events(&pool).await.unwrap(),
+        0
+    );
+    db::insert_system_event(&pool, SystemEventType::RepoSyncFailed, None, "sync failed")
+        .await
+        .unwrap();
+    db::insert_system_event(&pool, SystemEventType::RepoSync, None, "sync ok")
+        .await
+        .unwrap();
+    assert_eq!(
+        db::count_unacknowledged_system_events(&pool).await.unwrap(),
+        1,
+        "only the failed sync is reviewable"
+    );
+
+    db::acknowledge_all_system_events(&pool).await.unwrap();
+    assert_eq!(
+        db::count_unacknowledged_system_events(&pool).await.unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn system_events_acknowledge_round_trip_and_filter(pool: PgPool) {
     db::insert_system_event(
         &pool,

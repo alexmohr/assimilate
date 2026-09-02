@@ -358,19 +358,26 @@ function toggleReport(r: ReportRow): void {
   expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
 
-// Resolves the matching agent without writing any ref until a match is
-// actually found - a background refresh (see `refreshAgent` below) must
-// leave the last-good `agent`/`ambiguousMatches` on screen if this throws
-// or the host briefly drops out of the list, rather than blanking the page.
+// A background refresh (see `refreshAgent` below) must leave the last-good
+// `agent` on screen if this throws or the host briefly drops out of the
+// list, rather than blanking the page - so `agent`/`ambiguousMatches` are
+// only written once a match (or a genuine ambiguity) is confirmed, never on
+// the "not found" path.
 async function fetchAgent(): Promise<void> {
   const agentRows = await listAgents()
+  allAgents.value = agentRows
   const matches = agentRows.filter((m) => m.hostname === props.hostname)
   const domain = routeDomain.value
   let resolved: AgentRow | null
   if (domain !== undefined) {
     resolved = matches.find((m) => (m.domain ?? '') === domain) ?? null
   } else if (matches.length > 1) {
-    allAgents.value = agentRows
+    // The breadcrumb reads `agent.value` directly, outside the template's
+    // v-else-if chain - null it so a background refresh that turns a
+    // previously-resolved single match ambiguous (e.g. a duplicate hostname
+    // appearing) doesn't leave a stale domain hint next to the hostname
+    // while the picker below asks which one is meant.
+    agent.value = null
     ambiguousMatches.value = matches
     return
   } else {
@@ -379,7 +386,6 @@ async function fetchAgent(): Promise<void> {
   if (!resolved) {
     throw new Error(`Agent "${props.hostname}" not found`)
   }
-  allAgents.value = agentRows
   ambiguousMatches.value = []
   agent.value = resolved
   await loadTabData()

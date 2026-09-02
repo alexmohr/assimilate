@@ -2085,6 +2085,41 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
     expect(wrapper.text()).toContain('Host B')
   })
+
+  // Regression test: the reverse transition. If a background refetch turns a
+  // previously-resolved single match ambiguous (a duplicate-hostname agent
+  // appearing elsewhere), the picker takes over correctly - but `agent`
+  // wasn't cleared, so the breadcrumb's domain hint (which reads `agent`
+  // directly, outside the template's picker/agent v-else-if chain) kept
+  // showing the stale domain next to the hostname while the picker below
+  // asked which one was meant.
+  it('clears the stale breadcrumb domain hint once a background refresh turns ambiguous', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [AGENT_A] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.find('.detail-breadcrumb .muted').text()).toBe('(a.example.com)')
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [AGENT_A, AGENT_B] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.find('.detail-breadcrumb .muted').exists()).toBe(false)
+  })
 })
 
 // A failed run has no archive behind it, so clearing it out is admin-only but

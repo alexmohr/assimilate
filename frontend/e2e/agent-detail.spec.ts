@@ -225,8 +225,8 @@ test.describe('Agent detail', () => {
   test('logs tab offers to load more once there are more runs than the first page', async ({
     page,
   }) => {
-    // database-hourly backs up every hour, so db-server-01 has well over 50
-    // runs in the demo seed - the one host guaranteed to exceed the first page.
+    // seed-demo.sh backfills db-server-01's hourly history well past 50 runs,
+    // the one host guaranteed to exceed the Logs tab's first page.
     await openAgent(page, 'db-server-01')
     await page.getByRole('tab', { name: /Logs/ }).click()
     await page.waitForLoadState('networkidle')

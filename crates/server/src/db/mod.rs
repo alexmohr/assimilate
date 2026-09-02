@@ -6340,6 +6340,21 @@ fn acknowledgeable_report_statuses() -> [String; 2] {
     ]
 }
 
+/// The system event types that report a problem, as the bind parameter the
+/// bulk acknowledgment queries pass to `event_type = ANY(..)`.
+///
+/// The system-event counterpart to [`acknowledgeable_report_statuses`], shared
+/// for the same reason: a change to which [`SystemEventType`] variants are
+/// acknowledgeable must reach every query at once rather than depending on
+/// whoever makes it remembering there is more than one call site.
+fn acknowledgeable_system_event_types() -> Vec<String> {
+    SystemEventType::ALL
+        .iter()
+        .filter(|event_type| event_type.is_acknowledgeable())
+        .map(ToString::to_string)
+        .collect()
+}
+
 /// Acknowledges every unacknowledged warning/failed backup report belonging to
 /// one of `repo_ids`, and reports how many rows that touched.
 ///
@@ -6424,11 +6439,7 @@ pub async fn count_unacknowledged_reports_in_repos(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn count_unacknowledged_system_events(pool: &PgPool) -> Result<i64, ApiError> {
-    let acknowledgeable: Vec<String> = SystemEventType::ALL
-        .iter()
-        .filter(|event_type| event_type.is_acknowledgeable())
-        .map(ToString::to_string)
-        .collect();
+    let acknowledgeable = acknowledgeable_system_event_types();
     Ok(sqlx::query_scalar!(
         "SELECT COUNT(*) FROM system_events WHERE acknowledged = false AND event_type = ANY($1)",
         &acknowledgeable,
@@ -6446,11 +6457,7 @@ pub async fn count_unacknowledged_system_events(pool: &PgPool) -> Result<i64, Ap
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn acknowledge_all_system_events(pool: &PgPool) -> Result<u64, ApiError> {
-    let acknowledgeable: Vec<String> = SystemEventType::ALL
-        .iter()
-        .filter(|event_type| event_type.is_acknowledgeable())
-        .map(ToString::to_string)
-        .collect();
+    let acknowledgeable = acknowledgeable_system_event_types();
     Ok(sqlx::query!(
         "UPDATE system_events SET acknowledged = true WHERE acknowledged = false AND event_type = \
          ANY($1)",

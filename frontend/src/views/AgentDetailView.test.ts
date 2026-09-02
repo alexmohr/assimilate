@@ -1961,6 +1961,29 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     expect(wrapper.find('.error-banner').exists()).toBe(false)
     expect(wrapper.find('.detail-name').exists()).toBe(true)
   })
+
+  // Regression test: fetchAgent used to null out `agent.value` as soon as
+  // the current host dropped out of the list, then throw - so a background
+  // refresh where the request itself *succeeds* but this host is no longer
+  // among the results (deleted, or renamed/merged away from another
+  // session) blanked the whole page instead of leaving the last-good data
+  // on screen the way a failed request does.
+  it('keeps showing the last-good agent when a background refetch no longer finds it', async () => {
+    const wrapper = await render()
+    expect(wrapper.find('.detail-name').exists()).toBe(true)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith('background agent refresh failed', expect.any(Error))
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').exists()).toBe(true)
+  })
 })
 
 // Two agents can share an OS hostname if they're in different domains; the
@@ -2033,6 +2056,34 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
     expect(wrapper.text()).toContain('Host B')
     expect(wrapper.text()).not.toContain('Host A')
+  })
+
+  // Regression test: a background refetch never cleared `ambiguousMatches`
+  // once it shrank back to a single match, so if the ambiguity resolved
+  // itself server-side (e.g. one of the duplicate-hostname agents got
+  // merged/deleted from another session) while this page was showing the
+  // picker, the picker stayed on screen forever instead of falling through
+  // to the now-unambiguous agent.
+  it('falls through to the resolved agent once a background refresh clears the ambiguity', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [AGENT_B] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.text()).toContain('Host B')
   })
 })
 

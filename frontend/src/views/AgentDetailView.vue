@@ -358,27 +358,37 @@ function toggleReport(r: ReportRow): void {
   expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
 
+// Resolves the matching agent without writing any ref until a match is
+// actually found - a background refresh (see `refreshAgent` below) must
+// leave the last-good `agent`/`ambiguousMatches` on screen if this throws
+// or the host briefly drops out of the list, rather than blanking the page.
 async function fetchAgent(): Promise<void> {
   const agentRows = await listAgents()
-  allAgents.value = agentRows
   const matches = agentRows.filter((m) => m.hostname === props.hostname)
   const domain = routeDomain.value
+  let resolved: AgentRow | null
   if (domain !== undefined) {
-    agent.value = matches.find((m) => (m.domain ?? '') === domain) ?? null
+    resolved = matches.find((m) => (m.domain ?? '') === domain) ?? null
   } else if (matches.length > 1) {
+    allAgents.value = agentRows
     ambiguousMatches.value = matches
-    agent.value = null
     return
   } else {
-    agent.value = matches[0] ?? null
+    resolved = matches[0] ?? null
   }
-  if (!agent.value) {
+  if (!resolved) {
     throw new Error(`Agent "${props.hostname}" not found`)
   }
+  allAgents.value = agentRows
+  ambiguousMatches.value = []
+  agent.value = resolved
   await loadTabData()
 }
 
 async function loadAgent(): Promise<void> {
+  // Cleared up front (rather than left to `fetchAgent`) so a hostname/domain
+  // change doesn't briefly show the *previous* host's stale disambiguation
+  // picker while this fresh load is still in flight behind the spinner.
   ambiguousMatches.value = []
   await run(fetchAgent)
 }

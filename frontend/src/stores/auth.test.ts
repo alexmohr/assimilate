@@ -175,6 +175,57 @@ describe('auth store - TOTP flow', () => {
   })
 })
 
+describe('auth store - isAdmin', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  async function loadMe(role: string): Promise<ReturnType<typeof useAuthStore>> {
+    const { apiClient } = await import('../api/client')
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: { ...defaultMeUser, role },
+    })
+    const store = useAuthStore()
+    await store.fetchMe()
+    return store
+  }
+
+  it('recognises a user whose only role is admin', async () => {
+    expect((await loadMe('admin')).isAdmin).toBe(true)
+  })
+
+  // The server joins every role a user holds into one comma-separated field,
+  // so whole-string equality would deny admin affordances to an admin who also
+  // holds a second role - and the backend would still accept their requests.
+  it('recognises an admin who also holds another role', async () => {
+    expect((await loadMe('admin,operator')).isAdmin).toBe(true)
+  })
+
+  it('recognises admin regardless of its position in the list', async () => {
+    expect((await loadMe('operator,admin')).isAdmin).toBe(true)
+  })
+
+  it('tolerates whitespace around the joined role names', async () => {
+    expect((await loadMe('operator, admin')).isAdmin).toBe(true)
+  })
+
+  it('does not treat a non-admin role as admin', async () => {
+    expect((await loadMe('operator')).isAdmin).toBe(false)
+  })
+
+  // A custom role merely containing "admin" as a substring is not the built-in
+  // admin role, which whole-string equality got right and a naive
+  // `includes()` would not.
+  it('does not treat a custom role containing "admin" as admin', async () => {
+    expect((await loadMe('administrator,viewer')).isAdmin).toBe(false)
+  })
+
+  it('is false before any user is loaded', () => {
+    expect(useAuthStore().isAdmin).toBe(false)
+  })
+})
+
 describe('auth store - session lifecycle', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

@@ -50,6 +50,11 @@ export function systemEventTone(severity: SystemEventSeverity): BadgeTone {
       return 'danger'
     case 'info':
       return 'info'
+    // Exhaustive over the current union, so this is unreachable at compile
+    // time. It guards the deploy-skew case instead: a tab left open while the
+    // server gains a new severity would otherwise render an undefined tone.
+    default:
+      return 'neutral'
   }
 }
 

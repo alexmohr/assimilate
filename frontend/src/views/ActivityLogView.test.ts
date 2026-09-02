@@ -1057,12 +1057,40 @@ describe('ActivityLogView', () => {
       expect(loadMore).toBeDefined()
     })
 
-    it('does not show Load more when data is fewer than page size', async () => {
-      setupDefaultMocks()
+    it('does not re-probe the outstanding counts when paging further back', async () => {
+      // Paging into history cannot change what is still outstanding, so the
+      // extra round trip would be pure waste. A filter change still re-probes,
+      // because another session may have acknowledged something meanwhile.
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/agents') return Promise.resolve({ data: AGENTS })
+        if (url === '/stats/activity')
+          return Promise.resolve({
+            data: Array.from({ length: 50 }, (_, i) => ({ ...ACTIVITY_ROWS[0], id: i + 1 })),
+          })
+        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+        if (url === '/stats/activity/outstanding') return Promise.resolve(outstandingResponse(2, 1))
+        return Promise.resolve({ data: [] })
+      })
+
       const wrapper = mountView()
       await flushPromises()
 
-      expect(wrapper.findAll('button').some((b) => b.text() === 'Load more')).toBe(false)
+      const outstandingCalls = (): number =>
+        mockGet.mock.calls.filter((call) => call[0] === '/stats/activity/outstanding').length
+      const afterMount = outstandingCalls()
+      expect(afterMount).toBeGreaterThan(0)
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Load more')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(outstandingCalls()).toBe(afterMount)
+
+      await setAcknowledgedFilter(wrapper, 'all')
+
+      expect(outstandingCalls()).toBeGreaterThan(afterMount)
     })
   })
 

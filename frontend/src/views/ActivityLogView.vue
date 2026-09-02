@@ -337,7 +337,9 @@ async function fetchData(reset: boolean, preserveExpanded = false): Promise<void
           : systemEvents.value.length
     hasMore.value = totalFetched >= limit
     offset.value += PAGE_SIZE
-    await refreshOutstanding()
+    // Only on a reset. Paging further into history cannot change what is
+    // still outstanding, so "Load more" has nothing to re-probe.
+    if (reset) await refreshOutstanding()
   } finally {
     loading.value = false
     loadingMore.value = false

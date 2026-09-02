@@ -7419,6 +7419,116 @@ async fn acknowledge_all_leaves_repos_the_caller_may_not_touch_alone() {
     assert_eq!(unacknowledged, 1);
 }
 
+/// `acknowledge_scope` re-derives `check_repo_permission(.., |p|
+/// p.can_modify_schedules)`'s rule rather than calling it, so that the bulk
+/// endpoints can resolve the whole reach in two queries instead of one per
+/// repository. That trade buys speed at the cost of a rule living in two
+/// places, so this pins the two against each other on one fixture: for every
+/// repository, the bulk endpoint acknowledges it if and only if the per-entry
+/// endpoint would have let the same caller acknowledge it alone. A future
+/// change to either rule that does not reach the other fails here.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn bulk_and_per_entry_acknowledge_agree_on_who_may_touch_what() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "agreement-granted-repo").await;
+    let view_only_repo = insert_test_repo(&pool, "agreement-view-only-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "agreement-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('agreement-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // A grant that carries can_modify_schedules, and one that deliberately
+    // does not - the case a `can_view_all_repos`-style view permission
+    // produces, which must not widen either path.
+    for (repo_id, can_modify) in [(granted_repo, true), (view_only_repo, false)] {
+        sqlx::query(
+            "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) \
+             VALUES ($1, $2, true, $3)",
+        )
+        .bind(user_id)
+        .bind(repo_id)
+        .bind(can_modify)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // One failed report per repository, kept so we can ask the per-entry
+    // endpoint about each one individually.
+    let mut report_ids = Vec::new();
+    for repo_id in [granted_repo, view_only_repo, ungranted_repo] {
+        let report_id: i64 = sqlx::query_scalar(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW(), NOW(), 'failed', true) RETURNING id",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        report_ids.push((repo_id, report_id));
+    }
+
+    // What the per-entry endpoint (check_repo_permission) allows, one at a time.
+    let mut per_entry_allows = Vec::new();
+    for (repo_id, report_id) in &report_ids {
+        let req = non_admin_post_request_without_body(&format!(
+            "/api/stats/activity/{report_id}/acknowledge"
+        ));
+        let status = oneshot(&mut app, req).await.status();
+        assert!(
+            status == StatusCode::NO_CONTENT || status == StatusCode::FORBIDDEN,
+            "unexpected per-entry status {status} for repo {repo_id}"
+        );
+        per_entry_allows.push((*repo_id, status == StatusCode::NO_CONTENT));
+    }
+    assert_eq!(
+        per_entry_allows,
+        vec![
+            (granted_repo, true),
+            (view_only_repo, false),
+            (ungranted_repo, false)
+        ],
+        "per-entry acknowledge must follow the can_modify_schedules grant"
+    );
+
+    // Reset, then let the bulk endpoint decide the same question in one go.
+    sqlx::query("UPDATE backup_reports SET acknowledged = false")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let req = non_admin_post_request_without_body("/api/stats/activity/acknowledge-all");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let mut bulk_allows: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT repo_id, acknowledged FROM backup_reports ORDER BY repo_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    bulk_allows.sort_by_key(|(repo_id, _)| *repo_id);
+    let mut expected = per_entry_allows.clone();
+    expected.sort_by_key(|(repo_id, _)| *repo_id);
+    assert_eq!(
+        bulk_allows, expected,
+        "acknowledge_scope and check_repo_permission must agree on every repository"
+    );
+}
+
 /// The realistic middle case between the two extremes the other bulk tests
 /// cover: a non-admin holding `can_modify_schedules` on one repository but not
 /// on another that also has outstanding reports. This is the

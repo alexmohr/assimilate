@@ -9,4 +9,8 @@ export type ReportListResponse = {
    * reports.
    */
   reports: Array<ReportResponse>;
+  /**
+   * Total number of matching reports, ignoring `limit`/`offset`.
+   */
+  total: number;
 };

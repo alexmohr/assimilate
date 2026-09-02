@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS schedule_name, br.started_at, br.finished_at, br.status, br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+  "query": "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS schedule_name, br.started_at, br.finished_at, br.status, br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at DESC LIMIT $2 OFFSET $3",
   "describe": {
     "columns": [
       {
@@ -107,6 +107,7 @@
     "parameters": {
       "Left": [
         "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -133,5 +134,5 @@
       true
     ]
   },
-  "hash": "1ce095c301be63652c308fb8f3d9c0c0c4794e68461314adc5c7f4d029c39e37"
+  "hash": "e2ed71f67920cb1f0094dff3dee88a4f634d7ae5b988646c1d7ed48a57da9e7c"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*) FROM backup_reports WHERE agent_id = $1",
+  "query": "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       null
     ]
   },
-  "hash": "88e574adceae2340b0aa9fcec0aeb356db48ef4d3ae3f911c13458796450ae1c"
+  "hash": "a726eddea7450659fdde03fa23c9b9c229e40e91ddba8455eaf27cdf5a4e3a06"
 }

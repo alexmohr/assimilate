@@ -48,11 +48,16 @@ import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 import AgentHeader from '../components/AgentHeader.vue'
 import AgentOverviewTab, { type LiveBackup } from '../components/AgentOverviewTab.vue'
 import AgentSchedulesTab from '../components/AgentSchedulesTab.vue'
-import AgentBackupsTab, { type BackupFilter } from '../components/AgentBackupsTab.vue'
+import AgentArchivesTab from '../components/AgentArchivesTab.vue'
+import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import AgentSettingsTab from '../components/AgentSettingsTab.vue'
+import { useReportsPager } from '../composables/useReportsPager'
 
 /**
- * An agent's detail page: a persistent header, then four tabs.
+ * An agent's detail page: a persistent header, then five tabs. Backups is
+ * the archive browser - the same one a schedule's own Backups tab renders -
+ * kept separate from Logs, which is the flat run history (any status,
+ * expandable warnings/errors) that used to live under Backups here.
  *
  * Settings is a tab rather than a separate route because every other detail
  * view in the app drives its sections off `route.query.tab`, and a route
@@ -60,11 +65,15 @@ import AgentSettingsTab from '../components/AgentSettingsTab.vue'
  * layout exists to shrink. Settings is self-contained either way, so
  * promoting it later is a router change and nothing else.
  */
-type TabId = 'overview' | 'schedules' | 'backups' | 'settings'
+type TabId = 'overview' | 'schedules' | 'backups' | 'logs' | 'settings'
 
 function isTabId(value: unknown): value is TabId {
   return (
-    value === 'overview' || value === 'schedules' || value === 'backups' || value === 'settings'
+    value === 'overview' ||
+    value === 'schedules' ||
+    value === 'backups' ||
+    value === 'logs' ||
+    value === 'settings'
   )
 }
 
@@ -103,10 +112,18 @@ const routeDomain = computed<string | undefined>(() =>
 )
 const repos = ref<Repo[]>([])
 const schedules = ref<ScheduleRow[]>([])
-const reports = ref<ReportRow[]>([])
+const reportsPager = useReportsPager((limit, offset) => {
+  if (!agent.value) return Promise.resolve({ reports: [], total: 0 })
+  return listAgentReports(agent.value.hostname, { limit, offset }, agent.value.domain)
+})
+const reports = reportsPager.reports
 const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const { loading, error, run } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
+
+function loadMoreReports(): void {
+  void reportsPager.loadMore()
+}
 
 const agentSchedules = computed(() => {
   const hostname = agent.value?.hostname
@@ -114,14 +131,16 @@ const agentSchedules = computed(() => {
 })
 
 /**
- * Every tab carries its tally, including zero. On an imported host the empty
- * Schedules tab is the point: it says why there is nothing there and how to
- * change that, which a hidden tab cannot.
+ * Every tab carries its tally, including zero, except Backups: the true
+ * archive count isn't known until each repository section has loaded, so
+ * showing one up front would either lag or undercount - the same reasoning
+ * that already keeps a schedule's own Backups tab uncounted.
  */
 const tabs = computed<TabOption<TabId>[]>(() => [
   { id: 'overview', label: 'Overview' },
   { id: 'schedules', label: 'Schedules', count: agentSchedules.value.length },
-  { id: 'backups', label: 'Backups', count: reports.value.length },
+  { id: 'backups', label: 'Backups' },
+  { id: 'logs', label: 'Logs', count: reportsPager.total.value },
   { id: 'settings', label: 'Settings' },
 ])
 
@@ -367,7 +386,7 @@ function openReport(r: ReportRow): void {
 
 /**
  * The other half of a preview row: a failed or warned run has no archive to
- * browse, so it lands on its own row in the Backups tab with the output
+ * browse, so it lands on its own row in the Logs tab with the output
  * already open. Stays on this page - `?report=` is picked up by the watch
  * below - rather than pushing a second copy of the run somewhere else.
  *
@@ -375,7 +394,7 @@ function openReport(r: ReportRow): void {
  * dropped: they select a run of their own, and the one asked for here wins.
  */
 function openReportDetail(r: ReportRow): void {
-  const query: LocationQueryRaw = { ...route.query, tab: 'backups', report: String(r.id) }
+  const query: LocationQueryRaw = { ...route.query, tab: 'logs', report: String(r.id) }
   delete query.status
   delete query.archive
   router.push({ query })
@@ -494,17 +513,16 @@ async function loadTabData(): Promise<void> {
     })
     .catch((e: unknown) => logger.error('countFailedReports failed', e))
   try {
-    const [repoRows, scheduleRows, reportRows, healthRows] = await Promise.all([
+    const [repoRows, scheduleRows, , healthRows] = await Promise.all([
       listAgentRepos(hostname, agent.value.domain),
       listSchedules(),
-      listAgentReports(hostname, undefined, agent.value.domain),
+      reportsPager.load(),
       getScheduleHealth(),
     ])
     repos.value = repoRows
     schedules.value = scheduleRows
-    reports.value = reportRows
     scheduleHealth.value = healthRows.filter((h) => h.hostname === hostname)
-    const runningReports = reportRows.filter((r) => {
+    const runningReports = reports.value.filter((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'
     })
@@ -935,16 +953,26 @@ watch(wsStatus, (newStatus, oldStatus) => {
           @open="navigateToSchedule"
         />
 
-        <AgentBackupsTab
-          v-else-if="activeTab === 'backups'"
+        <AgentArchivesTab
+          v-else-if="activeTab === 'backups' && agent"
+          :hostname="agent.hostname"
+          :repos="repos"
+          :is-admin="isAdmin"
+        />
+
+        <RunLogTab
+          v-else-if="activeTab === 'logs'"
           v-model:filter="filterStatus"
           v-model:sort-ascending="sortAscending"
           :reports="reports"
+          :total="reportsPager.total.value"
+          :loading-more="reportsPager.loadingMore.value"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="highlightedArchiveName"
           :pinned-report-id="highlightedReportId"
           @toggle="toggleReport"
           @open="openReport"
+          @load-more="loadMoreReports"
         />
 
         <AgentSettingsTab

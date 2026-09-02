@@ -13,9 +13,12 @@ import type { ScheduleRow } from '../types/schedule'
  * The schedule detail page's identity block, shown above the tab strip and so
  * present on every tab. Follows the same grammar as every other detail page:
  * one accented slot for the thing that is actionable right now (Run now /
- * Cancel backup), everything else - Logs and the destructive Delete - behind
- * the overflow menu. Before this, Logs was a trailing tab-strip link and
- * Delete sat in a full-width Danger Zone card below the form.
+ * Cancel backup), everything else - the destructive Delete - behind the
+ * overflow menu. Before this, Logs was a trailing tab-strip link, then an
+ * overflow item pointing at the Activity page; it's a tab of its own now,
+ * the same run history the agent detail page's Logs tab renders, so it no
+ * longer needs a header affordance. Delete used to sit in a full-width
+ * Danger Zone card below the form.
  */
 defineProps<{
   schedule: ScheduleRow
@@ -35,7 +38,6 @@ defineProps<{
 const emit = defineEmits<{
   runNow: []
   cancelBackup: []
-  logs: []
   delete: []
   cleanFailedReports: []
 }>()
@@ -91,14 +93,6 @@ const emit = defineEmits<{
         v-slot="{ run }"
         label="More schedule actions"
       >
-        <button
-          class="overflow-menu-item"
-          role="menuitem"
-          type="button"
-          @click="run(() => emit('logs'))"
-        >
-          Logs
-        </button>
         <button
           v-if="failedReportCount > 0"
           class="overflow-menu-item overflow-menu-item--danger"

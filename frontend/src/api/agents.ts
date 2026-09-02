@@ -12,9 +12,9 @@ import type {
   FailedReportCountResponse,
   HookCommand,
   MergeAgentResponse,
+  ReportListResponse,
 } from '../types/generated'
 import type { Repo } from '../types/repo'
-import type { ReportRow } from '../types/report'
 
 export interface CreateAgentRequest {
   hostname: string
@@ -93,6 +93,7 @@ export interface DeploySshKeyResult {
 
 export interface ListAgentReportsParams {
   limit?: number
+  offset?: number
   target?: string
 }
 
@@ -303,8 +304,8 @@ export async function listAgentReports(
   hostname: string,
   params?: ListAgentReportsParams,
   domain?: string | null,
-): Promise<ReportRow[]> {
-  const response = await apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`, {
+): Promise<ReportListResponse> {
+  const response = await apiClient.get<ReportListResponse>(`/agents/${hostname}/reports`, {
     params: { ...params, ...domainParams(domain) },
   })
   return response.data

@@ -389,16 +389,20 @@ fn dashboard_upcoming_schedules(
 const RUN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
 
 /// When the run following `after` stops being merely late and leaves the
-/// target overdue, per this target's cron expression.
+/// target overdue, per `cron_expression`.
+///
+/// The single definition of "overdue", shared by the dashboard's Needs
+/// Attention finding and the health endpoint, so the two cannot end up
+/// disagreeing about whether the same target is late.
 ///
 /// Returns `None` for a cron expression that will not parse, which keeps a
 /// malformed schedule from being reported as overdue forever.
 fn run_deadline_after(
-    target: &db::dashboard::TargetRow,
+    cron_expression: &str,
     after: chrono::DateTime<Utc>,
     timezone: chrono_tz::Tz,
 ) -> Option<chrono::DateTime<Utc>> {
-    shared::schedule::calculate_next_run(&target.cron_expression, after, timezone)
+    shared::schedule::calculate_next_run(cron_expression, after, timezone)
         .ok()
         .and_then(|expected| expected.checked_add_signed(RUN_GRACE))
 }
@@ -427,7 +431,7 @@ fn acknowledgment_covers_schedule(
     }
     target
         .latest_finished_at
-        .and_then(|reviewed| run_deadline_after(target, reviewed, timezone))
+        .and_then(|reviewed| run_deadline_after(&target.cron_expression, reviewed, timezone))
         .is_some_and(|covered_until| now <= covered_until)
 }
 
@@ -448,9 +452,9 @@ fn target_finding(
     // warning - stay muted until the next run files a fresh report.
     let latest_acknowledged = target.latest_acknowledged == Some(true);
 
-    let overdue_at = target
-        .last_success_at
-        .and_then(|last_success| run_deadline_after(target, last_success, timezone));
+    let overdue_at = target.last_success_at.and_then(|last_success| {
+        run_deadline_after(&target.cron_expression, last_success, timezone)
+    });
 
     let acknowledgment_covers_schedule = acknowledgment_covers_schedule(target, now, timezone);
 
@@ -1183,13 +1187,7 @@ fn is_overdue(
     let Some(cron_expr) = cron_expression else {
         return false;
     };
-    let grace = chrono::Duration::minutes(30);
-    let Ok(expected_next) = shared::schedule::calculate_next_run(cron_expr, last, tz) else {
-        return false;
-    };
-    expected_next
-        .checked_add_signed(grace)
-        .is_some_and(|deadline| Utc::now() > deadline)
+    run_deadline_after(cron_expr, last, tz).is_some_and(|deadline| Utc::now() > deadline)
 }
 
 /// Query parameters for backup trends.
@@ -2143,6 +2141,56 @@ mod tests {
         )
         .expect("expected a schedule_target_never_succeeded finding");
 
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetNeverSucceeded);
+    }
+
+    /// The never-succeeded branch shares `acknowledgment_covers_schedule` with
+    /// the overdue one, so it needs the same three cases: muted right after a
+    /// review, still muted while the next run is ahead, and back once that run
+    /// has come and gone with nothing filed.
+    fn never_succeeded_target(reviewed_ago: chrono::Duration) -> crate::db::dashboard::TargetRow {
+        let mut target = base_target_row();
+        target.last_success_at = None;
+        target.schedule_last_run_at = Some(chrono::Utc::now());
+        target.latest_failed = Some(true);
+        target.latest_acknowledged = Some(true);
+        target.latest_finished_at = chrono::Utc::now().checked_sub_signed(reviewed_ago);
+        target
+    }
+
+    #[test]
+    fn acknowledging_a_failure_also_mutes_the_never_succeeded_state_it_left_behind() {
+        let target = never_succeeded_target(chrono::Duration::minutes(1));
+        let (now, due_soon) = now_and_due_soon();
+
+        assert!(
+            super::target_finding(
+                &target,
+                &std::collections::HashSet::new(),
+                now,
+                due_soon,
+                chrono_tz::UTC,
+            )
+            .is_none(),
+            "a freshly acknowledged failure must not leave the never-succeeded finding behind"
+        );
+    }
+
+    #[test]
+    fn a_never_succeeded_target_comes_back_once_the_acknowledgment_stops_covering_it() {
+        // Reviewed a month ago on a daily schedule, and still nothing has ever
+        // succeeded - the target has to be visible again.
+        let target = never_succeeded_target(chrono::Duration::days(30));
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("a target that has still never succeeded must come back to the panel");
         assert_eq!(finding.kind, FindingKind::ScheduleTargetNeverSucceeded);
     }
 

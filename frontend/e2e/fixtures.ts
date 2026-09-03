@@ -181,14 +181,24 @@ export async function mockScheduleOnePatch(
 // seeded by the demo) into /api/stats/dashboard-overview's running_operations, so
 // tests can force the agent list's "Running" pill to render without waiting for a
 // real backup to start.
+//
+// The demo seeds a real, never-resolving `started` backup_reports row for this
+// exact schedule/agent/repo (see seed-demo.sh) so the dashboard has something to
+// show even when no test has triggered a real backup - so the real API response
+// this mock builds on may already contain an entry for schedule 1. Replace it
+// rather than appending, or a real entry plus this synthetic one both matching
+// schedule_id 1 makes every `.active-backup-schedule` locator resolve to two
+// elements instead of one.
 export async function mockRunningBackupOperation(page: Page): Promise<void> {
   await page.route(
     (url) => url.pathname === '/api/stats/dashboard-overview',
     async (route) => {
       const response = await route.fetch()
-      const overview = (await response.json()) as { running_operations: unknown[] }
+      const overview = (await response.json()) as {
+        running_operations: Array<{ schedule_id: unknown }>
+      }
       overview.running_operations = [
-        ...overview.running_operations,
+        ...overview.running_operations.filter((op) => op.schedule_id !== 1),
         {
           report_id: 999_999,
           status: 'started',

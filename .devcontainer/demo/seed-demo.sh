@@ -428,7 +428,7 @@ SQL
 # the same repository, not merely the same storage host: every demo repo lives
 # on localhost, so a host-keyed warning would fire for every pair of runs on
 # the page and say nothing.
-api POST "/api/schedules" "{
+WEB01_COLLIDING_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"name\": \"Colliding daily window\",
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -439,7 +439,7 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/etc\"]
-}" > /dev/null
+}" | jq -r '.id')
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 UPDATE schedules
@@ -889,11 +889,18 @@ echo "==> Seeding an in-progress run on web-server-01..."
 # finished_at mirrors started_at as a placeholder, matching how
 # db::insert_backup_started's own INSERT sets both to the same timestamp for
 # a row that has not actually finished yet - status is what's authoritative.
+# Deliberately attributed to the "Colliding daily window" schedule rather than
+# WEB01_DAILY_SCHEDULE_ID (schedule 1): nothing ever resolves this row to a
+# terminal status (it's not a real backup, so no agent reconnect or same-repo
+# dispatch will trigger the cleanup paths that do that), so it sits at
+# 'started' for the life of the demo container. Several e2e specs navigate to
+# schedule 1 expecting a clean report history (see backup-lifecycle.spec.ts's
+# openFirstSchedule comment) - schedule 1 must stay free of it.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
 INSERT INTO backup_reports
     (agent_id, repo_id, schedule_id, started_at, finished_at, status)
 VALUES (
-    $WEB01_ID, $REPO_DAILY_ID, $WEB01_DAILY_SCHEDULE_ID,
+    $WEB01_ID, $REPO_DAILY_ID, $WEB01_COLLIDING_SCHEDULE_ID,
     NOW() - interval '90 seconds',
     NOW() - interval '90 seconds',
     'started'

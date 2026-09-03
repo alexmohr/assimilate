@@ -20,6 +20,7 @@ use shared::{
         AgentConfig, BORG_REPO_ENV_KEY, BorgEncryption, DryRunFile, RepoConfig, RepoId,
         build_repo_url,
     },
+    vm::VmSnapshotConfig,
 };
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
@@ -31,6 +32,7 @@ use crate::{
     backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult},
     borg::Borg,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
+    vm::VmStager,
 };
 
 pub enum ExecutorCommand {
@@ -42,6 +44,9 @@ pub enum ExecutorCommand {
     },
     CancelBackup {
         repo_id: RepoId,
+    },
+    ScanVms {
+        request_id: Option<String>,
     },
     RunCheckNow {
         repo_id: RepoId,
@@ -126,6 +131,9 @@ impl Executor {
                 } => {
                     self.handle_run_now(repo_id, schedule_id, run_id, &outbound_tx)
                         .await;
+                }
+                ExecutorCommand::ScanVms { request_id } => {
+                    self.handle_scan_vms(request_id, &outbound_tx).await;
                 }
                 ExecutorCommand::RunCheckNow { repo_id } => {
                     self.handle_run_check(repo_id, &outbound_tx).await;
@@ -228,7 +236,12 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.agent_hostname, schedule_id);
+        let target = backup_target_from_repo(
+            repo,
+            &config.agent_hostname,
+            schedule_id,
+            &config.vm_snapshot,
+        );
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.agent_hostname.clone();
         drop(config_guard);
@@ -306,6 +319,40 @@ impl Executor {
         }
     }
 
+    /// Reports which domains this host has, in answer to a scan request. A
+    /// host with staging switched off still answers: the operator is usually
+    /// scanning precisely because they are about to switch it on.
+    async fn handle_scan_vms(
+        &self,
+        request_id: Option<String>,
+        outbound_tx: &mpsc::Sender<AgentToServer>,
+    ) {
+        let config = self
+            .current_config
+            .lock()
+            .await
+            .as_ref()
+            .map_or_else(VmSnapshotConfig::default, |config| {
+                config.vm_snapshot.clone()
+            });
+
+        let (vms, error) = match VmStager::new(config).scan().await {
+            Ok(vms) => (vms, None),
+            Err(e) => {
+                warn!("Virtual machine scan failed: {e}");
+                (Vec::new(), Some(e.to_string()))
+            }
+        };
+
+        let _ = outbound_tx
+            .send(AgentToServer::VmScanResult {
+                request_id,
+                vms,
+                error,
+            })
+            .await;
+    }
+
     async fn handle_run_check(&self, repo_id: RepoId, outbound_tx: &mpsc::Sender<AgentToServer>) {
         let config_guard = self.current_config.lock().await;
         let Some(config) = config_guard.as_ref() else {
@@ -318,7 +365,8 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
+        let target =
+            backup_target_from_repo(repo, &config.agent_hostname, None, &config.vm_snapshot);
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.agent_hostname.clone();
         drop(config_guard);
@@ -367,7 +415,8 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
+        let target =
+            backup_target_from_repo(repo, &config.agent_hostname, None, &config.vm_snapshot);
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.agent_hostname.clone();
         drop(config_guard);
@@ -516,7 +565,12 @@ impl Executor {
 
         let backup_sources = schedule.backup_sources.clone();
         let exclude_patterns = schedule.exclude_patterns.clone();
-        let target = backup_target_from_repo(repo, &config.agent_hostname, Some(schedule_id));
+        let target = backup_target_from_repo(
+            repo,
+            &config.agent_hostname,
+            Some(schedule_id),
+            &config.vm_snapshot,
+        );
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.agent_hostname.clone();
         drop(config_guard);
@@ -598,7 +652,8 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
+        let target =
+            backup_target_from_repo(repo, &config.agent_hostname, None, &config.vm_snapshot);
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.agent_hostname.clone();
         drop(config_guard);
@@ -675,7 +730,8 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
+        let target =
+            backup_target_from_repo(repo, &config.agent_hostname, None, &config.vm_snapshot);
         let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.agent_hostname.clone();
         drop(config_guard);
@@ -984,6 +1040,27 @@ async fn run_backup_task(
         tracing::debug!(error = %e, "outbound send failed");
     }
 
+    // Virtual machines are staged before borg runs, so the archive holds the
+    // images this run produced. A domain that could not be staged fails the
+    // backup: an archive that quietly holds last night's image is worse than a
+    // run the operator is told about.
+    if let Some(vm_config) = target.vm_snapshot.clone()
+        && let Err(reason) = stage_virtual_machines(vm_config, schedule_id, outbound_tx).await
+    {
+        error!(repo_id = ?repo_id, reason = %reason, "virtual machine staging failed");
+        report_backup_failure(
+            repo_id,
+            schedule_id,
+            started_at,
+            reason,
+            run_id,
+            borg_command,
+            outbound_tx,
+        )
+        .await;
+        return;
+    }
+
     let _ssh_forward = setup_ssh_forward(&mut target, &hostname, &server_url, &token).await;
 
     let canary = if target.canary_enabled {
@@ -1050,6 +1127,72 @@ async fn run_backup_task(
     if let Some(canary) = &canary {
         send_canary_result(repo_id, canary.nonce.clone(), canary_result, outbound_tx).await;
         BackupEngine::cleanup_canary(canary).await;
+    }
+}
+
+/// Reports a backup that failed before borg was even reached, so the run shows
+/// up with its reason instead of silently never finishing.
+async fn report_backup_failure(
+    repo_id: RepoId,
+    schedule_id: Option<i64>,
+    started_at: chrono::DateTime<Utc>,
+    reason: String,
+    run_id: Option<String>,
+    borg_command: String,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+) {
+    let report = make_failed_report(
+        repo_id,
+        schedule_id,
+        started_at,
+        reason,
+        run_id,
+        Some(borg_command),
+    );
+    if let Err(e) = outbound_tx
+        .send(AgentToServer::BackupCompleted { report })
+        .await
+    {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+}
+
+/// Stages this host's domains and reports what happened to each. Returns the
+/// reason the backup must not go ahead, when a domain failed.
+async fn stage_virtual_machines(
+    config: shared::vm::VmSnapshotConfig,
+    schedule_id: Option<i64>,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+) -> Result<(), String> {
+    info!("Staging virtual machines into {}", config.staging_dir);
+    let outcomes = VmStager::new(config).stage_all().await;
+
+    let failures: Vec<String> = outcomes
+        .iter()
+        .filter_map(|outcome| {
+            outcome
+                .error
+                .as_ref()
+                .map(|error| format!("{}: {error}", outcome.name))
+        })
+        .collect();
+
+    let msg = AgentToServer::VmSnapshotReport {
+        schedule_id,
+        outcomes,
+    };
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "could not stage {} virtual machine(s): {}",
+            failures.len(),
+            failures.join("; ")
+        ))
     }
 }
 
@@ -1175,10 +1318,24 @@ pub fn backup_target_from_repo(
     repo: &RepoConfig,
     hostname: &str,
     schedule_id: Option<i64>,
+    vm_snapshot: &VmSnapshotConfig,
 ) -> BackupTarget {
     let schedule = schedule_id
         .and_then(|id| repo.schedules.iter().find(|s| s.id == id))
         .or_else(|| repo.schedules.first());
+    // Staging needs both halves: the schedule opting in, and the host having
+    // it switched on at all.
+    let stages_vms = schedule.is_some_and(|s| s.vm_snapshot_enabled) && vm_snapshot.enabled;
+    let mut backup_sources = schedule.map_or_else(Vec::new, |s| s.backup_sources.clone());
+    // The staging directory is part of the backup by virtue of staging, so the
+    // operator never has to remember to list it as a source.
+    if stages_vms
+        && !backup_sources
+            .iter()
+            .any(|source| source == &vm_snapshot.staging_dir)
+    {
+        backup_sources.push(vm_snapshot.staging_dir.clone());
+    }
     BackupTarget {
         target_name: repo.name.clone(),
         schedule_id: schedule.map(|s| s.id),
@@ -1191,7 +1348,7 @@ pub fn backup_target_from_repo(
         passphrase: repo.passphrase.clone(),
         hostname: hostname.to_owned(),
         compression: repo.compression.clone(),
-        backup_sources: schedule.map_or_else(Vec::new, |s| s.backup_sources.clone()),
+        backup_sources,
         rate_limit_kbps: schedule.and_then(|s| s.rate_limit_kbps),
         keep_hourly: schedule.map_or(24, |s| s.keep_hourly),
         keep_daily: schedule.map_or(7, |s| s.keep_daily),
@@ -1199,6 +1356,7 @@ pub fn backup_target_from_repo(
         keep_monthly: schedule.map_or(6, |s| s.keep_monthly),
         keep_yearly: schedule.map_or(0, |s| s.keep_yearly),
         compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
+        vm_snapshot: stages_vms.then(|| vm_snapshot.clone()),
         pre_backup_commands: schedule.map_or_else(Vec::new, |s| s.pre_backup_commands.clone()),
         post_backup_commands: schedule.map_or_else(Vec::new, |s| s.post_backup_commands.clone()),
         hook_timeout_seconds: schedule.map_or(60, |s| s.hook_timeout_seconds),
@@ -1800,6 +1958,7 @@ mod tests {
             backup_sources: sources.into_iter().map(str::to_owned).collect(),
             rate_limit_kbps: None,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns: Vec::new(),
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -1838,7 +1997,7 @@ mod tests {
             make_schedule(10, vec!["/var"]),
             make_schedule(20, vec!["/home"]),
         ]);
-        let target = backup_target_from_repo(&repo, "hostname", None);
+        let target = backup_target_from_repo(&repo, "hostname", None, &VmSnapshotConfig::default());
         assert_eq!(target.backup_sources, vec!["/var"]);
     }
 
@@ -1848,7 +2007,8 @@ mod tests {
             make_schedule(10, vec!["/var"]),
             make_schedule(20, vec!["/home"]),
         ]);
-        let target = backup_target_from_repo(&repo, "hostname", Some(20));
+        let target =
+            backup_target_from_repo(&repo, "hostname", Some(20), &VmSnapshotConfig::default());
         assert_eq!(target.backup_sources, vec!["/home"]);
     }
 
@@ -1858,7 +2018,8 @@ mod tests {
             make_schedule(10, vec!["/var"]),
             make_schedule(20, vec!["/home"]),
         ]);
-        let target = backup_target_from_repo(&repo, "hostname", Some(99));
+        let target =
+            backup_target_from_repo(&repo, "hostname", Some(99), &VmSnapshotConfig::default());
         assert_eq!(target.backup_sources, vec!["/var"]);
     }
 
@@ -1868,6 +2029,7 @@ mod tests {
             &make_repo(vec![make_schedule(10, vec!["/var"])]),
             "hostname",
             None,
+            &VmSnapshotConfig::default(),
         );
         let known_hosts = write_known_hosts(&mut target).unwrap().unwrap();
         let env = build_borg_env(&target);
@@ -1886,6 +2048,7 @@ mod tests {
             &make_repo(vec![make_schedule(10, vec!["/var"])]),
             "hostname",
             None,
+            &VmSnapshotConfig::default(),
         );
         target.ssh_port = 2222;
 
@@ -1898,8 +2061,9 @@ mod tests {
     #[test]
     fn repo_operation_key_is_based_on_physical_repo_location() {
         let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
-        let first = backup_target_from_repo(&repo, "hostname", None);
-        let second = backup_target_from_repo(&repo, "hostname", Some(10));
+        let first = backup_target_from_repo(&repo, "hostname", None, &VmSnapshotConfig::default());
+        let second =
+            backup_target_from_repo(&repo, "hostname", Some(10), &VmSnapshotConfig::default());
 
         assert_eq!(
             RepoOperationKey::from_backup_target(&first),
@@ -1925,13 +2089,18 @@ mod tests {
         let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
         let config = shared::types::AgentConfig {
             agent_hostname: "hostname".to_owned(),
+            vm_snapshot: VmSnapshotConfig::default(),
             skip_targets: Vec::new(),
             repos: vec![repo.clone()],
         };
         *executor.current_config.lock().await = Some(config);
 
-        let repo_key =
-            RepoOperationKey::from_backup_target(&backup_target_from_repo(&repo, "hostname", None));
+        let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
+            &repo,
+            "hostname",
+            None,
+            &VmSnapshotConfig::default(),
+        ));
         let repo_queue = executor.repo_operation_queue(&repo_key).await;
         let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
 
@@ -1956,6 +2125,7 @@ mod tests {
         let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
         let config = shared::types::AgentConfig {
             agent_hostname: "hostname".to_owned(),
+            vm_snapshot: VmSnapshotConfig::default(),
             skip_targets: Vec::new(),
             repos: vec![repo.clone()],
         };
@@ -1982,8 +2152,12 @@ mod tests {
     async fn repo_operation_queue_serializes_tasks() {
         let executor = Executor::new("ws://localhost", "token", TaskRegistry::default());
         let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
-        let repo_key =
-            RepoOperationKey::from_backup_target(&backup_target_from_repo(&repo, "hostname", None));
+        let repo_key = RepoOperationKey::from_backup_target(&backup_target_from_repo(
+            &repo,
+            "hostname",
+            None,
+            &VmSnapshotConfig::default(),
+        ));
         let repo_queue = executor.repo_operation_queue(&repo_key).await;
         let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
         let (tx, mut rx) = mpsc::channel(1);

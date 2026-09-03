@@ -136,6 +136,9 @@ pub struct CreateScheduleRequest {
     pub enabled: Option<bool>,
     /// Whether canary backups are enabled (defaults to true).
     pub canary_enabled: Option<bool>,
+    /// Whether this schedule stages the host's virtual machines before
+    /// backing up. Requires the host itself to have staging enabled.
+    pub vm_snapshot_enabled: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Whether to ignore global excludes.
@@ -193,6 +196,9 @@ pub struct UpdateScheduleRequest {
     pub enabled: Option<bool>,
     /// Whether canary backups are enabled.
     pub canary_enabled: Option<bool>,
+    /// Whether this schedule stages the host's virtual machines before
+    /// backing up. Requires the host itself to have staging enabled.
+    pub vm_snapshot_enabled: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Whether to ignore global excludes.
@@ -356,6 +362,7 @@ pub async fn create_schedule(
         cron_expression: &req.cron_expression,
         enabled,
         canary_enabled: req.canary_enabled.unwrap_or(true),
+        vm_snapshot_enabled: req.vm_snapshot_enabled.unwrap_or(false),
         exclude_patterns_raw: &exclude_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
         keep_hourly: req.keep_hourly.unwrap_or(24),
@@ -532,6 +539,9 @@ pub async fn update_schedule(
         cron_expression: &req.cron_expression,
         enabled,
         canary_enabled: req.canary_enabled.unwrap_or(existing.canary_enabled),
+        vm_snapshot_enabled: req
+            .vm_snapshot_enabled
+            .unwrap_or(existing.vm_snapshot_enabled),
         exclude_patterns_raw: &exclude_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
         keep_hourly: req.keep_hourly.unwrap_or(existing.keep_hourly),
@@ -1601,6 +1611,7 @@ mod tests {
             import_tasks: crate::ImportTaskRegistry::default(),
             pending_dryruns: crate::new_pending_map(),
             pending_restores: crate::new_pending_map(),
+            pending_vm_scans: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),

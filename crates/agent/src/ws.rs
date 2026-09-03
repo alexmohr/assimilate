@@ -202,6 +202,16 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
+        ServerToAgent::ScanVms { request_id } => {
+            info!("Received ScanVms");
+            if exec_cmd_tx
+                .send(ExecutorCommand::ScanVms { request_id })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
         ServerToAgent::RunCheckNow { repo_id, .. } => {
             info!("Received RunCheckNow for repo {repo_id:?}");
             if exec_cmd_tx

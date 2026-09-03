@@ -1,0 +1,97 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agent_vms (agent_id, name, included, limit_bytes) VALUES ($1, $2, $3, $4) ON CONFLICT (agent_id, name) DO UPDATE SET included = EXCLUDED.included, limit_bytes = EXCLUDED.limit_bytes RETURNING id, name, included, limit_bytes, state, mode, disk_count, disk_bytes, staged_bytes, chain_length, last_error, last_scanned_at, last_staged_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "included",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "limit_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "mode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "disk_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "disk_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "staged_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "chain_length",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "last_scanned_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_staged_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "020f6e91b8180d9798aec213bdf7d9419a619f32fb09b040d74a9e21974e0d33"
+}

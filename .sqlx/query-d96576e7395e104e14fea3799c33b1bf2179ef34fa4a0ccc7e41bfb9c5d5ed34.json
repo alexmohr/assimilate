@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agent_vms SET state = 'unknown', mode = 'unknown' WHERE agent_id = $1 AND NOT (name = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d96576e7395e104e14fea3799c33b1bf2179ef34fa4a0ccc7e41bfb9c5d5ed34"
+}

@@ -15,6 +15,8 @@ pub mod run_events;
 pub mod server_quota;
 /// Tag database queries.
 pub mod tags;
+/// Queries for a host's virtual-machine staging settings and its domains.
+pub mod vms;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -462,6 +464,9 @@ pub struct ScheduleRow {
     pub enabled: bool,
     /// Whether canary backups are enabled.
     pub canary_enabled: bool,
+    /// Whether this schedule stages the host's virtual machines before
+    /// backing up. Requires the host itself to have staging enabled.
+    pub vm_snapshot_enabled: bool,
     /// When the schedule last ran.
     pub last_run_at: Option<DateTime<Utc>>,
     /// When the schedule is next due.
@@ -2377,16 +2382,16 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
     let rows = sqlx::query_as!(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
-         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
-         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
-         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
-         s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY(SELECT a.hostname FROM \
-         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
-         ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER \
-         BY s.id",
+         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
+         s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
+         s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
+         s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
+         ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id \
+         WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS \
+         \"target_hostnames!\" FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -2410,6 +2415,8 @@ pub struct ScheduleParams<'a> {
     pub enabled: bool,
     /// Whether canary backups are enabled.
     pub canary_enabled: bool,
+    /// Whether this schedule stages the host's virtual machines first.
+    pub vm_snapshot_enabled: bool,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: &'a str,
     /// Whether to ignore global excludes.
@@ -2458,16 +2465,16 @@ pub async fn insert_schedule(
          canary_enabled, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, \
          keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
          rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, \
-         owner_id, hook_timeout_seconds, missed_backup_threshold) VALUES ($1, $2, $3, $4, $5, $6, \
-         $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, $21, \
-         $22) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, \
-         canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
-         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", hook_timeout_seconds, missed_backup_threshold, execution_mode, \
-         on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+         owner_id, hook_timeout_seconds, missed_backup_threshold, vm_snapshot_enabled) VALUES \
+         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, \
+         'sequential', $19, $20, $21, $22, $23) RETURNING id, repo_id, name, schedule_type, \
+         cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
+         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
+         execution_mode, on_failure, owner_id, visibility, consecutive_failures, \
+         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -2490,6 +2497,7 @@ pub async fn insert_schedule(
         owner_id,
         params.hook_timeout_seconds,
         params.missed_backup_threshold,
+        params.vm_snapshot_enabled,
     )
     .fetch_one(pool)
     .await
@@ -2523,20 +2531,21 @@ pub async fn update_schedule(
          keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = \
          $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, \
          post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, \
-         hook_timeout_seconds = $19, missed_backup_threshold = $20, \
+         hook_timeout_seconds = $19, missed_backup_threshold = $20, vm_snapshot_enabled = $21, \
          auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE \
          auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS \
          DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = \
          CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END, \
          failure_streak_pure_connectivity = CASE WHEN enabled IS DISTINCT FROM $4 THEN true ELSE \
          failure_streak_pure_connectivity END WHERE id = $1 RETURNING id, repo_id, name, \
-         schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
-         exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
-         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
-         execution_mode, on_failure, owner_id, visibility, consecutive_failures, \
-         auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+         schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, \
+         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, \
+         visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\"",
         id,
         params.name,
         params.cron_expression,
@@ -2557,6 +2566,7 @@ pub async fn update_schedule(
         params.on_failure,
         params.hook_timeout_seconds,
         params.missed_backup_threshold,
+        params.vm_snapshot_enabled,
     )
     .fetch_one(pool)
     .await
@@ -3248,13 +3258,13 @@ pub async fn get_schedule_for_repo(
     sqlx::query_as!(
         ScheduleRow,
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
-         hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, \
-         visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
+         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
+         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
+         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
+         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
+         HookCommands\", hook_timeout_seconds, missed_backup_threshold, execution_mode, \
+         on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
         repo_id,
     )
     .fetch_optional(pool)
@@ -3280,16 +3290,16 @@ pub async fn get_schedule_for_hostname_repo(
     sqlx::query_as!(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
-         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
-         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
-         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
-         s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
-         JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
-         s.schedule_type = $3 LIMIT 1",
+         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
+         s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
+         s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
+         s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON \
+         st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND \
+         s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -3309,16 +3319,17 @@ pub async fn list_schedules_for_repo(
     sqlx::query_as!(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
-         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
-         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
-         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
-         s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT \
-         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
-         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \
-         \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
+         s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
+         s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
+         s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
+         COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = \
+         st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), \
+         ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY \
+         s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -3353,15 +3364,15 @@ pub async fn list_schedules_for_agent(
     sqlx::query_as!(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
-         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
-         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-         s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands \
-         AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, \
-         s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
-         WHERE st.agent_id = $1 ORDER by s.id",
+         s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, \
+         s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, \
+         s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
+         s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: \
+         HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
+         s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON \
+         st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3781,13 +3792,13 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
     sqlx::query_as!(
         ScheduleRow,
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
-         hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, \
-         visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE id = $1",
+         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
+         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
+         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
+         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
+         HookCommands\", hook_timeout_seconds, missed_backup_threshold, execution_mode, \
+         on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -8580,13 +8591,13 @@ pub async fn get_enabled_schedules_for_calendar(
     let rows = sqlx::query_as!(
         ScheduleRow,
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
-         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
-         HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
-         hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, \
-         visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\" FROM schedules WHERE enabled = true",
+         vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
+         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
+         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
+         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
+         HookCommands\", hook_timeout_seconds, missed_backup_threshold, execution_mode, \
+         on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

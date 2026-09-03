@@ -26,3 +26,5 @@ pub mod task_registry;
 /// Core domain types (identifiers, hosts, repositories, backup reports, etc.)
 /// used throughout the workspace.
 pub mod types;
+/// Types describing the libvirt/QEMU domains an agent stages before a backup.
+pub mod vm;

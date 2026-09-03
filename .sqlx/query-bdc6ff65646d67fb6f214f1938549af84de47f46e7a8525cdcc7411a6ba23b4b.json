@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM agent_vms WHERE agent_id = $1 AND NOT (name = ANY($2)) AND included AND limit_bytes IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bdc6ff65646d67fb6f214f1938549af84de47f46e7a8525cdcc7411a6ba23b4b"
+}

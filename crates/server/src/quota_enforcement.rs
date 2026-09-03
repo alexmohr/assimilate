@@ -136,6 +136,7 @@ mod tests {
             import_tasks: crate::ImportTaskRegistry::default(),
             pending_dryruns: crate::new_pending_map(),
             pending_restores: crate::new_pending_map(),
+            pending_vm_scans: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
             session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
@@ -183,6 +184,7 @@ mod tests {
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,

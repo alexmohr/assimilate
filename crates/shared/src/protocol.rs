@@ -6,9 +6,12 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
-use crate::types::{
-    AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, RunEventTarget,
-    RunEventType, SearchEntry,
+use crate::{
+    types::{
+        AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, RunEventTarget,
+        RunEventType, SearchEntry,
+    },
+    vm::{DiscoveredVm, VmSnapshotOutcome},
 };
 
 /// The kind of repository operation being performed.
@@ -199,6 +202,13 @@ pub enum ServerToAgent {
     CancelBackup {
         /// The repository whose backup should be cancelled.
         repo_id: RepoId,
+    },
+    /// Ask the agent which libvirt/QEMU domains its host has. Answered with
+    /// [`AgentToServer::VmScanResult`].
+    ScanVms {
+        /// Optional opaque request identifier for correlating the response.
+        #[serde(default)]
+        request_id: Option<String>,
     },
     /// Heartbeat ping to check agent connectivity.
     Ping,
@@ -437,6 +447,27 @@ pub enum AgentToServer {
         schedule_id: Option<i64>,
         /// The log line content.
         line: String,
+    },
+    /// The domains found on the agent's host, in response to
+    /// [`ServerToAgent::ScanVms`].
+    VmScanResult {
+        /// The request identifier from the scan request, when it carried one.
+        #[serde(default)]
+        request_id: Option<String>,
+        /// The domains the host has. Empty when the scan failed.
+        vms: Vec<DiscoveredVm>,
+        /// Why the scan failed, when it did.
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// What a backup's snapshot phase did to each domain. Sent before the
+    /// backup result so the figures shown per domain come from a real run.
+    VmSnapshotReport {
+        /// The schedule whose backup staged these domains, if any.
+        #[serde(default)]
+        schedule_id: Option<i64>,
+        /// One entry per domain the agent tried to stage.
+        outcomes: Vec<VmSnapshotOutcome>,
     },
     /// Response to a server ping.
     Pong,

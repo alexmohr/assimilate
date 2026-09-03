@@ -65,6 +65,9 @@ pub struct BackupTarget {
     pub keep_monthly: u32,
     pub keep_yearly: u32,
     pub compact_enabled: bool,
+    /// How to stage this host's virtual machines before the backup, when the
+    /// schedule opts in and the host has staging enabled.
+    pub vm_snapshot: Option<shared::vm::VmSnapshotConfig>,
     pub pre_backup_commands: Vec<HookCommand>,
     pub post_backup_commands: Vec<HookCommand>,
     pub hook_timeout_seconds: u32,
@@ -98,6 +101,7 @@ impl Default for BackupTarget {
             keep_monthly: 0,
             keep_yearly: 0,
             compact_enabled: false,
+            vm_snapshot: None,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
             hook_timeout_seconds: 60,
@@ -1128,6 +1132,7 @@ mod tests {
             keep_monthly: 6,
             keep_yearly: 0,
             compact_enabled: true,
+            vm_snapshot: None,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
             hook_timeout_seconds: 60,

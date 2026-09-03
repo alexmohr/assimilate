@@ -248,7 +248,7 @@ Everything that configures the agent lives here, behind a sub-nav:
 | Section | Contents |
 |---------|----------|
 | **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, and token regeneration |
-| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request |
+| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
 | **Hostname aliases** | Glob patterns for archive matching (see below) |
 | **Power** | Waking this host and starting the agent process before a backup, admins only — see [Power Management](power-management.md) |
 | **Tags** | Agent tags, for filtering the Agents list |

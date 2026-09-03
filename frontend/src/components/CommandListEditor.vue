@@ -6,26 +6,40 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { X } from '@lucide/vue'
+import { MAX_HOOK_COMMAND_TIMEOUT_SECONDS } from '../utils/hookCommands'
+import type { HookCommand } from '../types/generated'
 
 /**
- * A list of hook commands, each its own resizable multi-line field. One
- * command's contents used to be one line in a single shared textarea, which
- * made a real multi-statement script unreadable and impossible to write. A
- * command is still just a shell string executed via `sh -c`, so a list entry
- * may itself contain newlines - it is a whole script, not a line.
+ * A list of hook commands, each its own resizable multi-line field with its
+ * own optional timeout. One command's contents used to be one line in a single
+ * shared textarea, which made a real multi-statement script unreadable and
+ * impossible to write. A command is still just a shell string executed via
+ * `sh -c`, so a list entry may itself contain newlines - it is a whole script,
+ * not a line.
+ *
+ * The timeout is per command because the alternative - one budget for every
+ * hook on the schedule - has to be set for the slowest of them, which leaves a
+ * genuinely stuck `systemctl stop` sitting for as long as a hypervisor dump
+ * legitimately needs.
  */
 const props = defineProps<{
   placeholder?: string
   /** Accessible name applied to every row's field, since a single `<label
    * for>` can't target a variable-length list of textareas. */
   ariaLabel?: string
+  /** The schedule's hook timeout, shown as the timeout field's placeholder so
+   * an empty field reads as "inherits this" rather than "no timeout". Absent
+   * where the commands are an agent's defaults, which have no one schedule to
+   * inherit from. */
+  defaultTimeoutSeconds?: number
 }>()
 
-const commands = defineModel<string[]>({ required: true })
+const commands = defineModel<HookCommand[]>({ required: true })
 
 interface CommandRow {
   id: number
   value: string
+  timeoutSeconds: number | null
 }
 
 // A plain counter rather than crypto.randomUUID(): the id only needs to be
@@ -36,8 +50,12 @@ interface CommandRow {
 // where randomUUID is undefined and would throw on every mount.
 let nextRowId = 0
 
-function makeRow(value: string): CommandRow {
-  return { id: nextRowId++, value }
+function makeRow(command: HookCommand): CommandRow {
+  return { id: nextRowId++, value: command.command, timeoutSeconds: command.timeout_seconds }
+}
+
+function toCommand(row: CommandRow): HookCommand {
+  return { command: row.value, timeout_seconds: row.timeoutSeconds }
 }
 
 // Keyed on a stable per-row id rather than array index: with an index key,
@@ -46,8 +64,15 @@ function makeRow(value: string): CommandRow {
 // from whichever one the user was actually editing).
 const rows = ref<CommandRow[]>(commands.value.map(makeRow))
 
-function sameContent(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index])
+function sameContent(a: HookCommand[], b: HookCommand[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (command, index) =>
+        command.command === b[index].command &&
+        command.timeout_seconds === b[index].timeout_seconds,
+    )
+  )
 }
 
 // Regenerating `rows` from `commands` always mints fresh row ids, which the
@@ -65,16 +90,15 @@ function sameContent(a: string[], b: string[]): boolean {
 // row too, the same DOM-identity/focus-loss problem the stable per-row id
 // was introduced to prevent in the first place.
 watch(commands, (value) => {
-  if (
-    sameContent(
-      value,
-      rows.value.map((row) => row.value),
-    )
-  )
-    return
-  rows.value = value.map((value, index) =>
-    rows.value[index]?.value === value ? rows.value[index] : makeRow(value),
-  )
+  if (sameContent(value, rows.value.map(toCommand))) return
+  rows.value = value.map((command, index) => {
+    const existing = rows.value[index]
+    const unchanged =
+      existing !== undefined &&
+      existing.value === command.command &&
+      existing.timeoutSeconds === command.timeout_seconds
+    return unchanged ? existing : makeRow(command)
+  })
 })
 
 // Guarded the same way as the watcher above: when `rows` was just
@@ -85,7 +109,7 @@ watch(commands, (value) => {
 watch(
   rows,
   (value) => {
-    const next = value.map((row) => row.value)
+    const next = value.map(toCommand)
     if (sameContent(next, commands.value)) return
     commands.value = next
   },
@@ -93,13 +117,20 @@ watch(
 )
 
 function addCommand(): void {
-  rows.value = [...rows.value, makeRow('')]
+  rows.value = [...rows.value, makeRow({ command: '', timeout_seconds: null })]
 }
 
 function removeCommand(index: number): void {
   const next = [...rows.value]
   next.splice(index, 1)
   rows.value = next
+}
+
+/** An emptied or unparseable field means "inherit", not "no timeout". */
+function updateTimeout(row: CommandRow, event: Event): void {
+  const raw = (event.target as HTMLInputElement).value.trim()
+  const parsed = Number.parseInt(raw, 10)
+  row.timeoutSeconds = Number.isNaN(parsed) ? null : parsed
 }
 </script>
 
@@ -119,14 +150,34 @@ function removeCommand(index: number): void {
       :key="row.id"
       class="cmd-list-row"
     >
-      <textarea
-        v-model="row.value"
-        class="input cmd-list-script"
-        :placeholder="placeholder ?? 'e.g. systemctl stop myapp'"
-        :aria-label="props.ariaLabel ? `${props.ariaLabel} ${index + 1}` : undefined"
-        spellcheck="false"
-        rows="1"
-      />
+      <div class="cmd-list-body">
+        <textarea
+          v-model="row.value"
+          class="input cmd-list-script"
+          :placeholder="placeholder ?? 'e.g. systemctl stop myapp'"
+          :aria-label="props.ariaLabel ? `${props.ariaLabel} ${index + 1}` : undefined"
+          spellcheck="false"
+          rows="1"
+        />
+        <div class="cmd-list-timeout">
+          <span class="field-hint">Timeout (seconds)</span>
+          <input
+            :value="row.timeoutSeconds ?? ''"
+            type="number"
+            min="1"
+            :max="MAX_HOOK_COMMAND_TIMEOUT_SECONDS"
+            class="input input-sm cmd-list-timeout-input"
+            :placeholder="
+              defaultTimeoutSeconds ? String(defaultTimeoutSeconds) : 'schedule default'
+            "
+            :aria-label="
+              props.ariaLabel ? `${props.ariaLabel} ${index + 1} timeout in seconds` : undefined
+            "
+            @input="(event) => updateTimeout(row, event)"
+          />
+          <span class="field-hint">Leave empty to use the schedule's hook command timeout.</span>
+        </div>
+      </div>
       <button
         type="button"
         class="btn btn-sm btn-danger"
@@ -161,13 +212,32 @@ function removeCommand(index: number): void {
   align-items: flex-start;
 }
 
-.cmd-list-script {
+.cmd-list-body {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cmd-list-script {
   min-height: 60px;
   resize: vertical;
   font-family: var(--mono);
   font-size: var(--fs-sm);
   line-height: 1.5;
+}
+
+.cmd-list-timeout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.cmd-list-timeout-input {
+  width: 9rem;
+  flex: none;
 }
 
 .cmd-list-row .btn {

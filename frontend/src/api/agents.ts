@@ -10,6 +10,7 @@ import type {
   DeleteFailedReportsResponse,
   DeployAgentResponse,
   FailedReportCountResponse,
+  HookCommand,
   MergeAgentResponse,
 } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -27,8 +28,8 @@ export interface UpdateAgentRequest {
   domain?: string | null
   default_backup_paths?: string[]
   default_exclude_patterns?: string[]
-  default_pre_backup_commands?: string[]
-  default_post_backup_commands?: string[]
+  default_pre_backup_commands?: HookCommand[]
+  default_post_backup_commands?: HookCommand[]
   default_file_change_patterns_raw?: string
 }
 

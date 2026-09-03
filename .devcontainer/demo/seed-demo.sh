@@ -105,6 +105,24 @@ api PUT "/api/agents/db-server-01" '{
     "default_file_change_patterns_raw": "*/var/lib/postgresql/*.tmp* ignore\n*checkpoint_wal* warn"
 }' > /dev/null
 
+# Agent-level hook commands, so the Backup defaults pane shows the read-only
+# script block: a multi-line pre-backup command (which an inline <code> would
+# collapse onto one line) carrying its own generous timeout, next to a
+# post-backup one that inherits whatever the schedule sets.
+echo "==> Setting agent-level default hook commands on media-store-01 (one with its own timeout)..."
+api PUT "/api/agents/media-store-01" '{
+    "display_name": "Media Store",
+    "default_pre_backup_commands": [
+        {
+            "command": "# make sure the media share is really mounted\nif ! mountpoint -q /mnt/media; then\n    mount /mnt/media || exit 1\nfi\nfind /mnt/media -name \"*.part\" -delete",
+            "timeout_seconds": 7200
+        }
+    ],
+    "default_post_backup_commands": [
+        {"command": "umount /mnt/media", "timeout_seconds": null}
+    ]
+}' > /dev/null
+
 echo "==> Registering repositories..."
 REPO_DAILY_ID=$(api POST "/api/repos" "{
     \"name\": \"server-daily\",
@@ -459,10 +477,10 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 8,
     \"keep_monthly\": 12,
     \"pre_backup_commands\": [
-        \"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\",
-        \"df -hP /var/lib/postgresql | tail -n1 | awk '{print \$5}' > /tmp/db-disk-usage.txt\\necho \\\"disk usage recorded: \$(cat /tmp/db-disk-usage.txt)\\\"\"
+        {\"command\": \"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\", \"timeout_seconds\": 1800},
+        {\"command\": \"df -hP /var/lib/postgresql | tail -n1 | awk '{print \$5}' > /tmp/db-disk-usage.txt\\necho \\\"disk usage recorded: \$(cat /tmp/db-disk-usage.txt)\\\"\", \"timeout_seconds\": null}
     ],
-    \"post_backup_commands\": [\"rm -f /tmp/mydb.sql /tmp/db-disk-usage.txt\"],
+    \"post_backup_commands\": [{\"command\": \"rm -f /tmp/mydb.sql /tmp/db-disk-usage.txt\", \"timeout_seconds\": null}],
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
     \"rate_limit_kbps\": 5000,
     \"hook_timeout_seconds\": 120

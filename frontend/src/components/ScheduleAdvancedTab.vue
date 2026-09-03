@@ -181,8 +181,8 @@ const refOpen = ref(false)
           class="input"
         />
         <span class="field-hint">
-          Applied to each pre- and post-backup command. A command still running past this is killed
-          and the backup fails.
+          The default for every pre- and post-backup command that does not set its own. A command
+          still running past its timeout is killed and the backup fails.
         </span>
       </div>
       <template v-if="!overrides.usePerAgentCmds">
@@ -192,6 +192,7 @@ const refOpen = ref(false)
             v-model="form.pre_backup_commands"
             placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
             aria-label="Pre-backup commands"
+            :default-timeout-seconds="form.hook_timeout_seconds"
           />
         </div>
         <div class="field">
@@ -200,6 +201,7 @@ const refOpen = ref(false)
             v-model="form.post_backup_commands"
             placeholder="e.g. rm /tmp/dump.sql (optional)"
             aria-label="Post-backup commands"
+            :default-timeout-seconds="form.hook_timeout_seconds"
           />
         </div>
       </template>
@@ -214,6 +216,7 @@ const refOpen = ref(false)
             :model-value="overrides.perAgentPreCmds[agentId] ?? []"
             placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
             aria-label="Pre-backup commands"
+            :default-timeout-seconds="form.hook_timeout_seconds"
             @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
           />
           <label class="form-sublabel">Post-backup</label>
@@ -221,6 +224,7 @@ const refOpen = ref(false)
             :model-value="overrides.perAgentPostCmds[agentId] ?? []"
             placeholder="e.g. rm /tmp/dump.sql (optional)"
             aria-label="Post-backup commands"
+            :default-timeout-seconds="form.hook_timeout_seconds"
             @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
           />
         </template>

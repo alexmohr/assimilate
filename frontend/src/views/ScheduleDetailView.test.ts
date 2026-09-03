@@ -70,6 +70,7 @@ vi.mock('../composables/useWebSocket', () => ({
 
 import { apiClient } from '../api/client'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
+import { hookCommand } from '../utils/hookCommands'
 import ScheduleDetailView from './ScheduleDetailView.vue'
 import { logger } from '../utils/logger'
 
@@ -98,7 +99,7 @@ const mockSchedule = {
   keep_monthly: 6,
   keep_yearly: 1,
   compact_enabled: true,
-  pre_backup_commands: ['docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'],
+  pre_backup_commands: [hookCommand('docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql')],
   post_backup_commands: [],
   hook_timeout_seconds: 60,
   missed_backup_threshold: 3,
@@ -1758,7 +1759,11 @@ describe('ScheduleDetailView - per-agent overrides', () => {
       backup_sources: ['/data'],
       backup_sources_per_agent: [],
       commands_per_agent: [
-        { agent_id: 10, pre_backup_commands: ['stop-app'], post_backup_commands: ['start-app'] },
+        {
+          agent_id: 10,
+          pre_backup_commands: [hookCommand('stop-app')],
+          post_backup_commands: [hookCommand('start-app')],
+        },
         { agent_id: 11, pre_backup_commands: [], post_backup_commands: [] },
       ],
     })
@@ -1769,7 +1774,11 @@ describe('ScheduleDetailView - per-agent overrides', () => {
       '/schedules/1',
       expect.objectContaining({
         commands_per_agent: [
-          { agent_id: 10, pre_backup_commands: ['stop-app'], post_backup_commands: ['start-app'] },
+          {
+            agent_id: 10,
+            pre_backup_commands: [hookCommand('stop-app')],
+            post_backup_commands: [hookCommand('start-app')],
+          },
           { agent_id: 11, pre_backup_commands: [], post_backup_commands: [] },
         ],
       }),
@@ -1787,19 +1796,24 @@ describe('ScheduleDetailView - per-agent overrides', () => {
 
     const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
     await editors[0].vm.$emit('update:modelValue', [
-      'docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql',
-      '',
-      '   ',
+      hookCommand('docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'),
+      hookCommand(''),
+      hookCommand('   '),
     ])
-    await editors[1].vm.$emit('update:modelValue', ['', 'systemctl start app'])
+    await editors[1].vm.$emit('update:modelValue', [
+      hookCommand(''),
+      hookCommand('systemctl start app'),
+    ])
 
     await save(wrapper)
 
     expect(mockApiClient.put).toHaveBeenCalledWith(
       '/schedules/1',
       expect.objectContaining({
-        pre_backup_commands: ['docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'],
-        post_backup_commands: ['systemctl start app'],
+        pre_backup_commands: [
+          hookCommand('docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'),
+        ],
+        post_backup_commands: [hookCommand('systemctl start app')],
       }),
     )
   })

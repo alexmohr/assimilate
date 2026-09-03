@@ -191,6 +191,30 @@ test.describe('Agent detail', () => {
     ])
   })
 
+  // A hook command is a whole script. Rendered inline the browser collapses
+  // its newlines and indentation into single spaces, so the demo's multi-line
+  // agent default arrived as one unreadable paragraph.
+  test('Backup defaults shows a multi-line hook command with its lines and timeout', async ({
+    page,
+  }) => {
+    await openAgent(page, 'media-store-01')
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
+
+    const script = page.locator('.detail-pre').first()
+    await expect(script).toBeVisible()
+    await expect(script).toContainText('mountpoint -q /mnt/media')
+    expect(await script.textContent()).toContain('\n')
+
+    // The comment is coloured as one, which is the whole point of the block.
+    await expect(script.locator('.sh-comment')).toContainText('#')
+
+    // A command with its own timeout says so; one without says what it
+    // inherits instead, so an empty value never reads as "no timeout".
+    await expect(page.getByText('Timeout: 7200s')).toBeVisible()
+    await expect(page.getByText("Timeout: the schedule's hook command timeout")).toBeVisible()
+  })
+
   test('an imported host keeps every tab and explains the empty one', async ({ page }) => {
     await openAgent(page, 'old-webserver')
 

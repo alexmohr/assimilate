@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type { HookCommand } from './generated'
+
 /**
  * The editable shape behind the schedule detail form. Lives here rather than
  * inline in the view so the tab components can be typed against it.
@@ -20,8 +22,8 @@ export interface ScheduleFormState {
   keep_yearly: number
   compact_enabled: boolean
   rate_limit_kbps: number
-  pre_backup_commands: string[]
-  post_backup_commands: string[]
+  pre_backup_commands: HookCommand[]
+  post_backup_commands: HookCommand[]
   hook_timeout_seconds: number
   missed_backup_threshold: number
   backup_sources: string
@@ -65,6 +67,6 @@ export interface ScheduleAgentOverrides {
   usePerHostFileChangePatterns: boolean
   perHostFileChangePatterns: Record<number, string>
   usePerAgentCmds: boolean
-  perAgentPreCmds: Record<number, string[]>
-  perAgentPostCmds: Record<number, string[]>
+  perAgentPreCmds: Record<number, HookCommand[]>
+  perAgentPostCmds: Record<number, HookCommand[]>
 }

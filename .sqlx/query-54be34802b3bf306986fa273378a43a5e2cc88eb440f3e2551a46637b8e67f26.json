@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT agent_id, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\" FROM per_agent_commands WHERE schedule_id = $1 ORDER BY agent_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "pre_backup_commands: HookCommands",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "post_backup_commands: HookCommands",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "54be34802b3bf306986fa273378a43a5e2cc88eb440f3e2551a46637b8e67f26"
+}

@@ -4532,6 +4532,217 @@ async fn test_schedule_update_rejects_invalid_hook_timeout_seconds(pool: sqlx::P
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// A hook command may carry its own `timeout_seconds`, overriding the
+/// schedule-wide default for that one command. It must survive the handler and
+/// land in the stored JSONB, since that value is the whole point of the field:
+/// a hypervisor dump needs hours where a `systemctl stop` beside it should
+/// still give up in a minute.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_persists_per_command_hook_timeout(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('cmd-timeout-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "cmd-timeout-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "hook_timeout_seconds": 60,
+            "pre_backup_commands": [
+                {"command": "vzdump --all 1", "timeout_seconds": 7200},
+                {"command": "echo quick"},
+            ],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let commands = body.get("pre_backup_commands").unwrap().as_array().unwrap();
+    assert_eq!(
+        commands.first().unwrap().get("timeout_seconds").unwrap(),
+        7200
+    );
+    assert!(
+        commands
+            .get(1)
+            .unwrap()
+            .get("timeout_seconds")
+            .unwrap()
+            .is_null(),
+        "a command with no timeout of its own inherits the schedule's"
+    );
+
+    let stored: serde_json::Value =
+        sqlx::query_scalar("SELECT pre_backup_commands FROM schedules WHERE id = $1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        json!([
+            {"command": "vzdump --all 1", "timeout_seconds": 7200},
+            {"command": "echo quick", "timeout_seconds": null},
+        ])
+    );
+}
+
+/// An API client written against the shape hook commands had before per-command
+/// timeouts sends a plain array of strings. That must keep working and be
+/// stored in the current shape, rather than 400 on a field the caller has never
+/// heard of.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_accepts_bare_string_hook_commands(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('legacy-cmd-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "legacy-cmd-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "pre_backup_commands": ["systemctl stop app"],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let stored: serde_json::Value =
+        sqlx::query_scalar("SELECT pre_backup_commands FROM schedules WHERE id = $1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        json!([{"command": "systemctl stop app", "timeout_seconds": null}])
+    );
+}
+
+/// A per-command timeout outside the accepted range must be rejected with a
+/// 400. Zero would mean a command that can never run; an unbounded one would
+/// let a stuck hook hold a schedule open indefinitely, which is what every hook
+/// timeout exists to prevent.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_rejects_out_of_range_command_timeout(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('bad-cmd-timeout-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "bad-cmd-timeout-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    for timeout in [json!(0), json!(86_401)] {
+        let req = json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(json!({
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "agent_ids": [agent_id],
+                "pre_backup_commands": [{"command": "sleep 1", "timeout_seconds": timeout}],
+            })),
+        );
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "timeout_seconds {timeout} must be rejected"
+        );
+    }
+}
+
+/// An agent's default hook commands go through their own handler, so they need
+/// the same per-command timeout support - an agent-level `vzdump` is exactly
+/// the case the field was added for, and it is merged into every schedule
+/// targeting that host regardless of what those schedules set.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_agent_update_persists_per_command_hook_timeout(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('defaults-host', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/defaults-host",
+        Some(json!({
+            "default_pre_backup_commands": [
+                {"command": "vzdump --all 1", "timeout_seconds": 7200},
+            ],
+            "default_post_backup_commands": ["rm -f /tmp/dump"],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("default_pre_backup_commands").unwrap(),
+        &json!([{"command": "vzdump --all 1", "timeout_seconds": 7200}])
+    );
+    assert_eq!(
+        body.get("default_post_backup_commands").unwrap(),
+        &json!([{"command": "rm -f /tmp/dump", "timeout_seconds": null}])
+    );
+}
+
+/// The same bound applies to an agent's defaults, through the agent handler.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_agent_update_rejects_out_of_range_command_timeout(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('bad-defaults-host', 'hash')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/bad-defaults-host",
+        Some(json!({
+            "default_pre_backup_commands": [{"command": "sleep 1", "timeout_seconds": 86401}],
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 /// The `missed_backup_threshold` field (how many consecutive missed backups a
 /// schedule tolerates before it is marked failed and auto-disabled) must be
 /// persisted through the actual `PUT /api/schedules/{id}` handler and reflected
@@ -5538,6 +5749,91 @@ async fn test_import_config_clamps_out_of_range_hook_timeout_seconds(pool: sqlx:
     .unwrap();
     // Alphabetical: "import-schedule-too-high" sorts before "import-schedule-too-low".
     assert_eq!(timeouts, vec![3600, 1]);
+}
+
+/// Same reasoning as the schedule-wide timeout above, for the per-command one:
+/// an import is best-effort across many schedules, so an out-of-range value on
+/// one hook is clamped into the accepted bound rather than aborting the whole
+/// upload.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_clamps_out_of_range_command_timeout(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    insert_test_repo(&pool, "import-repo-cmd-clamp").await;
+
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('import-cmd-clamp-target', \
+         'real-token')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [
+            {
+                "name": "import-schedule-cmd-clamp",
+                "schedule_type": "backup",
+                "cron_expression": "0 3 * * *",
+                "enabled": true,
+                "canary_enabled": false,
+                "execution_mode": "parallel",
+                "on_failure": "stop",
+                "exclude_patterns_raw": "",
+                "ignore_global_excludes": false,
+                "keep_hourly": 0,
+                "keep_daily": 7,
+                "keep_weekly": 4,
+                "keep_monthly": 6,
+                "keep_yearly": 0,
+                "compact_enabled": true,
+                "rate_limit_kbps": null,
+                "pre_backup_commands": [
+                    {"command": "sleep 1", "timeout_seconds": 999_999_999},
+                    {"command": "sleep 2", "timeout_seconds": 0},
+                    "systemctl stop app",
+                ],
+                "post_backup_commands": [],
+                "hook_timeout_seconds": 60,
+                "repo_name": "import-repo-cmd-clamp",
+                "backup_sources": ["/home"],
+                "targets": [
+                    {
+                        "hostname": "import-cmd-clamp-target",
+                        "execution_order": 0,
+                        "backup_sources": ["/etc"],
+                        "exclude_patterns": ""
+                    }
+                ]
+            }
+        ]
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let stored: serde_json::Value = sqlx::query_scalar(
+        "SELECT pre_backup_commands FROM schedules WHERE name = 'import-schedule-cmd-clamp'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        json!([
+            {"command": "sleep 1", "timeout_seconds": 86_400},
+            {"command": "sleep 2", "timeout_seconds": 1},
+            {"command": "systemctl stop app", "timeout_seconds": null},
+        ])
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

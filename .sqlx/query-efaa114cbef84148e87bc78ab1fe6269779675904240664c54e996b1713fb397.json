@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents ORDER BY hostname",
+  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents WHERE hostname = $1 ORDER BY domain",
   "describe": {
     "columns": [
       {
@@ -70,12 +70,12 @@
       },
       {
         "ordinal": 13,
-        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "default_pre_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
         "ordinal": 14,
-        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "default_post_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
@@ -155,7 +155,9 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text"
+      ]
     },
     "nullable": [
       false,
@@ -190,5 +192,5 @@
       false
     ]
   },
-  "hash": "cccfba7c84ca7bc315d4e9f15b899ac9496f47ed77b625ea3e19eb639e627514"
+  "hash": "efaa114cbef84148e87bc78ab1fe6269779675904240664c54e996b1713fb397"
 }

@@ -457,11 +457,53 @@ test.describe('Schedules management', () => {
     await page.getByRole('button', { name: 'Save changes' }).click()
 
     const savedBody = await waitForSave()
-    expect(savedBody.pre_backup_commands as string[]).toContain(script)
+    expect(savedBody.pre_backup_commands as { command: string }[]).toContainEqual(
+      expect.objectContaining({ command: script }),
+    )
 
     // The multi-line script round-trips through the save intact, still in
     // its own field rather than getting flattened or split across rows.
     await expect(newRow).toHaveValue(script)
+  })
+
+  // The per-command timeout is what lets one slow hook (a hypervisor dump)
+  // have a longer budget than the `systemctl stop` sitting beside it, instead
+  // of every command on the schedule sharing the slowest one's.
+  test('schedule detail Advanced section saves a per-command hook timeout', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Advanced' }).click()
+
+    const preField = page.locator('.field', { hasText: 'Pre-backup commands' })
+    await preField.getByRole('button', { name: '+ Add command' }).click()
+
+    const newRow = preField.locator('textarea').last()
+    await newRow.fill('vzdump --all 1 --storage backup-store')
+    const timeoutInput = preField.locator('input[type="number"]').last()
+    // Empty means "inherit", and the placeholder says which value that is.
+    await expect(timeoutInput).toHaveValue('')
+    await expect(timeoutInput).toHaveAttribute('placeholder', /\d+/)
+    await timeoutInput.fill('7200')
+
+    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+      ...responseBody,
+      pre_backup_commands: requestBody.pre_backup_commands,
+    }))
+
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    const savedBody = await waitForSave()
+    expect(
+      savedBody.pre_backup_commands as { command: string; timeout_seconds: number | null }[],
+    ).toContainEqual({
+      command: 'vzdump --all 1 --storage backup-store',
+      timeout_seconds: 7200,
+    })
+
+    await expect(timeoutInput).toHaveValue('7200')
   })
 
   test('schedule detail General section edits and saves the missed backup threshold', async ({

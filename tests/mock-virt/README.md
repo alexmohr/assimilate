@@ -1,6 +1,6 @@
 # mock-virt
 
-Test doubles for `virsh` and `qemu-img`, used by `tests/qemu-vm-snapshot.test.sh` to exercise `scripts/hooks/qemu-vm-snapshot.sh` without libvirt.
+Test doubles for `virsh` and `qemu-img`, used by the agent's tests in `crates/agent/src/vm.rs` to exercise virtual-machine staging without libvirt.
 
 ## State directory
 

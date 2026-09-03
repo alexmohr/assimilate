@@ -154,13 +154,6 @@ jobs:
         run: pip install -r docs/requirements.txt
       - name: Build docs (strict)
         run: mkdocs build --strict
-  hook-scripts:
-    name: Hook Scripts (shell tests)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test the QEMU snapshot hook
-        run: tests/qemu-vm-snapshot.test.sh
   deps-audit:
     name: Rust Dependency Audit (cargo-deny)
     runs-on: ubuntu-latest

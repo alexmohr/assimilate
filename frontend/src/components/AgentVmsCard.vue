@@ -1,0 +1,535 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { MonitorCog, RefreshCw } from '@lucide/vue'
+import { getAgentVms, scanAgentVms, updateAgentVm, updateAgentVmSnapshot } from '../api/vms'
+import { badgeClass, type BadgeTone } from '../utils/badge'
+import { extractError } from '../utils/error'
+import { formatBytes } from '../utils/format'
+import BaseSpinner from './BaseSpinner.vue'
+import EditableSection from './EditableSection.vue'
+import EmptyState from './EmptyState.vue'
+import ToggleSwitch from './ToggleSwitch.vue'
+import type { AgentRow } from '../types/agent'
+import type {
+  AgentVmResponse,
+  AgentVmSnapshotResponse,
+  VmSnapshotMode,
+  VmState,
+} from '../types/generated'
+
+/**
+ * Staging this host's libvirt domains before a backup: where they are staged,
+ * how long a chain of increments may grow, and what each domain may occupy.
+ *
+ * The settings sit on the host rather than on a schedule because the staging
+ * directory is shared by every schedule that targets it; a schedule only opts
+ * in. The domain table is what the agent last reported, so it is empty until
+ * the host has been scanned once.
+ */
+const props = defineProps<{
+  agent: AgentRow
+  /** False for imported hosts, which have no agent to scan or push to. */
+  canEdit: boolean
+}>()
+
+const GIB = 1024 * 1024 * 1024
+
+const loading = ref(true)
+const loadError = ref<string | null>(null)
+const data = ref<AgentVmSnapshotResponse | null>(null)
+
+const editing = ref(false)
+const saving = ref(false)
+const saveError = ref<string | null>(null)
+
+const scanning = ref(false)
+const scanError = ref<string | null>(null)
+
+const rowSaving = ref<string | null>(null)
+const rowError = ref<string | null>(null)
+
+const enabled = ref(false)
+const stagingDir = ref('')
+const fullInterval = ref(7)
+const timeoutSeconds = ref(1800)
+const defaultLimitGib = ref(0)
+
+const vms = computed<AgentVmResponse[]>(() => data.value?.vms ?? [])
+
+/** Bytes to whole GiB for the form, which is the unit operators think in. */
+function toGib(bytes: number): number {
+  return Math.round(bytes / GIB)
+}
+
+function fromGib(gib: number): number {
+  return Math.max(0, Math.round(gib)) * GIB
+}
+
+function limitLabel(vm: AgentVmResponse): string {
+  if (vm.effective_limit_bytes === 0) return 'No limit'
+  return formatBytes(vm.effective_limit_bytes)
+}
+
+/** Share of its limit a domain uses, as a percentage capped at 100. */
+function usedPercent(vm: AgentVmResponse): number {
+  if (vm.effective_limit_bytes === 0) return 0
+  return Math.min(100, Math.round((vm.staged_bytes / vm.effective_limit_bytes) * 100))
+}
+
+function usageTone(vm: AgentVmResponse): string {
+  const percent = usedPercent(vm)
+  if (percent >= 95) return 'progress-bar--danger'
+  if (percent >= 80) return 'progress-bar--warning'
+  return ''
+}
+
+const MODE_LABELS: Record<VmSnapshotMode, string> = {
+  incremental: 'Incremental',
+  full_copy: 'Full copy',
+  offline_copy: 'Offline copy',
+  excluded: 'Excluded',
+  unknown: 'Not scanned',
+}
+
+function modeLabel(mode: VmSnapshotMode): string {
+  return MODE_LABELS[mode]
+}
+
+const MODE_TONES: Record<VmSnapshotMode, BadgeTone> = {
+  incremental: 'info',
+  full_copy: 'neutral',
+  offline_copy: 'neutral',
+  excluded: 'neutral',
+  unknown: 'neutral',
+}
+
+function modeBadge(mode: VmSnapshotMode): string {
+  return badgeClass(MODE_TONES[mode])
+}
+
+const STATE_LABELS: Record<VmState, string> = {
+  running: 'Running',
+  paused: 'Paused',
+  shut_off: 'Shut off',
+  suspended: 'Suspended',
+  unknown: 'Unknown',
+}
+
+function stateLabel(state: VmState): string {
+  return STATE_LABELS[state]
+}
+
+const STATE_TONES: Record<VmState, BadgeTone> = {
+  running: 'success',
+  paused: 'warning',
+  suspended: 'warning',
+  shut_off: 'neutral',
+  unknown: 'neutral',
+}
+
+function stateBadge(state: VmState): string {
+  return badgeClass(STATE_TONES[state])
+}
+
+function applyResponse(response: AgentVmSnapshotResponse): void {
+  data.value = response
+  enabled.value = response.settings.enabled
+  stagingDir.value = response.settings.staging_dir
+  fullInterval.value = response.settings.full_interval
+  timeoutSeconds.value = response.settings.timeout_seconds
+  defaultLimitGib.value = toGib(response.settings.default_limit_bytes)
+}
+
+async function load(): Promise<void> {
+  loading.value = true
+  loadError.value = null
+  try {
+    applyResponse(await getAgentVms(props.agent.hostname, props.agent.domain))
+  } catch (e: unknown) {
+    loadError.value = extractError(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+function startEdit(): void {
+  if (data.value) applyResponse(data.value)
+  saveError.value = null
+  editing.value = true
+}
+
+async function save(): Promise<void> {
+  saving.value = true
+  saveError.value = null
+  try {
+    applyResponse(
+      await updateAgentVmSnapshot(
+        props.agent.hostname,
+        {
+          enabled: enabled.value,
+          staging_dir: stagingDir.value.trim(),
+          full_interval: fullInterval.value,
+          timeout_seconds: timeoutSeconds.value,
+          default_limit_bytes: fromGib(defaultLimitGib.value),
+        },
+        props.agent.domain,
+      ),
+    )
+    editing.value = false
+  } catch (e: unknown) {
+    saveError.value = extractError(e)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function scan(): Promise<void> {
+  scanning.value = true
+  scanError.value = null
+  try {
+    applyResponse(await scanAgentVms(props.agent.hostname, props.agent.domain))
+  } catch (e: unknown) {
+    scanError.value = extractError(e)
+  } finally {
+    scanning.value = false
+  }
+}
+
+async function saveVm(vm: AgentVmResponse, included: boolean, limitGib: string): Promise<void> {
+  rowSaving.value = vm.name
+  rowError.value = null
+  const trimmed = limitGib.trim()
+  try {
+    applyResponse(
+      await updateAgentVm(
+        props.agent.hostname,
+        vm.name,
+        {
+          included,
+          limit_bytes: trimmed === '' ? null : fromGib(Number(trimmed)),
+        },
+        props.agent.domain,
+      ),
+    )
+  } catch (e: unknown) {
+    rowError.value = extractError(e)
+  } finally {
+    rowSaving.value = null
+  }
+}
+
+function limitInput(vm: AgentVmResponse): string {
+  return vm.limit_bytes === null ? '' : String(toGib(vm.limit_bytes))
+}
+
+function onLimitChange(vm: AgentVmResponse, event: Event): void {
+  const value = (event.target as HTMLInputElement).value
+  void saveVm(vm, vm.included, value)
+}
+
+function onIncludedChange(vm: AgentVmResponse, included: boolean): void {
+  void saveVm(vm, included, limitInput(vm))
+}
+
+onMounted(load)
+</script>
+
+<template>
+  <div class="settings-pane">
+    <BaseSpinner
+      v-if="loading"
+      label="Loading virtual machines"
+    />
+    <p
+      v-else-if="loadError"
+      class="form-error"
+    >
+      {{ loadError }}
+    </p>
+
+    <template v-else>
+      <EditableSection
+        lede="Stage this host's virtual machines into a directory before a backup runs, so borg
+          picks them up as ordinary files. Schedules opt in one by one."
+        :editing="editing"
+        :can-edit="canEdit"
+        :saving="saving"
+        :error="saveError"
+        @edit="startEdit"
+        @cancel="editing = false"
+        @save="save"
+      >
+        <template #view>
+          <section
+            class="pane-section"
+            style="border-top: none; padding-top: 0"
+          >
+            <div class="pane-section-head">
+              <span class="group-label group-label--lg">Staging</span>
+            </div>
+            <dl class="info-grid">
+              <dt>Stage virtual machines</dt>
+              <dd>{{ enabled ? 'Enabled' : 'Disabled' }}</dd>
+              <dt>Staging directory</dt>
+              <dd class="mono">{{ stagingDir }}</dd>
+              <dt>New full image after</dt>
+              <dd>{{ fullInterval }} increments</dd>
+              <dt>Snapshot timeout</dt>
+              <dd>{{ timeoutSeconds }} seconds per domain</dd>
+              <dt>Default limit per domain</dt>
+              <dd>{{ defaultLimitGib === 0 ? 'No limit' : `${defaultLimitGib} GiB` }}</dd>
+            </dl>
+          </section>
+        </template>
+
+        <template #edit>
+          <section
+            class="pane-section"
+            style="border-top: none; padding-top: 0"
+          >
+            <div class="pane-section-head">
+              <span class="group-label group-label--lg">Staging</span>
+            </div>
+
+            <div class="field field-inline">
+              <div class="field-body">
+                <p class="field-title">Stage virtual machines</p>
+                <p class="field-hint">
+                  When off, a schedule that opts in stages nothing on this host.
+                </p>
+              </div>
+              <ToggleSwitch
+                v-model="enabled"
+                label="Stage virtual machines"
+              />
+            </div>
+
+            <div class="field">
+              <label
+                class="field-label"
+                for="vm-staging-dir"
+              >
+                Staging directory
+              </label>
+              <input
+                id="vm-staging-dir"
+                v-model="stagingDir"
+                class="input"
+                type="text"
+                placeholder="/home/virt/backups"
+              />
+              <span class="field-hint">
+                An absolute path with one subdirectory per domain. It must be writable by the user
+                QEMU runs as, and it joins the sources of every schedule that opts in.
+              </span>
+            </div>
+
+            <div class="field-row">
+              <div class="field field-narrow">
+                <label
+                  class="field-label"
+                  for="vm-full-interval"
+                >
+                  New full image after
+                </label>
+                <input
+                  id="vm-full-interval"
+                  v-model.number="fullInterval"
+                  class="input"
+                  type="number"
+                  min="1"
+                />
+                <span class="field-hint">Increments per chain.</span>
+              </div>
+              <div class="field field-narrow">
+                <label
+                  class="field-label"
+                  for="vm-timeout"
+                >
+                  Snapshot timeout
+                </label>
+                <input
+                  id="vm-timeout"
+                  v-model.number="timeoutSeconds"
+                  class="input"
+                  type="number"
+                  min="1"
+                />
+                <span class="field-hint">Seconds, per domain.</span>
+              </div>
+              <div class="field field-narrow">
+                <label
+                  class="field-label"
+                  for="vm-default-limit"
+                >
+                  Default limit per domain
+                </label>
+                <input
+                  id="vm-default-limit"
+                  v-model.number="defaultLimitGib"
+                  class="input"
+                  type="number"
+                  min="0"
+                />
+                <span class="field-hint">GiB. 0 means no limit.</span>
+              </div>
+            </div>
+          </section>
+        </template>
+      </EditableSection>
+
+      <section class="pane-section">
+        <div class="pane-section-head">
+          <span class="group-label group-label--lg">Domains</span>
+          <button
+            v-if="canEdit"
+            type="button"
+            class="btn btn-sm"
+            :disabled="scanning"
+            @click="scan"
+          >
+            <RefreshCw
+              :size="14"
+              :class="{ spinning: scanning }"
+            />
+            {{ scanning ? 'Scanning...' : 'Rescan host' }}
+          </button>
+        </div>
+
+        <p
+          v-if="scanError"
+          class="form-error"
+        >
+          {{ scanError }}
+        </p>
+        <p
+          v-if="rowError"
+          class="form-error"
+        >
+          {{ rowError }}
+        </p>
+
+        <EmptyState
+          v-if="vms.length === 0"
+          :icon="MonitorCog"
+          title="No domains reported"
+          description="Rescan the host to list the libvirt domains it has."
+        />
+
+        <div
+          v-else
+          class="table-wrap"
+        >
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>State</th>
+                <th>Mode</th>
+                <th>Staged size</th>
+                <th>Limit (GiB)</th>
+                <th>Include</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="vm in vms"
+                :key="vm.name"
+              >
+                <td>
+                  <div class="cell-mono">{{ vm.name }}</div>
+                  <div class="cell-muted">
+                    {{ vm.disk_count }} disk<span v-if="vm.disk_count !== 1">s</span>
+                    <span v-if="vm.chain_length > 0">
+                      &middot; full + {{ vm.chain_length }} increments
+                    </span>
+                  </div>
+                  <div
+                    v-if="vm.last_error"
+                    class="cell-muted vm-error"
+                  >
+                    {{ vm.last_error }}
+                  </div>
+                </td>
+                <td>
+                  <span
+                    class="badge"
+                    :class="stateBadge(vm.state)"
+                  >
+                    {{ stateLabel(vm.state) }}
+                  </span>
+                </td>
+                <td>
+                  <span
+                    class="badge"
+                    :class="modeBadge(vm.mode)"
+                  >
+                    {{ modeLabel(vm.mode) }}
+                  </span>
+                </td>
+                <td>
+                  <div class="cell-size">
+                    {{ formatBytes(vm.staged_bytes) }} of {{ limitLabel(vm) }}
+                  </div>
+                  <div
+                    v-if="vm.effective_limit_bytes > 0"
+                    class="progress-track vm-usage"
+                  >
+                    <div
+                      class="progress-bar"
+                      :class="usageTone(vm)"
+                      :style="{ width: `${usedPercent(vm)}%` }"
+                    />
+                  </div>
+                </td>
+                <td>
+                  <input
+                    class="input input-sm vm-limit"
+                    type="number"
+                    min="0"
+                    :value="limitInput(vm)"
+                    :disabled="!canEdit || rowSaving === vm.name"
+                    :aria-label="`Limit for ${vm.name} in GiB`"
+                    placeholder="Default"
+                    @change="onLimitChange(vm, $event)"
+                  />
+                  <div class="cell-muted">
+                    {{ vm.limit_bytes === null ? 'Host default' : 'Overridden' }}
+                  </div>
+                </td>
+                <td>
+                  <ToggleSwitch
+                    :model-value="vm.included"
+                    :disabled="!canEdit || rowSaving === vm.name"
+                    :label="`Include ${vm.name}`"
+                    @update:model-value="onIncludedChange(vm, $event)"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.vm-usage {
+  margin-top: var(--space-2);
+}
+
+.vm-limit {
+  width: 5.5rem;
+  text-align: right;
+}
+
+.vm-error {
+  color: var(--danger);
+}
+</style>

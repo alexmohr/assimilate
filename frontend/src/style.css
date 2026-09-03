@@ -2428,6 +2428,15 @@
     background: var(--text-muted);
   }
 
+  /* A share of a budget that is running out, and one that has all but gone. */
+  .progress-bar--warning {
+    background: var(--warning);
+  }
+
+  .progress-bar--danger {
+    background: var(--danger);
+  }
+
   .progress-row {
     display: flex;
     align-items: center;

@@ -284,6 +284,41 @@ pub async fn list_schedules(
     Ok(Json(visible))
 }
 
+/// A backup schedule needs sources from somewhere: the request, its per-agent
+/// overrides, or the first agent's own defaults. Checked before the schedule is
+/// written, so one that could never back anything up is refused rather than
+/// created and left to fail at run time.
+async fn ensure_backup_sources_available(
+    state: &AppState,
+    req: &CreateScheduleRequest,
+    schedule_type: ScheduleType,
+) -> Result<(), ApiError> {
+    if schedule_type != ScheduleType::Backup {
+        return Ok(());
+    }
+    let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
+    let has_per_agent_sources = req
+        .backup_sources_per_agent
+        .as_ref()
+        .is_some_and(|v| !v.is_empty());
+    if has_backup_sources || has_per_agent_sources {
+        return Ok(());
+    }
+
+    let Some(&first_agent_id) = req.agent_ids.first() else {
+        return Err(ApiError::BadRequest(
+            "agent_ids must contain at least one entry".into(),
+        ));
+    };
+    let agent = db::get_agent_by_id(&state.pool, first_agent_id).await?;
+    if agent.default_backup_paths.is_empty() {
+        return Err(ApiError::BadRequest(
+            "no backup sources provided and agent has no default backup paths configured".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[utoipa::path(
     post,
     path = "/api/schedules",
@@ -316,33 +351,16 @@ pub async fn create_schedule(
     check_repo_permission(&state.pool, &auth, req.repo_id, |p| p.can_modify_schedules).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
+    let schedule_type_enum = req.schedule_type.unwrap_or_default();
+    let schedule_type = schedule_type_to_str(schedule_type_enum);
+    // Before any field is taken out of `req`, which would leave it partially
+    // moved and unborrowable.
+    ensure_backup_sources_available(&state, &req, schedule_type_enum).await?;
+
     let exclude_patterns_raw = req.exclude_patterns_raw.unwrap_or_default();
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
         check_ssh_reachability(&state.pool, req.repo_id).await?;
-    }
-    let schedule_type_enum = req.schedule_type.unwrap_or_default();
-    let schedule_type = schedule_type_to_str(schedule_type_enum);
-
-    let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
-    let has_per_agent_sources = req
-        .backup_sources_per_agent
-        .as_ref()
-        .is_some_and(|v| !v.is_empty());
-
-    if !has_backup_sources && !has_per_agent_sources && schedule_type_enum == ScheduleType::Backup {
-        let Some(&first_agent_id) = req.agent_ids.first() else {
-            return Err(ApiError::BadRequest(
-                "agent_ids must contain at least one entry".into(),
-            ));
-        };
-        let agent = db::get_agent_by_id(&state.pool, first_agent_id).await?;
-        if agent.default_backup_paths.is_empty() {
-            return Err(ApiError::BadRequest(
-                "no backup sources provided and agent has no default backup paths configured"
-                    .into(),
-            ));
-        }
     }
 
     let on_failure = req.on_failure.unwrap_or_default();

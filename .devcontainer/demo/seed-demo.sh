@@ -326,6 +326,36 @@ api PUT "/api/repos/$REPO_WEEKLY_ID/power" '{
     "shutdown_after_backup": true
 }' > /dev/null
 
+# db-server-01 stands in for a virtualization host: staging enabled, a
+# per-domain budget, and the domains a scan would have reported. The rows are
+# written directly because a real scan needs a libvirt host behind the agent.
+echo "==> Configuring virtual machine staging..."
+api PUT "/api/agents/db-server-01/vm-snapshot" '{
+    "enabled": true,
+    "staging_dir": "/srv/vm-staging",
+    "full_interval": 7,
+    "timeout_seconds": 1800,
+    "default_limit_bytes": 214748364800
+}' > /dev/null
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO agent_vms (agent_id, name, included, limit_bytes, state, mode, disk_count,
+                       disk_bytes, staged_bytes, chain_length, last_error,
+                       last_scanned_at, last_staged_at)
+VALUES
+    ($DB01_ID, 'web01', TRUE, NULL, 'running', 'incremental', 1,
+     45097156608, 45943046144, 4, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
+    ($DB01_ID, 'db01', TRUE, 536870912000, 'running', 'incremental', 2,
+     472446402560, 502511173632, 6, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
+    ($DB01_ID, 'build01', TRUE, 21474836480, 'running', 'full_copy', 1,
+     20401094656, 21045969715, 0, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
+    ($DB01_ID, 'mail01', TRUE, NULL, 'shut_off', 'offline_copy', 1,
+     33714665062, 33714665062, 0, NULL, NOW() - interval '4 minutes', NOW() - interval '1 day'),
+    ($DB01_ID, 'win-ci', FALSE, NULL, 'paused', 'excluded', 1,
+     64424509440, 0, 0, NULL, NOW() - interval '4 minutes', NULL)
+ON CONFLICT (agent_id, name) DO NOTHING;
+SQL
+
 echo "==> Creating schedules..."
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],
@@ -481,6 +511,7 @@ api POST "/api/schedules" "{
         {\"command\": \"df -hP /var/lib/postgresql | tail -n1 | awk '{print \$5}' > /tmp/db-disk-usage.txt\\necho \\\"disk usage recorded: \$(cat /tmp/db-disk-usage.txt)\\\"\", \"timeout_seconds\": null}
     ],
     \"post_backup_commands\": [{\"command\": \"rm -f /tmp/mydb.sql /tmp/db-disk-usage.txt\", \"timeout_seconds\": null}],
+    \"vm_snapshot_enabled\": true,
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
     \"rate_limit_kbps\": 5000,
     \"hook_timeout_seconds\": 120

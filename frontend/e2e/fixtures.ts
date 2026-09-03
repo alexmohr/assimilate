@@ -182,23 +182,30 @@ export async function mockScheduleOnePatch(
 // tests can force the agent list's "Running" pill to render without waiting for a
 // real backup to start.
 //
-// The demo's own never-resolving `started` seed row now lives on a different
-// schedule (see seed-demo.sh), so schedule 1 stays clean by default - but a
-// test that runs after backup-lifecycle.spec.ts triggers a real backup on
-// schedule 1 can still leave a real running_operations entry for it. Replace
-// any such entry rather than appending, or a real entry plus this synthetic
-// one both matching schedule_id 1 makes every `.active-backup-schedule`
-// locator resolve to two elements instead of one.
+// The demo also seeds its own never-resolving `started` backup report for
+// web-server-01 / server-daily, attributed to the "Colliding daily window"
+// schedule rather than schedule 1 (see seed-demo.sh) - so the real API
+// response this mock builds on can already contain an entry for the same
+// hostname/repo pair, just under a different `schedule_id`. Both
+// DashboardView's `mergeActiveBackups` (keyed by `hostname::repo_name`) and
+// HostsView's active-backup map (keyed by `hostname`+`repo_name`) treat two
+// entries for that pair as two separate active backups, so filtering on
+// `schedule_id !== 1` alone would miss the real entry and leave both it and
+// this synthetic one in the response. Filter by hostname/repo instead, so
+// only one entry for this pair ever survives, regardless of which schedule
+// the real seed data currently attributes it to.
 export async function mockRunningBackupOperation(page: Page): Promise<void> {
   await page.route(
     (url) => url.pathname === '/api/stats/dashboard-overview',
     async (route) => {
       const response = await route.fetch()
       const overview = (await response.json()) as {
-        running_operations: Array<{ schedule_id: unknown }>
+        running_operations: Array<{ hostname: unknown; repo_id: unknown }>
       }
       overview.running_operations = [
-        ...overview.running_operations.filter((op) => op.schedule_id !== 1),
+        ...overview.running_operations.filter(
+          (op) => !(op.hostname === 'web-server-01' && op.repo_id === 1),
+        ),
         {
           report_id: 999_999,
           status: 'started',

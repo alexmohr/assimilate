@@ -78,6 +78,45 @@ async function interceptScheduleSave(
 // Fills a numeric settings field, intercepts the PUT so the response echoes
 // back the value the request actually sent, and waits for the save to land.
 // Returns the field's input so the caller can assert its final value.
+/** One hook command as the schedule PUT carries it. */
+interface HookCommandPayload {
+  command: string
+  timeout_seconds: number | null
+}
+
+/**
+ * Opens schedule 1's Settings -> Advanced pane, where the hook command fields
+ * live. Extracted rather than repeated per test: three tests need the same
+ * five-step navigation, which the duplicate-code check counts as a cluster.
+ */
+async function openScheduleAdvanced(page: Page): Promise<void> {
+  await loginAsAdmin(page)
+  await page.goto('/schedules/1')
+  await page.waitForLoadState('networkidle')
+
+  await page.getByRole('tab', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Advanced' }).click()
+}
+
+/** Adds an empty pre-backup command row, returning its field and its script box. */
+async function addPreBackupCommand(page: Page): Promise<{ field: Locator; script: Locator }> {
+  const field = page.locator('.field', { hasText: 'Pre-backup commands' })
+  await field.getByRole('button', { name: '+ Add command' }).click()
+  return { field, script: field.locator('textarea').last() }
+}
+
+/** Saves the schedule and returns the pre-backup commands the UI sent. */
+async function savePreBackupCommands(page: Page): Promise<HookCommandPayload[]> {
+  const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+    ...responseBody,
+    pre_backup_commands: requestBody.pre_backup_commands,
+  }))
+
+  await page.getByRole('button', { name: 'Save changes' }).click()
+
+  return (await waitForSave()).pre_backup_commands as HookCommandPayload[]
+}
+
 async function saveNumericScheduleField(
   page: Page,
   fieldLabel: string,
@@ -415,12 +454,7 @@ test.describe('Schedules management', () => {
   test('schedule detail Advanced section edits and saves the hook command timeout', async ({
     page,
   }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
-
-    await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.getByRole('button', { name: 'Advanced' }).click()
+    await openScheduleAdvanced(page)
 
     const timeoutInput = await saveNumericScheduleField(
       page,
@@ -434,30 +468,14 @@ test.describe('Schedules management', () => {
   test('schedule detail Advanced section adds a multi-line pre-backup command and saves it', async ({
     page,
   }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
+    await openScheduleAdvanced(page)
+    const { script: newRow } = await addPreBackupCommand(page)
 
-    await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.getByRole('button', { name: 'Advanced' }).click()
-
-    const preField = page.locator('.field', { hasText: 'Pre-backup commands' })
-    await preField.getByRole('button', { name: '+ Add command' }).click()
-
-    const newRow = preField.locator('textarea').last()
     const script =
       'umount -l /mnt/pve/truenas-backup\npvesm status --storage truenas-backup || exit 1'
     await newRow.fill(script)
 
-    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
-      ...responseBody,
-      pre_backup_commands: requestBody.pre_backup_commands,
-    }))
-
-    await page.getByRole('button', { name: 'Save changes' }).click()
-
-    const savedBody = await waitForSave()
-    expect(savedBody.pre_backup_commands as { command: string }[]).toContainEqual(
+    expect(await savePreBackupCommands(page)).toContainEqual(
       expect.objectContaining({ command: script }),
     )
 
@@ -470,36 +488,20 @@ test.describe('Schedules management', () => {
   // have a longer budget than the `systemctl stop` sitting beside it, instead
   // of every command on the schedule sharing the slowest one's.
   test('schedule detail Advanced section saves a per-command hook timeout', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
+    await openScheduleAdvanced(page)
+    const { field: preField, script: newRow } = await addPreBackupCommand(page)
 
-    await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.getByRole('button', { name: 'Advanced' }).click()
+    const script = 'vzdump --all 1 --storage backup-store'
+    await newRow.fill(script)
 
-    const preField = page.locator('.field', { hasText: 'Pre-backup commands' })
-    await preField.getByRole('button', { name: '+ Add command' }).click()
-
-    const newRow = preField.locator('textarea').last()
-    await newRow.fill('vzdump --all 1 --storage backup-store')
     const timeoutInput = preField.locator('input[type="number"]').last()
     // Empty means "inherit", and the placeholder says which value that is.
     await expect(timeoutInput).toHaveValue('')
     await expect(timeoutInput).toHaveAttribute('placeholder', /\d+/)
     await timeoutInput.fill('7200')
 
-    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
-      ...responseBody,
-      pre_backup_commands: requestBody.pre_backup_commands,
-    }))
-
-    await page.getByRole('button', { name: 'Save changes' }).click()
-
-    const savedBody = await waitForSave()
-    expect(
-      savedBody.pre_backup_commands as { command: string; timeout_seconds: number | null }[],
-    ).toContainEqual({
-      command: 'vzdump --all 1 --storage backup-store',
+    expect(await savePreBackupCommands(page)).toContainEqual({
+      command: script,
       timeout_seconds: 7200,
     })
 

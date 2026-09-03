@@ -439,8 +439,19 @@ async function loadAgent(): Promise<void> {
 async function refreshAgent(): Promise<void> {
   try {
     await fetchAgent()
+    error.value = null
   } catch (e: unknown) {
     logger.error('background agent refresh failed', e)
+    // Normally a failed background refresh leaves whatever was already on
+    // screen alone - the whole point of this path vs. loadAgent(). But if
+    // there's no last-good agent AND no ambiguity picker to fall back on
+    // (e.g. the picker's last remaining candidates vanished between two
+    // refreshes), the loading/ambiguous/error/agent v-else-if chain has
+    // nothing left to render at all. Surface the error banner in that case
+    // only - there's no existing state this would clobber.
+    if (!agent.value && ambiguousMatches.value.length === 0) {
+      error.value = extractError(e)
+    }
   }
 }
 

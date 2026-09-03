@@ -2251,6 +2251,32 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.find('.entity-card').exists()).toBe(false)
   })
 
+  // Regression test: unlike the previous test, this one starts with `agent`
+  // already null (from a prior ambiguous resolution) - so once the picker's
+  // last candidates also vanish, there is no last-good `agent` to fall back
+  // on either. Without surfacing an error, the loading/ambiguous/error/agent
+  // v-else-if chain has nothing left to render: no picker, no agent view,
+  // just a bare breadcrumb.
+  it('shows an error banner if a background refresh finds nothing left to show at all', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
+  })
+
   // Regression test: the reverse transition. If a background refetch turns a
   // previously-resolved single match ambiguous (a duplicate-hostname agent
   // appearing elsewhere), the picker takes over correctly - but `agent`

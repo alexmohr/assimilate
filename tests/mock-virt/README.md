@@ -22,6 +22,7 @@ Test doubles for `virsh` and `qemu-img`, used by `tests/qemu-vm-snapshot.test.sh
 - `MOCK_VIRT_JOB_FAILED=1` — reports the completed backup job as failed.
 - `MOCK_VIRT_NO_QUIESCE=1` — makes `snapshot-create-as --quiesce` fail, as on a host without a guest agent.
 - `MOCK_VIRT_FAIL_COMMIT=1` — makes `blockcommit` fail.
+- `MOCK_VIRT_BACKUP_KIB=<n>` — size in KiB of every image `backup-begin` writes (default 4).
 
 <!--
 SPDX-License-Identifier: Apache-2.0

@@ -47,15 +47,24 @@ new_case() {
   export DEST_ROOT="$WORK/dest"
   mkdir -p "$MOCK_VIRT_STATE" "$WORK/images" "$DEST_ROOT"
   unset MOCK_VIRT_FAIL_BACKUP MOCK_VIRT_NO_QUIESCE MOCK_VIRT_FAIL_COMMIT MOCK_VIRT_JOB_FAILED
-  unset FULL_INTERVAL SKIP_DOMAINS
+  unset MOCK_VIRT_BACKUP_KIB
+  unset FULL_INTERVAL SKIP_DOMAINS MAX_SIZE MAX_SIZE_OVERRIDES
 }
 
 define_domain() {
-  # define_domain <name> <state> <disk target> <disk image>
+  # define_domain <name> <state> <disk target> <disk image> [image size in KiB]
   printf '%s\n' "$1" >>"$MOCK_VIRT_STATE/domains"
   printf '%s %s\n' "$1" "$2" >>"$MOCK_VIRT_STATE/states"
   printf 'file disk %s %s\n' "$3" "$4" >>"$MOCK_VIRT_STATE/disks-$1"
-  printf 'mock guest disk\n' >"$4"
+  if [[ -n "${5:-}" ]]; then
+    dd if=/dev/zero of="$4" bs=1024 count="$5" status=none
+  else
+    printf 'mock guest disk\n' >"$4"
+  fi
+}
+
+usage_kib() {
+  du -sk "$1" | cut -f1
 }
 
 run_hook() {
@@ -89,6 +98,71 @@ assert_not_grep "$MOCK_VIRT_STATE/last-backup-vm1.xml" "<incremental>" "FULL_INT
 assert_eq "$(cat "$DEST_ROOT/vm1/chain.txt")" "vda vda.full.qcow2" "the chain is reset to the new full image"
 assert_eq "$(count_lines "$MOCK_VIRT_STATE/checkpoints-vm1")" "1" "the old checkpoints are dropped"
 assert_eq "$(find "$DEST_ROOT/vm1" -name 'vda.*.qcow2' ! -name 'vda.full.qcow2' | wc -l | tr -d ' ')" "0" "the superseded increments are removed"
+
+new_case "the storage limit forces a new full image before the chain outgrows it"
+export MOCK_VIRT_BACKUP_KIB=256
+export MAX_SIZE=700K
+define_domain vm10 running vda "$WORK/images/vm10.qcow2" 64
+run_hook >/dev/null
+sleep 1
+run_hook >/dev/null
+assert_grep "$MOCK_VIRT_STATE/last-backup-vm10.xml" "<incremental>" "the second run still fits an increment"
+sleep 1
+run_hook >/dev/null
+assert_not_grep "$MOCK_VIRT_STATE/last-backup-vm10.xml" "<incremental>" "the third run writes a full image instead"
+assert_eq "$(cat "$DEST_ROOT/vm10/chain.txt")" "vda vda.full.qcow2" "the chain was reset"
+if [[ "$(usage_kib "$DEST_ROOT/vm10")" -le 700 ]]; then
+  ok "the domain stays inside its limit"
+else
+  bad "the domain stays inside its limit (uses $(usage_kib "$DEST_ROOT/vm10") KiB)"
+fi
+
+new_case "a full backup that cannot fit fails the domain and keeps the previous chain"
+export MAX_SIZE=100M
+export MOCK_VIRT_BACKUP_KIB=256
+define_domain vm11 running vda "$WORK/images/vm11.qcow2" 512
+run_hook >/dev/null
+export MAX_SIZE=64K
+sleep 1
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "1" "the hook exits non-zero"
+printf '%s\n' "$output" >"$WORK/output.txt"
+assert_grep "$WORK/output.txt" "exceeds the limit of 64 KiB" "the limit is reported"
+assert_file "$DEST_ROOT/vm11/vda.full.qcow2" "the previous full image is kept"
+assert_eq "$(cat "$DEST_ROOT/vm11/chain.txt")" "vda vda.full.qcow2" "the previous chain is kept"
+
+new_case "a run that overshoots the limit fails the domain"
+export MAX_SIZE=256K
+export MOCK_VIRT_BACKUP_KIB=512
+define_domain vm12 running vda "$WORK/images/vm12.qcow2" 64
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "1" "the hook exits non-zero"
+printf '%s\n' "$output" >"$WORK/output.txt"
+assert_grep "$WORK/output.txt" "which exceeds the limit of 256 KiB" "the overshoot is reported"
+
+new_case "MAX_SIZE_OVERRIDES sets the limit of a single domain"
+export MAX_SIZE=64K
+export MAX_SIZE_OVERRIDES="vm13=100M"
+define_domain vm13 running vda "$WORK/images/vm13.qcow2" 512
+define_domain vm14 running vda "$WORK/images/vm14.qcow2" 512
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "1" "the domain on the default limit still fails"
+printf '%s\n' "$output" >"$WORK/output.txt"
+assert_grep "$WORK/output.txt" "could not be snapshotted: vm14" "only the domain without an override fails"
+assert_file "$DEST_ROOT/vm13/vda.full.qcow2" "the domain with the override is backed up"
+
+new_case "an unparsable limit stops the run before any domain is touched"
+export MAX_SIZE=plenty
+define_domain vm15 running vda "$WORK/images/vm15.qcow2"
+status=0
+output="$(run_hook 2>&1)" || status=$?
+assert_eq "$status" "1" "the hook exits non-zero"
+printf '%s\n' "$output" >"$WORK/output.txt"
+assert_grep "$WORK/output.txt" "MAX_SIZE is not a valid size: plenty" "the invalid value is named"
+assert_missing "$DEST_ROOT/vm15" "no domain was touched"
 
 new_case "shut off domain: disks are copied once and skipped while unchanged"
 define_domain vm2 "shut off" vda "$WORK/images/vm2.raw"

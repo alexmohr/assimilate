@@ -63,7 +63,7 @@ case "$SUBCOMMAND" in
       exit 1
     fi
     while read -r target_file; do
-      printf 'mock backup of %s\n' "$domain" >"$target_file"
+      dd if=/dev/zero of="$target_file" bs=1024 count="${MOCK_VIRT_BACKUP_KIB:-4}" status=none
     done < <(sed -n 's:.*<target file="\([^"]*\)".*:\1:p' "$2")
     sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$3" >>"$STATE/checkpoints-$domain"
     ;;

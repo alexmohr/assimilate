@@ -100,10 +100,31 @@ All options are environment variables, set in front of the command in the hook f
 | `FULL_INTERVAL` | `7` | No | Number of increments after which a new full image is written |
 | `JOB_TIMEOUT` | `1800` | No | Seconds to wait for one domain's backup job before aborting it |
 | `SKIP_DOMAINS` | — | No | Space separated domain names to leave out |
+| `MAX_SIZE` | `0` | No | Storage one domain may use below `DEST_ROOT`, for example `200G`. `0` means no limit |
+| `MAX_SIZE_OVERRIDES` | — | No | Space separated `domain=size` pairs that override `MAX_SIZE` for single domains |
 | `TARGET_OWNER` | — | No | Owner (`user` or `user:group`) applied to the per-domain directories |
 | `LIBVIRT_DEFAULT_URI` | `qemu:///system` | No | libvirt connection URI |
 
 Positional arguments limit the run to specific domains: `qemu-vm-snapshot.sh web01 db01`. Without arguments every defined domain is processed.
+
+## Limit the space per domain
+
+`MAX_SIZE` caps what one domain may occupy below `DEST_ROOT`, counted as allocated blocks rather than apparent size. Sizes take a `K`, `M`, `G` or `T` suffix; a bare number is bytes, and `0` means no limit. `MAX_SIZE_OVERRIDES` raises or lowers the cap for single domains:
+
+```bash
+MAX_SIZE=200G MAX_SIZE_OVERRIDES="db01=500G build01=20G" /usr/local/sbin/qemu-vm-snapshot.sh
+```
+
+The limit is enforced at three points:
+
+1. **Before an increment.** When the chain plus the expected next increment (the largest increment written so far) would cross the limit, the run writes a new full image instead. That drops the whole chain first, so the domain falls back to a single image and the space is reclaimed.
+2. **Before a full image.** A full backup that cannot fit is refused before anything is deleted or written, so the previous chain stays intact and restorable. The hook fails, and the schedule reports which domain was refused.
+3. **After the run.** The directory is measured again. An overshoot fails the domain, because the estimate in step 1 can only ever be a guess.
+
+A domain whose disks alone are larger than its limit can never be backed up, and every run reports that. Raise `MAX_SIZE` for it, or lower `FULL_INTERVAL` so the chain stays shorter.
+
+!!! note
+    The limit governs the staging directory, not the borg repository. Use [Storage Quotas](quotas.md) to bound what a repository may consume.
 
 ## Restore a domain
 
@@ -139,3 +160,4 @@ virsh define domain.xml
 - [Scheduling & Retention](scheduling.md)
 - [Configuration](configuration.md)
 - [Restoring Files](restore.md)
+- [Storage Quotas](quotas.md)

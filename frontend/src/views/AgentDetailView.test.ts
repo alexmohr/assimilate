@@ -1610,6 +1610,59 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(router.currentRoute.value.fullPath).toContain('archive=')
   })
 
+  // The other half: a failed run produced no archive, so the preview points
+  // at the only place its output is rendered - its own row, one tab over.
+  it('carries a failed preview run through to its output', async () => {
+    const wrapper = await render()
+
+    const viewError = wrapper.findAll('button').find((b) => b.text() === 'View error')
+    expect(viewError).toBeDefined()
+    await viewError!.trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+    ).$router
+    expect(router.currentRoute.value.query.tab).toBe('backups')
+    expect(router.currentRoute.value.query.report).toBe('3')
+
+    const highlighted = wrapper.find('.agent-row--highlighted')
+    expect(highlighted.attributes('id')).toBe('report-3')
+    expect(wrapper.text()).toContain('Connection refused')
+  })
+
+  // The pin the row asked for wins over one the route was already carrying,
+  // rather than the two selecting different runs on the same tab.
+  it('drops a status pin when a preview row names its own run', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'backups', status: 'warning' })
+    expect(wrapper.find('.agent-row--highlighted').attributes('id')).toBe('report-2')
+
+    await goTo(wrapper, { tab: 'overview' })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'View error')!
+      .trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+    ).$router
+    expect(router.currentRoute.value.query.status).toBeUndefined()
+    expect(wrapper.findAll('.agent-row--highlighted')).toHaveLength(1)
+    expect(wrapper.find('.agent-row--highlighted').attributes('id')).toBe('report-3')
+  })
+
+  // A link to a run that has since been cleaned up still has to render the
+  // tab, just without a pin.
+  it('ignores a report query param that matches no run', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'backups', report: '9999' })
+
+    expect(wrapper.find('.agent-row--highlighted').exists()).toBe(false)
+    expect(wrapper.findAll('[id^="report-"]').length).toBeGreaterThan(0)
+  })
+
   // The link only appears when the preview is hiding something, so this needs
   // more runs than the preview shows.
   it('follows the Overview preview through to the full tab', async () => {

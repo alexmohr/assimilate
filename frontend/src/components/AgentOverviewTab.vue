@@ -50,6 +50,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   openSchedule: [schedule: ScheduleRow]
   openReport: [report: ReportRow]
+  openReportDetail: [report: ReportRow]
   showTab: [tab: 'schedules' | 'backups']
   cancelBackup: [repoId: number]
 }>()
@@ -301,6 +302,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
           :key="r.id"
           :report="r"
           @open="emit('openReport', r)"
+          @detail="emit('openReportDetail', r)"
         />
       </div>
     </section>

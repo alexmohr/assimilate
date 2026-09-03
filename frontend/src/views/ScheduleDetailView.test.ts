@@ -615,6 +615,67 @@ describe('ScheduleDetailView - edit mode', () => {
     ).toBe('Backups')
   })
 
+  // A run in the preview is a way in, not just a status line: its archive is
+  // on this schedule's own Backups tab, one click away.
+  it('selects the archive of a preview run on the Backups tab', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      started_at: '2026-06-01T01:50:00Z',
+      agent_id: 10,
+      original_size: 100,
+      duration_secs: 10,
+      archive_name: 'web-server-01-2026-06-01',
+      error_message: null,
+      warnings: [],
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const rows = wrapper.findAll('.agent-row')
+    await rows[rows.length - 1].find('button.agent-row-name').trigger('click')
+    await flushPromises()
+
+    expect(
+      wrapper
+        .findAll('.tab')
+        .find((t) => t.attributes('aria-selected') === 'true')!
+        .text(),
+    ).toBe('Backups')
+    expect(wrapper.findComponent({ name: 'ScheduleBackupsTab' }).props('selected')).toMatchObject({
+      id: 1,
+    })
+  })
+
+  // A failed run wrote no archive, so this tab's browser has nothing to show
+  // for it - the output lives on the host that produced the run.
+  it('sends a failed preview run to its output on the host', async () => {
+    setupEditModeWithReport({
+      id: 7,
+      status: 'failed',
+      finished_at: '2026-06-01T02:00:00Z',
+      started_at: '2026-06-01T01:50:00Z',
+      agent_id: 10,
+      original_size: 0,
+      duration_secs: 5,
+      archive_name: null,
+      error_message: 'Repository lock could not be acquired',
+      warnings: [],
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const viewError = wrapper.findAll('button').find((b) => b.text() === 'View error')
+    expect(viewError).toBeDefined()
+    await viewError!.trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe('/agents/web-server-01?tab=backups&report=7')
+  })
+
   it('reorders targets from the real Settings tab and saves the new order', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })

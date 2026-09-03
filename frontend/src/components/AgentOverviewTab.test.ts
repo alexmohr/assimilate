@@ -243,6 +243,19 @@ describe('AgentOverviewTab', () => {
       expect(wrapper.emitted('openReport')).toHaveLength(1)
     })
 
+    // A failed run in the preview shows a badge and no output; the jump is
+    // the only thing on the row that answers "why".
+    it('asks the view to open the output of a failed run', async () => {
+      const wrapper = mount({
+        reports: [
+          report({ id: 2, status: 'failed', archive_name: null, error_message: 'Lock held' }),
+        ],
+      })
+      const button = wrapper.findAll('button').find((b) => b.text() === 'View error')
+      await button!.trigger('click')
+      expect(wrapper.emitted('openReportDetail')).toHaveLength(1)
+    })
+
     it('switches to the backups tab from its View all link', async () => {
       const wrapper = mount({
         reports: Array.from({ length: 8 }, (_, i) => report({ id: i + 1 })),

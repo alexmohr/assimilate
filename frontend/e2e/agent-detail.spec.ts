@@ -161,6 +161,39 @@ test.describe('Agent detail', () => {
     await expect(page.locator('.archive-file-browser')).toBeVisible()
   })
 
+  // A failed run in the Overview preview carries a badge and no output, so
+  // the row is a dead end without this: the jump lands on the row that does
+  // render the error, already expanded.
+  test("the overview preview jumps to a failed run's error", async ({ page }) => {
+    await loginAsAdmin(page)
+    // The seed's own failures age out of the preview as the demo date moves,
+    // so the run this asserts on is guaranteed here instead.
+    await page.route('**/api/agents/web-server-01/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeFailedReport(9996)]),
+      }),
+    )
+    // Registered second so it wins for the more specific URL: the count
+    // endpoint answers with an object, not a list of reports.
+    await page.route('**/api/agents/web-server-01/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
+    await page.goto('/agents/web-server-01')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'View error' }).first().click()
+
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=backups.*report=9996/)
+    await expect(page.locator('#report-9996.agent-row--highlighted')).toBeVisible()
+    await expect(page.locator('.detail-output--danger')).toContainText('connection refused')
+  })
+
   test('settings is a fourth tab with its own sub-nav', async ({ page }) => {
     await openAgent(page)
     await page.getByRole('tab', { name: 'Settings' }).click()

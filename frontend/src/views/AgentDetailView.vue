@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import {
   listAgents,
   updateAgent,
@@ -145,6 +145,17 @@ const pinnedStatus = computed(() => {
 })
 const pinnedReportId = ref<number | null>(null)
 const pinnedForStatus = ref<typeof pinnedStatus.value>(undefined)
+
+/** A run addressed by id (`?report=`), the deep link a preview row builds. */
+const linkedReportId = computed<number | null>(() => {
+  const r = route.query.report
+  if (typeof r !== 'string') return null
+  const id = Number(r)
+  return Number.isInteger(id) ? id : null
+})
+
+/** Whichever run the route is pointing at, for the row that marks itself. */
+const highlightedReportId = computed(() => linkedReportId.value ?? pinnedReportId.value)
 
 function isOverdueQuery(value: unknown): value is 'overdue' {
   return value === 'overdue'
@@ -354,6 +365,22 @@ function openReport(r: ReportRow): void {
   router.push({ path: `/repos/${r.repo_id}`, query })
 }
 
+/**
+ * The other half of a preview row: a failed or warned run has no archive to
+ * browse, so it lands on its own row in the Backups tab with the output
+ * already open. Stays on this page - `?report=` is picked up by the watch
+ * below - rather than pushing a second copy of the run somewhere else.
+ *
+ * The two pins that would fight over the same row (`status`, `archive`) are
+ * dropped: they select a run of their own, and the one asked for here wins.
+ */
+function openReportDetail(r: ReportRow): void {
+  const query: LocationQueryRaw = { ...route.query, tab: 'backups', report: String(r.id) }
+  delete query.status
+  delete query.archive
+  router.push({ query })
+}
+
 function toggleReport(r: ReportRow): void {
   expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
@@ -452,6 +479,26 @@ watch(
     nextTick(() => {
       document
         .getElementById(`report-${match.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  },
+  { immediate: true },
+)
+
+/**
+ * `?report=` opens that exact run, which is how a preview row hands off a
+ * failure: the row it points at is the only place its output is rendered.
+ */
+watch(
+  [reports, linkedReportId],
+  ([, id]) => {
+    if (id === null) return
+    const report = reports.value.find((r) => r.id === id)
+    if (!report) return
+    expandedReportId.value = report.id
+    nextTick(() => {
+      document
+        .getElementById(`report-${report.id}`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     })
   },
@@ -799,6 +846,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :repo-name-for="repoNameForSchedule"
           @open-schedule="navigateToSchedule"
           @open-report="openReport"
+          @open-report-detail="openReportDetail"
           @show-tab="activeTab = $event"
           @cancel-backup="cancelBackupInProgress"
         />
@@ -820,7 +868,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :reports="reports"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="highlightedArchiveName"
-          :pinned-report-id="pinnedReportId"
+          :pinned-report-id="highlightedReportId"
           @toggle="toggleReport"
           @open="openReport"
         />

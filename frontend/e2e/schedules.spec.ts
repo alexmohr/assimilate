@@ -393,6 +393,35 @@ test.describe('Schedules management', () => {
     await expect(page.locator('.cron-input')).toHaveValue('0 2 * * *')
   })
 
+  // This schedule's Backups tab is an archive browser, and a failed run
+  // wrote no archive - so the preview hands the run to the host that
+  // produced it, which is where its output is rendered.
+  test('a failed run in the overview preview opens on its host', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeFailedReport(9995, 1)]),
+      }),
+    )
+    // Registered second so it wins for the more specific URL: the count
+    // endpoint answers with an object, not a list of reports.
+    await page.route('**/api/schedules/1/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'View error' }).first().click()
+
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=backups.*report=9995/)
+  })
+
   test('schedule detail shows retention policy', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')

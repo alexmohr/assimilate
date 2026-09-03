@@ -76,6 +76,8 @@ A saved schedule's detail page opens on **Overview**: an at-a-glance summary (re
 
 On the Overview tab, a target that's behind shows an **Overdue** badge and a **Retry** button, both in the attention banner at the top and in its row further down. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
 
+The **Recent backups** preview below them is a way into each run, not just a status line. A run that produced an archive opens it from the host name, selected on this schedule's **Backups** tab. A run that finished with warnings or failed carries **View warnings** / **View error**, which opens that run on the host's own Backups tab with its output expanded — a failed run wrote no archive, so its output is the only thing there is to show for it.
+
 While a backup for the schedule is running, the Overview tab also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
 ### Backups Tab

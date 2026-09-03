@@ -1722,6 +1722,42 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(false)
   })
 
+  // AgentDeployDialog shows its own success message once `deployed` fires
+  // (it doesn't close itself) - the parent must refresh in the background
+  // rather than doing a full spinner-gated reload, or nulling `agent` while
+  // the dialog is still open (gated `v-if="showDeployDialog && agent"`)
+  // would unmount it out from under the success message before the user
+  // ever sees it.
+  it('keeps the deploy dialog open and refreshes in the background once deployed', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/system/version')
+        return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+    const detailNameEl = wrapper.find('.detail-name').element
+
+    await wrapper
+      .findAll('.detail-actions > button')
+      .find((b) => b.text().includes('Upgrade'))!
+      .trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'AgentDeployDialog' }).vm.$emit('deployed', '2.0.0')
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(true)
+    expect(wrapper.find('.spinner-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').element).toBe(detailNameEl)
+  })
+
   async function openSshKeyDialog(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
     await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
@@ -2380,6 +2416,31 @@ describe('AgentDetailView - clean up failed backups', () => {
     })
     expect(mockToastSuccess).toHaveBeenCalledWith('Deleted 1 failed backup report.')
     expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  // Regression test: the post-delete refetch used to run through the same
+  // spinner-gated load as the initial page mount, unmounting and remounting
+  // the whole page right after the toast - discarding any edit in progress
+  // elsewhere on the page. It must refresh in the background instead.
+  it('does not show the loading spinner or remount the page after deleting failed reports', async () => {
+    const wrapper = await renderAsAdmin()
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: { deleted: 1 } } as never)
+    const detailNameEl = wrapper.find('.detail-name').element
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.spinner-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').element).toBe(detailNameEl)
   })
 
   it('reports a failure and leaves the dialog open', async () => {

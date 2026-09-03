@@ -616,7 +616,7 @@ async function confirmCleanFailedReports(): Promise<void> {
         ? 'Deleted 1 failed backup report.'
         : `Deleted ${result.deleted} failed backup reports.`,
     )
-    await loadAgent()
+    await refreshAgent()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -1117,7 +1117,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           deployForceRedeploy = false
         }
       "
-      @deployed="loadAgent"
+      @deployed="refreshAgent"
     />
   </div>
 </template>

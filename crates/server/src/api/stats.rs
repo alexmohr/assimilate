@@ -910,6 +910,53 @@ pub struct AcknowledgementCountsResponse {
     pub system_events: i64,
 }
 
+/// Upper bound on a bulk acknowledge's `days` window, in days. Roughly a
+/// century - far past any retention policy, and small enough that
+/// `make_interval` cannot overflow on a nonsense value.
+const MAX_ACKNOWLEDGE_WINDOW_DAYS: i64 = 36_500;
+
+/// Which slice of the activity feed a bulk acknowledge -- and the count that
+/// gates its button -- applies to.
+///
+/// Empty means "everything outstanding", what the Activity Log's own
+/// Acknowledge all asks for. The dashboard's Backup stats panel shows one
+/// repository over one window, so it passes the same selectors here and clears
+/// exactly the failures it was counting rather than every failure on the
+/// server.
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+pub struct BulkAcknowledgeQuery {
+    /// Only backup reports for this repository.
+    pub repo_id: Option<i64>,
+    /// Only backup reports started within the last N days.
+    pub days: Option<i64>,
+}
+
+impl BulkAcknowledgeQuery {
+    /// Whether the caller asked for everything, rather than one slice of the
+    /// feed.
+    ///
+    /// System events belong to no repository and to no backup window, so a
+    /// filtered request leaves them alone: a "clear what this panel shows"
+    /// button must not silently retire a failed repository sync nobody has
+    /// looked at.
+    const fn is_unfiltered(&self) -> bool {
+        self.repo_id.is_none() && self.days.is_none()
+    }
+
+    /// The database-side filter, with `days` clamped into a range
+    /// `make_interval` can represent. A negative window matches nothing, which
+    /// is the safe direction for a nonsense value: it acknowledges less than
+    /// asked, never more.
+    fn filters(&self) -> db::BulkAcknowledgeFilters {
+        db::BulkAcknowledgeFilters {
+            repo_id: self.repo_id,
+            days: self
+                .days
+                .map(|days| i32::try_from(days.clamp(0, MAX_ACKNOWLEDGE_WINDOW_DAYS)).unwrap_or(0)),
+        }
+    }
+}
+
 /// How far a bulk acknowledge reaches for one caller: the repositories whose
 /// outstanding reports they may acknowledge, and whether they may acknowledge
 /// the (repository-less) system events.
@@ -971,6 +1018,10 @@ async fn acknowledge_scope(
     path = "/api/stats/activity/outstanding",
     tag = "Statistics",
     operation_id = "getOutstandingAcknowledgements",
+    params(
+        ("repo_id" = Option<i64>, Query, description = "Only count reports for this repository"),
+        ("days" = Option<i64>, Query, description = "Only count reports from the last N days"),
+    ),
     responses(
         (status = 200, description = "Counts still awaiting acknowledgement",
             body = AcknowledgementCountsResponse),
@@ -983,7 +1034,9 @@ async fn acknowledge_scope(
 /// The feed itself is paged and filtered, so counting what is on screen would
 /// hide the "Acknowledge all" button precisely when a narrow filter is
 /// hiding the problems it exists to clear. This reports the same set that
-/// endpoint would act on.
+/// endpoint would act on, including the `repo_id`/`days` narrowing a caller
+/// asks for here - a panel scoped to one repository and window gates its
+/// button on what a bulk acknowledge would clear *for that panel*.
 ///
 /// # Errors
 ///
@@ -991,15 +1044,17 @@ async fn acknowledge_scope(
 pub async fn outstanding_acknowledgements(
     State(state): State<AppState>,
     auth: AuthUser,
+    Query(query): Query<BulkAcknowledgeQuery>,
 ) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
     let scope = acknowledge_scope(&state.pool, &auth).await?;
+    let include_system_events = scope.system_events && query.is_unfiltered();
     // Two independent counts, and this runs on every Activity Log load, so
     // they go together rather than one after the other. A caller who cannot
     // acknowledge system events issues no query for them at all.
     let (backup_reports, system_events) = tokio::try_join!(
-        db::count_unacknowledged_reports_in_repos(&state.pool, &scope.repos),
+        db::count_unacknowledged_reports_in_repos(&state.pool, &scope.repos, query.filters()),
         async {
-            if scope.system_events {
+            if include_system_events {
                 db::count_unacknowledged_system_events(&state.pool).await
             } else {
                 Ok(0)
@@ -1017,19 +1072,26 @@ pub async fn outstanding_acknowledgements(
     post,
     path = "/api/stats/activity/acknowledge-all",
     tag = "Statistics",
+    params(
+        ("repo_id" = Option<i64>, Query,
+            description = "Only acknowledge reports for this repository"),
+        ("days" = Option<i64>, Query,
+            description = "Only acknowledge reports from the last N days"),
+    ),
     responses(
         (status = 200, description = "Counts of what was acknowledged",
             body = AcknowledgementCountsResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
-/// Acknowledge every outstanding warning or failure at once.
+/// Acknowledge every outstanding warning or failure at once, or just the ones
+/// in the repository and window the caller names.
 ///
 /// Backup reports are acknowledged only for repositories the caller may
 /// already acknowledge one-by-one, so this can never mute more than the
 /// per-entry endpoint would. System events are not repo-scoped, so only an
-/// admin acknowledges those; for anyone else they are left untouched rather
-/// than failing the whole call.
+/// admin acknowledges those, and only on an unfiltered call; for anyone else
+/// they are left untouched rather than failing the whole call.
 ///
 /// Both writes share one transaction, so a call the client sees fail leaves
 /// nothing half-acknowledged.
@@ -1040,10 +1102,17 @@ pub async fn outstanding_acknowledgements(
 pub async fn acknowledge_all_activity(
     State(state): State<AppState>,
     auth: AuthUser,
+    Query(query): Query<BulkAcknowledgeQuery>,
 ) -> Result<Json<AcknowledgementCountsResponse>, ApiError> {
     let scope = acknowledge_scope(&state.pool, &auth).await?;
-    let (backup_reports, system_events) =
-        db::acknowledge_all_outstanding(&state.pool, &scope.repos, scope.system_events).await?;
+    let include_system_events = scope.system_events && query.is_unfiltered();
+    let (backup_reports, system_events) = db::acknowledge_all_outstanding(
+        &state.pool,
+        &scope.repos,
+        include_system_events,
+        query.filters(),
+    )
+    .await?;
 
     Ok(Json(AcknowledgementCountsResponse {
         backup_reports: i64::try_from(backup_reports).unwrap_or(i64::MAX),
@@ -1627,7 +1696,69 @@ mod tests {
         types::{BackupStatus, FindingKind, FindingSeverity},
     };
 
-    use super::{CalendarEventStatus, CalendarEventType, DashboardQuotaStatus};
+    use super::{
+        BulkAcknowledgeQuery, CalendarEventStatus, CalendarEventType, DashboardQuotaStatus,
+        MAX_ACKNOWLEDGE_WINDOW_DAYS,
+    };
+
+    /// An unfiltered bulk acknowledge is the Activity Log's "clear everything",
+    /// so it keeps reaching system events; naming any slice of the feed makes
+    /// it about backup reports alone.
+    #[test]
+    fn bulk_acknowledge_is_unfiltered_only_without_a_scope() {
+        assert!(BulkAcknowledgeQuery::default().is_unfiltered());
+        assert!(
+            !BulkAcknowledgeQuery {
+                repo_id: Some(7),
+                days: None,
+            }
+            .is_unfiltered()
+        );
+        assert!(
+            !BulkAcknowledgeQuery {
+                repo_id: None,
+                days: Some(30),
+            }
+            .is_unfiltered()
+        );
+    }
+
+    #[test]
+    fn bulk_acknowledge_filters_pass_the_scope_through() {
+        let filters = BulkAcknowledgeQuery {
+            repo_id: Some(3),
+            days: Some(30),
+        }
+        .filters();
+        assert_eq!(filters.repo_id, Some(3));
+        assert_eq!(filters.days, Some(30));
+        assert_eq!(BulkAcknowledgeQuery::default().filters().days, None);
+    }
+
+    /// A nonsense window must never widen what gets acknowledged: a negative
+    /// one clamps to zero days (matching nothing) and an oversized one to a
+    /// bound `make_interval` can represent.
+    #[test]
+    fn bulk_acknowledge_clamps_a_nonsense_window() {
+        assert_eq!(
+            BulkAcknowledgeQuery {
+                repo_id: None,
+                days: Some(-30),
+            }
+            .filters()
+            .days,
+            Some(0)
+        );
+        assert_eq!(
+            BulkAcknowledgeQuery {
+                repo_id: None,
+                days: Some(i64::MAX),
+            }
+            .filters()
+            .days,
+            i32::try_from(MAX_ACKNOWLEDGE_WINDOW_DAYS).ok()
+        );
+    }
 
     #[test]
     fn health_response_parses_valid_status() {

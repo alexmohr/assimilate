@@ -35,6 +35,7 @@ A successful run has no Acknowledge button; there is nothing on it to review.
 
 Acknowledging a run also removes it from the dashboard:
 
+- it stops counting towards the **Failed** tile in Backup Stats, which reports only runs still awaiting review
 - its **Needs attention** finding disappears, so the finding count drops
 - the **Last failure** / **Last warning** tiles fall back to the most recent run still awaiting review
 - an acknowledged failure no longer leaves the schedule target flagged as overdue or never-succeeded — the target is muted until its next run, whose fresh report is flagged again if it fails too. The mute is bounded: if that run never happens, the target is overdue on a new cycle and returns to the dashboard, so a host that goes silent after a review cannot stay hidden
@@ -46,6 +47,8 @@ The success-rate ring is history rather than a to-do list, so it keeps counting 
 **Acknowledge all**, in the page header, marks every outstanding warning and failure as reviewed in one step. It reaches exactly as far as acknowledging each entry by hand would: backup runs only in repositories you may modify schedules for, and system events only if you are an admin.
 
 It appears whenever anything is left for you to acknowledge — deliberately regardless of the tab and filters in effect, since it acts on the same unfiltered set. A narrow filter showing nothing acknowledgeable does not mean there is nothing left, so gating the button on what happens to be on screen would hide it exactly when it is most useful.
+
+The dashboard's Backup Stats panel carries a narrower version of the same action, **Mark reviewed**, which clears only the runs in the repository and range that panel is showing and leaves system events untouched. See [Resetting the failed count](dashboard.md#resetting-the-failed-count).
 
 ### Acknowledging a system event
 

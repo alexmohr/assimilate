@@ -29,6 +29,25 @@ While at least one backup is running, a **Backups In Progress** panel appears ab
 
 As archive progress streams in, each row also shows the files and data processed so far, plus the file currently being backed up. The current-file path is clamped to two lines and ellipsized if it still doesn't fit, so one deeply nested path can't stretch the panel.
 
+## Backup Stats
+
+Backup Stats summarises the runs in one window — 7, 14, 30, or 90 days — for every repository or for one picked from the selector beside the range buttons. It reports four numbers: **Total** runs, the **Success** rate, the number of **Failed** runs, and the average duration. Selecting Total, Success, or Failed opens the Activity Log filtered to the same range and outcome.
+
+![Backup stats](assets/screenshots/dashboard-backup-stats.png)
+
+**Failed** counts only the failures nobody has reviewed yet — failed runs specifically, matching the Activity Log filter the tile links to; a run that merely warned is not counted here. Acknowledging a run — from the [Activity Log](activity.md#acknowledging-a-warning-or-failure), or in bulk from here — takes it out of that count; when the window holds runs that have been reviewed, the tile says how many under the number. Total, Success, and the average duration are history rather than a to-do list, so they keep counting every run either way.
+
+### Resetting the failed count
+
+When anything in view is still awaiting review, a **Mark reviewed** button appears under the tiles. It acknowledges the failed *and* warned runs in the repository and range currently selected, which drops the Failed tile to zero and clears the same warnings from the Activity Log's own outstanding list.
+
+The dialog states how many runs that is — counted on the server over the same repository and window, not from the rows on screen, so the number is what the reset will actually clear. Nothing is deleted: the runs stay in the Activity Log, where the **Acknowledged** filter finds them again and **Unacknowledge** puts any one of them back.
+
+Two limits keep the button from reaching past what it says:
+
+- It only ever touches runs in the selected repository and range. Widen the range to 90 days to clear more; narrow it to 7 days to clear only the recent ones.
+- It reaches exactly as far as acknowledging each run by hand would — backup runs in repositories you may modify schedules for, and no further. Because it is scoped to a window of backup runs, it leaves system events alone; those are cleared from the Activity Log's own **Acknowledge all**. If nothing is left for you to acknowledge in view, the button does not appear.
+
 ## Needs Attention
 
 Needs Attention contains only actionable findings. Critical findings appear before warnings. For one schedule target, overlapping failed, warning, overdue, never-succeeded, and offline-due-soon symptoms collapse to the highest-priority finding.

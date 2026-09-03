@@ -130,6 +130,55 @@ test.describe('Dashboard widgets', () => {
     await expect(page.getByRole('heading', { name: 'Backup stats' })).toBeVisible()
   })
 
+  // The reset the Failed tile exists for: acknowledging the runs in view has
+  // to take them out of the count, out of the button's own reason to exist,
+  // and into the reviewed line - without deleting anything.
+  test('marks the failures in view as reviewed and clears the failed tile', async ({ page }) => {
+    await loginAsAdmin(page)
+
+    // Everything the reset is about to acknowledge, so the demo environment
+    // can be put back exactly as it was for the tests that follow.
+    const outstanding = await page.request.get(
+      '/api/stats/activity?days=30&acknowledged=unacknowledged',
+    )
+    expect(outstanding.ok()).toBe(true)
+    const rows = (await outstanding.json()) as Array<{ id: number; status: string }>
+    const reviewedIds = rows
+      .filter((row) => row.status === 'failed' || row.status === 'warning')
+      .map((row) => row.id)
+    expect(reviewedIds.length).toBeGreaterThan(0)
+
+    try {
+      await page.goto('/')
+      await page.waitForLoadState('networkidle')
+
+      const panel = page
+        .locator('section.panel')
+        .filter({ has: page.getByRole('heading', { name: 'Backup stats' }) })
+      const failedTile = panel.locator('.mini-stat').nth(2)
+      await expect(failedTile.locator('.stat-value')).not.toHaveText('0')
+
+      await panel.locator('.stats-actions button').click()
+      await page.locator('.modal-footer').getByRole('button', { name: 'Mark reviewed' }).click()
+
+      await expect(failedTile.locator('.stat-value')).toHaveText('0')
+      await expect(failedTile.locator('.stat-sub')).toContainText('reviewed')
+      // Nothing left in view to review, so the button retires itself.
+      await expect(panel.locator('.stats-actions')).toHaveCount(0)
+
+      // Reviewed, not deleted: the runs are still in the feed.
+      const kept = await page.request.get('/api/stats/activity?days=30&acknowledged=acknowledged')
+      const keptIds = ((await kept.json()) as Array<{ id: number }>).map((row) => row.id)
+      for (const id of reviewedIds) {
+        expect(keptIds).toContain(id)
+      }
+    } finally {
+      for (const id of reviewedIds) {
+        await page.request.delete(`/api/stats/activity/${id}/acknowledge`)
+      }
+    }
+  })
+
   test('backup calendar renders all seven day columns without clipping', async ({ page }) => {
     // The calendar used to share a three-column row, which left it narrower
     // than its own month grid: the grid overflowed and the panel's clip took

@@ -4,12 +4,22 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { CheckCheck } from '@lucide/vue'
 import { formatDuration } from '../utils/format'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { logger } from '../utils/logger'
+import { extractError } from '../utils/error'
+import { useToast } from '../composables/useToast'
+import {
+  acknowledgeAllActivity,
+  getOutstandingAcknowledgements,
+  type AcknowledgeScope,
+} from '../api/stats'
 import type { Repo } from '../types/repo'
 import { type SegmentedOption } from './BaseSegmented.vue'
+import BaseModal from './BaseModal.vue'
 import ChartRangeControls from './ChartRangeControls.vue'
 import { useRangeFilteredFetch } from '../composables/useRangeFilteredFetch'
 
@@ -28,14 +38,16 @@ interface ActivityEntry {
   finished_at: string
   status: string
   duration_secs: number
+  acknowledged: boolean
 }
 
 const props = defineProps<{ repos: Repo[] }>()
 const router = useRouter()
+const { error: toastError, success: toastSuccess } = useToast()
 
 const selectedDays = ref<number>(30)
 const selectedRepoId = ref<number | undefined>(undefined)
-const { entries, loading } = useRangeFilteredFetch<ActivityEntry>(
+const { entries, loading, refetch } = useRangeFilteredFetch<ActivityEntry>(
   '/stats/activity',
   selectedDays,
   selectedRepoId,
@@ -45,8 +57,17 @@ const totalCount = computed((): number => entries.value.length)
 const successCount = computed(
   (): number => entries.value.filter((e) => normalizeBackupStatus(e.status) === 'success').length,
 )
+const failedEntries = computed((): ActivityEntry[] =>
+  entries.value.filter((e) => normalizeBackupStatus(e.status) === 'failed'),
+)
+// Only the failures nobody has reviewed yet. A reviewed failure stays in the
+// history the success rate is computed from - it just stops being something
+// this tile is still asking the operator to look at.
 const failedCount = computed(
-  (): number => entries.value.filter((e) => normalizeBackupStatus(e.status) !== 'success').length,
+  (): number => failedEntries.value.filter((e) => !e.acknowledged).length,
+)
+const reviewedCount = computed(
+  (): number => failedEntries.value.filter((e) => e.acknowledged).length,
 )
 const successRate = computed((): number => {
   if (totalCount.value === 0) return 0
@@ -56,6 +77,53 @@ const avgDurationSecs = computed((): number => {
   if (entries.value.length === 0) return 0
   const total = entries.value.reduce((sum, e) => sum + e.duration_secs, 0)
   return Math.round(total / entries.value.length)
+})
+
+/** The repo and range the panel is showing, as the API spells them. */
+const scope = computed(
+  (): AcknowledgeScope => ({ days: selectedDays.value, repo_id: selectedRepoId.value }),
+)
+
+// What a reset would actually clear, counted server-side over the same repo
+// and window. The feed this panel renders is only what the caller may see and
+// stops at the window's edge, so counting its rows would offer the button to
+// someone whose permissions leave nothing to acknowledge - and would promise a
+// number the write then does not match.
+const outstanding = ref(0)
+const resetting = ref(false)
+const showResetDialog = ref(false)
+
+async function fetchOutstanding(): Promise<void> {
+  const counts = await getOutstandingAcknowledgements(scope.value)
+  outstanding.value = counts.backup_reports
+}
+
+const canReset = computed((): boolean => outstanding.value > 0)
+
+async function confirmReset(): Promise<void> {
+  resetting.value = true
+  try {
+    const result = await acknowledgeAllActivity(scope.value)
+    toastSuccess(
+      result.backup_reports === 1
+        ? 'Marked 1 run as reviewed'
+        : `Marked ${result.backup_reports} runs as reviewed`,
+    )
+    showResetDialog.value = false
+    await Promise.all([refetch(), fetchOutstanding()])
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    resetting.value = false
+  }
+}
+
+onMounted(() => {
+  fetchOutstanding().catch((e: unknown) => logger.error('fetchOutstanding failed', e))
+})
+
+watch([selectedDays, selectedRepoId], () => {
+  fetchOutstanding().catch((e: unknown) => logger.error('fetchOutstanding failed', e))
 })
 
 function navigateToActivity(status?: string): void {
@@ -123,16 +191,73 @@ function navigateToActivity(status?: string): void {
           {{ failedCount }}
         </span>
         <span class="stat-label">Failed</span>
+        <span
+          v-if="reviewedCount > 0"
+          class="stat-sub"
+        >
+          {{ reviewedCount }} reviewed
+        </span>
       </div>
       <div class="mini-stat">
         <span class="stat-value stat-value--lg">{{ formatDuration(avgDurationSecs) }}</span>
         <span class="stat-label">Avg duration</span>
       </div>
     </div>
+    <!-- Below the tiles rather than in the header: the repo and range controls
+         already fill that row, and a third control there wraps the heading off
+         its own line. -->
+    <div
+      v-if="!loading && canReset"
+      class="stats-actions"
+    >
+      <button
+        class="btn btn-sm btn-ghost"
+        title="Mark the failed and warned runs in this range as reviewed"
+        @click="showResetDialog = true"
+      >
+        <CheckCheck :size="14" />
+        Mark reviewed
+      </button>
+    </div>
+
+    <BaseModal
+      :open="showResetDialog"
+      title="Mark runs as reviewed"
+      @close="showResetDialog = false"
+    >
+      <p>
+        Mark the <strong>{{ outstanding }}</strong>
+        {{ outstanding === 1 ? 'failed or warned run' : 'failed and warned runs' }} in this range as
+        reviewed? The failed count drops to zero and the runs stay in the Activity Log — nothing is
+        deleted, and any one of them can be un-reviewed there.
+      </p>
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="showResetDialog = false"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          :disabled="resetting"
+          @click="confirmReset"
+        >
+          {{ resetting ? 'Marking...' : 'Mark reviewed' }}
+        </button>
+      </template>
+    </BaseModal>
   </section>
 </template>
 
 <style scoped>
+.stats-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-5);
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -108,8 +108,18 @@ describe('stats api', () => {
 
     const result = await getOutstandingAcknowledgements()
 
-    expect(apiClient.get).toHaveBeenCalledWith('/stats/activity/outstanding')
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/activity/outstanding', { params: undefined })
     expect(result).toEqual({ backup_reports: 4, system_events: 2 })
+  })
+
+  it('counts what is outstanding within one repo and window', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { backup_reports: 1, system_events: 0 } })
+
+    await getOutstandingAcknowledgements({ days: 7, repo_id: 2 })
+
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/activity/outstanding', {
+      params: { days: 7, repo_id: 2 },
+    })
   })
 
   it('acknowledges everything outstanding at once', async () => {
@@ -119,8 +129,24 @@ describe('stats api', () => {
 
     const result = await acknowledgeAllActivity()
 
-    expect(apiClient.post).toHaveBeenCalledWith('/stats/activity/acknowledge-all')
+    expect(apiClient.post).toHaveBeenCalledWith('/stats/activity/acknowledge-all', undefined, {
+      params: undefined,
+    })
     expect(result).toEqual({ backup_reports: 3, system_events: 1 })
+  })
+
+  // A panel that shows one repo over one window clears what it showed, so the
+  // scope has to reach the server rather than being dropped client-side.
+  it('acknowledges only the named repo and window when given a scope', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { backup_reports: 2, system_events: 0 },
+    })
+
+    await acknowledgeAllActivity({ days: 30, repo_id: 5 })
+
+    expect(apiClient.post).toHaveBeenCalledWith('/stats/activity/acknowledge-all', undefined, {
+      params: { days: 30, repo_id: 5 },
+    })
   })
 
   it('gets the dashboard summary', async () => {

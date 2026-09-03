@@ -14,7 +14,7 @@ export function useRangeFilteredFetch<T>(
   endpoint: string,
   selectedDays: Ref<number>,
   selectedRepoId: Ref<number | undefined>,
-): { entries: Ref<T[]>; loading: Ref<boolean> } {
+): { entries: Ref<T[]>; loading: Ref<boolean>; refetch: () => Promise<void> } {
   const entries = ref<T[]>([]) as Ref<T[]>
   const loading = ref(true)
 
@@ -40,5 +40,8 @@ export function useRangeFilteredFetch<T>(
     fetchEntries().catch(logger.error)
   })
 
-  return { entries, loading }
+  // Exposed for a widget that mutates what it is showing - the dashboard's
+  // Backup stats panel acknowledges the failures it counted, and has to read
+  // the window back rather than guess what the write left behind.
+  return { entries, loading, refetch: fetchEntries }
 }

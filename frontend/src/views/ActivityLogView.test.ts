@@ -675,7 +675,9 @@ describe('ActivityLogView', () => {
       await button!.trigger('click')
       await flushPromises()
 
-      expect(mockPost).toHaveBeenCalledWith('/stats/activity/acknowledge-all')
+      expect(mockPost).toHaveBeenCalledWith('/stats/activity/acknowledge-all', undefined, {
+        params: undefined,
+      })
     })
 
     it('shows the button on the Backup tab when only system events are outstanding', async () => {

@@ -358,23 +358,24 @@ function toggleReport(r: ReportRow): void {
   expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
 
-// SSH-key deploy, merge, redeploy and the failed-reports cleanup dialog all
-// operate on the currently-resolved `agent` object. The first three are
-// gated `v-if="agent"` (merge/redeploy additionally on their own `show*`
-// flag); the cleanup dialog isn't gated on `agent` at all in the template,
-// so it would otherwise stay open with a stale `failedReportCount` and
-// silently no-op on "Delete failed reports" (`confirmCleanFailedReports`
-// returns early when `agent.value` is null). Once the host can no longer be
-// uniquely resolved - ambiguous, or gone entirely - keeping any of these
-// open would mean it silently keeps acting on a stale/orphaned agent, so
-// close them all alongside `agent`/`ambiguousMatches` rather than relying
-// on `v-if="agent"` alone (which only helps when `agent.value` is actually
-// nulled).
+// SSH-key deploy, merge, redeploy, the failed-reports cleanup dialog and the
+// identity-edit dialog all operate on the currently-resolved `agent` object.
+// The first three are gated `v-if="agent"` (merge/redeploy additionally on
+// their own `show*` flag); the cleanup and identity-edit dialogs aren't
+// gated on `agent` at all in the template, so they'd otherwise stay open
+// with stale data and silently no-op on save (`confirmCleanFailedReports`
+// and `saveIdentity` both return early when `agent.value` is null). Once the
+// host can no longer be uniquely resolved - ambiguous, or gone entirely -
+// keeping any of these open would mean it silently keeps acting on a
+// stale/orphaned agent, so close them all alongside `agent`/`ambiguousMatches`
+// rather than relying on `v-if="agent"` alone (which only helps when
+// `agent.value` is actually nulled).
 function closeAgentScopedModals(): void {
   showDeploySshKey.value = false
   showMergeDialog.value = false
   showDeployDialog.value = false
   showCleanFailedDialog.value = false
+  editingIdentity.value = false
 }
 
 // A background refresh (see `refreshAgent` below) must leave the last-good

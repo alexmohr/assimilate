@@ -1830,6 +1830,34 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(openModals(wrapper)).toHaveLength(0)
   })
 
+  // Regression test: the identity-edit dialog isn't gated `v-if="agent"` in
+  // the template (same shape as the failed-reports cleanup dialog), so it
+  // would otherwise stay open with stale hostname/domain fields - and
+  // silently no-op on Save, since `saveIdentity` returns early once
+  // `agent.value` is null - if a background refresh discovers the host is
+  // now ambiguous or gone while it's open.
+  it('closes the identity dialog if a background refresh can no longer find the host', async () => {
+    const wrapper = await render()
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text().trim() === 'Edit identity')!
+      .trigger('click')
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(1)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
   it('deploys an SSH key from a dialog', async () => {
     const wrapper = await render()
     await wrapper.find('.overflow-toggle').trigger('click')

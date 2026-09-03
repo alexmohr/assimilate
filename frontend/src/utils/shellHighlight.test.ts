@@ -114,6 +114,35 @@ describe('highlightShell', () => {
     expect(kindOf('for id in $(ls -1); do :; done', 'ls')).toBe('command')
   })
 
+  // A trailing backslash is how a long command wraps onto the next line, so
+  // it turns up in exactly the multi-line hook scripts this renders.
+  it('keeps an escaped character with the surrounding text', () => {
+    const script = 'vzdump --all 1 \\\n    --storage backup-store'
+    expect(
+      highlightShell(script)
+        .map((token) => token.text)
+        .join(''),
+    ).toBe(script)
+    expect(kindOf(script, '\\')).toBe('text')
+  })
+
+  // Without the escape branch the backslash would fall through to the quote
+  // matcher on the next character and open a string that never closes.
+  it('does not let an escaped quote open a string', () => {
+    expect(highlightShell('echo \\" still text').some((t) => t.kind === 'string')).toBe(false)
+  })
+
+  // A bare `$` starts no expansion and is excluded from a word, so it leaves
+  // the loop only through the single-character fallback - without which the
+  // cursor would never advance past it and the render would hang.
+  it('advances past a character no matcher claims, such as a bare $', () => {
+    expect(
+      highlightShell('echo $')
+        .map((token) => token.text)
+        .join(''),
+    ).toBe('echo $')
+  })
+
   it('merges adjacent runs of the same kind into one token', () => {
     const tokens = highlightShell('a && b')
     expect(tokens.filter((t) => t.kind === 'operator').map((t) => t.text)).toEqual(['&&'])

@@ -676,6 +676,39 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(router.currentRoute.value.fullPath).toBe('/agents/web-server-01?tab=backups&report=7')
   })
 
+  // The row offers the jump on any run with output, and the host it belongs
+  // to is resolved at click time - so a run whose host cannot be named (an
+  // agent since deleted, no hostname on the report either) has to stay put
+  // rather than route to `/agents/`.
+  it('stays put when a preview run names no host to open', async () => {
+    setupEditModeWithReport({
+      id: 8,
+      agent_id: 999,
+      hostname: null,
+      status: 'failed',
+      finished_at: '2026-06-01T02:00:00Z',
+      started_at: '2026-06-01T01:50:00Z',
+      original_size: 0,
+      duration_secs: 5,
+      archive_name: null,
+      error_message: 'Repository lock could not be acquired',
+      warnings: [],
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'View error')!
+      .trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
+      .$router
+    expect(router.currentRoute.value.path).not.toContain('/agents/')
+    expect(logger.error).toHaveBeenCalledWith('cannot open a run whose host is unknown', 8)
+  })
+
   it('reorders targets from the real Settings tab and saves the new order', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })

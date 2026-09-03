@@ -275,10 +275,10 @@ pub struct AgentRow {
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
     /// Default pre-backup commands.
-    #[schema(value_type = Vec<String>)]
+    #[schema(value_type = Vec<HookCommand>)]
     pub default_pre_backup_commands: HookCommands,
     /// Default post-backup commands.
-    #[schema(value_type = Vec<String>)]
+    #[schema(value_type = Vec<HookCommand>)]
     pub default_post_backup_commands: HookCommands,
     /// Default file-change detection patterns (raw text).
     #[serde(default)]
@@ -487,10 +487,10 @@ pub struct ScheduleRow {
     /// Rate limit in KB/s, if any.
     pub rate_limit_kbps: Option<i32>,
     /// Pre-backup commands.
-    #[schema(value_type = Vec<String>)]
+    #[schema(value_type = Vec<HookCommand>)]
     pub pre_backup_commands: HookCommands,
     /// Post-backup commands.
-    #[schema(value_type = Vec<String>)]
+    #[schema(value_type = Vec<HookCommand>)]
     pub post_backup_commands: HookCommands,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     pub hook_timeout_seconds: i32,

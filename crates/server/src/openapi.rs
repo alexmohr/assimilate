@@ -336,4 +336,47 @@ mod tests {
         assert!(json.contains("List audit log entries"));
         assert!(!json.contains("\"summary\":null"));
     }
+
+    /// The hook command fields on `AgentRow` and `ScheduleRow` carry a
+    /// `#[schema(value_type = ...)]` override, because the rows hold them as
+    /// `sqlx::types::Json`, which utoipa cannot infer through. An override is
+    /// a hand-written copy of the real type and goes stale silently: it kept
+    /// claiming `Vec<String>` after hook commands became objects, so the
+    /// published schema described a shape the API had stopped serving.
+    #[test]
+    fn hook_command_fields_are_documented_as_objects() {
+        let doc = ApiDoc::openapi();
+        let json = serde_json::to_value(&doc).unwrap();
+        let schemas = json
+            .get("components")
+            .and_then(|components| components.get("schemas"))
+            .expect("the spec declares component schemas");
+
+        assert!(
+            schemas.get("HookCommand").is_some(),
+            "HookCommand must be a reachable component for the refs below to resolve"
+        );
+
+        for (schema, field) in [
+            ("AgentRow", "default_pre_backup_commands"),
+            ("AgentRow", "default_post_backup_commands"),
+            ("ScheduleRow", "pre_backup_commands"),
+            ("ScheduleRow", "post_backup_commands"),
+        ] {
+            let property = schemas
+                .get(schema)
+                .and_then(|row| row.get("properties"))
+                .and_then(|properties| properties.get(field))
+                .unwrap_or_else(|| panic!("{schema}.{field} is missing from the spec"));
+            let item_ref = property
+                .get("items")
+                .and_then(|items| items.get("$ref"))
+                .and_then(serde_json::Value::as_str);
+            assert_eq!(
+                item_ref,
+                Some("#/components/schemas/HookCommand"),
+                "{schema}.{field} must be an array of HookCommand, got {property}"
+            );
+        }
+    }
 }

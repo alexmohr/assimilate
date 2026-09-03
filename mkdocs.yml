@@ -54,6 +54,7 @@ nav:
   - Repository Management: repositories.md
   - Power Management: power-management.md
   - Scheduling & Retention: scheduling.md
+  - VM Snapshots: vm-snapshots.md
   - Archive Browsing: archives.md
   - Restoring Files: restore.md
   - Storage Quotas: quotas.md

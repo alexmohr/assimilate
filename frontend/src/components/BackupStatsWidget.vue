@@ -126,12 +126,20 @@ async function confirmReset(): Promise<void> {
         : `Marked ${result.backup_reports} runs as reviewed`,
     )
     showResetDialog.value = false
-    await Promise.all([refetch(), fetchOutstanding()])
   } catch (e: unknown) {
     toastError(extractError(e))
+    return
   } finally {
     resetting.value = false
   }
+
+  // Deliberately outside the try: by here the runs *are* acknowledged and the
+  // operator has been told so. A failed re-read leaves the panel stale, not the
+  // reset undone, and reporting it as an error right after the success toast
+  // would say the opposite of what happened.
+  await Promise.all([refetch(), fetchOutstanding()]).catch((e: unknown) =>
+    logger.error('refresh after acknowledge failed', e),
+  )
 }
 
 onMounted(() => {

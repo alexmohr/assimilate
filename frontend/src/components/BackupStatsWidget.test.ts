@@ -26,6 +26,11 @@ vi.mock('../utils/logger', () => ({
 }))
 // jscpd:ignore-end
 
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
+vi.mock('../composables/useToast', () => ({
+  useToast: (): { success: typeof toast.success; error: typeof toast.error } => toast,
+}))
+
 const mockGet = vi.mocked(apiClient.get)
 const mockPost = vi.mocked(apiClient.post)
 
@@ -269,6 +274,27 @@ describe('BackupStatsWidget', () => {
     expect(mockPost).not.toHaveBeenCalled()
   })
 
+  // The runs are acknowledged by the time the panel re-reads itself, so a
+  // failed re-read is a stale panel, not a failed reset - saying otherwise
+  // right after the success toast would contradict what just happened.
+  it('does not report a failed refresh as a failed reset', async () => {
+    mockApi([activityEntry(1, 'failed')], 1)
+    const wrapper = renderWithPlugins(BackupStatsWidget, { props: { repos: [] } })
+    await flushPromises()
+
+    await wrapper.find('.stats-actions .btn').trigger('click')
+    await flushPromises()
+    // Every read from here on fails, including the two the reset triggers.
+    mockGet.mockRejectedValue(new Error('network'))
+    const confirm = wrapper.findAll('.modal-footer .btn').find((b) => b.text() === 'Mark reviewed')!
+    await confirm.trigger('click')
+    await flushPromises()
+
+    expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(wrapper.find('.modal-footer').exists()).toBe(false)
+  })
+
   it('keeps the dialog open and reports the failure when the acknowledge fails', async () => {
     mockApi([activityEntry(1, 'failed')], 1)
     mockPost.mockRejectedValue(new Error('nope'))
@@ -282,5 +308,7 @@ describe('BackupStatsWidget', () => {
     await flushPromises()
 
     expect(wrapper.find('.modal-footer').exists()).toBe(true)
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.success).not.toHaveBeenCalled()
   })
 })

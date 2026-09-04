@@ -6406,6 +6406,13 @@ pub struct BulkAcknowledgeFilters {
 /// acknowledge would. `filters` narrows it further, to the slice of the feed
 /// the caller is actually looking at.
 ///
+/// Hidden and imported-placeholder agents are excluded, with the same
+/// predicate [`get_activity_feed`] and [`get_activity_feed_days`] apply. Their
+/// reports never reach any feed or dashboard tile, so acknowledging one here
+/// would silently retire a run nobody was shown - and would break the promise
+/// the button rests on, that a bulk acknowledge clears no more than what was
+/// on screen.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -6419,9 +6426,12 @@ where
 {
     let [warning, failed] = acknowledgeable_report_statuses();
     Ok(sqlx::query!(
-        "UPDATE backup_reports SET acknowledged = true WHERE acknowledged = false AND repo_id = \
-         ANY($1) AND status IN ($2, $3) AND ($4::bigint IS NULL OR repo_id = $4) AND ($5::int IS \
-         NULL OR started_at > NOW() - make_interval(days => $5))",
+        "UPDATE backup_reports SET acknowledged = true WHERE id IN (SELECT br.id FROM \
+         backup_reports br JOIN agents a ON a.id = br.agent_id WHERE br.acknowledged = false AND \
+         br.repo_id = ANY($1) AND br.status IN ($2, $3) AND ($4::bigint IS NULL OR br.repo_id = \
+         $4) AND ($5::int IS NULL OR br.started_at > NOW() - make_interval(days => $5)) AND \
+         a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT \
+         ILIKE '%(imported)%')",
         repo_ids,
         warning,
         failed,
@@ -6435,7 +6445,11 @@ where
 }
 
 /// The repositories that still hold at least one unacknowledged warning or
-/// failed backup report, so the caller can permission-check just those.
+/// failed backup report from an agent a feed would actually show, so the
+/// caller can permission-check just those. Carries the same agent-visibility
+/// predicate as the count and the write it feeds, so a repository whose only
+/// outstanding reports belong to a hidden or imported agent is not offered as
+/// a candidate for something that would then acknowledge nothing.
 ///
 /// # Errors
 ///
@@ -6443,8 +6457,10 @@ where
 pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
     let [warning, failed] = acknowledgeable_report_statuses();
     sqlx::query_scalar!(
-        "SELECT DISTINCT repo_id FROM backup_reports WHERE acknowledged = false AND status IN \
-         ($1, $2) ORDER BY repo_id",
+        "SELECT DISTINCT br.repo_id FROM backup_reports br JOIN agents a ON a.id = br.agent_id \
+         WHERE br.acknowledged = false AND br.status IN ($1, $2) AND a.is_hidden = false AND \
+         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' ORDER \
+         BY br.repo_id",
         warning,
         failed,
     )
@@ -6457,9 +6473,9 @@ pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>
 /// `repo_ids` and matching `filters`, so the UI can tell whether a bulk
 /// acknowledge would do anything without first loading the feed.
 ///
-/// Deliberately mirrors [`acknowledge_backup_reports_in_repos`]'s filter, so
-/// "the button is shown" and "the button would acknowledge something" can
-/// never disagree.
+/// Deliberately mirrors [`acknowledge_backup_reports_in_repos`]'s filter -
+/// the agent-visibility predicate included - so "the button is shown" and
+/// "the button would acknowledge something" can never disagree.
 ///
 /// # Errors
 ///
@@ -6471,9 +6487,11 @@ pub async fn count_unacknowledged_reports_in_repos(
 ) -> Result<i64, ApiError> {
     let [warning, failed] = acknowledgeable_report_statuses();
     Ok(sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false AND repo_id = ANY($1) AND \
-         status IN ($2, $3) AND ($4::bigint IS NULL OR repo_id = $4) AND ($5::int IS NULL OR \
-         started_at > NOW() - make_interval(days => $5))",
+        "SELECT COUNT(*) FROM backup_reports br JOIN agents a ON a.id = br.agent_id WHERE \
+         br.acknowledged = false AND br.repo_id = ANY($1) AND br.status IN ($2, $3) AND \
+         ($4::bigint IS NULL OR br.repo_id = $4) AND ($5::int IS NULL OR br.started_at > NOW() - \
+         make_interval(days => $5)) AND a.is_hidden = false AND a.visibility <> 'hidden' AND \
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%'",
         repo_ids,
         warning,
         failed,

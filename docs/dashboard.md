@@ -46,7 +46,7 @@ The dialog states how many runs that is — counted on the server over the same 
 Two limits keep the button from reaching past what it says:
 
 - It only ever touches runs in the selected repository and range. Widen the range to 90 days to clear more; narrow it to 7 days to clear only the recent ones.
-- It reaches exactly as far as acknowledging each run by hand would — backup runs in repositories you may modify schedules for, and no further. Because it is scoped to a window of backup runs, it leaves system events alone; those are cleared from the Activity Log's own **Acknowledge all**. If nothing is left for you to acknowledge in view, the button does not appear.
+- It reaches exactly as far as acknowledging each run by hand would — backup runs in repositories you may modify schedules for, and no further. Runs belonging to hidden or imported placeholder agents are excluded, the same way they are left out of every other panel here, so the reset cannot clear a failure that was never on screen. Because it is scoped to a window of backup runs, it leaves system events alone; those are cleared from the Activity Log's own **Acknowledge all**. If nothing is left for you to acknowledge in view, the button does not appear.
 
 ## Needs Attention
 

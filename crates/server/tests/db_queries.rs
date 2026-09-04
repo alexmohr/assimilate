@@ -2262,6 +2262,67 @@ async fn bulk_acknowledge_scoped_to_one_repo_leaves_the_others_outstanding(pool:
     );
 }
 
+/// A hidden agent's failed run never reaches a feed or the Failed tile, so a
+/// bulk acknowledge must neither count it nor silently retire it - the
+/// button's whole promise is that it clears no more than what was on screen.
+#[sqlx::test(migrations = "./migrations")]
+async fn bulk_acknowledge_ignores_reports_from_agents_no_feed_shows(pool: PgPool) {
+    let visible = db::insert_agent(&pool, "visible-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let hidden = db::insert_agent(&pool, "hidden-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET is_hidden = true WHERE id = $1")
+        .bind(hidden.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    for agent_id in [visible.id, hidden.id] {
+        insert_report_with_status(
+            &pool,
+            agent_id,
+            repo.id,
+            shared::types::BackupStatus::Failed,
+        )
+        .await;
+    }
+
+    let all = db::BulkAcknowledgeFilters::default();
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id], all)
+            .await
+            .unwrap(),
+        1,
+        "only the visible agent's failure is counted"
+    );
+
+    let acknowledged = db::acknowledge_backup_reports_in_repos(&pool, &[repo.id], all)
+        .await
+        .unwrap();
+    assert_eq!(acknowledged, 1);
+
+    let hidden_still_outstanding: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE agent_id = $1 AND acknowledged = false",
+    )
+    .bind(hidden.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        hidden_still_outstanding, 1,
+        "the hidden agent's run must be left exactly as it was"
+    );
+
+    // With nothing acknowledgeable left that a feed would show, the repository
+    // stops being a candidate at all rather than offering a no-op button.
+    assert_eq!(
+        db::repos_with_unacknowledged_reports(&pool).await.unwrap(),
+        Vec::<i64>::new()
+    );
+}
+
 /// Scoped to a window, a bulk acknowledge clears the runs inside it and leaves
 /// the older ones outstanding - the panel's "last 7 days" reset must not
 /// silently retire a quarter of history.

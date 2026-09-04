@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT br.repo_id FROM backup_reports br JOIN agents a ON a.id = br.agent_id WHERE br.acknowledged = false AND br.status IN ($1, $2) AND a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' ORDER BY br.repo_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7a9509463fb8b088c60ee3d2859cb4119e0e86c09345f50da041c78b0dfd5b8c"
+}

@@ -210,6 +210,12 @@ test.describe('Hosts management', () => {
     page,
   }) => {
     // schedule 1 ("server-daily") targets web-server-01 - see schedules.spec.ts.
+    // "Colliding daily window" targets the same agent/repo (see seed-demo.sh)
+    // and can carry its own Failed chip (e.g. once its own seeded in-progress
+    // report resolves), so a row/chip lookup scoped only by the shared repo
+    // name "server-daily" is ambiguous - the accessible description below
+    // (from last_error_message, unique to this mock) picks out schedule 1's
+    // own chip regardless of what else is on the page.
     await mockScheduleOneHealth(page, {
       last_status: 'failed',
       last_error_message: 'Simulated failure',
@@ -219,8 +225,10 @@ test.describe('Hosts management', () => {
     await page.goto('/agents/web-server-01?tab=schedules')
     await page.waitForLoadState('networkidle')
 
-    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
-    const failedChip = row.locator('.entity-issue-chip.sev-danger')
+    const failedChip = page.getByRole('button', {
+      name: 'Failed',
+      description: 'Simulated failure',
+    })
     await expect(failedChip).toBeVisible()
 
     await failedChip.click()

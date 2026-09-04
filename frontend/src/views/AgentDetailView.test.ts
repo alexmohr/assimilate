@@ -1376,6 +1376,31 @@ describe('AgentDetailView - identity, token and merge', () => {
 
     expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(false)
   })
+
+  // Regression test: MergeAgentDialog operates on the currently-resolved
+  // `agent`. If a background refresh discovers a second agent now sharing
+  // this hostname while the dialog is open, it must close rather than keep
+  // running against the now-ambiguous/stale agent.
+  it('closes the merge dialog if a background refresh makes the host ambiguous', async () => {
+    const wrapper = await render({ is_imported: true })
+    await clickButton(wrapper, 'Merge into...')
+    expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(true)
+
+    const otherAgent = { ...mockAgent, id: 2, domain: 'b.example.com' }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents')
+        return Promise.resolve({ data: [{ ...mockAgent, is_imported: true }, otherAgent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('More than one host is named')
+    expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(false)
+  })
 })
 
 describe('AgentDetailView - tab bar and list controls', () => {
@@ -1697,6 +1722,42 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(false)
   })
 
+  // AgentDeployDialog shows its own success message once `deployed` fires
+  // (it doesn't close itself) - the parent must refresh in the background
+  // rather than doing a full spinner-gated reload, or nulling `agent` while
+  // the dialog is still open (gated `v-if="showDeployDialog && agent"`)
+  // would unmount it out from under the success message before the user
+  // ever sees it.
+  it('keeps the deploy dialog open and refreshes in the background once deployed', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/system/version')
+        return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin', can_upgrade_agent: true } } },
+    })
+    await flushPromises()
+    const detailNameEl = wrapper.find('.detail-name').element
+
+    await wrapper
+      .findAll('.detail-actions > button')
+      .find((b) => b.text().includes('Upgrade'))!
+      .trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'AgentDeployDialog' }).vm.$emit('deployed', '2.0.0')
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'AgentDeployDialog' }).exists()).toBe(true)
+    expect(wrapper.find('.spinner-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').element).toBe(detailNameEl)
+  })
+
   async function openSshKeyDialog(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
     await wrapper.find('.overflow-toggle').trigger('click')
     await flushPromises()
@@ -1743,6 +1804,55 @@ describe('AgentDetailView - tab structure and settings', () => {
       .mock.calls.find(([active]) => (active as { value: boolean }).value === true)
     expect(registration).toBeDefined()
     registration![1]()
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  // Regression test: the SSH key dialog is gated `v-if="agent"` and hands
+  // `agent.hostname` straight to the panel inside it. If this host drops out
+  // of the list entirely during a background refresh (renamed/merged/deleted
+  // from another session), `agent` is deliberately left at its last-good
+  // value so the page behind the dialog doesn't blank - but that must not
+  // leave the dialog itself open and acting on the now-orphaned agent.
+  it('closes the SSH key dialog if a background refresh can no longer find the host', async () => {
+    const wrapper = await render()
+    await openSshKeyDialog(wrapper)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(openModals(wrapper)).toHaveLength(0)
+  })
+
+  // Regression test: the identity-edit dialog isn't gated `v-if="agent"` in
+  // the template (same shape as the failed-reports cleanup dialog), so it
+  // would otherwise stay open with stale hostname/domain fields - and
+  // silently no-op on Save, since `saveIdentity` returns early once
+  // `agent.value` is null - if a background refresh discovers the host is
+  // now ambiguous or gone while it's open.
+  it('closes the identity dialog if a background refresh can no longer find the host', async () => {
+    const wrapper = await render()
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text().trim() === 'Edit identity')!
+      .trigger('click')
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(1)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
     await flushPromises()
 
     expect(openModals(wrapper)).toHaveLength(0)
@@ -1931,6 +2041,89 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
 
     expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(before)
   })
+
+  // Regression test: a background refetch used to run through the same
+  // loading flag as the initial load, which unmounted and remounted the
+  // whole page - discarding any edit in progress in a settings form. A
+  // background refresh must update the page in place instead.
+  it('does not show the loading spinner or remount the page on a background refetch', async () => {
+    const wrapper = await render()
+    const detailNameEl = wrapper.find('.detail-name').element
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.find('.spinner-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').element).toBe(detailNameEl)
+  })
+
+  it('logs and keeps showing the page when a background refetch fails', async () => {
+    const wrapper = await render()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.reject(new Error('network error'))
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith('background agent refresh failed', expect.any(Error))
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').exists()).toBe(true)
+  })
+
+  // Regression test: fetchAgent used to null out `agent.value` as soon as
+  // the current host dropped out of the list, then throw - so a background
+  // refresh where the request itself *succeeds* but this host is no longer
+  // among the results (deleted, or renamed/merged away from another
+  // session) blanked the whole page instead of leaving the last-good data
+  // on screen the way a failed request does.
+  it('keeps showing the last-good agent when a background refetch no longer finds it', async () => {
+    const wrapper = await render()
+    expect(wrapper.find('.detail-name').exists()).toBe(true)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith('background agent refresh failed', expect.any(Error))
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').exists()).toBe(true)
+  })
+
+  // Regression test: unlike a background refresh, a genuine navigation to a
+  // hostname that doesn't resolve goes through loadAgent()'s spinner/error
+  // path, not refreshAgent()'s "preserve last-good state" one - so it must
+  // still clear stale data. The agent-detail route has no `:key`, so the
+  // same component instance (and its `agent` ref) is reused across a
+  // hostname change; without resetting `agent.value` up front, the
+  // breadcrumb's domain hint (which reads `agent.value` directly) would
+  // keep showing the previous host's domain next to the new, nonexistent
+  // one, right beside the "not found" error banner.
+  it('clears the stale breadcrumb domain hint when navigating to a host that is not found', async () => {
+    const wrapper = await render({ domain: 'a.example.com' })
+    expect(wrapper.find('.detail-breadcrumb .muted').text()).toBe('(a.example.com)')
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    // The route itself has no `:key`, so a real navigation reuses this same
+    // component instance and only updates its `hostname` prop - reproduced
+    // here the same way, rather than through `$router.push`, since this
+    // view is mounted directly with static props rather than under a
+    // `<RouterView>` in this test harness.
+    await wrapper.setProps({ hostname: 'nonexistent-host' })
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
+    expect(wrapper.find('.detail-breadcrumb .muted').exists()).toBe(false)
+  })
 })
 
 // Two agents can share an OS hostname if they're in different domains; the
@@ -2003,6 +2196,120 @@ describe('AgentDetailView — duplicate hostnames', () => {
     expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
     expect(wrapper.text()).toContain('Host B')
     expect(wrapper.text()).not.toContain('Host A')
+  })
+
+  // Regression test: a background refetch never cleared `ambiguousMatches`
+  // once it shrank back to a single match, so if the ambiguity resolved
+  // itself server-side (e.g. one of the duplicate-hostname agents got
+  // merged/deleted from another session) while this page was showing the
+  // picker, the picker stayed on screen forever instead of falling through
+  // to the now-unambiguous agent.
+  it('falls through to the resolved agent once a background refresh clears the ambiguity', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [AGENT_B] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.text()).toContain('Host B')
+  })
+
+  // Regression test: the picker must not get stuck forever if a background
+  // refresh goes straight from "ambiguous" to "gone entirely" (e.g. both
+  // duplicate-hostname agents were merged/deleted elsewhere between
+  // refreshes) - this hits the "not found" throw path directly, skipping
+  // the single-match branch the previous test exercises.
+  it('clears the picker once a background refresh finds no match at all', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.find('.entity-card').exists()).toBe(false)
+  })
+
+  // Regression test: unlike the previous test, this one starts with `agent`
+  // already null (from a prior ambiguous resolution) - so once the picker's
+  // last candidates also vanish, there is no last-good `agent` to fall back
+  // on either. Without surfacing an error, the loading/ambiguous/error/agent
+  // v-else-if chain has nothing left to render: no picker, no agent view,
+  // just a bare breadcrumb.
+  it('shows an error banner if a background refresh finds nothing left to show at all', async () => {
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
+  })
+
+  // Regression test: the reverse transition. If a background refetch turns a
+  // previously-resolved single match ambiguous (a duplicate-hostname agent
+  // appearing elsewhere), the picker takes over correctly - but `agent`
+  // wasn't cleared, so the breadcrumb's domain hint (which reads `agent`
+  // directly, outside the template's picker/agent v-else-if chain) kept
+  // showing the stale domain next to the hostname while the picker below
+  // asked which one was meant.
+  it('clears the stale breadcrumb domain hint once a background refresh turns ambiguous', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [AGENT_A] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.find('.detail-breadcrumb .muted').text()).toBe('(a.example.com)')
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [AGENT_A, AGENT_B] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).toContain(AMBIGUOUS_TEXT)
+    expect(wrapper.find('.detail-breadcrumb .muted').exists()).toBe(false)
   })
 })
 
@@ -2165,6 +2472,31 @@ describe('AgentDetailView - clean up failed backups', () => {
     expect(openModals(wrapper)).toHaveLength(0)
   })
 
+  // Regression test: the post-delete refetch used to run through the same
+  // spinner-gated load as the initial page mount, unmounting and remounting
+  // the whole page right after the toast - discarding any edit in progress
+  // elsewhere on the page. It must refresh in the background instead.
+  it('does not show the loading spinner or remount the page after deleting failed reports', async () => {
+    const wrapper = await renderAsAdmin()
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: { deleted: 1 } } as never)
+    const detailNameEl = wrapper.find('.detail-name').element
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper
+      .findAll('.modal-footer button')
+      .find((b) => b.text().trim() === 'Delete failed reports')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.spinner-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.detail-name').element).toBe(detailNameEl)
+  })
+
   it('reports a failure and leaves the dialog open', async () => {
     const wrapper = await renderAsAdmin()
     vi.mocked(apiClient.delete).mockRejectedValue(new Error('locked'))
@@ -2183,5 +2515,36 @@ describe('AgentDetailView - clean up failed backups', () => {
 
     expect(mockToastError).toHaveBeenCalled()
     expect(openModals(wrapper)).toHaveLength(1)
+  })
+
+  // Regression test: unlike the SSH-key/merge/deploy dialogs, this one isn't
+  // gated `v-if="agent"` in the template, so it would otherwise stay open
+  // with a stale `failedReportCount` (and silently no-op on delete, since
+  // confirmCleanFailedReports returns early once `agent.value` is null) if
+  // a background refresh discovers the host is now ambiguous while it's
+  // open.
+  it('closes the cleanup dialog if a background refresh makes the host ambiguous', async () => {
+    const wrapper = await renderAsAdmin()
+    await openMenu(wrapper)
+    await wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text() === 'Clean up failed backups (1)')!
+      .trigger('click')
+    await flushPromises()
+    expect(openModals(wrapper)).toHaveLength(1)
+
+    const otherAgent = { ...mockAgent, id: 2, domain: 'b.example.com' }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent, otherAgent] })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('More than one host is named')
+    expect(openModals(wrapper)).toHaveLength(0)
   })
 })

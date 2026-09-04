@@ -253,6 +253,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         pending_dryruns: std::sync::Arc::default(),
         pending_restores: std::sync::Arc::default(),
         pending_vm_scans: std::sync::Arc::default(),
+        pending_vm_builds: std::sync::Arc::default(),
         pending_migrations: std::sync::Arc::default(),
         pending_deletes: std::sync::Arc::default(),
         shutdown_token,
@@ -486,6 +487,10 @@ fn agent_routes() -> Router<AppState> {
         .route(
             "/api/agents/{hostname}/vms/scan",
             post(api::vms::scan_agent_vms),
+        )
+        .route(
+            "/api/agents/{hostname}/vms/build",
+            post(api::vms::build_agent_vm),
         )
         .route(
             "/api/agents/{hostname}/vms/{name}",

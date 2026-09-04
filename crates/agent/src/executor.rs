@@ -48,6 +48,10 @@ pub enum ExecutorCommand {
     ScanVms {
         request_id: Option<String>,
     },
+    BuildVm {
+        request_id: String,
+        request: shared::vm::VmBuildRequest,
+    },
     RunCheckNow {
         repo_id: RepoId,
     },
@@ -134,6 +138,13 @@ impl Executor {
                 }
                 ExecutorCommand::ScanVms { request_id } => {
                     self.handle_scan_vms(request_id, &outbound_tx).await;
+                }
+                ExecutorCommand::BuildVm {
+                    request_id,
+                    request,
+                } => {
+                    self.handle_build_vm(request_id, &request, &outbound_tx)
+                        .await;
                 }
                 ExecutorCommand::RunCheckNow { repo_id } => {
                     self.handle_run_check(repo_id, &outbound_tx).await;
@@ -348,6 +359,39 @@ impl Executor {
             .send(AgentToServer::VmScanResult {
                 request_id,
                 vms,
+                error,
+            })
+            .await;
+    }
+
+    /// Builds a domain out of files a restore put back on disk. The host's
+    /// own staging settings do not apply: the request says where to read from
+    /// and where the images go.
+    async fn handle_build_vm(
+        &self,
+        request_id: String,
+        request: &shared::vm::VmBuildRequest,
+        outbound_tx: &mpsc::Sender<AgentToServer>,
+    ) {
+        info!(
+            "Building virtual machine {} from {}",
+            request.name, request.source_dir
+        );
+        let (outcome, error) = match VmStager::new(VmSnapshotConfig::default())
+            .build(request)
+            .await
+        {
+            Ok(outcome) => (Some(outcome), None),
+            Err(e) => {
+                warn!("Virtual machine build failed: {e}");
+                (None, Some(e.to_string()))
+            }
+        };
+
+        let _ = outbound_tx
+            .send(AgentToServer::VmBuildResult {
+                request_id,
+                outcome,
                 error,
             })
             .await;

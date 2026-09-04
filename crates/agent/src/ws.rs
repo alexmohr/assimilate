@@ -212,6 +212,22 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
+        ServerToAgent::BuildVm {
+            request_id,
+            request,
+        } => {
+            info!("Received BuildVm for {}", request.name);
+            if exec_cmd_tx
+                .send(ExecutorCommand::BuildVm {
+                    request_id,
+                    request,
+                })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
         ServerToAgent::RunCheckNow { repo_id, .. } => {
             info!("Received RunCheckNow for repo {repo_id:?}");
             if exec_cmd_tx

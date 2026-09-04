@@ -12,6 +12,7 @@ Test doubles for `virsh` and `qemu-img`, used by the agent's tests in `crates/ag
 - `checkpoints-<domain>` — checkpoints created so far, maintained by `backup-begin` and `checkpoint-delete`.
 - `calls.log` — every mock invocation, one line per call.
 - `last-backup-<domain>.xml`, `last-checkpoint-<domain>.xml` — the XML of the most recent `backup-begin`.
+- `last-defined.xml` — the definition the most recent `define` was given, so a test can assert how a restored domain was rewritten.
 
 `qemu-img info` reports `qcow2` for paths ending in `.qcow2` and `raw` for everything else.
 
@@ -22,6 +23,8 @@ Test doubles for `virsh` and `qemu-img`, used by the agent's tests in `crates/ag
 - `MOCK_VIRT_JOB_FAILED=1` — reports the completed backup job as failed.
 - `MOCK_VIRT_NO_QUIESCE=1` — makes `snapshot-create-as --quiesce` fail, as on a host without a guest agent.
 - `MOCK_VIRT_FAIL_COMMIT=1` — makes `blockcommit` fail.
+- `MOCK_VIRT_FAIL_DEFINE=1` — makes `define` fail, as when a restored definition is rejected.
+- `MOCK_VIRT_FAIL_START=1` — makes `start` fail.
 - `MOCK_VIRT_BACKUP_KIB=<n>` — size in KiB of every image `backup-begin` writes (default 4).
 
 <!--

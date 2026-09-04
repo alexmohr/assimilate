@@ -63,6 +63,31 @@ test.describe('Virtual machine staging', () => {
     await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Overridden')
   })
 
+  test('the restore wizard walks both stages', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.waitForLoadState('networkidle')
+
+    await page
+      .locator('tbody tr', { hasText: 'web01' })
+      .getByRole('button', { name: 'Restore' })
+      .click()
+
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toContainText('Restore virtual machine')
+    // Stage one is borg: the archives this host produced are the points in time.
+    await expect(dialog.locator('input[name="vm-restore-archive"]').first()).toBeVisible()
+    await dialog.locator('input[name="vm-restore-archive"]').first().check()
+
+    await dialog.getByRole('button', { name: 'Next' }).click()
+    // The wizard says exactly where the files land, so stage two is not a guess.
+    await expect(dialog).toContainText('/srv/vm-staging/web01')
+
+    await dialog.getByRole('button', { name: 'Next' }).click()
+    await expect(page.locator('#vm-restore-name')).toHaveValue('web01-restored')
+    await expect(dialog).toContainText('Define the domain, leave it shut off')
+  })
+
   test('a schedule opts in from its advanced settings', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')

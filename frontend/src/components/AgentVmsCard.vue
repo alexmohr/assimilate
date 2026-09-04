@@ -14,6 +14,7 @@ import BaseSpinner from './BaseSpinner.vue'
 import EditableSection from './EditableSection.vue'
 import EmptyState from './EmptyState.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
+import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
 import type {
   AgentVmResponse,
@@ -52,6 +53,9 @@ const scanError = ref<string | null>(null)
 
 const rowSaving = ref<string | null>(null)
 const rowError = ref<string | null>(null)
+
+/** The domain whose restore wizard is open, if any. */
+const restoring = ref<string | null>(null)
 
 const enabled = ref(false)
 const stagingDir = ref('')
@@ -234,6 +238,11 @@ function onLimitChange(vm: AgentVmResponse, event: Event): void {
 
 function onIncludedChange(vm: AgentVmResponse, included: boolean): void {
   void saveVm(vm, included, limitInput(vm))
+}
+
+function restored(): void {
+  restoring.value = null
+  void load()
 }
 
 onMounted(load)
@@ -434,6 +443,7 @@ onMounted(load)
                 <th>Staged size</th>
                 <th>Limit (GiB)</th>
                 <th>Include</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -510,11 +520,31 @@ onMounted(load)
                     @update:model-value="onIncludedChange(vm, $event)"
                   />
                 </td>
+                <td class="td-action">
+                  <button
+                    v-if="canEdit"
+                    type="button"
+                    class="btn btn-sm"
+                    @click="restoring = vm.name"
+                  >
+                    Restore
+                  </button>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
+
+      <VmRestoreWizard
+        v-if="restoring"
+        :open="restoring !== null"
+        :agent="agent"
+        :domain-name="restoring"
+        :staging-dir="stagingDir"
+        @close="restoring = null"
+        @restored="restored"
+      />
     </template>
   </div>
 </template>

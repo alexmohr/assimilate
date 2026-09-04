@@ -165,6 +165,82 @@ pub struct VmSnapshotOutcome {
     pub error: Option<String>,
 }
 
+/// What to do once a restored domain's images are in place.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum VmBuildAction {
+    /// Merge and place the images, define nothing.
+    FilesOnly,
+    /// Define the domain and leave it shut off.
+    #[default]
+    Define,
+    /// Define the domain and start it.
+    DefineAndStart,
+}
+
+impl VmBuildAction {
+    /// Whether the domain is defined in libvirt.
+    #[must_use]
+    pub const fn defines(self) -> bool {
+        matches!(self, Self::Define | Self::DefineAndStart)
+    }
+
+    /// Whether the domain is started once defined.
+    #[must_use]
+    pub const fn starts(self) -> bool {
+        matches!(self, Self::DefineAndStart)
+    }
+}
+
+/// Building a domain out of files a restore put back on disk: the second stage
+/// of a virtual-machine restore, which can also run on its own against any
+/// directory holding a staged domain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct VmBuildRequest {
+    /// Directory holding the restored domain: its chain, its definition and,
+    /// for a UEFI domain, its NVRAM.
+    pub source_dir: String,
+    /// Name to define the domain under. Restoring beside a domain that still
+    /// exists needs a new one.
+    pub name: String,
+    /// Directory the merged images are moved to.
+    pub image_dir: String,
+    /// What to do once the images are in place.
+    pub action: VmBuildAction,
+}
+
+/// What building a domain produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct VmBuildOutcome {
+    /// The name the domain was built under.
+    pub name: String,
+    /// The images that now back it, in the order its disks are attached.
+    pub images: Vec<String>,
+    /// How many increments were merged into the full images.
+    pub merged_increments: u32,
+    /// Whether the domain was defined in libvirt.
+    pub defined: bool,
+    /// Whether the domain was started.
+    pub started: bool,
+}
+
 /// Per-domain settings the operator made, delivered to the agent alongside the
 /// host's settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +349,16 @@ mod tests {
         assert!(config().includes("never-seen"));
         assert!(config().includes("web01"));
         assert!(!config().includes("win-ci"));
+    }
+
+    #[test]
+    fn build_actions_say_what_they_do() {
+        assert!(!VmBuildAction::FilesOnly.defines());
+        assert!(!VmBuildAction::FilesOnly.starts());
+        assert!(VmBuildAction::Define.defines());
+        assert!(!VmBuildAction::Define.starts());
+        assert!(VmBuildAction::DefineAndStart.defines());
+        assert!(VmBuildAction::DefineAndStart.starts());
     }
 
     #[test]

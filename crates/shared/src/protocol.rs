@@ -11,7 +11,7 @@ use crate::{
         AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, RunEventTarget,
         RunEventType, SearchEntry,
     },
-    vm::{DiscoveredVm, VmSnapshotOutcome},
+    vm::{DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmSnapshotOutcome},
 };
 
 /// The kind of repository operation being performed.
@@ -209,6 +209,14 @@ pub enum ServerToAgent {
         /// Optional opaque request identifier for correlating the response.
         #[serde(default)]
         request_id: Option<String>,
+    },
+    /// Build a domain out of files a restore put back on disk. Answered with
+    /// [`AgentToServer::VmBuildResult`].
+    BuildVm {
+        /// Opaque request identifier for correlating the response.
+        request_id: String,
+        /// What to build, from where, and what to do with it.
+        request: VmBuildRequest,
     },
     /// Heartbeat ping to check agent connectivity.
     Ping,
@@ -468,6 +476,18 @@ pub enum AgentToServer {
         schedule_id: Option<i64>,
         /// One entry per domain the agent tried to stage.
         outcomes: Vec<VmSnapshotOutcome>,
+    },
+    /// The result of building a domain, in response to
+    /// [`ServerToAgent::BuildVm`].
+    VmBuildResult {
+        /// The request identifier from the build request.
+        request_id: String,
+        /// What was built, when it worked.
+        #[serde(default)]
+        outcome: Option<VmBuildOutcome>,
+        /// Why the build failed, when it did.
+        #[serde(default)]
+        error: Option<String>,
     },
     /// Response to a server ping.
     Pong,

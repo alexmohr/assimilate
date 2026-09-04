@@ -110,26 +110,39 @@ A domain whose disks alone are larger than its limit can never be staged, and ev
 
 ## Restore a domain
 
-Restore the staged directory from the archive first (see [Restoring Files](restore.md)), then merge the chain. Merging rewrites the full image, so work on the restored copy, never on the staging directory of a live host.
+Restoring happens in two stages, in the order they actually occur: borg puts the staged files back on disk, then the agent builds a domain out of them. Open the agent's **Virtual machines** section and click **Restore** on the domain's row.
+
+![The restore wizard, picking the archive to restore a domain from](assets/screenshots/vm-restore.png)
+
+1. **Which point in time.** Every archive holds the whole chain as it stood that night, so an archive is a point in time and restoring one never needs a second archive. Turn off **Restore the files from an archive** to build from files that are already on disk.
+2. **Where the files land.** This is the ordinary [agent-side restore](restore.md#agent-side-restore): `borg extract` runs on the host and no data passes through the server. The files land under the staging path they were archived with, and the wizard shows the exact directory. Stage two reads that directory and leaves it alone, so a failed build can be retried without fetching from borg again.
+3. **What to build.** A name for the restored domain (defaulted to `<domain>-restored`, so it can be defined beside the one it came from), the image directory, and what to do once the images are in place: leave the images only, define the domain shut off, or define and start it.
+
+The build merges each disk's chain in the order `chain.txt` records, moves the merged image into the image directory as `<name>-<target>.<format>`, and defines the domain from the restored definition with its disk paths rewritten. The definition keeps everything else the machine had, including its MAC address, and loses its UUID so libvirt issues a fresh one.
+
+!!! warning "Two machines, one MAC"
+    A restored domain keeps the MAC address of the domain it came from. Starting both at once puts two machines with the same MAC on the network. Restore shut off unless the original is gone.
+
+### Build from files restored earlier
+
+The second stage stands on its own: it reads any directory holding a staged domain (`chain.txt`, the images and `domain.xml`), however those files got there. Restore them with the [file restore](restore.md) or from a copy you already have, then run the wizard with **Restore the files from an archive** switched off and point it at the directory.
+
+### By hand
+
+The wizard does what an operator would do with `qemu-img`. To do it by hand, restore the domain's directory and then, in the order `chain.txt` lists them for that disk, oldest increment first:
 
 ```bash
 cd <restored>/web01
-# In the order chain.txt lists them for that disk, oldest increment first:
 qemu-img rebase -u -F qcow2 -b vda.full.qcow2 vda.20260902T020112123Z.qcow2
 qemu-img commit vda.20260902T020112123Z.qcow2
 qemu-img rebase -u -F qcow2 -b vda.full.qcow2 vda.20260903T020049881Z.qcow2
 qemu-img commit vda.20260903T020049881Z.qcow2
 ```
 
-`vda.full.qcow2` now holds the state of the last merged increment. Copy it to the image directory, then define the domain again:
-
-```bash
-cp vda.full.qcow2 /var/lib/libvirt/images/web01.qcow2
-virsh define domain.xml
-```
+`vda.full.qcow2` now holds the state of the last merged increment. Copy it to the image directory, edit the domain name and disk paths in `domain.xml`, then `virsh define domain.xml`.
 
 !!! warning "Restore the whole chain"
-    An increment is only usable together with its full image and every increment before it. Restore the complete directory for the point in time you want, not a single file.
+    An increment is only usable together with its full image and every increment before it. Restore the complete directory for the point in time you want, not a single file. Merging rewrites the full image, so always work on the restored copy, never on the staging directory of a live host.
 
 ## Caveats
 

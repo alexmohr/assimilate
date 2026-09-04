@@ -137,6 +137,7 @@ mod tests {
             pending_dryruns: crate::new_pending_map(),
             pending_restores: crate::new_pending_map(),
             pending_vm_scans: crate::new_pending_map(),
+            pending_vm_builds: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
             session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(

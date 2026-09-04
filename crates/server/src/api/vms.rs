@@ -15,7 +15,7 @@ use serde::Deserialize;
 use shared::{
     protocol::ServerToAgent,
     responses::{AgentVmResponse, AgentVmSnapshotResponse, AgentVmSnapshotSettingsResponse},
-    vm::{VmSnapshotMode, VmState},
+    vm::{VmBuildAction, VmBuildOutcome, VmBuildRequest, VmSnapshotMode, VmState},
 };
 use tokio::sync::oneshot;
 use utoipa::ToSchema;
@@ -35,6 +35,10 @@ use crate::{
 /// giving up. Enumerating domains is a handful of local commands, so a host
 /// that has not answered by now is not going to.
 const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long the server waits for a build. Merging a chain is disk-bound and
+/// runs at the speed of the target host's storage, so this is generous.
+const BUILD_TIMEOUT: Duration = Duration::from_hours(4);
 
 /// Largest staging directory depth we accept, to keep a typo from pointing the
 /// staging directory at a filesystem root.
@@ -373,6 +377,161 @@ pub async fn scan_agent_vms(
     }
 }
 
+/// What to build, where from, and what to do with it.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct BuildAgentVmRequest {
+    /// Directory on the target host holding the restored domain.
+    pub source_dir: String,
+    /// Name to define the restored domain under.
+    pub name: String,
+    /// Directory the merged images are moved to.
+    pub image_dir: String,
+    /// What to do once the images are in place.
+    pub action: VmBuildAction,
+}
+
+/// Rejects a domain name libvirt would not take, and one that would let a
+/// path escape the directory it is written into.
+fn validate_domain_name(name: &str) -> Result<(), ApiError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest(
+            "a name for the restored domain is required".to_owned(),
+        ));
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(ApiError::BadRequest(
+            "a domain name may only hold letters, digits, '-', '_' and '.'".to_owned(),
+        ));
+    }
+    if trimmed.starts_with('.') {
+        return Err(ApiError::BadRequest(
+            "a domain name must not start with '.'".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects a path the agent could not act on, or that walks out of itself.
+fn validate_absolute_dir(label: &str, path: &str) -> Result<(), ApiError> {
+    let trimmed = path.trim();
+    if !trimmed.starts_with('/') {
+        return Err(ApiError::BadRequest(format!(
+            "the {label} must be an absolute path"
+        )));
+    }
+    if trimmed.len() < MIN_STAGING_DIR_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "the {label} must not be the filesystem root"
+        )));
+    }
+    if trimmed.contains("..") {
+        return Err(ApiError::BadRequest(format!(
+            "the {label} must not contain '..'"
+        )));
+    }
+    Ok(())
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/agents/{hostname}/vms/build",
+    tag = "Agents",
+    operation_id = "buildAgentVm",
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
+    request_body = BuildAgentVmRequest,
+    responses(
+        (status = 200, description = "The domain that was built", body = VmBuildOutcome),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+        (status = 502, description = "The agent could not build the domain"),
+        (status = 503, description = "The agent is not connected"),
+    )
+)]
+/// Build a domain out of files a restore put back on disk: merge the chain,
+/// place the images, and define the domain under a new name.
+///
+/// This is the second stage of a virtual-machine restore. It reads whatever
+/// directory it is pointed at, so it also works on files restored earlier.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::NotFound`]: the agent does not exist
+/// - [`ApiError::ServiceUnavailable`]: the agent is not connected, or did not
+///   answer in time
+/// - [`ApiError::BadGateway`]: the agent could not build the domain
+pub async fn build_agent_vm(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
+    ApiJson(req): ApiJson<BuildAgentVmRequest>,
+) -> Result<Json<VmBuildOutcome>, ApiError> {
+    validate_domain_name(&req.name)?;
+    validate_absolute_dir("source directory", &req.source_dir)?;
+    validate_absolute_dir("image directory", &req.image_dir)?;
+
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+
+    let request_id = Uuid::new_v4().to_string();
+    let (tx, rx) = oneshot::channel();
+    state
+        .pending_vm_builds
+        .lock()
+        .await
+        .insert(request_id.clone(), tx);
+
+    if state
+        .registry
+        .send_to(
+            agent.id,
+            ServerToAgent::BuildVm {
+                request_id: request_id.clone(),
+                request: VmBuildRequest {
+                    source_dir: req.source_dir.trim().to_owned(),
+                    name: req.name.trim().to_owned(),
+                    image_dir: req.image_dir.trim().to_owned(),
+                    action: req.action,
+                },
+            },
+        )
+        .await
+        .is_err()
+    {
+        state.pending_vm_builds.lock().await.remove(&request_id);
+        return Err(ApiError::ServiceUnavailable(format!(
+            "agent '{hostname}' is not connected"
+        )));
+    }
+
+    match tokio::time::timeout(BUILD_TIMEOUT, rx).await {
+        Ok(Ok((Some(outcome), _))) => Ok(Json(outcome)),
+        Ok(Ok((None, error))) => Err(ApiError::BadGateway(format!(
+            "agent '{hostname}' could not build the domain: {}",
+            error.unwrap_or_else(|| "no reason given".to_owned())
+        ))),
+        Ok(Err(_)) => Err(ApiError::ServiceUnavailable(format!(
+            "agent '{hostname}' disconnected before the build finished"
+        ))),
+        Err(_) => {
+            state.pending_vm_builds.lock().await.remove(&request_id);
+            Err(ApiError::ServiceUnavailable(format!(
+                "agent '{hostname}' did not finish the build within {} minutes",
+                BUILD_TIMEOUT.as_secs().saturating_div(60)
+            )))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +573,26 @@ mod tests {
         let response = vm_to_response(row(false, None), 200);
         assert_eq!(response.mode, VmSnapshotMode::Excluded);
         assert_eq!(response.state, VmState::Running);
+    }
+
+    #[test]
+    fn a_restored_domain_name_must_be_one_libvirt_takes() {
+        assert!(validate_domain_name("web01-restored").is_ok());
+        assert!(validate_domain_name("web_01.test").is_ok());
+        assert!(validate_domain_name("").is_err());
+        assert!(validate_domain_name("   ").is_err());
+        assert!(validate_domain_name("web01 restored").is_err());
+        assert!(validate_domain_name("../etc/passwd").is_err());
+        assert!(validate_domain_name(".hidden").is_err());
+        assert!(validate_domain_name("web01;reboot").is_err());
+    }
+
+    #[test]
+    fn build_directories_must_be_absolute_and_sane() {
+        assert!(validate_absolute_dir("source directory", "/var/tmp/restore").is_ok());
+        assert!(validate_absolute_dir("image directory", "var/lib/images").is_err());
+        assert!(validate_absolute_dir("image directory", "/").is_err());
+        assert!(validate_absolute_dir("source directory", "/var/../etc").is_err());
     }
 
     #[test]

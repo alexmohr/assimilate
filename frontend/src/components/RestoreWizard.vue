@@ -330,43 +330,6 @@ function cancelDownload(): void {
 </template>
 
 <style scoped>
-.steps-indicator {
-  display: flex;
-  gap: var(--space-4);
-  justify-content: center;
-  margin-bottom: var(--space-8);
-}
-
-.step-dot {
-  width: 2rem;
-  height: 2rem;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  background: var(--bg-card);
-  border: 2px solid var(--border);
-  color: var(--text-muted);
-}
-
-.step-dot.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.step-dot.completed {
-  border-color: var(--success);
-  background: var(--success);
-  color: #fff;
-}
-
-.step-content {
-  min-height: 140px;
-}
-
 .field-label {
   display: block;
   margin-bottom: var(--space-4);

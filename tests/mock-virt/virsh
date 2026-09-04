@@ -95,6 +95,24 @@ case "$SUBCOMMAND" in
     done <"$STATE/disks-$domain"
     ;;
 
+  define)
+    if [[ "${MOCK_VIRT_FAIL_DEFINE:-0}" == "1" ]]; then
+      printf 'error: Failed to define domain from %s\n' "${1:-}" >&2
+      exit 1
+    fi
+    # Kept so a test can assert what the definition was rewritten to.
+    cp "${1:-}" "$STATE/last-defined.xml" 2>/dev/null || true
+    printf 'Domain defined from %s\n' "${1:-}"
+    ;;
+
+  start)
+    if [[ "${MOCK_VIRT_FAIL_START:-0}" == "1" ]]; then
+      printf 'error: Failed to start domain %s\n' "${1:-}" >&2
+      exit 1
+    fi
+    printf 'Domain %s started\n' "${1:-}"
+    ;;
+
   blockcommit)
     if [[ "${MOCK_VIRT_FAIL_COMMIT:-0}" == "1" ]]; then
       printf 'error: block commit failed\n' >&2

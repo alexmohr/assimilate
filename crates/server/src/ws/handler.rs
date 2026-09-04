@@ -824,6 +824,22 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 );
             }
         }
+        AgentToServer::VmBuildResult {
+            request_id,
+            outcome,
+            error,
+        } => {
+            if let Some(reason) = error.as_deref() {
+                tracing::warn!(
+                    hostname = %hostname,
+                    error = %reason,
+                    "virtual machine build failed on the agent"
+                );
+            }
+            if let Some(tx) = state.pending_vm_builds.lock().await.remove(&request_id) {
+                let _ = tx.send((outcome, error));
+            }
+        }
         AgentToServer::Hello { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected Hello after handshake");
         }
@@ -2057,6 +2073,7 @@ mod tests {
             pending_dryruns: crate::new_pending_map(),
             pending_restores: crate::new_pending_map(),
             pending_vm_scans: crate::new_pending_map(),
+            pending_vm_builds: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
             session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(

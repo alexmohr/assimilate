@@ -27,7 +27,8 @@ use std::{
 
 use chrono::Utc;
 use shared::vm::{
-    DiscoveredVm, VmRunAction, VmSnapshotConfig, VmSnapshotMode, VmSnapshotOutcome, VmState,
+    DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmRunAction, VmSnapshotConfig, VmSnapshotMode,
+    VmSnapshotOutcome, VmState,
 };
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -158,6 +159,136 @@ fn format_bytes(bytes: u64) -> String {
         }
     }
     format!("{bytes} B")
+}
+
+/// The domain definition of a restored domain, edited so it can be defined
+/// beside the domain it came from.
+///
+/// The edits are deliberately narrow: the top-level name, the UUID (dropped so
+/// libvirt issues a new one rather than colliding with the original), the
+/// source path of each disk, and the NVRAM path. Everything else about the
+/// machine is left exactly as it was backed up.
+struct DomainXml {
+    text: String,
+}
+
+impl DomainXml {
+    fn new(text: String) -> Self {
+        Self { text }
+    }
+
+    /// Replaces the content of the first `<tag>` element, if there is one.
+    fn replace_element(&mut self, tag: &str, value: &str) -> bool {
+        let open = format!("<{tag}>");
+        let close = format!("</{tag}>");
+        let Some(start) = self.text.find(&open) else {
+            return false;
+        };
+        let Some(end) = self.text[start..]
+            .find(&close)
+            .and_then(|at| start.checked_add(at))
+        else {
+            return false;
+        };
+        let Some(from) = start.checked_add(open.len()) else {
+            return false;
+        };
+        self.text.replace_range(from..end, value);
+        true
+    }
+
+    /// Removes the first `<tag>...</tag>` element entirely.
+    fn remove_element(&mut self, tag: &str) {
+        let open = format!("<{tag}>");
+        let close = format!("</{tag}>");
+        let Some(start) = self.text.find(&open) else {
+            return;
+        };
+        let Some(end) = self.text[start..]
+            .find(&close)
+            .and_then(|at| start.checked_add(at))
+        else {
+            return;
+        };
+        let Some(end) = end.checked_add(close.len()) else {
+            return;
+        };
+        self.text.replace_range(start..end, "");
+    }
+
+    /// The source path libvirt has for one disk target, found by scanning the
+    /// `<disk>` element that carries that target.
+    fn disk_source(&self, target: &str) -> Option<String> {
+        for block in self.text.split("<disk ").skip(1) {
+            let block = block.split("</disk>").next().unwrap_or(block);
+            if Self::attribute(block, "dev").is_none_or(|dev| dev != target) {
+                continue;
+            }
+            return Self::attribute(block, "file").or_else(|| Self::attribute(block, "dev_path"));
+        }
+        None
+    }
+
+    /// Reads an attribute value written with either quote style. Only the
+    /// first occurrence in `block` is considered, which is what the disk
+    /// elements need: `dev` names the target, `file` the source.
+    fn attribute(block: &str, name: &str) -> Option<String> {
+        for quote in ['\'', '"'] {
+            let needle = format!("{name}={quote}");
+            if let Some(start) = block.find(&needle)
+                && let Some(from) = start.checked_add(needle.len())
+                && let Some(end) = block.get(from..).and_then(|rest| rest.find(quote))
+                && let Some(to) = from.checked_add(end)
+                && let Some(value) = block.get(from..to)
+            {
+                return Some(value.to_owned());
+            }
+        }
+        None
+    }
+
+    /// Points a path that appears in the definition at its new location.
+    fn repath(&mut self, from: &str, to: &str) {
+        for quote in ['\'', '"'] {
+            self.text = self.text.replace(
+                &format!("{quote}{from}{quote}"),
+                &format!("{quote}{to}{quote}"),
+            );
+        }
+    }
+
+    fn into_text(self) -> String {
+        self.text
+    }
+}
+
+/// One disk of a restored domain: which staged files make it up, in the order
+/// they must be merged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChainEntry {
+    target: String,
+    files: Vec<String>,
+}
+
+/// Reads `chain.txt` into one entry per disk, preserving the order the files
+/// were written in, which is the order they must be merged in.
+fn parse_chain(text: &str) -> Vec<ChainEntry> {
+    let mut entries: Vec<ChainEntry> = Vec::new();
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(target), Some(file)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if let Some(entry) = entries.iter_mut().find(|entry| entry.target == target) {
+            entry.files.push(file.to_owned());
+        } else {
+            entries.push(ChainEntry {
+                target: target.to_owned(),
+                files: vec![file.to_owned()],
+            });
+        }
+    }
+    entries
 }
 
 /// Stages a host's domains according to the settings the server delivered.
@@ -323,6 +454,204 @@ impl VmStager {
         } else {
             VmSnapshotMode::FullCopy
         }
+    }
+
+    /// Builds a domain out of files a restore put back on disk: merges each
+    /// disk's chain, moves the merged images into place, points a copy of the
+    /// definition at them, and defines the domain under its new name.
+    ///
+    /// The merge rewrites the restored copy, which is why this works on a
+    /// restore target and never on a host's staging directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VmError::Io`] when the source directory is not a staged
+    /// domain, or [`VmError::Command`] when qemu-img or libvirt refuses.
+    pub async fn build(&self, request: &VmBuildRequest) -> Result<VmBuildOutcome, VmError> {
+        let source = PathBuf::from(&request.source_dir);
+        let image_dir = PathBuf::from(&request.image_dir);
+
+        let chain_text = tokio::fs::read_to_string(source.join(CHAIN_FILE))
+            .await
+            .map_err(|e| VmError::Io {
+                action: format!("read {}", source.join(CHAIN_FILE).display()),
+                source: e,
+            })?;
+        let chain = parse_chain(&chain_text);
+        if chain.is_empty() {
+            return Err(VmError::Job(format!(
+                "{} holds no chain.txt entries, so it is not a staged domain",
+                source.display()
+            )));
+        }
+
+        let definition = tokio::fs::read_to_string(source.join("domain.xml"))
+            .await
+            .map_err(|e| VmError::Io {
+                action: format!("read {}", source.join("domain.xml").display()),
+                source: e,
+            })?;
+        let mut xml = DomainXml::new(definition);
+
+        tokio::fs::create_dir_all(&image_dir)
+            .await
+            .map_err(|e| VmError::Io {
+                action: format!("create {}", image_dir.display()),
+                source: e,
+            })?;
+
+        let mut images = Vec::with_capacity(chain.len());
+        let mut merged_increments: u32 = 0;
+
+        for entry in &chain {
+            let (merged, increments) = self.merge_disk(&source, entry).await?;
+            merged_increments = merged_increments.saturating_add(increments);
+
+            let extension = merged.extension().map_or_else(
+                || "img".to_owned(),
+                |ext| ext.to_string_lossy().into_owned(),
+            );
+            let placed = image_dir.join(format!("{}-{}.{extension}", request.name, entry.target));
+            tokio::fs::copy(&merged, &placed)
+                .await
+                .map_err(|e| VmError::Io {
+                    action: format!("place {}", placed.display()),
+                    source: e,
+                })?;
+
+            if let Some(old) = xml.disk_source(&entry.target) {
+                xml.repath(&old, &placed.to_string_lossy());
+            }
+            images.push(placed.to_string_lossy().into_owned());
+        }
+
+        // A UEFI domain keeps its variables beside its images, so the restored
+        // machine boots the way it did rather than falling back to defaults.
+        let nvram = source.join("nvram.fd");
+        if is_file(&nvram).await {
+            let placed = image_dir.join(format!("{}-nvram.fd", request.name));
+            tokio::fs::copy(&nvram, &placed)
+                .await
+                .map_err(|e| VmError::Io {
+                    action: format!("place {}", placed.display()),
+                    source: e,
+                })?;
+            if let Some(old) = Self::nvram_path(&xml.text) {
+                xml.repath(&old, &placed.to_string_lossy());
+            }
+        }
+
+        xml.replace_element("name", &request.name);
+        // Dropped rather than rewritten: libvirt issues a fresh UUID, so the
+        // restored domain never collides with the one it came from.
+        xml.remove_element("uuid");
+
+        let outcome = VmBuildOutcome {
+            name: request.name.clone(),
+            images,
+            merged_increments,
+            defined: false,
+            started: false,
+        };
+
+        if !request.action.defines() {
+            return Ok(outcome);
+        }
+
+        let definition_path = source.join(format!(".assimilate-{}.xml", request.name));
+        tokio::fs::write(&definition_path, xml.into_text())
+            .await
+            .map_err(|e| VmError::Io {
+                action: format!("write {}", definition_path.display()),
+                source: e,
+            })?;
+
+        let defined = self
+            .virsh(&["define", &definition_path.to_string_lossy()])
+            .await;
+        let _ = tokio::fs::remove_file(&definition_path).await;
+        defined?;
+
+        let started = if request.action.starts() {
+            self.virsh(&["start", &request.name]).await?;
+            true
+        } else {
+            false
+        };
+
+        info!(domain = request.name, started, "restored domain defined");
+        Ok(VmBuildOutcome {
+            defined: true,
+            started,
+            ..outcome
+        })
+    }
+
+    /// Merges one disk's chain into its full image and returns the merged
+    /// file, plus how many increments went into it. A chain of one file (a
+    /// copy, or a full image on its own) is already the merged image.
+    async fn merge_disk(
+        &self,
+        source: &Path,
+        entry: &ChainEntry,
+    ) -> Result<(PathBuf, u32), VmError> {
+        let mut files = entry.files.iter();
+        let Some(base_name) = files.next() else {
+            return Err(VmError::Job(format!(
+                "disk {} has no files in chain.txt",
+                entry.target
+            )));
+        };
+        let base = source.join(base_name);
+        if !is_file(&base).await {
+            return Err(VmError::Job(format!(
+                "{} is missing, so the chain of {} cannot be merged",
+                base.display(),
+                entry.target
+            )));
+        }
+
+        let mut merged: u32 = 0;
+        for increment_name in files {
+            let increment = source.join(increment_name);
+            if !is_file(&increment).await {
+                return Err(VmError::Job(format!(
+                    "{} is missing, so the chain of {} is incomplete",
+                    increment.display(),
+                    entry.target
+                )));
+            }
+            // Point the increment at the image it was taken against, then fold
+            // it in. Both steps are what a hand restore does, in the order
+            // chain.txt records.
+            self.run(
+                &self.qemu_img,
+                &[
+                    "rebase",
+                    "-u",
+                    "-F",
+                    "qcow2",
+                    "-b",
+                    &base.to_string_lossy(),
+                    &increment.to_string_lossy(),
+                ],
+            )
+            .await?;
+            self.run(&self.qemu_img, &["commit", &increment.to_string_lossy()])
+                .await?;
+            merged = merged.saturating_add(1);
+        }
+
+        Ok((base, merged))
+    }
+
+    /// The NVRAM path a definition carries, when it has one.
+    fn nvram_path(xml: &str) -> Option<String> {
+        xml.split_once("<nvram")
+            .and_then(|(_, rest)| rest.split_once('>'))
+            .and_then(|(_, rest)| rest.split_once("</nvram>"))
+            .map(|(path, _)| path.trim().to_owned())
+            .filter(|path| !path.is_empty())
     }
 
     /// Enumerates this host's domains without changing anything.
@@ -578,7 +907,7 @@ impl VmStager {
             .await
             .unwrap_or_default();
         for disk in disks {
-            let _ = write!(chain, "{} {}.{suffix}\n", disk.target, disk.target);
+            let _ = writeln!(chain, "{} {}.{suffix}", disk.target, disk.target);
         }
         tokio::fs::write(dest.join(CHAIN_FILE), chain)
             .await
@@ -736,15 +1065,15 @@ impl VmStager {
     fn backup_xml(dest: &Path, disks: &[Disk], from: Option<&str>, suffix: &str) -> String {
         let mut xml = String::from("<domainbackup mode=\"push\">\n");
         if let Some(from) = from {
-            let _ = write!(xml, "  <incremental>{from}</incremental>\n");
+            let _ = writeln!(xml, "  <incremental>{from}</incremental>");
         }
         xml.push_str("  <disks>\n");
         for disk in disks {
             let target = dest.join(format!("{}.{suffix}", disk.target));
-            let _ = write!(
+            let _ = writeln!(
                 xml,
                 "    <disk name=\"{}\" backup=\"yes\" type=\"file\">\n      <driver \
-                 type=\"qcow2\"/>\n      <target file=\"{}\"/>\n    </disk>\n",
+                 type=\"qcow2\"/>\n      <target file=\"{}\"/>\n    </disk>",
                 disk.target,
                 target.display()
             );
@@ -758,9 +1087,9 @@ impl VmStager {
     fn checkpoint_xml(disks: &[Disk], name: &str) -> String {
         let mut xml = format!("<domaincheckpoint>\n  <name>{name}</name>\n  <disks>\n");
         for disk in disks {
-            let _ = write!(
+            let _ = writeln!(
                 xml,
-                "    <disk name=\"{}\" checkpoint=\"bitmap\"/>\n",
+                "    <disk name=\"{}\" checkpoint=\"bitmap\"/>",
                 disk.target
             );
         }
@@ -949,7 +1278,7 @@ impl VmStager {
                     })?;
                 copied = true;
             }
-            let _ = write!(chain, "{} {}.img\n", disk.target, disk.target);
+            let _ = writeln!(chain, "{} {}.img", disk.target, disk.target);
         }
 
         // A domain that was staged incrementally while it was running leaves a
@@ -1376,6 +1705,295 @@ mod tests {
 
         assert!(only(&outcomes).error.is_some());
         assert!(!is_file(&host.staged("web01").join("vda.full.qcow2")).await);
+    }
+
+    /// A definition in the shape libvirt writes, with the two attribute quote
+    /// styles it uses in practice.
+    const DOMAIN_XML: &str = r#"<domain type='kvm'>
+  <name>web01</name>
+  <uuid>4dea22b3-1d52-d8f3-2516-782e98ab3fa0</uuid>
+  <memory unit='KiB'>4194304</memory>
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE.fd</loader>
+    <nvram>/var/lib/libvirt/qemu/nvram/web01_VARS.fd</nvram>
+  </os>
+  <devices>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='/var/lib/libvirt/images/web01.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="/var/lib/libvirt/images/web01-data.qcow2"/>
+      <target dev="vdb" bus="virtio"/>
+    </disk>
+    <disk type='file' device='cdrom'>
+      <target dev='sda' bus='sata'/>
+    </disk>
+    <interface type='bridge'>
+      <mac address='52:54:00:6b:3c:58'/>
+    </interface>
+  </devices>
+</domain>
+"#;
+
+    #[test]
+    fn a_chain_file_becomes_one_entry_per_disk_in_merge_order() {
+        let chain = parse_chain(
+            "vda vda.full.qcow2\nvdb vdb.full.qcow2\nvda vda.20260903T020000000Z.qcow2\nvdb \
+             vdb.20260903T020000000Z.qcow2\n",
+        );
+
+        assert_eq!(chain.len(), 2);
+        let vda = chain.first().expect("vda entry");
+        assert_eq!(vda.target, "vda");
+        assert_eq!(
+            vda.files,
+            vec!["vda.full.qcow2", "vda.20260903T020000000Z.qcow2"]
+        );
+        assert_eq!(chain.get(1).expect("vdb entry").target, "vdb");
+    }
+
+    #[test]
+    fn a_blank_or_malformed_chain_line_is_ignored() {
+        let chain = parse_chain("\nvda vda.full.qcow2\nnonsense\n\n");
+        assert_eq!(chain.len(), 1);
+        assert_eq!(
+            chain.first().expect("one entry").files,
+            vec!["vda.full.qcow2"]
+        );
+    }
+
+    #[test]
+    fn the_definition_yields_the_source_of_each_disk_whichever_quotes_it_uses() {
+        let xml = DomainXml::new(DOMAIN_XML.to_owned());
+        assert_eq!(
+            xml.disk_source("vda").as_deref(),
+            Some("/var/lib/libvirt/images/web01.qcow2")
+        );
+        assert_eq!(
+            xml.disk_source("vdb").as_deref(),
+            Some("/var/lib/libvirt/images/web01-data.qcow2")
+        );
+        // A cdrom carries no source, and an unknown target is not there.
+        assert_eq!(xml.disk_source("sda"), None);
+        assert_eq!(xml.disk_source("vdz"), None);
+    }
+
+    #[test]
+    fn a_restored_definition_is_renamed_repathed_and_stripped_of_its_uuid() {
+        let mut xml = DomainXml::new(DOMAIN_XML.to_owned());
+        xml.repath(
+            "/var/lib/libvirt/images/web01.qcow2",
+            "/var/lib/libvirt/images/web01-restored-vda.qcow2",
+        );
+        xml.repath(
+            "/var/lib/libvirt/images/web01-data.qcow2",
+            "/var/lib/libvirt/images/web01-restored-vdb.qcow2",
+        );
+        xml.replace_element("name", "web01-restored");
+        xml.remove_element("uuid");
+        let text = xml.into_text();
+
+        assert!(text.contains("<name>web01-restored</name>"));
+        assert!(!text.contains("4dea22b3"));
+        assert!(text.contains("'/var/lib/libvirt/images/web01-restored-vda.qcow2'"));
+        assert!(text.contains("\"/var/lib/libvirt/images/web01-restored-vdb.qcow2\""));
+        // The machine itself is untouched: same MAC, same firmware, same disks.
+        assert!(text.contains("52:54:00:6b:3c:58"));
+        assert!(text.contains("<type arch='x86_64' machine='q35'>hvm</type>"));
+    }
+
+    #[test]
+    fn the_nvram_path_is_read_from_the_definition() {
+        assert_eq!(
+            VmStager::nvram_path(DOMAIN_XML).as_deref(),
+            Some("/var/lib/libvirt/qemu/nvram/web01_VARS.fd")
+        );
+        assert_eq!(
+            VmStager::nvram_path("<domain><name>x</name></domain>"),
+            None
+        );
+    }
+
+    /// Lays out a restored domain directory the way stage one leaves it.
+    async fn restored_domain(host: &FakeHost, chain: &str) -> PathBuf {
+        let dir = host.root.path().join("restored").join("web01");
+        tokio::fs::create_dir_all(&dir).await.expect("restore dir");
+        tokio::fs::write(dir.join("domain.xml"), DOMAIN_XML)
+            .await
+            .expect("definition");
+        tokio::fs::write(dir.join(CHAIN_FILE), chain)
+            .await
+            .expect("chain");
+        for line in chain.lines() {
+            if let Some(file) = line.split_whitespace().nth(1) {
+                tokio::fs::write(dir.join(file), vec![0u8; 4096])
+                    .await
+                    .expect("image");
+            }
+        }
+        dir
+    }
+
+    #[tokio::test]
+    async fn building_merges_the_chain_places_the_image_and_defines_the_domain() {
+        let host = FakeHost::new().await;
+        let source = restored_domain(
+            &host,
+            "vda vda.full.qcow2\nvda vda.20260902T020000000Z.qcow2\nvda \
+             vda.20260903T020000000Z.qcow2\n",
+        )
+        .await;
+        let images = host.root.path().join("images-restored");
+
+        let outcome = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect("build");
+
+        assert_eq!(outcome.name, "web01-restored");
+        assert_eq!(outcome.merged_increments, 2);
+        assert!(outcome.defined);
+        assert!(!outcome.started);
+        assert!(is_file(&images.join("web01-restored-vda.qcow2")).await);
+
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .expect("calls");
+        // Each increment is rebased onto the full image and then committed,
+        // oldest first, before the domain is defined.
+        let rebases = calls.lines().filter(|line| line.contains("rebase")).count();
+        let commits = calls.lines().filter(|line| line.contains("commit")).count();
+        assert_eq!(rebases, 2);
+        assert_eq!(commits, 2);
+        assert!(calls.contains("virsh define"));
+        assert!(!calls.contains("virsh start"));
+
+        // The definition it defined from is the restored one, renamed, pointed
+        // at the placed image and stripped of the UUID it would collide on.
+        let defined = tokio::fs::read_to_string(host.state().join("last-defined.xml"))
+            .await
+            .expect("definition");
+        assert!(defined.contains("<name>web01-restored</name>"));
+        assert!(!defined.contains("4dea22b3"));
+        assert!(defined.contains(&format!(
+            "'{}'",
+            images.join("web01-restored-vda.qcow2").display()
+        )));
+        assert!(defined.contains("52:54:00:6b:3c:58"));
+    }
+
+    #[tokio::test]
+    async fn a_single_file_chain_needs_no_merge() {
+        let host = FakeHost::new().await;
+        let source = restored_domain(&host, "vda vda.img\n").await;
+        let images = host.root.path().join("images-restored");
+
+        let outcome = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "mail01-restored".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::FilesOnly,
+            })
+            .await
+            .expect("build");
+
+        assert_eq!(outcome.merged_increments, 0);
+        assert!(!outcome.defined);
+        assert!(is_file(&images.join("mail01-restored-vda.img")).await);
+
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(!calls.contains("virsh define"));
+    }
+
+    #[tokio::test]
+    async fn building_can_start_the_domain_it_defined() {
+        let host = FakeHost::new().await;
+        let source = restored_domain(&host, "vda vda.full.qcow2\n").await;
+        let images = host.root.path().join("images-restored");
+
+        let outcome = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::DefineAndStart,
+            })
+            .await
+            .expect("build");
+
+        assert!(outcome.defined);
+        assert!(outcome.started);
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .expect("calls");
+        assert!(calls.contains("virsh start web01-restored"));
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_chain_is_refused_before_anything_is_placed() {
+        let host = FakeHost::new().await;
+        let source = restored_domain(&host, "vda vda.full.qcow2\n").await;
+        tokio::fs::write(
+            source.join(CHAIN_FILE),
+            "vda vda.full.qcow2\nvda vda.20260903T020000000Z.qcow2\n",
+        )
+        .await
+        .expect("chain");
+        let images = host.root.path().join("images-restored");
+
+        let error = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect_err("incomplete chain");
+
+        assert!(error.to_string().contains("incomplete"), "{error}");
+        assert!(!is_file(&images.join("web01-restored-vda.qcow2")).await);
+    }
+
+    #[tokio::test]
+    async fn a_directory_that_is_not_a_staged_domain_is_refused() {
+        let host = FakeHost::new().await;
+        let empty = host.root.path().join("empty");
+        tokio::fs::create_dir_all(&empty).await.expect("dir");
+
+        let error = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: empty.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: host
+                    .root
+                    .path()
+                    .join("images-restored")
+                    .to_string_lossy()
+                    .into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect_err("not a staged domain");
+
+        assert!(error.to_string().contains("chain.txt"), "{error}");
     }
 
     #[test]

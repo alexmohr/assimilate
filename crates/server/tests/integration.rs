@@ -96,6 +96,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         pending_dryruns: server::new_pending_map(),
         pending_restores: server::new_pending_map(),
         pending_vm_scans: server::new_pending_map(),
+        pending_vm_builds: server::new_pending_map(),
         pending_migrations: server::new_pending_map(),
         pending_deletes: server::new_pending_map(),
         completion_bus: server::ws::completion_bus::CompletionBus::new(),

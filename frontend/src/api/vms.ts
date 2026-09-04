@@ -3,7 +3,7 @@
 
 import { apiClient } from './client'
 import { domainParams } from '../utils/agent'
-import type { AgentVmSnapshotResponse } from '../types/generated'
+import type { AgentVmSnapshotResponse, VmBuildAction, VmBuildOutcome } from '../types/generated'
 
 /** New staging settings for a host. */
 export interface UpdateAgentVmSnapshotRequest {
@@ -68,5 +68,29 @@ export async function scanAgentVms(
     {},
     { params: domainParams(domain) },
   )
+  return response.data
+}
+
+/** What to build out of a restored domain directory, and what to do with it. */
+export interface BuildAgentVmRequest {
+  source_dir: string
+  name: string
+  image_dir: string
+  action: VmBuildAction
+}
+
+/**
+ * Stage two of a virtual-machine restore: merge the chain, place the images
+ * and define the domain. Reads whatever directory it is pointed at, so it also
+ * works on files restored earlier.
+ */
+export async function buildAgentVm(
+  hostname: string,
+  data: BuildAgentVmRequest,
+  domain?: string | null,
+): Promise<VmBuildOutcome> {
+  const response = await apiClient.post<VmBuildOutcome>(`/agents/${hostname}/vms/build`, data, {
+    params: domainParams(domain),
+  })
   return response.data
 }

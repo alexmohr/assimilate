@@ -1886,6 +1886,8 @@ describe('AgentDetailView - tab structure and settings', () => {
         return Promise.resolve({ data: { agent_version: '2.0.0', server_commit_count: null } })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -2373,6 +2375,8 @@ describe('AgentDetailView — duplicate hostnames', () => {
       if (url === '/agents') return Promise.resolve({ data: [AGENT_B] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2446,6 +2450,8 @@ describe('AgentDetailView — duplicate hostnames', () => {
       if (url === '/agents') return Promise.resolve({ data: [AGENT_A] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(AgentDetailView, {
@@ -2459,6 +2465,8 @@ describe('AgentDetailView — duplicate hostnames', () => {
       if (url === '/agents') return Promise.resolve({ data: [AGENT_A, AGENT_B] })
       if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 

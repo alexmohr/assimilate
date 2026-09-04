@@ -216,7 +216,6 @@ function openReportDetail(r: ReportRow): void {
   })
 }
 
-
 const scheduleType = computed(() =>
   isCreate.value ? selectedType.value : (schedule.value?.schedule_type ?? 'backup'),
 )

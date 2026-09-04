@@ -213,6 +213,38 @@ describe('BackupStatsWidget', () => {
     })
   })
 
+  // Both ways out of the dialog without acting: the footer's Cancel and the
+  // modal's own close. Neither may acknowledge anything on the way.
+  it('leaves everything outstanding when the dialog is cancelled', async () => {
+    mockApi([activityEntry(1, 'failed')], 1)
+    const wrapper = renderWithPlugins(BackupStatsWidget, { props: { repos: [] } })
+    await flushPromises()
+
+    await wrapper.find('.stats-actions .btn').trigger('click')
+    await flushPromises()
+    const cancel = wrapper.findAll('.modal-footer .btn').find((b) => b.text() === 'Cancel')!
+    await cancel.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.modal-footer').exists()).toBe(false)
+    expect(mockPost).not.toHaveBeenCalled()
+    expect(wrapper.find('.stats-actions .btn').exists()).toBe(true)
+  })
+
+  it('closes the dialog when the modal itself asks to close', async () => {
+    mockApi([activityEntry(1, 'failed')], 1)
+    const wrapper = renderWithPlugins(BackupStatsWidget, { props: { repos: [] } })
+    await flushPromises()
+
+    await wrapper.find('.stats-actions .btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.modal-close').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.modal-footer').exists()).toBe(false)
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
   it('keeps the dialog open and reports the failure when the acknowledge fails', async () => {
     mockApi([activityEntry(1, 'failed')], 1)
     mockPost.mockRejectedValue(new Error('nope'))

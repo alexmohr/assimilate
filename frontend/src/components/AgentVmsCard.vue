@@ -79,9 +79,12 @@ function limitLabel(vm: AgentVmResponse): string {
   return formatBytes(vm.effective_limit_bytes)
 }
 
-/** Share of its limit a domain uses, as a percentage capped at 100. */
+/**
+ * Share of its limit a domain uses, as a percentage capped at 100. Only called
+ * for a domain that has a limit: the bar it fills is not rendered at all for an
+ * unlimited one, which is what keeps the divisor here above zero.
+ */
 function usedPercent(vm: AgentVmResponse): number {
-  if (vm.effective_limit_bytes === 0) return 0
   return Math.min(100, Math.round((vm.staged_bytes / vm.effective_limit_bytes) * 100))
 }
 

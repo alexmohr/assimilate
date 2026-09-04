@@ -188,6 +188,15 @@ describe('VmRestoreWizard', () => {
     expect(button(wrapper, 'Next')?.attributes('disabled')).toBeDefined()
   })
 
+  it('asks the server for nothing while it is closed', async () => {
+    renderWithPlugins(VmRestoreWizard, {
+      props: { open: false, agent: AGENT, domainName: 'web01', stagingDir: '/srv/vm-staging' },
+    })
+    await flushPromises()
+
+    expect(apiClient.get).not.toHaveBeenCalled()
+  })
+
   it('says why the archives could not be listed', async () => {
     vi.mocked(apiClient.get).mockRejectedValue(new Error('repository is unreachable'))
     const wrapper = await mount()

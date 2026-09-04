@@ -193,6 +193,34 @@ describe('AgentVmsCard', () => {
     expect(wrapper.find<HTMLInputElement>('input.vm-limit').element.disabled).toBe(true)
   })
 
+  it('says a domain with no budget is unlimited', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: response([vm({ limit_bytes: 0, effective_limit_bytes: 0 })]),
+    } as never)
+    const wrapper = await mount()
+
+    expect(wrapper.text()).toContain('No limit')
+    // Nothing to be a share of, so there is no bar to fill.
+    expect(wrapper.find('.progress-track').exists()).toBe(false)
+  })
+
+  // The bar is the warning a domain is about to blow its budget, so which
+  // tone it takes at which share is the behaviour, not decoration.
+  it.each([
+    [42, ''],
+    [160, 'progress-bar--warning'],
+    [195, 'progress-bar--danger'],
+  ])('marks a domain staging %i GiB of its 200 GiB budget', async (stagedGib, tone) => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: response([vm({ staged_bytes: stagedGib * GIB })]),
+    } as never)
+    const wrapper = await mount()
+
+    const bar = wrapper.find('.progress-bar')
+    expect(bar.classes().includes('progress-bar--warning')).toBe(tone === 'progress-bar--warning')
+    expect(bar.classes().includes('progress-bar--danger')).toBe(tone === 'progress-bar--danger')
+  })
+
   it('reports a host whose settings could not be loaded', async () => {
     vi.mocked(apiClient.get).mockRejectedValue(new Error('agent is not connected'))
     const wrapper = await mount()

@@ -64,9 +64,17 @@ const stageTwoDone = ref(false)
 const outcome = ref<VmBuildOutcome | null>(null)
 const error = ref<string | null>(null)
 
-/** Archives of this host, newest first: each successful run is a point in time. */
-const restorable = computed<ReportRow[]>(() =>
-  reports.value.filter((report) => report.archive_name !== null),
+/** A run that produced an archive, so it can be restored from. */
+type RestorableReport = ReportRow & { archive_name: string }
+
+/**
+ * Archives of this host, newest first: each successful run is a point in time.
+ * Narrowed as it is filtered, so what the list hands to `pickArchive` carries
+ * the archive name in its type rather than needing a second check for one the
+ * filter has already ruled out.
+ */
+const restorable = computed<RestorableReport[]>(() =>
+  reports.value.filter((report): report is RestorableReport => report.archive_name !== null),
 )
 
 /**
@@ -126,8 +134,7 @@ watch(
   { immediate: true },
 )
 
-function pickArchive(report: ReportRow): void {
-  if (report.archive_name === null) return
+function pickArchive(report: RestorableReport): void {
   selected.value = { repoId: report.repo_id, archive: report.archive_name }
 }
 

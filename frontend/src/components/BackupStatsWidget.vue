@@ -57,6 +57,12 @@ const totalCount = computed((): number => entries.value.length)
 const successCount = computed(
   (): number => entries.value.filter((e) => normalizeBackupStatus(e.status) === 'success').length,
 )
+/** A run somebody can review: exactly what the reset clears. */
+function isReviewable(entry: ActivityEntry): boolean {
+  const status = normalizeBackupStatus(entry.status)
+  return status === 'failed' || status === 'warning'
+}
+
 const failedEntries = computed((): ActivityEntry[] =>
   entries.value.filter((e) => normalizeBackupStatus(e.status) === 'failed'),
 )
@@ -66,9 +72,6 @@ const failedEntries = computed((): ActivityEntry[] =>
 const failedCount = computed(
   (): number => failedEntries.value.filter((e) => !e.acknowledged).length,
 )
-const reviewedCount = computed(
-  (): number => failedEntries.value.filter((e) => e.acknowledged).length,
-)
 // Warned runs are acknowledgeable too, so a reset clears them - and without
 // this the button could appear over a tile reading zero, with nothing on the
 // panel accounting for what it was about to mark reviewed.
@@ -76,6 +79,13 @@ const warnedCount = computed(
   (): number =>
     entries.value.filter((e) => normalizeBackupStatus(e.status) === 'warning' && !e.acknowledged)
       .length,
+)
+// Everything the reset has already retired, warnings included - counting only
+// reviewed failures would let a reviewed warning leave the "warned" side
+// without arriving on the "reviewed" one, reading as a run that vanished
+// rather than one that was looked at.
+const reviewedCount = computed(
+  (): number => entries.value.filter((e) => e.acknowledged && isReviewable(e)).length,
 )
 
 /** What the sub-line under the Failed tile has to say, if anything. */

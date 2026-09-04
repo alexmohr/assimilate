@@ -200,8 +200,28 @@ describe('BackupStatsWidget', () => {
     const failedTile = wrapper.findAll('.mini-stat')[2]!
     expect(failedTile.find('.stat-value').text()).toBe('0')
     expect(failedTile.find('.stat-sub').text()).toContain('2 warned')
-    expect(failedTile.find('.stat-sub').text()).toContain('1 reviewed')
+    // The reviewed side counts the acknowledged warning as well as the
+    // acknowledged failure - both were looked at, and the reset that retires
+    // them says it covers "failed and warned runs".
+    expect(failedTile.find('.stat-sub').text()).toContain('2 reviewed')
     expect(wrapper.find('.stats-actions .btn').exists()).toBe(true)
+  })
+
+  // The state the panel lands in once the reset has run: nothing left warned,
+  // and every run it retired credited as reviewed rather than just gone.
+  it('credits reviewed warnings once nothing is left awaiting review', async () => {
+    mockApi([
+      activityEntry(1, 'warning', true),
+      activityEntry(2, 'warning', true),
+      activityEntry(3, 'failed', true),
+      activityEntry(4, 'success'),
+    ])
+    const wrapper = renderWithPlugins(BackupStatsWidget, { props: { repos: [] } })
+    await flushPromises()
+
+    const failedTile = wrapper.findAll('.mini-stat')[2]!
+    expect(failedTile.find('.stat-value').text()).toBe('0')
+    expect(failedTile.find('.stat-sub').text()).toBe('3 reviewed')
   })
 
   it('offers the reset only when the server says something is outstanding', async () => {

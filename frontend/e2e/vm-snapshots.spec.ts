@@ -90,13 +90,23 @@ test.describe('Virtual machine staging', () => {
 
   test('a schedule opts in from its advanced settings', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/schedules')
+
+    // The schedule is found by the flag rather than by clicking a card: the
+    // list shows a schedule's name and repository, never its agent's hostname,
+    // and the demo gives db-server-01 several schedules of which only the
+    // hourly one opts in.
+    const schedules = await (await page.request.get('/api/schedules')).json()
+    const optedIn = (schedules as { id: number; vm_snapshot_enabled: boolean }[]).find(
+      (s) => s.vm_snapshot_enabled,
+    )
+    expect(optedIn, 'seed-demo.sh seeds one schedule with vm_snapshot_enabled').toBeDefined()
+
+    await page.goto(`/schedules/${optedIn!.id}?tab=settings&section=advanced`)
     await page.waitForLoadState('networkidle')
 
-    await page.locator('.entity-card', { hasText: 'db-server-01' }).first().click()
-    await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.locator('.settings-nav-item', { hasText: 'Advanced' }).click()
-
-    await expect(page.locator('.settings-pane')).toContainText('Stage virtual machines')
+    const pane = page.locator('.settings-pane')
+    const optIn = pane.locator('.field-inline', { hasText: 'Stage virtual machines' })
+    await expect(optIn).toBeVisible()
+    await expect(optIn.locator('[role="switch"]')).toHaveAttribute('aria-checked', 'true')
   })
 })

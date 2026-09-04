@@ -249,304 +249,305 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="settings-pane">
-    <BaseSpinner
-      v-if="loading"
-      label="Loading virtual machines"
-    />
-    <p
-      v-else-if="loadError"
-      class="form-error"
-    >
-      {{ loadError }}
-    </p>
+  <!-- No wrapper element: SettingsRail already puts this card's content inside
+       the `.settings-pane` column, and nesting a second one both duplicates the
+       class on the page and re-applies the column gap a level too deep. -->
+  <BaseSpinner
+    v-if="loading"
+    label="Loading virtual machines"
+  />
+  <p
+    v-else-if="loadError"
+    class="form-error"
+  >
+    {{ loadError }}
+  </p>
 
-    <template v-else>
-      <EditableSection
-        lede="Stage this host's virtual machines into a directory before a backup runs, so borg
+  <template v-else>
+    <EditableSection
+      lede="Stage this host's virtual machines into a directory before a backup runs, so borg
           picks them up as ordinary files. Schedules opt in one by one."
-        :editing="editing"
-        :can-edit="canEdit"
-        :saving="saving"
-        :error="saveError"
-        @edit="startEdit"
-        @cancel="editing = false"
-        @save="save"
-      >
-        <template #view>
-          <section
-            class="pane-section"
-            style="border-top: none; padding-top: 0"
-          >
-            <div class="pane-section-head">
-              <span class="group-label group-label--lg">Staging</span>
-            </div>
-            <dl class="info-grid">
-              <dt>Stage virtual machines</dt>
-              <dd>{{ enabled ? 'Enabled' : 'Disabled' }}</dd>
-              <dt>Staging directory</dt>
-              <dd class="mono">{{ stagingDir }}</dd>
-              <dt>New full image after</dt>
-              <dd>{{ fullInterval }} increments</dd>
-              <dt>Snapshot timeout</dt>
-              <dd>{{ timeoutSeconds }} seconds per domain</dd>
-              <dt>Default limit per domain</dt>
-              <dd>{{ defaultLimitGib === 0 ? 'No limit' : `${defaultLimitGib} GiB` }}</dd>
-            </dl>
-          </section>
-        </template>
+      :editing="editing"
+      :can-edit="canEdit"
+      :saving="saving"
+      :error="saveError"
+      @edit="startEdit"
+      @cancel="editing = false"
+      @save="save"
+    >
+      <template #view>
+        <section
+          class="pane-section"
+          style="border-top: none; padding-top: 0"
+        >
+          <div class="pane-section-head">
+            <span class="group-label group-label--lg">Staging</span>
+          </div>
+          <dl class="info-grid">
+            <dt>Stage virtual machines</dt>
+            <dd>{{ enabled ? 'Enabled' : 'Disabled' }}</dd>
+            <dt>Staging directory</dt>
+            <dd class="mono">{{ stagingDir }}</dd>
+            <dt>New full image after</dt>
+            <dd>{{ fullInterval }} increments</dd>
+            <dt>Snapshot timeout</dt>
+            <dd>{{ timeoutSeconds }} seconds per domain</dd>
+            <dt>Default limit per domain</dt>
+            <dd>{{ defaultLimitGib === 0 ? 'No limit' : `${defaultLimitGib} GiB` }}</dd>
+          </dl>
+        </section>
+      </template>
 
-        <template #edit>
-          <section
-            class="pane-section"
-            style="border-top: none; padding-top: 0"
-          >
-            <div class="pane-section-head">
-              <span class="group-label group-label--lg">Staging</span>
-            </div>
+      <template #edit>
+        <section
+          class="pane-section"
+          style="border-top: none; padding-top: 0"
+        >
+          <div class="pane-section-head">
+            <span class="group-label group-label--lg">Staging</span>
+          </div>
 
-            <div class="field field-inline">
-              <div class="field-body">
-                <p class="field-title">Stage virtual machines</p>
-                <p class="field-hint">
-                  When off, a schedule that opts in stages nothing on this host.
-                </p>
-              </div>
-              <ToggleSwitch
-                v-model="enabled"
-                label="Stage virtual machines"
-              />
+          <div class="field field-inline">
+            <div class="field-body">
+              <p class="field-title">Stage virtual machines</p>
+              <p class="field-hint">
+                When off, a schedule that opts in stages nothing on this host.
+              </p>
             </div>
+            <ToggleSwitch
+              v-model="enabled"
+              label="Stage virtual machines"
+            />
+          </div>
 
-            <div class="field">
+          <div class="field">
+            <label
+              class="field-label"
+              for="vm-staging-dir"
+            >
+              Staging directory
+            </label>
+            <input
+              id="vm-staging-dir"
+              v-model="stagingDir"
+              class="input"
+              type="text"
+              placeholder="/home/virt/backups"
+            />
+            <span class="field-hint">
+              An absolute path with one subdirectory per domain. It must be writable by the user
+              QEMU runs as, and it joins the sources of every schedule that opts in.
+            </span>
+          </div>
+
+          <div class="field-row">
+            <div class="field field-narrow">
               <label
                 class="field-label"
-                for="vm-staging-dir"
+                for="vm-full-interval"
               >
-                Staging directory
+                New full image after
               </label>
               <input
-                id="vm-staging-dir"
-                v-model="stagingDir"
+                id="vm-full-interval"
+                v-model.number="fullInterval"
                 class="input"
-                type="text"
-                placeholder="/home/virt/backups"
+                type="number"
+                min="1"
               />
-              <span class="field-hint">
-                An absolute path with one subdirectory per domain. It must be writable by the user
-                QEMU runs as, and it joins the sources of every schedule that opts in.
-              </span>
+              <span class="field-hint">Increments per chain.</span>
             </div>
+            <div class="field field-narrow">
+              <label
+                class="field-label"
+                for="vm-timeout"
+              >
+                Snapshot timeout
+              </label>
+              <input
+                id="vm-timeout"
+                v-model.number="timeoutSeconds"
+                class="input"
+                type="number"
+                min="1"
+              />
+              <span class="field-hint">Seconds, per domain.</span>
+            </div>
+            <div class="field field-narrow">
+              <label
+                class="field-label"
+                for="vm-default-limit"
+              >
+                Default limit per domain
+              </label>
+              <input
+                id="vm-default-limit"
+                v-model.number="defaultLimitGib"
+                class="input"
+                type="number"
+                min="0"
+              />
+              <span class="field-hint">GiB. 0 means no limit.</span>
+            </div>
+          </div>
+        </section>
+      </template>
+    </EditableSection>
 
-            <div class="field-row">
-              <div class="field field-narrow">
-                <label
-                  class="field-label"
-                  for="vm-full-interval"
+    <section class="pane-section">
+      <div class="pane-section-head">
+        <span class="group-label group-label--lg">Domains</span>
+        <button
+          v-if="canEdit"
+          type="button"
+          class="btn btn-sm"
+          :disabled="scanning"
+          @click="scan"
+        >
+          <RefreshCw
+            :size="14"
+            :class="{ spinning: scanning }"
+          />
+          {{ scanning ? 'Scanning...' : 'Rescan host' }}
+        </button>
+      </div>
+
+      <p
+        v-if="scanError"
+        class="form-error"
+      >
+        {{ scanError }}
+      </p>
+      <p
+        v-if="rowError"
+        class="form-error"
+      >
+        {{ rowError }}
+      </p>
+
+      <EmptyState
+        v-if="vms.length === 0"
+        :icon="MonitorCog"
+        title="No domains reported"
+        description="Rescan the host to list the libvirt domains it has."
+      />
+
+      <div
+        v-else
+        class="table-wrap"
+      >
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>State</th>
+              <th>Mode</th>
+              <th>Staged size</th>
+              <th>Limit (GiB)</th>
+              <th>Include</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="vm in vms"
+              :key="vm.name"
+            >
+              <td>
+                <div class="cell-mono">{{ vm.name }}</div>
+                <div class="cell-muted">
+                  {{ vm.disk_count }} disk<span v-if="vm.disk_count !== 1">s</span>
+                  <span v-if="vm.chain_length > 0">
+                    &middot; full + {{ vm.chain_length }} increments
+                  </span>
+                </div>
+                <div
+                  v-if="vm.last_error"
+                  class="cell-muted vm-error"
                 >
-                  New full image after
-                </label>
-                <input
-                  id="vm-full-interval"
-                  v-model.number="fullInterval"
-                  class="input"
-                  type="number"
-                  min="1"
-                />
-                <span class="field-hint">Increments per chain.</span>
-              </div>
-              <div class="field field-narrow">
-                <label
-                  class="field-label"
-                  for="vm-timeout"
+                  {{ vm.last_error }}
+                </div>
+              </td>
+              <td>
+                <span
+                  class="badge"
+                  :class="stateBadge(vm.state)"
                 >
-                  Snapshot timeout
-                </label>
-                <input
-                  id="vm-timeout"
-                  v-model.number="timeoutSeconds"
-                  class="input"
-                  type="number"
-                  min="1"
-                />
-                <span class="field-hint">Seconds, per domain.</span>
-              </div>
-              <div class="field field-narrow">
-                <label
-                  class="field-label"
-                  for="vm-default-limit"
+                  {{ stateLabel(vm.state) }}
+                </span>
+              </td>
+              <td>
+                <span
+                  class="badge"
+                  :class="modeBadge(vm.mode)"
                 >
-                  Default limit per domain
-                </label>
+                  {{ modeLabel(vm.mode) }}
+                </span>
+              </td>
+              <td>
+                <div class="cell-size">
+                  {{ formatBytes(vm.staged_bytes) }} of {{ limitLabel(vm) }}
+                </div>
+                <div
+                  v-if="vm.effective_limit_bytes > 0"
+                  class="progress-track vm-usage"
+                >
+                  <div
+                    class="progress-bar"
+                    :class="usageTone(vm)"
+                    :style="{ width: `${usedPercent(vm)}%` }"
+                  />
+                </div>
+              </td>
+              <td>
                 <input
-                  id="vm-default-limit"
-                  v-model.number="defaultLimitGib"
-                  class="input"
+                  class="input input-sm vm-limit"
                   type="number"
                   min="0"
+                  :value="limitInput(vm)"
+                  :disabled="!canEdit || rowSaving === vm.name"
+                  :aria-label="`Limit for ${vm.name} in GiB`"
+                  placeholder="Default"
+                  @change="onLimitChange(vm, $event)"
                 />
-                <span class="field-hint">GiB. 0 means no limit.</span>
-              </div>
-            </div>
-          </section>
-        </template>
-      </EditableSection>
+                <div class="cell-muted">
+                  {{ vm.limit_bytes === null ? 'Host default' : 'Overridden' }}
+                </div>
+              </td>
+              <td>
+                <ToggleSwitch
+                  :model-value="vm.included"
+                  :disabled="!canEdit || rowSaving === vm.name"
+                  :label="`Include ${vm.name}`"
+                  @update:model-value="onIncludedChange(vm, $event)"
+                />
+              </td>
+              <td class="td-action">
+                <button
+                  v-if="canEdit"
+                  type="button"
+                  class="btn btn-sm"
+                  @click="restoring = vm.name"
+                >
+                  Restore
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-      <section class="pane-section">
-        <div class="pane-section-head">
-          <span class="group-label group-label--lg">Domains</span>
-          <button
-            v-if="canEdit"
-            type="button"
-            class="btn btn-sm"
-            :disabled="scanning"
-            @click="scan"
-          >
-            <RefreshCw
-              :size="14"
-              :class="{ spinning: scanning }"
-            />
-            {{ scanning ? 'Scanning...' : 'Rescan host' }}
-          </button>
-        </div>
-
-        <p
-          v-if="scanError"
-          class="form-error"
-        >
-          {{ scanError }}
-        </p>
-        <p
-          v-if="rowError"
-          class="form-error"
-        >
-          {{ rowError }}
-        </p>
-
-        <EmptyState
-          v-if="vms.length === 0"
-          :icon="MonitorCog"
-          title="No domains reported"
-          description="Rescan the host to list the libvirt domains it has."
-        />
-
-        <div
-          v-else
-          class="table-wrap"
-        >
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Domain</th>
-                <th>State</th>
-                <th>Mode</th>
-                <th>Staged size</th>
-                <th>Limit (GiB)</th>
-                <th>Include</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="vm in vms"
-                :key="vm.name"
-              >
-                <td>
-                  <div class="cell-mono">{{ vm.name }}</div>
-                  <div class="cell-muted">
-                    {{ vm.disk_count }} disk<span v-if="vm.disk_count !== 1">s</span>
-                    <span v-if="vm.chain_length > 0">
-                      &middot; full + {{ vm.chain_length }} increments
-                    </span>
-                  </div>
-                  <div
-                    v-if="vm.last_error"
-                    class="cell-muted vm-error"
-                  >
-                    {{ vm.last_error }}
-                  </div>
-                </td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="stateBadge(vm.state)"
-                  >
-                    {{ stateLabel(vm.state) }}
-                  </span>
-                </td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="modeBadge(vm.mode)"
-                  >
-                    {{ modeLabel(vm.mode) }}
-                  </span>
-                </td>
-                <td>
-                  <div class="cell-size">
-                    {{ formatBytes(vm.staged_bytes) }} of {{ limitLabel(vm) }}
-                  </div>
-                  <div
-                    v-if="vm.effective_limit_bytes > 0"
-                    class="progress-track vm-usage"
-                  >
-                    <div
-                      class="progress-bar"
-                      :class="usageTone(vm)"
-                      :style="{ width: `${usedPercent(vm)}%` }"
-                    />
-                  </div>
-                </td>
-                <td>
-                  <input
-                    class="input input-sm vm-limit"
-                    type="number"
-                    min="0"
-                    :value="limitInput(vm)"
-                    :disabled="!canEdit || rowSaving === vm.name"
-                    :aria-label="`Limit for ${vm.name} in GiB`"
-                    placeholder="Default"
-                    @change="onLimitChange(vm, $event)"
-                  />
-                  <div class="cell-muted">
-                    {{ vm.limit_bytes === null ? 'Host default' : 'Overridden' }}
-                  </div>
-                </td>
-                <td>
-                  <ToggleSwitch
-                    :model-value="vm.included"
-                    :disabled="!canEdit || rowSaving === vm.name"
-                    :label="`Include ${vm.name}`"
-                    @update:model-value="onIncludedChange(vm, $event)"
-                  />
-                </td>
-                <td class="td-action">
-                  <button
-                    v-if="canEdit"
-                    type="button"
-                    class="btn btn-sm"
-                    @click="restoring = vm.name"
-                  >
-                    Restore
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <VmRestoreWizard
-        v-if="restoring"
-        :open="restoring !== null"
-        :agent="agent"
-        :domain-name="restoring"
-        :staging-dir="stagingDir"
-        @close="restoring = null"
-        @restored="restored"
-      />
-    </template>
-  </div>
+    <VmRestoreWizard
+      v-if="restoring"
+      :open="restoring !== null"
+      :agent="agent"
+      :domain-name="restoring"
+      :staging-dir="stagingDir"
+      @close="restoring = null"
+      @restored="restored"
+    />
+  </template>
 </template>
 
 <style scoped>

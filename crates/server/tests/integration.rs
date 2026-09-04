@@ -7661,6 +7661,97 @@ async fn acknowledge_all_clears_every_outstanding_warning_and_failure() {
     assert_eq!(success_untouched, 0);
 }
 
+/// The dashboard's Backup stats panel clears the failures it is showing, so a
+/// bulk acknowledge narrowed to one repository and window must leave every
+/// other repository, every older run, and the system events untouched - and
+/// the count that gates its button must agree with what the write did.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn acknowledge_all_scoped_to_a_repo_and_window_leaves_the_rest_outstanding() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let scoped_repo_id = insert_test_repo(&pool, "ack-scope-repo").await;
+    let other_repo_id = insert_test_repo(&pool, "ack-scope-other-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('ack-scope-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // In the window and in scope; in scope but older than the window; in the
+    // window but in another repository.
+    for (repo_id, age_days) in [
+        (scoped_repo_id, 1),
+        (scoped_repo_id, 20),
+        (other_repo_id, 1),
+    ] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             matched) VALUES ($1, $2, NOW() - make_interval(days => $3), NOW() - \
+             make_interval(days => $3), 'failed', true)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(age_days)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO system_events (event_type, message) VALUES ('repo_sync_failed', 'Periodic \
+         sync failed')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let scope = format!("repo_id={scoped_repo_id}&days=7");
+    let req = get_request(&format!("/api/stats/activity/outstanding?{scope}"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        body.get("backup_reports").unwrap(),
+        1,
+        "only the run inside the scoped repo and window is counted"
+    );
+    assert_eq!(
+        body.get("system_events").unwrap(),
+        0,
+        "a scoped request is about backup runs, so it must not offer to clear system events"
+    );
+
+    let req = post_request_without_body(&format!("/api/stats/activity/acknowledge-all?{scope}"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.get("backup_reports").unwrap(), 1);
+    assert_eq!(body.get("system_events").unwrap(), 0);
+
+    let still_outstanding: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        still_outstanding, 2,
+        "the older run and the other repository's run must still await review"
+    );
+
+    let events_outstanding: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM system_events WHERE acknowledged = false")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(events_outstanding, 1);
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn acknowledge_all_leaves_repos_the_caller_may_not_touch_alone() {

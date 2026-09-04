@@ -907,6 +907,24 @@ if [ "$INCIDENT_COUNT" != "3" ]; then
     exit 1
 fi
 
+echo "==> Acknowledging one incident failure, so Backup Stats shows a reviewed run..."
+# The dashboard's Backup Stats panel counts only failures still awaiting
+# review and reports how many in the window have already been reviewed, so the
+# demo needs both states inside its default 30-day range. The *oldest* run of
+# the recovered incident is the one marked reviewed: it is not its target's
+# latest run, so no Needs Attention finding hangs off it, and the remaining
+# seeded failures stay outstanding - which is what puts the panel's "Mark
+# reviewed" button on screen for the screenshot.
+DB01_REVIEWED_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT id FROM backup_reports
+     WHERE agent_id = $DB01_ID AND status = 'failed' AND archive_name IS NULL
+     ORDER BY started_at ASC LIMIT 1")
+if [ -z "$DB01_REVIEWED_REPORT_ID" ]; then
+    echo "expected a db-server-01 failure to acknowledge, found none" >&2
+    exit 1
+fi
+api POST "/api/stats/activity/$DB01_REVIEWED_REPORT_ID/acknowledge" > /dev/null
+
 echo "==> Seeding a cancelled run on web-server-01..."
 # Feeds the Schedules view's run-history strip: a cancelled run must render
 # distinctly from a failed one (a muted, non-alarming bar) rather than

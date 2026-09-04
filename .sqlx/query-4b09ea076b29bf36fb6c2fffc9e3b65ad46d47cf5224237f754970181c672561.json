@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET acknowledged = true WHERE id IN (SELECT br.id FROM backup_reports br JOIN agents a ON a.id = br.agent_id WHERE br.acknowledged = false AND br.repo_id = ANY($1) AND br.status IN ($2, $3) AND ($4::bigint IS NULL OR br.repo_id = $4) AND ($5::int IS NULL OR br.started_at > NOW() - make_interval(days => $5)) AND a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Text",
+        "Text",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4b09ea076b29bf36fb6c2fffc9e3b65ad46d47cf5224237f754970181c672561"
+}

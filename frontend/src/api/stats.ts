@@ -160,19 +160,41 @@ export interface AcknowledgementCounts {
   system_events: number
 }
 
-export async function acknowledgeAllActivity(): Promise<AcknowledgementCounts> {
-  const response = await apiClient.post<AcknowledgementCounts>('/stats/activity/acknowledge-all')
+/**
+ * The slice of activity a bulk acknowledge applies to. Omitted entirely, it
+ * covers everything outstanding - what the Activity Log's Acknowledge all
+ * asks for. A panel showing one repository over one window passes its own
+ * selectors, so it clears exactly the runs it was counting and leaves the
+ * rest, system events included, for whoever reviews them.
+ */
+export interface AcknowledgeScope {
+  days?: number
+  repo_id?: number
+}
+
+export async function acknowledgeAllActivity(
+  scope?: AcknowledgeScope,
+): Promise<AcknowledgementCounts> {
+  const response = await apiClient.post<AcknowledgementCounts>(
+    '/stats/activity/acknowledge-all',
+    undefined,
+    { params: scope },
+  )
   return response.data
 }
 
 /**
- * What this user could still acknowledge, ignoring whatever filter the feed is
- * showing. The feed is paged and filtered, so counting the rows on screen
- * would hide the Acknowledge all button exactly when a narrow filter is hiding
- * the problems it exists to clear.
+ * What this user could still acknowledge within `scope`, ignoring whatever
+ * filter the feed is showing. The feed is paged and filtered, so counting the
+ * rows on screen would hide the Acknowledge all button exactly when a narrow
+ * filter is hiding the problems it exists to clear.
  */
-export async function getOutstandingAcknowledgements(): Promise<AcknowledgementCounts> {
-  const response = await apiClient.get<AcknowledgementCounts>('/stats/activity/outstanding')
+export async function getOutstandingAcknowledgements(
+  scope?: AcknowledgeScope,
+): Promise<AcknowledgementCounts> {
+  const response = await apiClient.get<AcknowledgementCounts>('/stats/activity/outstanding', {
+    params: scope,
+  })
   return response.data
 }
 

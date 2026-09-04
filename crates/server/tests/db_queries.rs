@@ -2064,15 +2064,28 @@ async fn insert_report_with_status(
     repo_id: i64,
     status: shared::types::BackupStatus,
 ) {
-    let now = Utc::now();
+    let started_at = Utc::now().checked_sub_signed(Duration::minutes(5)).unwrap();
+    insert_report_with_status_at(pool, agent_id, repo_id, status, started_at).await;
+}
+
+/// The same, but filed at a chosen `started_at`, for the window-scoped
+/// acknowledgment tests.
+#[cfg(test)]
+async fn insert_report_with_status_at(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    status: shared::types::BackupStatus,
+    started_at: chrono::DateTime<Utc>,
+) {
     db::insert_backup_report(
         pool,
         &InsertReportParams {
             agent_id,
             repo_id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
-            finished_at: now,
+            started_at,
+            finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
             status,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -2194,9 +2207,13 @@ async fn acknowledge_backup_reports_in_repos_only_touches_listed_repos(pool: PgP
     expected.sort_unstable();
     assert_eq!(pending, expected);
 
-    let acknowledged = db::acknowledge_backup_reports_in_repos(&pool, &[repo_a.id])
-        .await
-        .unwrap();
+    let acknowledged = db::acknowledge_backup_reports_in_repos(
+        &pool,
+        &[repo_a.id],
+        db::BulkAcknowledgeFilters::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(acknowledged, 1, "only the failed run in repo A is ackable");
 
     let still_pending = db::repos_with_unacknowledged_reports(&pool).await.unwrap();
@@ -2213,6 +2230,173 @@ async fn acknowledge_backup_reports_in_repos_only_touches_listed_repos(pool: PgP
     assert_eq!(successes_acknowledged, 0);
 }
 
+/// The dashboard's Backup stats panel clears the failures *it* is showing, so
+/// a bulk acknowledge scoped to one repository must leave every other
+/// repository's outstanding runs exactly where they were.
+#[sqlx::test(migrations = "./migrations")]
+async fn bulk_acknowledge_scoped_to_one_repo_leaves_the_others_outstanding(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "scoped-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_a = create_test_repo_with_host(&pool, "scoped-ack-repo-a", "a.local").await;
+    let repo_b = create_test_repo_with_host(&pool, "scoped-ack-repo-b", "b.local").await;
+    for repo_id in [repo_a.id, repo_b.id] {
+        insert_report_with_status(
+            &pool,
+            agent.id,
+            repo_id,
+            shared::types::BackupStatus::Failed,
+        )
+        .await;
+    }
+
+    let scoped = db::BulkAcknowledgeFilters {
+        repo_id: Some(repo_a.id),
+        days: None,
+    };
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo_a.id, repo_b.id], scoped)
+            .await
+            .unwrap(),
+        1,
+        "the count must see only the scoped repository"
+    );
+
+    let acknowledged =
+        db::acknowledge_backup_reports_in_repos(&pool, &[repo_a.id, repo_b.id], scoped)
+            .await
+            .unwrap();
+    assert_eq!(acknowledged, 1);
+    assert_eq!(
+        db::repos_with_unacknowledged_reports(&pool).await.unwrap(),
+        vec![repo_b.id],
+        "the unscoped repository keeps its outstanding failure"
+    );
+}
+
+/// A hidden agent's failed run never reaches a feed or the Failed tile, so a
+/// bulk acknowledge must neither count it nor silently retire it - the
+/// button's whole promise is that it clears no more than what was on screen.
+#[sqlx::test(migrations = "./migrations")]
+async fn bulk_acknowledge_ignores_reports_from_agents_no_feed_shows(pool: PgPool) {
+    let visible = db::insert_agent(&pool, "visible-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let hidden = db::insert_agent(&pool, "hidden-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET is_hidden = true WHERE id = $1")
+        .bind(hidden.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    for agent_id in [visible.id, hidden.id] {
+        insert_report_with_status(
+            &pool,
+            agent_id,
+            repo.id,
+            shared::types::BackupStatus::Failed,
+        )
+        .await;
+    }
+
+    let all = db::BulkAcknowledgeFilters::default();
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id], all)
+            .await
+            .unwrap(),
+        1,
+        "only the visible agent's failure is counted"
+    );
+
+    let acknowledged = db::acknowledge_backup_reports_in_repos(&pool, &[repo.id], all)
+        .await
+        .unwrap();
+    assert_eq!(acknowledged, 1);
+
+    let hidden_still_outstanding: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE agent_id = $1 AND acknowledged = false",
+    )
+    .bind(hidden.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        hidden_still_outstanding, 1,
+        "the hidden agent's run must be left exactly as it was"
+    );
+
+    // With nothing acknowledgeable left that a feed would show, the repository
+    // stops being a candidate at all rather than offering a no-op button.
+    assert_eq!(
+        db::repos_with_unacknowledged_reports(&pool).await.unwrap(),
+        Vec::<i64>::new()
+    );
+}
+
+/// Scoped to a window, a bulk acknowledge clears the runs inside it and leaves
+/// the older ones outstanding - the panel's "last 7 days" reset must not
+/// silently retire a quarter of history.
+#[sqlx::test(migrations = "./migrations")]
+async fn bulk_acknowledge_scoped_to_a_window_leaves_older_failures_outstanding(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "windowed-ack-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    insert_report_with_status_at(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Failed,
+        now.checked_sub_signed(Duration::days(2)).unwrap(),
+    )
+    .await;
+    insert_report_with_status_at(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Failed,
+        now.checked_sub_signed(Duration::days(20)).unwrap(),
+    )
+    .await;
+
+    let last_week = db::BulkAcknowledgeFilters {
+        repo_id: None,
+        days: Some(7),
+    };
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id], last_week)
+            .await
+            .unwrap(),
+        1,
+        "only the run inside the window is in scope"
+    );
+
+    let acknowledged = db::acknowledge_backup_reports_in_repos(&pool, &[repo.id], last_week)
+        .await
+        .unwrap();
+    assert_eq!(acknowledged, 1);
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id], last_week)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        db::count_unacknowledged_reports_in_repos(
+            &pool,
+            &[repo.id],
+            db::BulkAcknowledgeFilters::default()
+        )
+        .await
+        .unwrap(),
+        1,
+        "the run outside the window must still await review"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn outstanding_counts_track_what_a_bulk_acknowledge_would_touch(pool: PgPool) {
     let agent = db::insert_agent(&pool, "outstanding-host", None, "hash", None, None)
@@ -2221,9 +2405,13 @@ async fn outstanding_counts_track_what_a_bulk_acknowledge_would_touch(pool: PgPo
     let repo = create_test_repo(&pool).await;
 
     assert_eq!(
-        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
-            .await
-            .unwrap(),
+        db::count_unacknowledged_reports_in_repos(
+            &pool,
+            &[repo.id],
+            db::BulkAcknowledgeFilters::default()
+        )
+        .await
+        .unwrap(),
         0
     );
 
@@ -2251,27 +2439,43 @@ async fn outstanding_counts_track_what_a_bulk_acknowledge_would_touch(pool: PgPo
 
     // Only the warning and the failure count - the success is not reviewable.
     assert_eq!(
-        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
-            .await
-            .unwrap(),
+        db::count_unacknowledged_reports_in_repos(
+            &pool,
+            &[repo.id],
+            db::BulkAcknowledgeFilters::default()
+        )
+        .await
+        .unwrap(),
         2
     );
     // A repo the caller may not touch contributes nothing.
     assert_eq!(
-        db::count_unacknowledged_reports_in_repos(&pool, &[])
-            .await
-            .unwrap(),
+        db::count_unacknowledged_reports_in_repos(
+            &pool,
+            &[],
+            db::BulkAcknowledgeFilters::default()
+        )
+        .await
+        .unwrap(),
         0
     );
 
-    let acknowledged = db::acknowledge_backup_reports_in_repos(&pool, &[repo.id])
-        .await
-        .unwrap();
+    let acknowledged = db::acknowledge_backup_reports_in_repos(
+        &pool,
+        &[repo.id],
+        db::BulkAcknowledgeFilters::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(acknowledged, 2);
     assert_eq!(
-        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
-            .await
-            .unwrap(),
+        db::count_unacknowledged_reports_in_repos(
+            &pool,
+            &[repo.id],
+            db::BulkAcknowledgeFilters::default()
+        )
+        .await
+        .unwrap(),
         0,
         "the count must fall to zero once the bulk acknowledge has run"
     );
@@ -2411,16 +2615,25 @@ async fn acknowledge_all_outstanding_commits_both_writes_together(pool: PgPool) 
         .await
         .unwrap();
 
-    let (reports, events) = db::acknowledge_all_outstanding(&pool, &[repo.id], true)
-        .await
-        .unwrap();
+    let (reports, events) = db::acknowledge_all_outstanding(
+        &pool,
+        &[repo.id],
+        true,
+        db::BulkAcknowledgeFilters::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!((reports, events), (1, 1));
 
     // Both sides of the transaction are visible afterwards.
     assert_eq!(
-        db::count_unacknowledged_reports_in_repos(&pool, &[repo.id])
-            .await
-            .unwrap(),
+        db::count_unacknowledged_reports_in_repos(
+            &pool,
+            &[repo.id],
+            db::BulkAcknowledgeFilters::default()
+        )
+        .await
+        .unwrap(),
         0
     );
     assert_eq!(
@@ -2446,9 +2659,14 @@ async fn acknowledge_all_outstanding_leaves_system_events_alone_for_a_non_admin(
         .await
         .unwrap();
 
-    let (reports, events) = db::acknowledge_all_outstanding(&pool, &[repo.id], false)
-        .await
-        .unwrap();
+    let (reports, events) = db::acknowledge_all_outstanding(
+        &pool,
+        &[repo.id],
+        false,
+        db::BulkAcknowledgeFilters::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!((reports, events), (1, 0));
     assert_eq!(
         db::count_unacknowledged_system_events(&pool).await.unwrap(),

@@ -6367,12 +6367,40 @@ fn acknowledgeable_system_event_types() -> Vec<String> {
         .collect()
 }
 
+/// The slice of the activity feed a bulk acknowledge acts on, beyond the
+/// repositories the caller is allowed to touch.
+///
+/// [`Default`] is "everything outstanding", which is what the Activity Log's
+/// own Acknowledge all asks for. The dashboard's Backup stats panel counts one
+/// repository over one window and clears exactly what it counted, so it fills
+/// these in from the same selectors its feed query uses -- `days` is applied
+/// with the same `NOW() - make_interval(...)` bound as
+/// [`get_activity_feed_days`], so the two can never disagree about which runs
+/// fall inside the window.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BulkAcknowledgeFilters {
+    /// Only reports for this repository, or every repository when `None`.
+    pub repo_id: Option<i64>,
+    /// Only reports started within the last N days, or all history when
+    /// `None`.
+    pub days: Option<i32>,
+}
+
 /// Acknowledges every unacknowledged warning/failed backup report belonging to
-/// one of `repo_ids`, and reports how many rows that touched.
+/// one of `repo_ids` and matching `filters`, and reports how many rows that
+/// touched.
 ///
 /// The caller narrows `repo_ids` to the repositories the user may act on, so
 /// a bulk acknowledge can never reach further than the same user's per-report
-/// acknowledge would.
+/// acknowledge would. `filters` narrows it further, to the slice of the feed
+/// the caller is actually looking at.
+///
+/// Hidden and imported-placeholder agents are excluded, with the same
+/// predicate [`get_activity_feed`] and [`get_activity_feed_days`] apply. Their
+/// reports never reach any feed or dashboard tile, so acknowledging one here
+/// would silently retire a run nobody was shown - and would break the promise
+/// the button rests on, that a bulk acknowledge clears no more than what was
+/// on screen.
 ///
 /// # Errors
 ///
@@ -6380,17 +6408,24 @@ fn acknowledgeable_system_event_types() -> Vec<String> {
 pub async fn acknowledge_backup_reports_in_repos<'e, E>(
     executor: E,
     repo_ids: &[i64],
+    filters: BulkAcknowledgeFilters,
 ) -> Result<u64, ApiError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
     let [warning, failed] = acknowledgeable_report_statuses();
     Ok(sqlx::query!(
-        "UPDATE backup_reports SET acknowledged = true WHERE acknowledged = false AND repo_id = \
-         ANY($1) AND status IN ($2, $3)",
+        "UPDATE backup_reports SET acknowledged = true WHERE id IN (SELECT br.id FROM \
+         backup_reports br JOIN agents a ON a.id = br.agent_id WHERE br.acknowledged = false AND \
+         br.repo_id = ANY($1) AND br.status IN ($2, $3) AND ($4::bigint IS NULL OR br.repo_id = \
+         $4) AND ($5::int IS NULL OR br.started_at > NOW() - make_interval(days => $5)) AND \
+         a.is_hidden = false AND a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT \
+         ILIKE '%(imported)%')",
         repo_ids,
         warning,
         failed,
+        filters.repo_id,
+        filters.days,
     )
     .execute(executor)
     .await
@@ -6399,7 +6434,11 @@ where
 }
 
 /// The repositories that still hold at least one unacknowledged warning or
-/// failed backup report, so the caller can permission-check just those.
+/// failed backup report from an agent a feed would actually show, so the
+/// caller can permission-check just those. Carries the same agent-visibility
+/// predicate as the count and the write it feeds, so a repository whose only
+/// outstanding reports belong to a hidden or imported agent is not offered as
+/// a candidate for something that would then acknowledge nothing.
 ///
 /// # Errors
 ///
@@ -6407,8 +6446,10 @@ where
 pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
     let [warning, failed] = acknowledgeable_report_statuses();
     sqlx::query_scalar!(
-        "SELECT DISTINCT repo_id FROM backup_reports WHERE acknowledged = false AND status IN \
-         ($1, $2) ORDER BY repo_id",
+        "SELECT DISTINCT br.repo_id FROM backup_reports br JOIN agents a ON a.id = br.agent_id \
+         WHERE br.acknowledged = false AND br.status IN ($1, $2) AND a.is_hidden = false AND \
+         a.visibility <> 'hidden' AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' ORDER \
+         BY br.repo_id",
         warning,
         failed,
     )
@@ -6418,12 +6459,12 @@ pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>
 }
 
 /// Counts the unacknowledged warning/failed backup reports belonging to one of
-/// `repo_ids`, so the UI can tell whether a bulk acknowledge would do anything
-/// without first loading the feed.
+/// `repo_ids` and matching `filters`, so the UI can tell whether a bulk
+/// acknowledge would do anything without first loading the feed.
 ///
-/// Deliberately mirrors [`acknowledge_backup_reports_in_repos`]'s filter, so
-/// "the button is shown" and "the button would acknowledge something" can
-/// never disagree.
+/// Deliberately mirrors [`acknowledge_backup_reports_in_repos`]'s filter -
+/// the agent-visibility predicate included - so "the button is shown" and
+/// "the button would acknowledge something" can never disagree.
 ///
 /// # Errors
 ///
@@ -6431,14 +6472,20 @@ pub async fn repos_with_unacknowledged_reports(pool: &PgPool) -> Result<Vec<i64>
 pub async fn count_unacknowledged_reports_in_repos(
     pool: &PgPool,
     repo_ids: &[i64],
+    filters: BulkAcknowledgeFilters,
 ) -> Result<i64, ApiError> {
     let [warning, failed] = acknowledgeable_report_statuses();
     Ok(sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM backup_reports WHERE acknowledged = false AND repo_id = ANY($1) AND \
-         status IN ($2, $3)",
+        "SELECT COUNT(*) FROM backup_reports br JOIN agents a ON a.id = br.agent_id WHERE \
+         br.acknowledged = false AND br.repo_id = ANY($1) AND br.status IN ($2, $3) AND \
+         ($4::bigint IS NULL OR br.repo_id = $4) AND ($5::int IS NULL OR br.started_at > NOW() - \
+         make_interval(days => $5)) AND a.is_hidden = false AND a.visibility <> 'hidden' AND \
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%'",
         repo_ids,
         warning,
         failed,
+        filters.repo_id,
+        filters.days,
     )
     .fetch_one(pool)
     .await
@@ -6488,8 +6535,9 @@ where
 }
 
 /// Acknowledges everything the caller may retire in one step - the warning and
-/// failed backup reports in `repo_ids`, and, when `include_system_events`, the
-/// problem-reporting system events - and reports the two counts.
+/// failed backup reports in `repo_ids` matching `filters`, and, when
+/// `include_system_events`, the problem-reporting system events - and reports
+/// the two counts.
 ///
 /// One transaction, so a request the client sees fail leaves nothing
 /// half-acknowledged: without it a failure on the second write would return
@@ -6502,9 +6550,10 @@ pub async fn acknowledge_all_outstanding(
     pool: &PgPool,
     repo_ids: &[i64],
     include_system_events: bool,
+    filters: BulkAcknowledgeFilters,
 ) -> Result<(u64, u64), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let backup_reports = acknowledge_backup_reports_in_repos(&mut *tx, repo_ids).await?;
+    let backup_reports = acknowledge_backup_reports_in_repos(&mut *tx, repo_ids, filters).await?;
     let system_events = if include_system_events {
         acknowledge_all_system_events(&mut *tx).await?
     } else {

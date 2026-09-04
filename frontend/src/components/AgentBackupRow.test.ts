@@ -178,6 +178,57 @@ describe('AgentBackupRow', () => {
     })
   })
 
+  // A preview row has no detail block to expand into, so the run that broke
+  // is a dead end unless it can hand off to the row that does have one.
+  describe('preview hand-off', () => {
+    function previewAction(wrapper: ReturnType<typeof mount>) {
+      return wrapper.findAll('button').find((b) => b.text().startsWith('View'))
+    }
+
+    it('offers the error of a failed run', async () => {
+      const wrapper = mount({
+        report: report({ status: 'failed', archive_name: null, error_message: 'Lock held' }),
+      })
+      const button = previewAction(wrapper)
+      expect(button?.text()).toBe('View error')
+      await button!.trigger('click')
+      expect(wrapper.emitted('detail')).toHaveLength(1)
+    })
+
+    // A warned run reached an archive, so it has two places worth going -
+    // the archive on the name, the output here - and the label says which.
+    it('offers the warnings of a warned run alongside its archive', async () => {
+      const wrapper = mount({
+        report: report({ status: 'warning', warnings: ['file changed while we read it'] }),
+      })
+      expect(previewAction(wrapper)?.text()).toBe('View warnings')
+      await wrapper.find('button.agent-row-name').trigger('click')
+      expect(wrapper.emitted('open')).toHaveLength(1)
+    })
+
+    it('offers nothing on a clean run', () => {
+      expect(previewAction(mount())).toBeUndefined()
+    })
+
+    // A run whose only detail is a power-management timeline would expand
+    // into "no power-management activity" as often as not - not worth a
+    // button on a summary row.
+    it('offers nothing for a timeline-only run', () => {
+      expect(previewAction(mount({ report: report({ run_id: 'run-123' }) }))).toBeUndefined()
+    })
+
+    // On the Backups tab the row expands in place, so a jump to itself would
+    // be a second button that does the same thing as the toggle.
+    it('gives way to the toggle on the full list', () => {
+      const wrapper = mount({
+        report: report({ status: 'failed', archive_name: null, error_message: 'Lock held' }),
+        showDetail: true,
+      })
+      expect(previewAction(wrapper)).toBeUndefined()
+      expect(wrapper.find('button[aria-expanded]').exists()).toBe(true)
+    })
+  })
+
   // A run tied to a power-management timeline is worth offering to expand
   // even when it succeeded with no warnings - most runs have wake/start
   // disabled and simply won't have recorded anything, but a viewer can't

@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::{
+    hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
     protocol::{ServerToAgent, ServerToUi},
     responses::{
         DeleteFailedReportsResponse, FailedReportCountResponse, PerAgentBackupSourcesResponse,
@@ -103,9 +104,9 @@ pub struct AgentCommands {
     /// The agent's ID.
     pub agent_id: i64,
     /// Commands to run before the backup.
-    pub pre_backup_commands: Vec<String>,
+    pub pre_backup_commands: Vec<HookCommand>,
     /// Commands to run after the backup.
-    pub post_backup_commands: Vec<String>,
+    pub post_backup_commands: Vec<HookCommand>,
 }
 
 /// Per-agent file change detection patterns for a schedule target.
@@ -154,9 +155,9 @@ pub struct CreateScheduleRequest {
     /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<u32>,
     /// Commands to run before the backup.
-    pub pre_backup_commands: Option<Vec<String>>,
+    pub pre_backup_commands: Option<Vec<HookCommand>>,
     /// Commands to run after the backup.
-    pub post_backup_commands: Option<Vec<String>>,
+    pub post_backup_commands: Option<Vec<HookCommand>>,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     pub hook_timeout_seconds: Option<i32>,
     /// How many consecutive missed backups this schedule tolerates before it
@@ -211,9 +212,9 @@ pub struct UpdateScheduleRequest {
     /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<u32>,
     /// Commands to run before the backup.
-    pub pre_backup_commands: Option<Vec<String>>,
+    pub pre_backup_commands: Option<Vec<HookCommand>>,
     /// Commands to run after the backup.
-    pub post_backup_commands: Option<Vec<String>>,
+    pub post_backup_commands: Option<Vec<HookCommand>>,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     pub hook_timeout_seconds: Option<i32>,
     /// How many consecutive missed backups this schedule tolerates before it
@@ -342,6 +343,8 @@ pub async fn create_schedule(
     let on_failure_str = on_failure.to_string();
     let pre_backup_commands = req.pre_backup_commands.unwrap_or_default();
     let post_backup_commands = req.post_backup_commands.unwrap_or_default();
+    validate_hook_commands(&pre_backup_commands)?;
+    validate_hook_commands(&post_backup_commands)?;
     let hook_timeout_seconds =
         validate_hook_timeout_seconds(req.hook_timeout_seconds.unwrap_or(60))?;
     let missed_backup_threshold =
@@ -506,6 +509,8 @@ pub async fn update_schedule(
         .post_backup_commands
         .clone()
         .unwrap_or_else(|| existing.post_backup_commands.0.clone());
+    validate_hook_commands(&pre_backup_commands)?;
+    validate_hook_commands(&post_backup_commands)?;
     let hook_timeout_seconds = validate_hook_timeout_seconds(
         req.hook_timeout_seconds
             .unwrap_or(existing.hook_timeout_seconds),
@@ -748,6 +753,26 @@ fn validate_hook_timeout_seconds(seconds: i32) -> Result<i32, ApiError> {
     Ok(seconds)
 }
 
+/// Validates the per-command timeout a hook may carry instead of inheriting
+/// the schedule's [`MAX_HOOK_TIMEOUT_SECONDS`]-bounded default.
+///
+/// `pub(crate)`: also used by `agents::update_agent` for an agent's default
+/// hook commands, and by `config_io` for imported configurations, so every
+/// path that can store a hook command enforces the same bound.
+pub(crate) fn validate_hook_commands(commands: &[HookCommand]) -> Result<(), ApiError> {
+    commands
+        .iter()
+        .try_for_each(|cmd| match cmd.timeout_seconds {
+            Some(seconds) if seconds == 0 || seconds > MAX_HOOK_COMMAND_TIMEOUT_SECONDS => {
+                Err(ApiError::BadRequest(format!(
+                    "hook command timeout_seconds must be between 1 and \
+                     {MAX_HOOK_COMMAND_TIMEOUT_SECONDS}"
+                )))
+            }
+            Some(_) | None => Ok(()),
+        })
+}
+
 /// Upper bound on how many consecutive missed backups a schedule can tolerate
 /// before being marked failed and auto-disabled. Generous enough to ride out an
 /// extended agent outage, but still bounded so a schedule can't be configured to
@@ -819,6 +844,8 @@ async fn insert_per_agent_commands(
     per_agent: &[AgentCommands],
 ) -> Result<(), ApiError> {
     for entry in per_agent {
+        validate_hook_commands(&entry.pre_backup_commands)?;
+        validate_hook_commands(&entry.post_backup_commands)?;
         db::upsert_per_agent_commands(
             pool,
             schedule_id,
@@ -1498,6 +1525,56 @@ mod tests {
         tunnel::TunnelManager,
         ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
+
+    #[test]
+    fn hook_command_without_a_timeout_is_accepted() {
+        assert!(validate_hook_commands(&[HookCommand::new("echo hi")]).is_ok());
+    }
+
+    #[test]
+    fn hook_command_timeout_is_accepted_across_the_whole_range() {
+        for seconds in [1, 3600, MAX_HOOK_COMMAND_TIMEOUT_SECONDS] {
+            assert!(
+                validate_hook_commands(&[HookCommand {
+                    command: "sleep 1".to_owned(),
+                    timeout_seconds: Some(seconds),
+                }])
+                .is_ok(),
+                "{seconds} should be accepted"
+            );
+        }
+    }
+
+    /// Zero would be a command that can never finish in time, and anything
+    /// past the bound would let a stuck hook hold a schedule open for longer
+    /// than a day - the two things a hook timeout exists to prevent.
+    #[test]
+    fn hook_command_timeout_outside_the_range_is_rejected() {
+        for seconds in [0, MAX_HOOK_COMMAND_TIMEOUT_SECONDS + 1] {
+            let err = validate_hook_commands(&[HookCommand {
+                command: "sleep 1".to_owned(),
+                timeout_seconds: Some(seconds),
+            }])
+            .unwrap_err();
+            assert!(
+                matches!(err, ApiError::BadRequest(_)),
+                "{seconds} should be a 400, got {err:?}"
+            );
+        }
+    }
+
+    /// The whole list is checked, not just its first entry.
+    #[test]
+    fn a_bad_timeout_later_in_the_list_is_still_rejected() {
+        let commands = vec![
+            HookCommand::new("echo one"),
+            HookCommand {
+                command: "sleep 1".to_owned(),
+                timeout_seconds: Some(0),
+            },
+        ];
+        assert!(validate_hook_commands(&commands).is_err());
+    }
 
     /// Builds an `AppState` around `pool` for tests that only need
     /// `release_manual_target_power`'s dependencies (pool, registry,

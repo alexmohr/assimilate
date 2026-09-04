@@ -34,7 +34,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
 import { dropBlankCommands, parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { isAgentOffline, lastSeenText } from '../utils/agent'
+import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
@@ -48,6 +48,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
+import type { HookCommand } from '../types/generated'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -176,6 +177,34 @@ const settingsSection = computed<ScheduleSettingsSection>({
     router.replace({ query: { ...route.query, section: val } })
   },
 })
+
+/**
+ * A preview row's archive: the Backups tab already browses this schedule's
+ * archives, so the jump is a selection plus a tab switch, not a route to
+ * some other screen that would lose the schedule's context.
+ */
+function openArchive(r: ReportRow): void {
+  selectedBackupReport.value = r
+  activeTab.value = 'backups'
+}
+
+/**
+ * A preview row's output. This schedule's Backups tab is an archive browser
+ * and a failed run wrote no archive, so the error lives one level down, on
+ * the host's own Backups tab - which renders it in place, expanded.
+ */
+function openReportDetail(r: ReportRow): void {
+  const agent = agentMap.value.get(r.agent_id ?? 0)
+  const hostname = agent?.hostname ?? r.hostname
+  if (!hostname) {
+    logger.error('cannot open a run whose host is unknown', r.id)
+    return
+  }
+  router.push({
+    path: `/agents/${encodeURIComponent(hostname)}`,
+    query: { ...domainParams(agent?.domain), tab: 'backups', report: String(r.id) },
+  })
+}
 
 function goToLogs(): void {
   const id = schedule.value?.id
@@ -381,8 +410,8 @@ async function loadData(): Promise<void> {
       const perAgentCmdEntries = sources.commands_per_agent ?? []
       if (perAgentCmdEntries.length > 0) {
         agentOverrides.value.usePerAgentCmds = true
-        const preMap: Record<number, string[]> = {}
-        const postMap: Record<number, string[]> = {}
+        const preMap: Record<number, HookCommand[]> = {}
+        const postMap: Record<number, HookCommand[]> = {}
         for (const entry of perAgentCmdEntries) {
           preMap[Number(entry.agent_id)] = entry.pre_backup_commands
           postMap[Number(entry.agent_id)] = entry.post_backup_commands
@@ -461,8 +490,8 @@ async function save(): Promise<void> {
       payload.post_backup_commands = []
       const perAgent: {
         agent_id: number
-        pre_backup_commands: string[]
-        post_backup_commands: string[]
+        pre_backup_commands: HookCommand[]
+        post_backup_commands: HookCommand[]
       }[] = []
       for (const id of selectedAgentIds.value) {
         perAgent.push({
@@ -761,6 +790,8 @@ watch(activeTab, (tab) => {
           :archive-progress="archiveProgress"
           @retry="runNow($event)"
           @open-backups="activeTab = 'backups'"
+          @open-archive="openArchive"
+          @open-report-detail="openReportDetail"
         />
 
         <ScheduleBackupsTab

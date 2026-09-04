@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import {
   listAgents,
   updateAgent,
@@ -145,6 +145,17 @@ const pinnedStatus = computed(() => {
 })
 const pinnedReportId = ref<number | null>(null)
 const pinnedForStatus = ref<typeof pinnedStatus.value>(undefined)
+
+/** A run addressed by id (`?report=`), the deep link a preview row builds. */
+const linkedReportId = computed<number | null>(() => {
+  const r = route.query.report
+  if (typeof r !== 'string') return null
+  const id = Number(r)
+  return Number.isInteger(id) ? id : null
+})
+
+/** Whichever run the route is pointing at, for the row that marks itself. */
+const highlightedReportId = computed(() => linkedReportId.value ?? pinnedReportId.value)
 
 function isOverdueQuery(value: unknown): value is 'overdue' {
   return value === 'overdue'
@@ -354,31 +365,121 @@ function openReport(r: ReportRow): void {
   router.push({ path: `/repos/${r.repo_id}`, query })
 }
 
+/**
+ * The other half of a preview row: a failed or warned run has no archive to
+ * browse, so it lands on its own row in the Backups tab with the output
+ * already open. Stays on this page - `?report=` is picked up by the watch
+ * below - rather than pushing a second copy of the run somewhere else.
+ *
+ * The two pins that would fight over the same row (`status`, `archive`) are
+ * dropped: they select a run of their own, and the one asked for here wins.
+ */
+function openReportDetail(r: ReportRow): void {
+  const query: LocationQueryRaw = { ...route.query, tab: 'backups', report: String(r.id) }
+  delete query.status
+  delete query.archive
+  router.push({ query })
+}
+
 function toggleReport(r: ReportRow): void {
   expandedReportId.value = expandedReportId.value === r.id ? null : r.id
 }
 
-async function loadAgent(): Promise<void> {
+// SSH-key deploy, merge, redeploy, the failed-reports cleanup dialog and the
+// identity-edit dialog all operate on the currently-resolved `agent` object.
+// The first three are gated `v-if="agent"` (merge/redeploy additionally on
+// their own `show*` flag); the cleanup and identity-edit dialogs aren't
+// gated on `agent` at all in the template, so they'd otherwise stay open
+// with stale data and silently no-op on save (`confirmCleanFailedReports`
+// and `saveIdentity` both return early when `agent.value` is null). Once the
+// host can no longer be uniquely resolved - ambiguous, or gone entirely -
+// keeping any of these open would mean it silently keeps acting on a
+// stale/orphaned agent, so close them all alongside `agent`/`ambiguousMatches`
+// rather than relying on `v-if="agent"` alone (which only helps when
+// `agent.value` is actually nulled).
+function closeAgentScopedModals(): void {
+  showDeploySshKey.value = false
+  showMergeDialog.value = false
+  showDeployDialog.value = false
+  showCleanFailedDialog.value = false
+  editingIdentity.value = false
+}
+
+// A background refresh (see `refreshAgent` below) must leave the last-good
+// `agent` on screen if this throws or the host briefly drops out of the
+// list, rather than blanking the page - so `agent` is only written once a
+// match is confirmed, never on the "not found" path. `ambiguousMatches` is
+// the one exception: it IS cleared on "not found" too, since at that point
+// there is definitely no ambiguity left to show - leaving it would strand
+// the disambiguation picker on screen (with stale, dead candidates) if a
+// background refresh goes straight from "ambiguous" to "gone entirely".
+async function fetchAgent(): Promise<void> {
+  const agentRows = await listAgents()
+  allAgents.value = agentRows
+  const matches = agentRows.filter((m) => m.hostname === props.hostname)
+  const domain = routeDomain.value
+  let resolved: AgentRow | null
+  if (domain !== undefined) {
+    resolved = matches.find((m) => (m.domain ?? '') === domain) ?? null
+  } else if (matches.length > 1) {
+    // The breadcrumb reads `agent.value` directly, outside the template's
+    // v-else-if chain - null it so a background refresh that turns a
+    // previously-resolved single match ambiguous (e.g. a duplicate hostname
+    // appearing) doesn't leave a stale domain hint next to the hostname
+    // while the picker below asks which one is meant.
+    agent.value = null
+    ambiguousMatches.value = matches
+    closeAgentScopedModals()
+    return
+  } else {
+    resolved = matches[0] ?? null
+  }
+  if (!resolved) {
+    ambiguousMatches.value = []
+    closeAgentScopedModals()
+    throw new Error(`Agent "${props.hostname}" not found`)
+  }
   ambiguousMatches.value = []
-  await run(async () => {
-    const agentRows = await listAgents()
-    allAgents.value = agentRows
-    const matches = agentRows.filter((m) => m.hostname === props.hostname)
-    const domain = routeDomain.value
-    if (domain !== undefined) {
-      agent.value = matches.find((m) => (m.domain ?? '') === domain) ?? null
-    } else if (matches.length > 1) {
-      ambiguousMatches.value = matches
-      agent.value = null
-      return
-    } else {
-      agent.value = matches[0] ?? null
+  agent.value = resolved
+  await loadTabData()
+}
+
+async function loadAgent(): Promise<void> {
+  // Cleared up front (rather than left to `fetchAgent`) so a hostname/domain
+  // change doesn't briefly show the *previous* host's stale disambiguation
+  // picker, or breadcrumb domain hint, while this fresh load is still in
+  // flight behind the spinner - and, if it fails, doesn't leave either
+  // showing the old host's data next to the "not found" error banner.
+  // `refreshAgent` below must NOT do this: a background refresh is meant to
+  // leave the last-good `agent` on screen on failure, not clear it.
+  ambiguousMatches.value = []
+  agent.value = null
+  await run(fetchAgent)
+}
+
+/**
+ * Re-fetches agent data in the background (WS-driven updates, reconnects)
+ * without toggling `loading` - that would unmount and remount the whole
+ * settings tab, discarding any in-progress edit in it. See `refreshRepo` in
+ * RepoDetailView.vue for the same pattern.
+ */
+async function refreshAgent(): Promise<void> {
+  try {
+    await fetchAgent()
+    error.value = null
+  } catch (e: unknown) {
+    logger.error('background agent refresh failed', e)
+    // Normally a failed background refresh leaves whatever was already on
+    // screen alone - the whole point of this path vs. loadAgent(). But if
+    // there's no last-good agent AND no ambiguity picker to fall back on
+    // (e.g. the picker's last remaining candidates vanished between two
+    // refreshes), the loading/ambiguous/error/agent v-else-if chain has
+    // nothing left to render at all. Surface the error banner in that case
+    // only - there's no existing state this would clobber.
+    if (!agent.value && ambiguousMatches.value.length === 0) {
+      error.value = extractError(e)
     }
-    if (!agent.value) {
-      throw new Error(`Agent "${props.hostname}" not found`)
-    }
-    await loadTabData()
-  })
+  }
 }
 
 async function loadTabData(): Promise<void> {
@@ -452,6 +553,26 @@ watch(
     nextTick(() => {
       document
         .getElementById(`report-${match.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  },
+  { immediate: true },
+)
+
+/**
+ * `?report=` opens that exact run, which is how a preview row hands off a
+ * failure: the row it points at is the only place its output is rendered.
+ */
+watch(
+  [reports, linkedReportId],
+  ([, id]) => {
+    if (id === null) return
+    const report = reports.value.find((r) => r.id === id)
+    if (!report) return
+    expandedReportId.value = report.id
+    nextTick(() => {
+      document
+        .getElementById(`report-${report.id}`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     })
   },
@@ -554,7 +675,7 @@ async function confirmCleanFailedReports(): Promise<void> {
         ? 'Deleted 1 failed backup report.'
         : `Deleted ${result.deleted} failed backup reports.`,
     )
-    await loadAgent()
+    await refreshAgent()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -577,7 +698,7 @@ onMounted(() => {
 })
 
 const { onMessage, status: wsStatus } = useWebSocket()
-onMessage('DataChanged', () => loadAgent().catch(logger.error))
+onMessage('DataChanged', () => refreshAgent())
 // Known limitation: this and the `RunEvent` handler below match on bare
 // hostname only, because neither payload carries a `domain`/`agent_id`.
 // Two agents sharing a hostname across different domains can therefore
@@ -587,9 +708,9 @@ onMessage('DataChanged', () => loadAgent().catch(logger.error))
 onMessage('AgentConnected', (payload) => {
   if (payload.hostname !== props.hostname) return
   powerPhase.value = null
-  loadAgent().catch(logger.error)
+  refreshAgent()
 })
-onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
+onMessage('AgentDisconnected', () => refreshAgent())
 
 /**
  * The transient phase `AgentHeader` shows in place of Online/Offline while
@@ -672,7 +793,7 @@ onMessage('BackupCompleted', (payload) => {
   if (payload.hostname === props.hostname) {
     activeBackups.value = activeBackups.value.filter((b) => b.targetName !== payload.target_name)
   }
-  loadAgent().catch(logger.error)
+  refreshAgent()
 })
 
 onMessage('BackupLog', (payload) => {
@@ -693,7 +814,7 @@ onMessage('BackupLog', (payload) => {
 
 watch(wsStatus, (newStatus, oldStatus) => {
   if (newStatus === 'connected' && oldStatus !== 'connected') {
-    loadAgent().catch(logger.error)
+    refreshAgent()
   }
 })
 </script>
@@ -799,6 +920,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :repo-name-for="repoNameForSchedule"
           @open-schedule="navigateToSchedule"
           @open-report="openReport"
+          @open-report-detail="openReportDetail"
           @show-tab="activeTab = $event"
           @cancel-backup="cancelBackupInProgress"
         />
@@ -820,7 +942,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :reports="reports"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="highlightedArchiveName"
-          :pinned-report-id="pinnedReportId"
+          :pinned-report-id="highlightedReportId"
           @toggle="toggleReport"
           @open="openReport"
         />
@@ -1055,7 +1177,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           deployForceRedeploy = false
         }
       "
-      @deployed="loadAgent"
+      @deployed="refreshAgent"
     />
   </div>
 </template>

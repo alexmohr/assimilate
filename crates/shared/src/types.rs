@@ -9,6 +9,8 @@ use serde_json::Value;
 use ts_rs::TS;
 use utoipa::ToSchema;
 
+use crate::hooks::HookCommand;
+
 fn default_keep_hourly() -> u32 {
     24
 }
@@ -1233,11 +1235,12 @@ pub struct ScheduleConfig {
     pub compact_enabled: bool,
     /// Shell commands to run on the agent before the backup starts.
     #[serde(default)]
-    pub pre_backup_commands: Vec<String>,
+    pub pre_backup_commands: Vec<HookCommand>,
     /// Shell commands to run on the agent after the backup finishes.
     #[serde(default)]
-    pub post_backup_commands: Vec<String>,
-    /// Timeout in seconds applied to each pre/post-backup hook command.
+    pub post_backup_commands: Vec<HookCommand>,
+    /// Default timeout in seconds for hook commands that do not carry one of
+    /// their own.
     #[serde(default = "default_hook_timeout_seconds")]
     pub hook_timeout_seconds: u32,
     /// Patterns used to flag unusually large file-change volumes as a possible incident.

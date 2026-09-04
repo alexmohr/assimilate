@@ -11,6 +11,8 @@ pub mod borg;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.
 pub mod crypto;
+/// Pre- and post-backup hook commands and their per-command timeouts.
+pub mod hooks;
 /// Message types exchanged over the agent/server WebSocket connection.
 pub mod protocol;
 /// API response DTOs returned by the server's REST endpoints.

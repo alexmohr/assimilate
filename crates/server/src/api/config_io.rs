@@ -5,12 +5,15 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::State};
 use chrono::Utc;
-use shared::crypto::encrypt_passphrase;
 // Re-exported for openapi.rs etc.
 pub use shared::responses::{
     ConfigExportResponse as ConfigExport, HostExportResponse as HostExport,
     ImportResultResponse as ImportResult, RepoExportResponse as RepoExport,
     ScheduleExportResponse as ScheduleExport, ScheduleTargetExportResponse as ScheduleTargetExport,
+};
+use shared::{
+    crypto::encrypt_passphrase,
+    hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
 };
 
 use super::auth::RequireAdmin;
@@ -21,6 +24,24 @@ use crate::{
 };
 
 const EXPORT_VERSION: u32 = 1;
+
+/// Clamps each hook command's own timeout into the accepted range.
+///
+/// Clamped rather than rejected for the same reason `hook_timeout_seconds` is:
+/// an uploaded export is untrusted input, but import is best-effort across
+/// many hosts and schedules, so one out-of-range value should not abort the
+/// whole import.
+fn clamp_hook_command_timeouts(commands: &[HookCommand]) -> Vec<HookCommand> {
+    commands
+        .iter()
+        .map(|cmd| HookCommand {
+            command: cmd.command.clone(),
+            timeout_seconds: cmd
+                .timeout_seconds
+                .map(|seconds| seconds.clamp(1, MAX_HOOK_COMMAND_TIMEOUT_SECONDS)),
+        })
+        .collect()
+}
 
 #[utoipa::path(
     get,
@@ -458,6 +479,10 @@ async fn import_host(
     result: &mut ImportResult,
 ) -> Result<(), ApiError> {
     let key = (host.hostname.clone(), host.domain.clone());
+    let default_pre_backup_commands =
+        clamp_hook_command_timeouts(&host.default_pre_backup_commands);
+    let default_post_backup_commands =
+        clamp_hook_command_timeouts(&host.default_post_backup_commands);
     if let Some(&existing_id) = hostname_to_id.get(&key) {
         db::update_agent(
             pool,
@@ -468,8 +493,8 @@ async fn import_host(
                 domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
-                default_pre_backup_commands: &host.default_pre_backup_commands,
-                default_post_backup_commands: &host.default_post_backup_commands,
+                default_pre_backup_commands: &default_pre_backup_commands,
+                default_post_backup_commands: &default_post_backup_commands,
                 default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
             },
         )
@@ -497,8 +522,8 @@ async fn import_host(
                 domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
-                default_pre_backup_commands: &host.default_pre_backup_commands,
-                default_post_backup_commands: &host.default_post_backup_commands,
+                default_pre_backup_commands: &default_pre_backup_commands,
+                default_post_backup_commands: &default_post_backup_commands,
                 default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
             },
         )
@@ -546,6 +571,8 @@ async fn import_schedule(
 
     let schedule_type_str = sched.schedule_type.to_string();
     let on_failure_str = sched.on_failure.to_string();
+    let pre_backup_commands = clamp_hook_command_timeouts(&sched.pre_backup_commands);
+    let post_backup_commands = clamp_hook_command_timeouts(&sched.post_backup_commands);
 
     let params = ScheduleParams {
         name: &sched.name,
@@ -563,8 +590,8 @@ async fn import_schedule(
         keep_yearly: sched.keep_yearly,
         compact_enabled: sched.compact_enabled,
         rate_limit_kbps: sched.rate_limit_kbps,
-        pre_backup_commands: &sched.pre_backup_commands,
-        post_backup_commands: &sched.post_backup_commands,
+        pre_backup_commands: &pre_backup_commands,
+        post_backup_commands: &post_backup_commands,
         // Clamped, not just passed through: an uploaded export is untrusted
         // input, and unlike the REST create/update paths (which reject an
         // out-of-range value with a 400 via validate_hook_timeout_seconds)

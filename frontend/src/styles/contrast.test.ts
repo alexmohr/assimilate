@@ -53,6 +53,11 @@ const light = {
   success: hex('#16a34a'),
   warning: hex('#d97706'),
   info: hex('#0ea5e9'),
+  syntaxComment: hex('#64748b'),
+  syntaxKeyword: hex('#7c3aed'),
+  syntaxString: hex('#15803d'),
+  syntaxVariable: hex('#0369a1'),
+  syntaxOperator: hex('#b45309'),
 }
 
 // Color tokens extracted from frontend/src/style.css .dark (dark theme)
@@ -72,6 +77,11 @@ const dark = {
   success: hex('#4ade80'),
   warning: hex('#fbbf24'),
   info: hex('#38bdf8'),
+  syntaxComment: hex('#9494a0'),
+  syntaxKeyword: hex('#a78bfa'),
+  syntaxString: hex('#86efac'),
+  syntaxVariable: hex('#7dd3fc'),
+  syntaxOperator: hex('#fcd34d'),
 }
 
 const WCAG_AA = 4.5
@@ -126,6 +136,58 @@ const lightPairs: ColorPair[] = [
     name: 'light: primary text on hover',
     foreground: light.textPrimary,
     background: light.bgHover,
+  },
+]
+
+const syntaxLightPairs: ColorPair[] = [
+  {
+    name: 'light: syntax comment on input',
+    foreground: light.syntaxComment,
+    background: light.bgInput,
+  },
+  {
+    name: 'light: syntax keyword on input',
+    foreground: light.syntaxKeyword,
+    background: light.bgInput,
+  },
+  {
+    name: 'light: syntax string on input',
+    foreground: light.syntaxString,
+    background: light.bgInput,
+  },
+  {
+    name: 'light: syntax variable on input',
+    foreground: light.syntaxVariable,
+    background: light.bgInput,
+  },
+  {
+    name: 'light: syntax operator on input',
+    foreground: light.syntaxOperator,
+    background: light.bgInput,
+  },
+]
+
+const syntaxDarkPairs: ColorPair[] = [
+  {
+    name: 'dark: syntax comment on input',
+    foreground: dark.syntaxComment,
+    background: dark.bgInput,
+  },
+  {
+    name: 'dark: syntax keyword on input',
+    foreground: dark.syntaxKeyword,
+    background: dark.bgInput,
+  },
+  { name: 'dark: syntax string on input', foreground: dark.syntaxString, background: dark.bgInput },
+  {
+    name: 'dark: syntax variable on input',
+    foreground: dark.syntaxVariable,
+    background: dark.bgInput,
+  },
+  {
+    name: 'dark: syntax operator on input',
+    foreground: dark.syntaxOperator,
+    background: dark.bgInput,
   },
 ]
 
@@ -202,7 +264,7 @@ describe('contrastRatio utility', () => {
 })
 
 describe('WCAG AA contrast >= 4.5:1 — light theme', () => {
-  for (const pair of lightPairs) {
+  for (const pair of [...lightPairs, ...syntaxLightPairs]) {
     it(pair.name, () => {
       const ratio = contrastRatio(pair.foreground, pair.background)
       expect(
@@ -214,7 +276,7 @@ describe('WCAG AA contrast >= 4.5:1 — light theme', () => {
 })
 
 describe('WCAG AA contrast >= 4.5:1 — dark theme', () => {
-  for (const pair of darkPairs) {
+  for (const pair of [...darkPairs, ...syntaxDarkPairs]) {
     it(pair.name, () => {
       const ratio = contrastRatio(pair.foreground, pair.background)
       expect(

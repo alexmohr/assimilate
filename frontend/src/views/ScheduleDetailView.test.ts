@@ -70,6 +70,7 @@ vi.mock('../composables/useWebSocket', () => ({
 
 import { apiClient } from '../api/client'
 import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
+import { hookCommand } from '../utils/hookCommands'
 import ScheduleDetailView from './ScheduleDetailView.vue'
 import { logger } from '../utils/logger'
 
@@ -98,7 +99,7 @@ const mockSchedule = {
   keep_monthly: 6,
   keep_yearly: 1,
   compact_enabled: true,
-  pre_backup_commands: ['docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'],
+  pre_backup_commands: [hookCommand('docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql')],
   post_backup_commands: [],
   hook_timeout_seconds: 60,
   missed_backup_threshold: 3,
@@ -613,6 +614,100 @@ describe('ScheduleDetailView - edit mode', () => {
         .find((t) => t.attributes('aria-selected') === 'true')!
         .text(),
     ).toBe('Backups')
+  })
+
+  // A run in the preview is a way in, not just a status line: its archive is
+  // on this schedule's own Backups tab, one click away.
+  it('selects the archive of a preview run on the Backups tab', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      started_at: '2026-06-01T01:50:00Z',
+      agent_id: 10,
+      original_size: 100,
+      duration_secs: 10,
+      archive_name: 'web-server-01-2026-06-01',
+      error_message: null,
+      warnings: [],
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const rows = wrapper.findAll('.agent-row')
+    await rows[rows.length - 1].find('button.agent-row-name').trigger('click')
+    await flushPromises()
+
+    expect(
+      wrapper
+        .findAll('.tab')
+        .find((t) => t.attributes('aria-selected') === 'true')!
+        .text(),
+    ).toBe('Backups')
+    expect(wrapper.findComponent({ name: 'ScheduleBackupsTab' }).props('selected')).toMatchObject({
+      id: 1,
+    })
+  })
+
+  // A failed run wrote no archive, so this tab's browser has nothing to show
+  // for it - the output lives on the host that produced the run.
+  it('sends a failed preview run to its output on the host', async () => {
+    setupEditModeWithReport({
+      id: 7,
+      status: 'failed',
+      finished_at: '2026-06-01T02:00:00Z',
+      started_at: '2026-06-01T01:50:00Z',
+      agent_id: 10,
+      original_size: 0,
+      duration_secs: 5,
+      archive_name: null,
+      error_message: 'Repository lock could not be acquired',
+      warnings: [],
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const viewError = wrapper.findAll('button').find((b) => b.text() === 'View error')
+    expect(viewError).toBeDefined()
+    await viewError!.trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe('/agents/web-server-01?tab=backups&report=7')
+  })
+
+  // The row offers the jump on any run with output, and the host it belongs
+  // to is resolved at click time - so a run whose host cannot be named (an
+  // agent since deleted, no hostname on the report either) has to stay put
+  // rather than route to `/agents/`.
+  it('stays put when a preview run names no host to open', async () => {
+    setupEditModeWithReport({
+      id: 8,
+      agent_id: 999,
+      hostname: null,
+      status: 'failed',
+      finished_at: '2026-06-01T02:00:00Z',
+      started_at: '2026-06-01T01:50:00Z',
+      original_size: 0,
+      duration_secs: 5,
+      archive_name: null,
+      error_message: 'Repository lock could not be acquired',
+      warnings: [],
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'View error')!
+      .trigger('click')
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
+      .$router
+    expect(router.currentRoute.value.path).not.toContain('/agents/')
+    expect(logger.error).toHaveBeenCalledWith('cannot open a run whose host is unknown', 8)
   })
 
   it('reorders targets from the real Settings tab and saves the new order', async () => {
@@ -1758,7 +1853,11 @@ describe('ScheduleDetailView - per-agent overrides', () => {
       backup_sources: ['/data'],
       backup_sources_per_agent: [],
       commands_per_agent: [
-        { agent_id: 10, pre_backup_commands: ['stop-app'], post_backup_commands: ['start-app'] },
+        {
+          agent_id: 10,
+          pre_backup_commands: [hookCommand('stop-app')],
+          post_backup_commands: [hookCommand('start-app')],
+        },
         { agent_id: 11, pre_backup_commands: [], post_backup_commands: [] },
       ],
     })
@@ -1769,7 +1868,11 @@ describe('ScheduleDetailView - per-agent overrides', () => {
       '/schedules/1',
       expect.objectContaining({
         commands_per_agent: [
-          { agent_id: 10, pre_backup_commands: ['stop-app'], post_backup_commands: ['start-app'] },
+          {
+            agent_id: 10,
+            pre_backup_commands: [hookCommand('stop-app')],
+            post_backup_commands: [hookCommand('start-app')],
+          },
           { agent_id: 11, pre_backup_commands: [], post_backup_commands: [] },
         ],
       }),
@@ -1787,19 +1890,24 @@ describe('ScheduleDetailView - per-agent overrides', () => {
 
     const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
     await editors[0].vm.$emit('update:modelValue', [
-      'docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql',
-      '',
-      '   ',
+      hookCommand('docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'),
+      hookCommand(''),
+      hookCommand('   '),
     ])
-    await editors[1].vm.$emit('update:modelValue', ['', 'systemctl start app'])
+    await editors[1].vm.$emit('update:modelValue', [
+      hookCommand(''),
+      hookCommand('systemctl start app'),
+    ])
 
     await save(wrapper)
 
     expect(mockApiClient.put).toHaveBeenCalledWith(
       '/schedules/1',
       expect.objectContaining({
-        pre_backup_commands: ['docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'],
-        post_backup_commands: ['systemctl start app'],
+        pre_backup_commands: [
+          hookCommand('docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql'),
+        ],
+        post_backup_commands: [hookCommand('systemctl start app')],
       }),
     )
   })

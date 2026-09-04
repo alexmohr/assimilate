@@ -76,6 +76,8 @@ A saved schedule's detail page opens on **Overview**: an at-a-glance summary (re
 
 On the Overview tab, a target that's behind shows an **Overdue** badge and a **Retry** button, both in the attention banner at the top and in its row further down. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
 
+The **Recent backups** preview below them is a way into each run, not just a status line. A run that produced an archive opens it from the host name, selected on this schedule's **Backups** tab. A run that finished with warnings or failed carries **View warnings** / **View error**, which opens that run on the host's own Backups tab with its output expanded — a failed run wrote no archive, so its output is the only thing there is to show for it.
+
 While a backup for the schedule is running, the Overview tab also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
 ### Backups Tab
@@ -210,6 +212,51 @@ Set the **Remote rate limit** field (in kB/s) when creating or editing a schedul
 
 !!! tip
     For schedules that run during the day, set a low rate limit (e.g. 1000 kB/s) to avoid impacting other traffic. Remove the limit for overnight schedules where full bandwidth is available.
+
+## Pre- and Post-Backup Commands
+
+Hook commands run on the agent around each backup: pre-backup commands before `borg create`, post-backup commands after it. Use them to quiesce a service, produce a dump to back up, or clean that dump up again.
+
+Configure them under **Advanced → Commands** on the schedule, or under **Settings → Backup defaults** on an agent for commands every schedule targeting that host should run.
+
+### How a command runs
+
+Each entry is one `sh -c` invocation, so a single command may span several lines and be a whole script rather than one statement. Commands run in order, and the agent runs them as the user the agent process itself runs as.
+
+A failing pre-backup command aborts the backup, and no post-backup command runs. Post-backup commands run only after `borg create` succeeded or finished with warnings — a failed backup leaves whatever the pre-backup commands produced in place, rather than deleting data that was never uploaded.
+
+Where both levels are set, the agent's defaults run first for pre-backup and last for post-backup, so a schedule's own commands sit inside the agent's.
+
+### Timeouts
+
+Set **Hook command timeout** on the schedule for the default that applies to every command, and a per-command **Timeout** for one that needs its own. A command still running past its timeout is killed and the backup fails.
+
+Give a command its own timeout when it is far slower than its neighbours. The schedule-wide default otherwise has to be set for the slowest command on the schedule, which leaves a genuinely stuck one — a `systemctl stop` waiting on a hung unit — holding the schedule open for just as long.
+
+Leave the per-command field empty to inherit the schedule's default. The schedule default accepts 1 to 3600 seconds; a per-command timeout accepts 1 to 86400 (24 hours), since it is a deliberate statement about one script rather than a blanket value.
+
+!!! warning
+    A hypervisor or database dump can exceed a 24-hour hook timeout on a large host. Where it does, run the dump from its own scheduler and leave the hook to verify the result is present and fresh, rather than producing it.
+
+### Example
+
+Dumping Proxmox guests to an NFS-backed storage before backing that storage up, as three commands on one schedule:
+
+```sh
+# Pre-backup 1 (timeout 120): the share must be there before anything writes to it
+mountpoint -q /mnt/pve/backup-store || pvesm set backup-store --disable 0
+mountpoint -q /mnt/pve/backup-store || exit 1
+```
+
+```sh
+# Pre-backup 2 (timeout 21600): the dump itself, far slower than its neighbours
+vzdump --all 1 --storage backup-store --mode snapshot --compress zstd
+```
+
+```sh
+# Post-backup 1 (inherits the schedule default): the dumps are uploaded, drop them
+find /mnt/pve/backup-store/dump -maxdepth 1 -name 'vzdump-*' -delete
+```
 
 ## Cloning a Schedule
 

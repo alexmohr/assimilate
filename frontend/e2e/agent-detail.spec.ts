@@ -161,6 +161,39 @@ test.describe('Agent detail', () => {
     await expect(page.locator('.archive-file-browser')).toBeVisible()
   })
 
+  // A failed run in the Overview preview carries a badge and no output, so
+  // the row is a dead end without this: the jump lands on the row that does
+  // render the error, already expanded.
+  test("the overview preview jumps to a failed run's error", async ({ page }) => {
+    await loginAsAdmin(page)
+    // The seed's own failures age out of the preview as the demo date moves,
+    // so the run this asserts on is guaranteed here instead.
+    await page.route('**/api/agents/web-server-01/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeFailedReport(9996)]),
+      }),
+    )
+    // Registered second so it wins for the more specific URL: the count
+    // endpoint answers with an object, not a list of reports.
+    await page.route('**/api/agents/web-server-01/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
+    await page.goto('/agents/web-server-01')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'View error' }).first().click()
+
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=backups.*report=9996/)
+    await expect(page.locator('#report-9996.agent-row--highlighted')).toBeVisible()
+    await expect(page.locator('.detail-output--danger')).toContainText('connection refused')
+  })
+
   test('settings is a fourth tab with its own sub-nav', async ({ page }) => {
     await openAgent(page)
     await page.getByRole('tab', { name: 'Settings' }).click()
@@ -189,6 +222,30 @@ test.describe('Agent detail', () => {
       'Pre-backup commands',
       'Post-backup commands',
     ])
+  })
+
+  // A hook command is a whole script. Rendered inline the browser collapses
+  // its newlines and indentation into single spaces, so the demo's multi-line
+  // agent default arrived as one unreadable paragraph.
+  test('Backup defaults shows a multi-line hook command with its lines and timeout', async ({
+    page,
+  }) => {
+    await openAgent(page, 'media-store-01')
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
+
+    const script = page.locator('.detail-pre').first()
+    await expect(script).toBeVisible()
+    await expect(script).toContainText('mountpoint -q /mnt/media')
+    expect(await script.textContent()).toContain('\n')
+
+    // The comment is coloured as one, which is the whole point of the block.
+    await expect(script.locator('.sh-comment')).toContainText('#')
+
+    // A command with its own timeout says so; one without says what it
+    // inherits instead, so an empty value never reads as "no timeout".
+    await expect(page.getByText('Timeout: 7200s')).toBeVisible()
+    await expect(page.getByText("Timeout: the schedule's hook command timeout")).toBeVisible()
   })
 
   test('an imported host keeps every tab and explains the empty one', async ({ page }) => {

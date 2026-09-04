@@ -216,6 +216,76 @@ describe('ScheduleOverviewTab', () => {
     expect(wrapper.emitted('openBackups')).toHaveLength(1)
   })
 
+  // The preview is where a run's outcome is noticed, so it is also where the
+  // trip to the run itself starts: its archive on this schedule's Backups
+  // tab, or its output on the host that produced it.
+  describe('preview hand-off', () => {
+    const AGENTS = new Map<number, AgentRow>([
+      [10, { id: 10, hostname: 'web-server-01', display_name: null } as unknown as AgentRow],
+    ])
+
+    function previewMount(over: Record<string, unknown>) {
+      return mount({
+        agents: AGENTS,
+        reports: [
+          {
+            id: 7,
+            agent_id: 10,
+            status: 'success',
+            finished_at: '2026-08-18T02:06:41Z',
+            original_size: 2_100_000_000,
+            duration_secs: 401,
+            archive_name: 'web-server-01-2026-08-18',
+            error_message: null,
+            warnings: [],
+            ...over,
+          },
+        ] as unknown as ReportRow[],
+      })
+    }
+
+    it('opens the archive of a run that produced one', async () => {
+      const wrapper = previewMount({})
+      const rows = wrapper.findAll('.agent-row')
+      const button = rows[rows.length - 1].find('button.agent-row-name')
+      await button.trigger('click')
+      expect(wrapper.emitted('openArchive')).toHaveLength(1)
+    })
+
+    // A failed run wrote no archive, so this tab's archive browser has
+    // nothing to select - the name stays inert and the output is elsewhere.
+    it('offers the output of a failed run instead of an archive', async () => {
+      const wrapper = previewMount({
+        status: 'failed',
+        archive_name: null,
+        error_message: 'Repository lock could not be acquired',
+      })
+      const rows = wrapper.findAll('.agent-row')
+      expect(rows[rows.length - 1].find('button.agent-row-name').exists()).toBe(false)
+      const button = wrapper.findAll('button').find((b) => b.text() === 'View error')
+      await button!.trigger('click')
+      expect(wrapper.emitted('openReportDetail')).toEqual([[expect.objectContaining({ id: 7 })]])
+    })
+
+    it('offers both on a warned run, and names which is which', async () => {
+      const wrapper = previewMount({
+        status: 'warning',
+        warnings: ['file changed while we read it'],
+      })
+      const button = wrapper.findAll('button').find((b) => b.text() === 'View warnings')
+      expect(button).toBeTruthy()
+      const rows = wrapper.findAll('.agent-row')
+      await rows[rows.length - 1].find('button.agent-row-name').trigger('click')
+      expect(wrapper.emitted('openArchive')).toHaveLength(1)
+    })
+
+    it('offers nothing to read on a clean run', () => {
+      const wrapper = previewMount({})
+      expect(wrapper.findAll('button').some((b) => b.text().startsWith('View e'))).toBe(false)
+      expect(wrapper.findAll('button').some((b) => b.text().startsWith('View w'))).toBe(false)
+    })
+  })
+
   it('gives a cancelled backup a muted stripe, not a success-green one', () => {
     // `filterSettledReports` keeps cancelled runs (only pending/started are
     // dropped), so they do reach this preview - and the badge beside the

@@ -105,6 +105,24 @@ api PUT "/api/agents/db-server-01" '{
     "default_file_change_patterns_raw": "*/var/lib/postgresql/*.tmp* ignore\n*checkpoint_wal* warn"
 }' > /dev/null
 
+# Agent-level hook commands, so the Backup defaults pane shows the read-only
+# script block: a multi-line pre-backup command (which an inline <code> would
+# collapse onto one line) carrying its own generous timeout, next to a
+# post-backup one that inherits whatever the schedule sets.
+echo "==> Setting agent-level default hook commands on media-store-01 (one with its own timeout)..."
+api PUT "/api/agents/media-store-01" '{
+    "display_name": "Media Store",
+    "default_pre_backup_commands": [
+        {
+            "command": "# make sure the media share is really mounted\nif ! mountpoint -q /mnt/media; then\n    mount /mnt/media || exit 1\nfi\nfind /mnt/media -name \"*.part\" -delete",
+            "timeout_seconds": 7200
+        }
+    ],
+    "default_post_backup_commands": [
+        {"command": "umount /mnt/media", "timeout_seconds": null}
+    ]
+}' > /dev/null
+
 echo "==> Registering repositories..."
 REPO_DAILY_ID=$(api POST "/api/repos" "{
     \"name\": \"server-daily\",
@@ -428,7 +446,7 @@ SQL
 # the same repository, not merely the same storage host: every demo repo lives
 # on localhost, so a host-keyed warning would fire for every pair of runs on
 # the page and say nothing.
-api POST "/api/schedules" "{
+WEB01_COLLIDING_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"name\": \"Colliding daily window\",
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -439,7 +457,7 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/etc\"]
-}" > /dev/null
+}" | jq -r '.id')
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 UPDATE schedules
@@ -459,10 +477,10 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 8,
     \"keep_monthly\": 12,
     \"pre_backup_commands\": [
-        \"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\",
-        \"df -hP /var/lib/postgresql | tail -n1 | awk '{print \$5}' > /tmp/db-disk-usage.txt\\necho \\\"disk usage recorded: \$(cat /tmp/db-disk-usage.txt)\\\"\"
+        {\"command\": \"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\", \"timeout_seconds\": 1800},
+        {\"command\": \"df -hP /var/lib/postgresql | tail -n1 | awk '{print \$5}' > /tmp/db-disk-usage.txt\\necho \\\"disk usage recorded: \$(cat /tmp/db-disk-usage.txt)\\\"\", \"timeout_seconds\": null}
     ],
-    \"post_backup_commands\": [\"rm -f /tmp/mydb.sql /tmp/db-disk-usage.txt\"],
+    \"post_backup_commands\": [{\"command\": \"rm -f /tmp/mydb.sql /tmp/db-disk-usage.txt\", \"timeout_seconds\": null}],
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
     \"rate_limit_kbps\": 5000,
     \"hook_timeout_seconds\": 120
@@ -801,6 +819,10 @@ ON CONFLICT DO NOTHING;
 SQL
 
 echo "==> Adding warnings to the most recent web-server-01 backup report..."
+# Also the demo's coverage of the recent-backups preview's "View warnings"
+# jump (see docs/agents.md, docs/scheduling.md): this run is web-server-01's
+# newest, so the button is on the first row of both the host's and the
+# schedule's Overview preview. Keep it the newest if this block is edited.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
 -- The first warning is deliberately long-winded, since borg emits
 -- multi-sentence diagnostics: the activity log shows it in full, while a
@@ -849,6 +871,11 @@ echo "==> Seeding a recovered outage on db-server-01..."
 # same three failures scattered across the window would be a standing
 # problem, while contiguous ones are a single incident that has since
 # recovered. Only the contiguous shape earns the "Incident" chip.
+#
+# These are also the demo's failed rows in a recent-backups preview, where
+# they carry the "View error" jump to their output (see docs/agents.md):
+# db-server-01 backs up hourly, so runs 4-6 hours old are still inside the
+# five rows a preview shows.
 #
 # archive_name stays NULL, which is both true (a failed backup writes no
 # archive) and load-bearing: delete_archive_records_by_names reconciles a
@@ -923,11 +950,18 @@ echo "==> Seeding an in-progress run on web-server-01..."
 # finished_at mirrors started_at as a placeholder, matching how
 # db::insert_backup_started's own INSERT sets both to the same timestamp for
 # a row that has not actually finished yet - status is what's authoritative.
+# Deliberately attributed to the "Colliding daily window" schedule rather than
+# WEB01_DAILY_SCHEDULE_ID (schedule 1): nothing ever resolves this row to a
+# terminal status (it's not a real backup, so no agent reconnect or same-repo
+# dispatch will trigger the cleanup paths that do that), so it sits at
+# 'started' for the life of the demo container. Several e2e specs navigate to
+# schedule 1 expecting a clean report history (see backup-lifecycle.spec.ts's
+# openFirstSchedule comment) - schedule 1 must stay free of it.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
 INSERT INTO backup_reports
     (agent_id, repo_id, schedule_id, started_at, finished_at, status)
 VALUES (
-    $WEB01_ID, $REPO_DAILY_ID, $WEB01_DAILY_SCHEDULE_ID,
+    $WEB01_ID, $REPO_DAILY_ID, $WEB01_COLLIDING_SCHEDULE_ID,
     NOW() - interval '90 seconds',
     NOW() - interval '90 seconds',
     'started'

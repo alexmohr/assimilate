@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::{
+    hooks::HookCommand,
     protocol::{ServerToAgent, ServerToUi},
     responses::{
         AgentResponse, CreateAgentResponse, DeleteAgentArchivesResponse, MergeAgentResponse,
@@ -60,10 +61,10 @@ pub struct UpdateAgentRequest {
     pub default_exclude_patterns: Vec<String>,
     /// Default pre-backup commands.
     #[serde(default)]
-    pub default_pre_backup_commands: Vec<String>,
+    pub default_pre_backup_commands: Vec<HookCommand>,
     /// Default post-backup commands.
     #[serde(default)]
-    pub default_post_backup_commands: Vec<String>,
+    pub default_post_backup_commands: Vec<HookCommand>,
     /// Default file change detection patterns.
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
@@ -391,6 +392,8 @@ pub async fn update_agent(
 ) -> Result<Json<AgentResponse>, ApiError> {
     let existing =
         db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    super::schedules::validate_hook_commands(&req.default_pre_backup_commands)?;
+    super::schedules::validate_hook_commands(&req.default_post_backup_commands)?;
     let new_hostname = req.hostname.as_deref().unwrap_or(&hostname);
     let agent = db::update_agent(
         &state.pool,

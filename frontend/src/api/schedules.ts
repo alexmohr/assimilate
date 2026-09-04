@@ -7,6 +7,7 @@ import type { ReportRow } from '../types/report'
 import type {
   DeleteFailedReportsResponse,
   FailedReportCountResponse,
+  HookCommand,
   ScheduleBackupSourcesResponse,
   ScheduleTargetResponse,
   HealthSummaryResponse,
@@ -24,8 +25,8 @@ export interface ScheduleAgentTextOverride {
 
 export interface ScheduleAgentCommandsOverride {
   agent_id: number
-  pre_backup_commands: string[]
-  post_backup_commands: string[]
+  pre_backup_commands: HookCommand[]
+  post_backup_commands: HookCommand[]
 }
 
 export interface CreateScheduleRequest {
@@ -43,8 +44,8 @@ export interface CreateScheduleRequest {
   keep_yearly: number
   compact_enabled: boolean
   rate_limit_kbps: number
-  pre_backup_commands: string[]
-  post_backup_commands: string[]
+  pre_backup_commands: HookCommand[]
+  post_backup_commands: HookCommand[]
   hook_timeout_seconds: number
   missed_backup_threshold: number
   backup_sources: string[]

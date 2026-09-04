@@ -76,6 +76,17 @@
   --info: #0ea5e9;
   --info-subtle: rgba(14, 165, 233, 0.08);
   --bg-code: #f1f5f9;
+
+  /* Syntax colours for read-only shell scripts (hook commands). Their own
+     tokens rather than reused status colours: --success, --warning and --info
+     are tuned to carry meaning on a badge, and none of the three clears WCAG
+     AA as running text on --bg-input. These do, in both themes, and
+     styles/contrast.test.ts holds them to it. */
+  --syntax-comment: #64748b;
+  --syntax-keyword: #7c3aed;
+  --syntax-string: #15803d;
+  --syntax-variable: #0369a1;
+  --syntax-operator: #b45309;
   --overlay: rgba(0, 0, 0, 0.5);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.08), 0 4px 10px rgba(0, 0, 0, 0.04);
@@ -156,6 +167,11 @@
   --info: #38bdf8;
   --info-subtle: rgba(56, 189, 248, 0.12);
   --bg-code: #202023;
+  --syntax-comment: #9494a0;
+  --syntax-keyword: #a78bfa;
+  --syntax-string: #86efac;
+  --syntax-variable: #7dd3fc;
+  --syntax-operator: #fcd34d;
   --overlay: rgba(0, 0, 0, 0.7);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.4), 0 4px 10px rgba(0, 0, 0, 0.3);
@@ -1061,6 +1077,13 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-6);
+  }
+
+  /* When the label side is a title-plus-hint pair (`.field-body`), centering
+     against the whole two-line block leaves the toggle sitting low relative
+     to the title. Align it with the title's line instead. */
+  .field-inline:has(.field-body) {
+    align-items: flex-start;
   }
 
   /* The title-plus-hint pair inside a `.field-inline`, for a toggle whose

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use shared::{
+    hooks::HookCommand,
     protocol::ServerToAgent,
     types::{AgentConfig, RepoConfig, RepoId, ScheduleConfig, ScheduleType},
 };
@@ -127,7 +128,7 @@ fn effective_pre_backup_commands(
     agent: &db::AgentRow,
     schedule: &db::ScheduleRow,
     per_agent_cmds: Option<&db::PerAgentCommands>,
-) -> Vec<String> {
+) -> Vec<HookCommand> {
     let schedule_cmds =
         per_agent_cmds.map_or(&schedule.pre_backup_commands.0, |c| &c.pre_backup_commands);
     agent
@@ -143,7 +144,7 @@ fn effective_post_backup_commands(
     agent: &db::AgentRow,
     schedule: &db::ScheduleRow,
     per_agent_cmds: Option<&db::PerAgentCommands>,
-) -> Vec<String> {
+) -> Vec<HookCommand> {
     let schedule_cmds = per_agent_cmds.map_or(&schedule.post_backup_commands.0, |c| {
         &c.post_backup_commands
     });

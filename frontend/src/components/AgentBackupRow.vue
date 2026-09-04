@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref, watch } from 'vue'
 import { getRunEvents } from '../api/runs'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
-import { normalizeBackupStatus } from '../utils/backupStatus'
+import { normalizeBackupStatus, reportMessageLabel } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
 import { logger } from '../utils/logger'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -23,6 +23,8 @@ import type { RunEventResponse } from '../types/generated'
  *
  * A run that produced an archive links to it; a warned or failed run also
  * expands its output in place, which is what you came to the page to read.
+ * In a preview (`showDetail` off) there is nothing to expand into, so the
+ * same run offers a jump to the full row instead.
  */
 const props = defineProps<{
   report: ReportRow
@@ -32,7 +34,7 @@ const props = defineProps<{
   showDetail?: boolean
 }>()
 
-const emit = defineEmits<{ open: []; toggle: [] }>()
+const emit = defineEmits<{ open: []; toggle: []; detail: [] }>()
 
 const status = computed(() => normalizeBackupStatus(props.report.status))
 const isSuccess = computed(() => status.value === 'success')
@@ -60,6 +62,18 @@ const hasDetail = computed(
     (props.report.error_message !== null && !isSuccess.value) ||
     props.report.run_id !== null,
 )
+
+/**
+ * Something to *read*, as opposed to `hasDetail`, which also counts a run
+ * whose only detail is a power-management timeline. The preview rows offer a
+ * jump straight to it; a row that would expand into "no power-management
+ * activity for this run" is not worth a button there. Null when there is
+ * nothing to read, so the label is the predicate too.
+ *
+ * The rule lives in `backupStatus` because the schedule Overview's own
+ * preview rows have to reach the same verdict for the same run.
+ */
+const messageLabel = computed(() => reportMessageLabel(props.report))
 
 const runEvents = ref<RunEventResponse[]>([])
 const loadingEvents = ref(false)
@@ -204,6 +218,21 @@ onMessage('RunEvent', (payload) => {
       </template>
       <span>{{ formatDuration(report.duration_secs) }}</span>
     </span>
+    <!--
+      A preview row cannot expand in place - it has no detail block - so what
+      it offers instead is the trip to the row that does, on the Backups tab.
+      Without it a failed run in a preview is a dead end: the badge says it
+      broke and nothing on the row says why.
+    -->
+    <button
+      v-if="!showDetail && messageLabel"
+      class="btn btn-sm btn-ghost"
+      type="button"
+      title="Open this run on the Backups tab"
+      @click="emit('detail')"
+    >
+      {{ messageLabel }}
+    </button>
     <button
       v-if="showDetail && hasDetail"
       class="btn btn-sm btn-ghost"

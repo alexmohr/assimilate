@@ -167,6 +167,17 @@ function startEdit(): void {
   editing.value = true
 }
 
+/**
+ * Puts the loaded settings back before leaving the form. The summary renders
+ * the same refs the form binds to, so without this an abandoned edit stays on
+ * screen as though it had been saved.
+ */
+function cancelEdit(): void {
+  if (data.value) applyResponse(data.value)
+  saveError.value = null
+  editing.value = false
+}
+
 async function save(): Promise<void> {
   saving.value = true
   saveError.value = null
@@ -272,7 +283,7 @@ onMounted(load)
       :saving="saving"
       :error="saveError"
       @edit="startEdit"
-      @cancel="editing = false"
+      @cancel="cancelEdit"
       @save="save"
     >
       <template #view>

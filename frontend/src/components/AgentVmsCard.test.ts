@@ -6,6 +6,7 @@ import { flushPromises } from '@vue/test-utils'
 import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import { apiClient } from '../api/client'
 import AgentVmsCard from './AgentVmsCard.vue'
+import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
 import type { AgentVmResponse, AgentVmSnapshotResponse } from '../types/generated'
 
@@ -62,7 +63,13 @@ describe('AgentVmsCard', () => {
     vi.mocked(apiClient.get).mockReset()
     vi.mocked(apiClient.put).mockReset()
     vi.mocked(apiClient.post).mockReset()
-    vi.mocked(apiClient.get).mockResolvedValue({ data: response() } as never)
+    // The card loads the VM table; the restore wizard it opens loads this
+    // host's reports, so the two are answered by URL rather than by one
+    // blanket response.
+    vi.mocked(apiClient.get).mockImplementation(((url: string) =>
+      Promise.resolve({
+        data: url.endsWith('/reports') ? [] : response(),
+      })) as never)
     vi.mocked(apiClient.put).mockResolvedValue({ data: response() } as never)
     vi.mocked(apiClient.post).mockResolvedValue({ data: response() } as never)
   })
@@ -184,5 +191,105 @@ describe('AgentVmsCard', () => {
     const wrapper = await mount({ canEdit: false })
     expect(wrapper.text()).not.toContain('Rescan host')
     expect(wrapper.find<HTMLInputElement>('input.vm-limit').element.disabled).toBe(true)
+  })
+
+  it('reports a host whose settings could not be loaded', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('agent is not connected'))
+    const wrapper = await mount()
+
+    expect(wrapper.text()).toContain('agent is not connected')
+    // The table is what failed to load, so none of it is claimed to be there.
+    expect(wrapper.find('input.vm-limit').exists()).toBe(false)
+  })
+
+  it('keeps the operator in the form when the host settings fail to save', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('staging_dir must be absolute'))
+
+    await wrapper.find<HTMLInputElement>('#vm-staging-dir').setValue('relative/path')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(wrapper.text()).toContain('staging_dir must be absolute')
+    // Still editing: the value the operator typed is not thrown away.
+    expect(wrapper.find<HTMLInputElement>('#vm-staging-dir').element.value).toBe('relative/path')
+  })
+
+  it('abandons an edit on cancel, keeping what the host had', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+    await wrapper.find<HTMLInputElement>('#vm-staging-dir').setValue('/data/vm-staging')
+    await clickSectionButton(wrapper, 'Cancel')
+
+    expect(apiClient.put).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('/srv/vm-staging')
+  })
+
+  it('saves the staging toggle and the timeout the operator set', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+
+    await wrapper.find<HTMLInputElement>('#vm-timeout').setValue('900')
+    await wrapper.find('[role="switch"]').trigger('click')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/virt-host-01/vm-snapshot',
+      expect.objectContaining({ enabled: false, timeout_seconds: 900 }),
+      { params: {} },
+    )
+  })
+
+  it('excludes a domain from staging when its include switch is turned off', async () => {
+    const wrapper = await mount()
+    const rowSwitch = wrapper.find('tbody tr [role="switch"]')
+    await rowSwitch.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/virt-host-01/vms/web01',
+      { included: false, limit_bytes: null },
+      { params: {} },
+    )
+  })
+
+  it('reports a per-domain change the agent rejected', async () => {
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('domain is unknown to this host'))
+    const wrapper = await mount()
+    await wrapper.find('tbody tr [role="switch"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('domain is unknown to this host')
+  })
+
+  it('opens the restore wizard for one domain and closes it again', async () => {
+    const wrapper = await mount()
+    const restore = wrapper.findAll('button').find((b) => b.text() === 'Restore')
+    await restore?.trigger('click')
+    await flushPromises()
+
+    const wizard = wrapper.findComponent(VmRestoreWizard)
+    expect(wizard.exists()).toBe(true)
+    expect(wizard.props('domainName')).toBe('web01')
+
+    wizard.vm.$emit('close')
+    await flushPromises()
+    expect(wrapper.findComponent(VmRestoreWizard).exists()).toBe(false)
+  })
+
+  it('reloads the domains once a restore has finished', async () => {
+    const wrapper = await mount()
+    const restore = wrapper.findAll('button').find((b) => b.text() === 'Restore')
+    await restore?.trigger('click')
+    await flushPromises()
+    vi.mocked(apiClient.get).mockClear()
+
+    wrapper.findComponent(VmRestoreWizard).vm.$emit('restored')
+    await flushPromises()
+
+    // The wizard closes and the table is re-read, so a restored domain's new
+    // staged size is what the operator sees.
+    expect(wrapper.findComponent(VmRestoreWizard).exists()).toBe(false)
+    expect(apiClient.get).toHaveBeenCalled()
   })
 })

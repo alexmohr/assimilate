@@ -42,8 +42,13 @@ const TOTAL_STEPS = 3
 const step = ref(1)
 const reports = ref<ReportRow[]>([])
 const loadingReports = ref(false)
-const selectedArchive = ref<string | null>(null)
-const selectedRepoId = ref<number | null>(null)
+/**
+ * The archive stage one restores from, with the repository holding it. One
+ * ref rather than two: an archive name is only ever meaningful together with
+ * its repository, and keeping them apart would let the two drift into a state
+ * `run()` would have to guard against.
+ */
+const selected = ref<{ repoId: number; archive: string } | null>(null)
 
 const restoreFiles = ref(true)
 const workingDir = ref('/var/tmp/assimilate-restore')
@@ -78,7 +83,7 @@ const sourceDir = computed<string>(() =>
 )
 
 const canProceed = computed<boolean>(() => {
-  if (step.value === 1) return !restoreFiles.value || selectedArchive.value !== null
+  if (step.value === 1) return !restoreFiles.value || selected.value !== null
   if (step.value === 2) return sourceDir.value.startsWith('/')
   return restoreAs.value.trim().length > 0 && imageDir.value.trim().startsWith('/')
 })
@@ -97,8 +102,7 @@ async function loadReports(): Promise<void> {
 
 function reset(): void {
   step.value = 1
-  selectedArchive.value = null
-  selectedRepoId.value = null
+  selected.value = null
   restoreFiles.value = true
   workingDir.value = '/var/tmp/assimilate-restore'
   sourceDirInput.value = ''
@@ -123,8 +127,8 @@ watch(
 )
 
 function pickArchive(report: ReportRow): void {
-  selectedArchive.value = report.archive_name
-  selectedRepoId.value = report.repo_id
+  if (report.archive_name === null) return
+  selected.value = { repoId: report.repo_id, archive: report.archive_name }
 }
 
 function next(): void {
@@ -142,13 +146,10 @@ async function run(): Promise<void> {
   stageTwoDone.value = false
 
   try {
-    if (restoreFiles.value) {
-      const repoId = selectedRepoId.value
-      const archive = selectedArchive.value
-      if (repoId === null || archive === null) {
-        throw new Error('Pick the archive to restore from')
-      }
-      const response = await restoreArchiveFiles(repoId, archive, {
+    // `canProceed` will not let step one be left without an archive picked,
+    // so a restore that reaches here always has one.
+    if (restoreFiles.value && selected.value !== null) {
+      const response = await restoreArchiveFiles(selected.value.repoId, selected.value.archive, {
         paths: [`${props.stagingDir.replace(/^\/+/, '')}/${props.domainName}`],
         target_path: workingDir.value.trim(),
         hostname: props.agent.hostname,
@@ -307,13 +308,13 @@ async function run(): Promise<void> {
           v-for="report in restorable"
           :key="`${report.repo_id}-${report.archive_name}`"
           class="archive-option"
-          :class="{ 'is-selected': selectedArchive === report.archive_name }"
+          :class="{ 'is-selected': selected?.archive === report.archive_name }"
         >
           <input
             type="radio"
             name="vm-restore-archive"
             :value="report.archive_name"
-            :checked="selectedArchive === report.archive_name"
+            :checked="selected?.archive === report.archive_name"
             @change="pickArchive(report)"
           />
           <span class="option-text">

@@ -6,6 +6,7 @@ import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import { apiClient } from '../api/client'
 import VmRestoreWizard from './VmRestoreWizard.vue'
+import BaseModal from './BaseModal.vue'
 import type { AgentRow } from '../types/agent'
 
 vi.mock('../api/client', () => ({
@@ -185,5 +186,112 @@ describe('VmRestoreWizard', () => {
   it('will not proceed without an archive to restore from', async () => {
     const wrapper = await mount()
     expect(button(wrapper, 'Next')?.attributes('disabled')).toBeDefined()
+  })
+
+  it('says why the archives could not be listed', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('repository is unreachable'))
+    const wrapper = await mount()
+
+    expect(wrapper.text()).toContain('repository is unreachable')
+    expect(wrapper.findAll('input[name="vm-restore-archive"]')).toHaveLength(0)
+  })
+
+  it('steps back to the archive it came from', async () => {
+    const wrapper = await mount()
+    await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
+    await button(wrapper, 'Next')?.trigger('click')
+    await button(wrapper, 'Next')?.trigger('click')
+    expect(wrapper.find('#vm-restore-name').exists()).toBe(true)
+
+    await button(wrapper, 'Back')?.trigger('click')
+    await button(wrapper, 'Back')?.trigger('click')
+
+    // Back at stage one, with the chosen archive still chosen.
+    expect(wrapper.find<HTMLInputElement>('input[name="vm-restore-archive"]').element.checked).toBe(
+      true,
+    )
+    expect(button(wrapper, 'Back')?.attributes('disabled')).toBeDefined()
+  })
+
+  it('builds into the directories and under the name the operator chose', async () => {
+    const wrapper = await mount()
+    await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
+    await button(wrapper, 'Next')?.trigger('click')
+    await wrapper.find<HTMLInputElement>('#vm-restore-workdir').setValue('/data/staging')
+    await button(wrapper, 'Next')?.trigger('click')
+
+    await wrapper.find<HTMLInputElement>('#vm-restore-name').setValue('web01-clone')
+    await wrapper.find<HTMLInputElement>('#vm-restore-image-dir').setValue('/pool/images')
+    await wrapper.find('input[type="radio"][value="define_and_start"]').setValue()
+    await button(wrapper, 'Restore')?.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenNthCalledWith(
+      2,
+      '/agents/virt-host-01/vms/build',
+      {
+        source_dir: '/data/staging/srv/vm-staging/web01',
+        name: 'web01-clone',
+        image_dir: '/pool/images',
+        action: 'define_and_start',
+      },
+      { params: {} },
+    )
+  })
+
+  it('can be put back to defining the domain after another option', async () => {
+    const wrapper = await mount()
+    await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
+    await button(wrapper, 'Next')?.trigger('click')
+    await button(wrapper, 'Next')?.trigger('click')
+
+    await wrapper.find('input[type="radio"][value="files_only"]').setValue()
+    await wrapper.find('input[type="radio"][value="define"]').setValue()
+    await button(wrapper, 'Restore')?.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenNthCalledWith(
+      2,
+      '/agents/virt-host-01/vms/build',
+      expect.objectContaining({ action: 'define' }),
+      { params: {} },
+    )
+  })
+
+  it('leaves the images alone when that is all that was asked for', async () => {
+    const wrapper = await mount()
+    await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
+    await button(wrapper, 'Next')?.trigger('click')
+    await button(wrapper, 'Next')?.trigger('click')
+    await wrapper.find('input[type="radio"][value="files_only"]').setValue()
+    await button(wrapper, 'Restore')?.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenNthCalledWith(
+      2,
+      '/agents/virt-host-01/vms/build',
+      expect.objectContaining({ action: 'files_only' }),
+      { params: {} },
+    )
+  })
+
+  it('closes once the operator is done with the outcome', async () => {
+    const wrapper = await mount()
+    await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
+    await button(wrapper, 'Next')?.trigger('click')
+    await button(wrapper, 'Next')?.trigger('click')
+    await button(wrapper, 'Restore')?.trigger('click')
+    await flushPromises()
+
+    await button(wrapper, 'Done')?.trigger('click')
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('closes when the dialog itself is dismissed', async () => {
+    const wrapper = await mount()
+    wrapper.findComponent(BaseModal).vm.$emit('close')
+    await flushPromises()
+
+    expect(wrapper.emitted('close')).toBeTruthy()
   })
 })

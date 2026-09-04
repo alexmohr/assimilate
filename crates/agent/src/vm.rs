@@ -18,10 +18,12 @@
 
 use std::{
     collections::BTreeSet,
+    convert::Infallible,
     fmt::Write as _,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     process::Stdio,
+    str::FromStr,
     time::Duration,
 };
 
@@ -88,15 +90,127 @@ struct Disk {
     source: PathBuf,
 }
 
-/// Maps libvirt's own wording for a domain's state onto [`VmState`]. libvirt
-/// writes "shut off" with a space, so this cannot be a plain enum parse.
+/// Maps a `virsh domstate` line onto [`VmState`]. The spellings libvirt uses
+/// are accepted by [`VmState`]'s own parser; anything else is unknown to this
+/// build and reported as such rather than guessed at.
 fn parse_domain_state(text: &str) -> VmState {
-    match text.trim() {
-        "running" => VmState::Running,
-        "paused" => VmState::Paused,
-        "shut off" | "shutoff" => VmState::ShutOff,
-        "pmsuspended" => VmState::Suspended,
-        _ => VmState::Unknown,
+    VmState::from_str(text.trim()).unwrap_or_default()
+}
+
+/// The kind of block device libvirt reports in the `Device` column of
+/// `domblklist --details`. Only `disk` carries guest state worth staging;
+/// CD-ROMs, floppies and passed-through LUNs are left out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum BlockDeviceKind {
+    /// A writable disk backed by an image or block device.
+    Disk,
+    /// A CD-ROM, which holds no guest state.
+    Cdrom,
+    /// A floppy device, which holds no guest state.
+    Floppy,
+    /// A SCSI LUN passed through to the guest.
+    Lun,
+    /// A device kind this build does not know, which is left alone.
+    #[default]
+    Unknown,
+}
+
+impl FromStr for BlockDeviceKind {
+    type Err = Infallible;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(match text.trim() {
+            "disk" => Self::Disk,
+            "cdrom" => Self::Cdrom,
+            "floppy" => Self::Floppy,
+            "lun" => Self::Lun,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+/// The `Source` column of `domblklist --details`, which libvirt writes as `-`
+/// for a device with nothing attached to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BlockSource(Option<PathBuf>);
+
+impl FromStr for BlockSource {
+    type Err = Infallible;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(Self(match text.trim() {
+            "" | "-" => None,
+            path => Some(PathBuf::from(path)),
+        }))
+    }
+}
+
+/// The image format `qemu-img info` reports for a disk. Only qcow2 can carry
+/// the dirty bitmaps an incremental backup is built on, so every other format
+/// collapses into one variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum DiskFormat {
+    /// qcow2, the one format that supports persistent dirty bitmaps.
+    Qcow2,
+    /// Any other format, including one qemu-img did not report at all.
+    #[default]
+    Other,
+}
+
+impl FromStr for DiskFormat {
+    type Err = Infallible;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(match text.trim() {
+            "qcow2" => Self::Qcow2,
+            _ => Self::Other,
+        })
+    }
+}
+
+/// The `Job type:` libvirt reports for a domain in `virsh domjobinfo`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum JobType {
+    /// libvirt printed no job type at all, so there is no job to wait on.
+    #[default]
+    Absent,
+    /// No job is running.
+    None,
+    /// A job is running and its end point is known.
+    Bounded,
+    /// A job is running without a known end point.
+    Unbounded,
+    /// The job finished successfully.
+    Completed,
+    /// The job failed.
+    Failed,
+    /// The job was cancelled.
+    Cancelled,
+    /// libvirt reported a job type this build does not know.
+    Unknown,
+}
+
+impl FromStr for JobType {
+    type Err = Infallible;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(match text.trim() {
+            "" => Self::Absent,
+            "None" => Self::None,
+            "Bounded" => Self::Bounded,
+            "Unbounded" => Self::Unbounded,
+            "Completed" => Self::Completed,
+            "Failed" => Self::Failed,
+            "Cancelled" => Self::Cancelled,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+impl JobType {
+    /// Whether a job is still in flight and worth polling again.
+    const fn is_running(self) -> bool {
+        matches!(self, Self::Bounded | Self::Unbounded | Self::Unknown)
     }
 }
 
@@ -403,9 +517,17 @@ impl VmStager {
                 let [_type, device, target, source] = fields.as_slice() else {
                     return None;
                 };
-                (*device == "disk" && *source != "-").then(|| Disk {
+                if BlockDeviceKind::from_str(device).unwrap_or_default() != BlockDeviceKind::Disk {
+                    return None;
+                }
+                let BlockSource(Some(source)) =
+                    BlockSource::from_str(source).unwrap_or(BlockSource(None))
+                else {
+                    return None;
+                };
+                Some(Disk {
                     target: (*target).to_owned(),
-                    source: PathBuf::from(*source),
+                    source,
                 })
             })
             .collect())
@@ -427,10 +549,10 @@ impl VmStager {
             let format = info
                 .lines()
                 .find_map(|line| line.trim().strip_prefix("file format: "))
-                .unwrap_or_default()
-                .trim()
-                .to_owned();
-            if format != "qcow2" {
+                .map(DiskFormat::from_str)
+                .and_then(Result::ok)
+                .unwrap_or_default();
+            if format != DiskFormat::Qcow2 {
                 return false;
             }
         }
@@ -1110,10 +1232,11 @@ impl VmStager {
                 .unwrap_or_default()
                 .lines()
                 .find_map(|line| line.trim().strip_prefix("Job type:"))
-                .map(|state| state.trim().to_owned())
+                .map(JobType::from_str)
+                .and_then(Result::ok)
                 .unwrap_or_default();
 
-            if running.is_empty() || running == "None" {
+            if !running.is_running() {
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
@@ -1126,7 +1249,7 @@ impl VmStager {
             tokio::time::sleep(self.job_poll_interval).await;
         }
 
-        let completed = self
+        let reported = self
             .virsh(&["domjobinfo", domain, "--completed"])
             .await
             .unwrap_or_default()
@@ -1134,16 +1257,17 @@ impl VmStager {
             .find_map(|line| line.trim().strip_prefix("Job type:"))
             .map(|state| state.trim().to_owned())
             .unwrap_or_default();
+        let completed = JobType::from_str(&reported).unwrap_or_default();
 
-        if completed == "Completed" {
+        if completed == JobType::Completed {
             Ok(())
         } else {
             Err(VmError::Job(format!(
                 "the backup job for {domain} did not complete ({})",
-                if completed.is_empty() {
+                if reported.is_empty() {
                     "no job information"
                 } else {
-                    &completed
+                    &reported
                 }
             )))
         }
@@ -1994,6 +2118,46 @@ mod tests {
             .expect_err("not a staged domain");
 
         assert!(error.to_string().contains("chain.txt"), "{error}");
+    }
+
+    #[test]
+    fn libvirt_block_device_columns_parse_into_enums() {
+        assert_eq!(BlockDeviceKind::from_str("disk"), Ok(BlockDeviceKind::Disk));
+        assert_eq!(
+            BlockDeviceKind::from_str("cdrom"),
+            Ok(BlockDeviceKind::Cdrom)
+        );
+        assert_eq!(
+            BlockDeviceKind::from_str("nvme"),
+            Ok(BlockDeviceKind::Unknown)
+        );
+        assert_eq!(BlockSource::from_str("-"), Ok(BlockSource(None)));
+        assert_eq!(BlockSource::from_str(""), Ok(BlockSource(None)));
+        assert_eq!(
+            BlockSource::from_str("/var/lib/libvirt/images/a.qcow2"),
+            Ok(BlockSource(Some(PathBuf::from(
+                "/var/lib/libvirt/images/a.qcow2"
+            ))))
+        );
+    }
+
+    #[test]
+    fn qemu_img_formats_and_libvirt_job_types_parse_into_enums() {
+        assert_eq!(DiskFormat::from_str("qcow2"), Ok(DiskFormat::Qcow2));
+        assert_eq!(DiskFormat::from_str("raw"), Ok(DiskFormat::Other));
+        assert_eq!(DiskFormat::from_str(""), Ok(DiskFormat::Other));
+
+        assert_eq!(JobType::from_str(""), Ok(JobType::Absent));
+        assert_eq!(JobType::from_str(" None"), Ok(JobType::None));
+        assert_eq!(JobType::from_str("Completed"), Ok(JobType::Completed));
+        assert_eq!(JobType::from_str("Bounded"), Ok(JobType::Bounded));
+        assert_eq!(JobType::from_str("Sideways"), Ok(JobType::Unknown));
+
+        assert!(JobType::Bounded.is_running());
+        assert!(JobType::Unbounded.is_running());
+        assert!(!JobType::None.is_running());
+        assert!(!JobType::Absent.is_running());
+        assert!(!JobType::Completed.is_running());
     }
 
     #[test]

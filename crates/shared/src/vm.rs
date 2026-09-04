@@ -20,6 +20,11 @@ pub const DEFAULT_FULL_INTERVAL: u32 = 7;
 pub const DEFAULT_SNAPSHOT_TIMEOUT_SECONDS: u32 = 1800;
 
 /// The run state of a domain as libvirt reports it.
+///
+/// Parsing accepts libvirt's own wording alongside the `snake_case` names
+/// used on the wire, so an agent can turn a `virsh domstate` line into this enum
+/// without comparing strings itself: libvirt writes "shut off" with a space
+/// and calls a guest-initiated suspend "pmsuspended".
 #[derive(
     Debug,
     Clone,
@@ -43,8 +48,10 @@ pub enum VmState {
     /// The domain is paused, but its memory is still resident.
     Paused,
     /// The domain is defined but not running.
+    #[strum(to_string = "shut_off", serialize = "shut off", serialize = "shutoff")]
     ShutOff,
     /// The domain is suspended to RAM or disk by the guest.
+    #[strum(to_string = "suspended", serialize = "pmsuspended")]
     Suspended,
     /// libvirt reported a state this build does not know, or the host has not
     /// been scanned yet.
@@ -392,5 +399,21 @@ mod tests {
             let text = mode.to_string();
             assert_eq!(text.parse::<VmSnapshotMode>().expect("mode parses"), mode);
         }
+    }
+
+    #[test]
+    fn vm_state_accepts_libvirts_own_spellings() {
+        assert_eq!("shut off".parse::<VmState>(), Ok(VmState::ShutOff));
+        assert_eq!("shutoff".parse::<VmState>(), Ok(VmState::ShutOff));
+        assert_eq!("shut_off".parse::<VmState>(), Ok(VmState::ShutOff));
+        assert_eq!("pmsuspended".parse::<VmState>(), Ok(VmState::Suspended));
+        assert_eq!("suspended".parse::<VmState>(), Ok(VmState::Suspended));
+        assert!("in shutdown".parse::<VmState>().is_err());
+    }
+
+    #[test]
+    fn vm_state_still_renders_the_wire_spellings() {
+        assert_eq!(VmState::ShutOff.to_string(), "shut_off");
+        assert_eq!(VmState::Suspended.to_string(), "suspended");
     }
 }

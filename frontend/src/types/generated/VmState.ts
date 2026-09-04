@@ -2,6 +2,11 @@
 
 /**
  * The run state of a domain as libvirt reports it.
+ *
+ * Parsing accepts libvirt's own wording alongside the `snake_case` names
+ * used on the wire, so an agent can turn a `virsh domstate` line into this enum
+ * without comparing strings itself: libvirt writes "shut off" with a space
+ * and calls a guest-initiated suspend "pmsuspended".
  */
 export type VmState =
   | "running"

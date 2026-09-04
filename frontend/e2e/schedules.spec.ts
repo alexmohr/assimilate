@@ -432,6 +432,55 @@ test.describe('Schedules management', () => {
     await expect(page.locator('.cron-input')).toHaveValue('0 2 * * *')
   })
 
+  // This schedule's Backups tab is an archive browser, and a failed run
+  // wrote no archive - so the preview hands the run to the host that
+  // produced it, which is where its output is rendered.
+  test('a failed run in the overview preview opens on its host', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.route('**/api/schedules/1/reports**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([makeFailedReport(9995, 1)]),
+      }),
+    )
+    // Registered second so it wins for the more specific URL: the count
+    // endpoint answers with an object, not a list of reports.
+    await page.route('**/api/schedules/1/reports/failed/count**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 1 }),
+      }),
+    )
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'View error' }).first().click()
+
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=backups.*report=9995/)
+  })
+
+  // The other half of the same preview row: a run that produced an archive
+  // opens it right here, on this schedule's own Backups tab, rather than
+  // making someone find it again in the repository's archive list.
+  test('a successful run in the overview preview opens its archive', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    // Only a recent-backups row names its host with a button - a target row
+    // above uses a plain span - so this cannot pick up the wrong section.
+    const archiveLink = page.locator('button.agent-row-name').first()
+    await expect(archiveLink).toBeVisible()
+    await archiveLink.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/schedules\/1\?.*tab=backups/)
+    await expect(page.locator('.archive-row.selected')).toHaveCount(1)
+    await expect(page.locator('.archive-file-browser')).toBeVisible({ timeout: 10_000 })
+  })
+
   test('schedule detail shows retention policy', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')

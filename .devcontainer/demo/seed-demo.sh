@@ -819,6 +819,10 @@ ON CONFLICT DO NOTHING;
 SQL
 
 echo "==> Adding warnings to the most recent web-server-01 backup report..."
+# Also the demo's coverage of the recent-backups preview's "View warnings"
+# jump (see docs/agents.md, docs/scheduling.md): this run is web-server-01's
+# newest, so the button is on the first row of both the host's and the
+# schedule's Overview preview. Keep it the newest if this block is edited.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
 -- The first warning is deliberately long-winded, since borg emits
 -- multi-sentence diagnostics: the activity log shows it in full, while a
@@ -867,6 +871,11 @@ echo "==> Seeding a recovered outage on db-server-01..."
 # same three failures scattered across the window would be a standing
 # problem, while contiguous ones are a single incident that has since
 # recovered. Only the contiguous shape earns the "Incident" chip.
+#
+# These are also the demo's failed rows in a recent-backups preview, where
+# they carry the "View error" jump to their output (see docs/agents.md):
+# db-server-01 backs up hourly, so runs 4-6 hours old are still inside the
+# five rows a preview shows.
 #
 # archive_name stays NULL, which is both true (a failed backup writes no
 # archive) and load-bearing: delete_archive_records_by_names reconciles a

@@ -10,7 +10,11 @@ import type { AgentRow } from '../types/agent'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import { computed } from 'vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
-import { normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
+import {
+  normalizeBackupStatus,
+  filterSettledReports,
+  reportMessageLabel,
+} from '../utils/backupStatus'
 import { scheduleRunStatus } from '../utils/scheduleHealth'
 import { backupStatusBadgeClass } from '../utils/badge'
 import BackupProgressCard from './BackupProgressCard.vue'
@@ -52,6 +56,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   retry: [agentId: number]
   openBackups: []
+  openArchive: [report: ReportRow]
+  openReportDetail: [report: ReportRow]
 }>()
 
 const BACKUP_PREVIEW_COUNT = 5
@@ -100,6 +106,15 @@ const backupPreview = computed(() =>
     .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())
     .slice(0, BACKUP_PREVIEW_COUNT),
 )
+
+/**
+ * The Backups tab lists archives, and builds them from exactly these runs -
+ * so a preview row offers the jump only when the tab has somewhere to land.
+ */
+function hasArchive(r: ReportRow): boolean {
+  const status = normalizeBackupStatus(r.status)
+  return !!r.archive_name && (status === 'success' || status === 'warning')
+}
 
 /**
  * Same mapping AgentBackupRow uses, including the muted fallback: a settled
@@ -257,7 +272,20 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
             aria-hidden="true"
           />
           <span class="agent-row-when">{{ relativeTime(r.finished_at) }}</span>
-          <span class="agent-row-name mono">{{ hostLabel(r.agent_id) }}</span>
+          <button
+            v-if="hasArchive(r)"
+            class="agent-row-name mono"
+            type="button"
+            title="Browse this archive"
+            @click="emit('openArchive', r)"
+          >
+            {{ hostLabel(r.agent_id) }}
+          </button>
+          <span
+            v-else
+            class="agent-row-name mono"
+            >{{ hostLabel(r.agent_id) }}</span
+          >
           <span
             v-if="normalizeBackupStatus(r.status) !== 'success'"
             class="badge"
@@ -269,6 +297,21 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
             <span>{{ formatBytes(r.original_size) }}</span>
             <span>{{ formatDuration(r.duration_secs) }}</span>
           </span>
+          <!--
+            A run that broke is the reason someone opens this page, and the
+            row itself has no room for the output - so it points at the host
+            row that renders it in full. Same verdict, from the same shared
+            helper, as the host Overview's own rows reach for that run.
+          -->
+          <button
+            v-if="reportMessageLabel(r)"
+            class="btn btn-sm btn-ghost"
+            type="button"
+            title="Open this run on the host's Backups tab"
+            @click="emit('openReportDetail', r)"
+          >
+            {{ reportMessageLabel(r) }}
+          </button>
         </div>
       </div>
     </section>

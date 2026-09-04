@@ -37,3 +37,32 @@ export function filterSettledReports<T extends { status: string }>(reports: read
     return status !== 'pending' && status !== 'started'
   })
 }
+
+/**
+ * What a run has to *say*: its warnings, or the error that ended it. The
+ * label doubles as the predicate - null means there is nothing to read, so
+ * a preview row offers no jump to it.
+ *
+ * Warnings win over the error message because a warned run carries both: the
+ * agent fills `error_message` for a warning-only run too (the notification
+ * path reads it), and the detail block renders the warnings rather than
+ * repeating them as an error.
+ *
+ * Shared rather than repeated: this decides which button a viewer sees, on
+ * the host Overview (AgentBackupRow) and the schedule Overview alike, and
+ * the two drifting apart would show different rows for the same run.
+ */
+export type ReportMessageLabel = 'View warnings' | 'View error'
+
+export function reportMessageLabel(report: {
+  status: string
+  error_message: string | null
+  /** The wire type says `Array<string>`, but a report can reach the UI without it. */
+  warnings?: readonly string[] | null
+}): ReportMessageLabel | null {
+  if (report.warnings && report.warnings.length > 0) return 'View warnings'
+  if (report.error_message && normalizeBackupStatus(report.status) !== 'success') {
+    return 'View error'
+  }
+  return null
+}

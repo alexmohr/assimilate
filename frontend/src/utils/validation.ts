@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type { HookCommand } from '../types/generated'
+
 export function parseLines(text: string): string[] {
   return text
     .split('\n')
@@ -13,8 +15,8 @@ export function parseLines(text: string): string[] {
  * before saving. Never trims the surviving entries' content - a command is a
  * whole script, and leading whitespace can be meaningful indentation.
  */
-export function dropBlankCommands(commands: string[]): string[] {
-  return commands.filter((c) => c.trim().length > 0)
+export function dropBlankCommands(commands: HookCommand[]): HookCommand[] {
+  return commands.filter((c) => c.command.trim().length > 0)
 }
 
 export function validatePassword(newPassword: string, confirmPassword: string): string | null {

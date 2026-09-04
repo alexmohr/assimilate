@@ -12,7 +12,9 @@ import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import EditableSection from './EditableSection.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 import CommandListEditor from './CommandListEditor.vue'
+import ShellScript from './ShellScript.vue'
 import type { AgentRow } from '../types/agent'
+import type { HookCommand } from '../types/generated'
 
 /**
  * An agent's backup defaults: paths, excludes, file change patterns and hook
@@ -40,8 +42,8 @@ const error = ref<string | null>(null)
 const pathsText = ref('')
 const excludesText = ref('')
 const fcpText = ref('')
-const preCmds = ref<string[]>([])
-const postCmds = ref<string[]>([])
+const preCmds = ref<HookCommand[]>([])
+const postCmds = ref<HookCommand[]>([])
 
 function startEdit(): void {
   pathsText.value = (props.agent.default_backup_paths ?? []).join('\n')
@@ -51,6 +53,13 @@ function startEdit(): void {
   postCmds.value = [...(props.agent.default_post_backup_commands ?? [])]
   error.value = null
   editing.value = true
+}
+
+/** Says which timeout a command runs under, since a blank one is inherited. */
+function timeoutLabel(cmd: HookCommand): string {
+  return cmd.timeout_seconds === null
+    ? "Timeout: the schedule's hook command timeout"
+    : `Timeout: ${cmd.timeout_seconds}s`
 }
 
 /** Holds the form open if the request fails, so nothing typed is lost. */
@@ -164,15 +173,16 @@ async function save(): Promise<void> {
           <span class="group-label group-label--lg">Pre-backup commands</span>
           <div
             v-if="(agent.default_pre_backup_commands ?? []).length > 0"
-            class="paths-list"
+            class="cmd-view-list"
           >
-            <code
+            <div
               v-for="(cmd, idx) in agent.default_pre_backup_commands ?? []"
               :key="idx"
-              class="path-item mono"
+              class="cmd-view-entry"
             >
-              {{ cmd }}
-            </code>
+              <ShellScript :source="cmd.command" />
+              <span class="field-hint">{{ timeoutLabel(cmd) }}</span>
+            </div>
           </div>
           <span
             v-else
@@ -185,15 +195,16 @@ async function save(): Promise<void> {
           <span class="group-label group-label--lg">Post-backup commands</span>
           <div
             v-if="(agent.default_post_backup_commands ?? []).length > 0"
-            class="paths-list"
+            class="cmd-view-list"
           >
-            <code
+            <div
               v-for="(cmd, idx) in agent.default_post_backup_commands ?? []"
               :key="idx"
-              class="path-item mono"
+              class="cmd-view-entry"
             >
-              {{ cmd }}
-            </code>
+              <ShellScript :source="cmd.command" />
+              <span class="field-hint">{{ timeoutLabel(cmd) }}</span>
+            </div>
           </div>
           <span
             v-else
@@ -270,6 +281,18 @@ async function save(): Promise<void> {
 </template>
 
 <style scoped>
+.cmd-view-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.cmd-view-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
 .defaults-area {
   min-height: 80px;
   resize: vertical;

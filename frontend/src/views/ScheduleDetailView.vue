@@ -48,6 +48,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
+import type { HookCommand } from '../types/generated'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -381,8 +382,8 @@ async function loadData(): Promise<void> {
       const perAgentCmdEntries = sources.commands_per_agent ?? []
       if (perAgentCmdEntries.length > 0) {
         agentOverrides.value.usePerAgentCmds = true
-        const preMap: Record<number, string[]> = {}
-        const postMap: Record<number, string[]> = {}
+        const preMap: Record<number, HookCommand[]> = {}
+        const postMap: Record<number, HookCommand[]> = {}
         for (const entry of perAgentCmdEntries) {
           preMap[Number(entry.agent_id)] = entry.pre_backup_commands
           postMap[Number(entry.agent_id)] = entry.post_backup_commands
@@ -461,8 +462,8 @@ async function save(): Promise<void> {
       payload.post_backup_commands = []
       const perAgent: {
         agent_id: number
-        pre_backup_commands: string[]
-        post_backup_commands: string[]
+        pre_backup_commands: HookCommand[]
+        post_backup_commands: HookCommand[]
       }[] = []
       for (const id of selectedAgentIds.value) {
         perAgent.push({

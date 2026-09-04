@@ -11,6 +11,7 @@ use std::{
 use chrono::Utc;
 use serde::Deserialize;
 use shared::{
+    hooks::HookCommand,
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
     task_registry::TaskRegistry,
     types::{BORG_REPO_ENV_KEY, BackupStatus, Compression, FileChangePattern, build_repo_url},
@@ -64,8 +65,8 @@ pub struct BackupTarget {
     pub keep_monthly: u32,
     pub keep_yearly: u32,
     pub compact_enabled: bool,
-    pub pre_backup_commands: Vec<String>,
-    pub post_backup_commands: Vec<String>,
+    pub pre_backup_commands: Vec<HookCommand>,
+    pub post_backup_commands: Vec<HookCommand>,
     pub hook_timeout_seconds: u32,
     pub skip_targets: Vec<String>,
     pub exclude_patterns: Vec<String>,
@@ -210,9 +211,8 @@ impl BackupEngine {
             )));
         }
 
-        let hook_timeout = Duration::from_secs(target.hook_timeout_seconds.into());
         for cmd in &target.pre_backup_commands {
-            self.run_hook_command(cmd, "pre-backup", hook_timeout)
+            self.run_hook_command(cmd, "pre-backup", target.hook_timeout_seconds)
                 .await?;
         }
 
@@ -238,7 +238,7 @@ impl BackupEngine {
         }
 
         for cmd in &target.post_backup_commands {
-            self.run_hook_command(cmd, "post-backup", hook_timeout)
+            self.run_hook_command(cmd, "post-backup", target.hook_timeout_seconds)
                 .await?;
         }
 
@@ -262,20 +262,23 @@ impl BackupEngine {
 
     async fn run_hook_command(
         &self,
-        cmd: &str,
+        cmd: &HookCommand,
         label: &str,
-        timeout: Duration,
+        default_timeout_seconds: u32,
     ) -> Result<(), BackupError> {
-        info!("Running {label} hook command");
+        let timeout_seconds = cmd.timeout_or(default_timeout_seconds);
+        info!("Running {label} hook command (timeout {timeout_seconds}s)");
 
-        let output = tokio::time::timeout(timeout, Command::new("sh").arg("-c").arg(cmd).output())
-            .await
-            .map_err(|_| {
-                BackupError::BorgFailed(format!(
-                    "{label} hook command timed out after {} seconds",
-                    timeout.as_secs()
-                ))
-            })??;
+        let output = tokio::time::timeout(
+            Duration::from_secs(timeout_seconds.into()),
+            Command::new("sh").arg("-c").arg(&cmd.command).output(),
+        )
+        .await
+        .map_err(|_| {
+            BackupError::BorgFailed(format!(
+                "{label} hook command timed out after {timeout_seconds} seconds"
+            ))
+        })??;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1323,7 +1326,7 @@ mod tests {
     async fn test_pre_backup_command_success() {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let mut target = test_target();
-        target.pre_backup_commands = vec!["true".to_owned()];
+        target.pre_backup_commands = vec![HookCommand::new("true")];
 
         let result = engine.run_backup(&target, None, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
@@ -1333,7 +1336,7 @@ mod tests {
     async fn test_pre_backup_command_failure() {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let mut target = test_target();
-        target.pre_backup_commands = vec!["false".to_owned()];
+        target.pre_backup_commands = vec![HookCommand::new("false")];
 
         let result = engine.run_backup(&target, None, None).await;
         assert!(result.is_err());
@@ -1344,7 +1347,8 @@ mod tests {
     async fn test_pre_backup_command_failure_includes_stderr() {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let mut target = test_target();
-        target.pre_backup_commands = vec!["echo 'connection refused' >&2 && exit 1".to_owned()];
+        target.pre_backup_commands =
+            vec![HookCommand::new("echo 'connection refused' >&2 && exit 1")];
 
         let result = engine.run_backup(&target, None, None).await;
         let err = result.unwrap_err();
@@ -1362,7 +1366,7 @@ mod tests {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let mut target = test_target();
         target.hook_timeout_seconds = 1;
-        target.pre_backup_commands = vec!["sleep 5".to_owned()];
+        target.pre_backup_commands = vec![HookCommand::new("sleep 5")];
 
         let result = engine.run_backup(&target, None, None).await;
         let err = result.unwrap_err();
@@ -1380,10 +1384,66 @@ mod tests {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let mut target = test_target();
         target.hook_timeout_seconds = 5;
-        target.pre_backup_commands = vec!["sleep 1".to_owned()];
+        target.pre_backup_commands = vec![HookCommand::new("sleep 1")];
 
         let result = engine.run_backup(&target, None, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
+    }
+
+    #[tokio::test]
+    async fn test_pre_backup_command_timeout_overrides_schedule_default() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.hook_timeout_seconds = 60;
+        target.pre_backup_commands = vec![HookCommand {
+            command: "sleep 5".to_owned(),
+            timeout_seconds: Some(1),
+        }];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("timed out after 1 seconds"),
+            "the command's own timeout should win over the schedule default: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pre_backup_command_timeout_can_exceed_schedule_default() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.hook_timeout_seconds = 1;
+        target.pre_backup_commands = vec![HookCommand {
+            command: "sleep 2".to_owned(),
+            timeout_seconds: Some(30),
+        }];
+
+        let result = engine.run_backup(&target, None, None).await.unwrap();
+        assert_eq!(result.status, BackupStatus::Success);
+    }
+
+    #[tokio::test]
+    async fn test_post_backup_command_uses_its_own_timeout() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.hook_timeout_seconds = 60;
+        target.post_backup_commands = vec![HookCommand {
+            command: "sleep 5".to_owned(),
+            timeout_seconds: Some(1),
+        }];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("post-backup hook command timed out after 1 seconds"),
+            "post-backup hooks honour their own timeout: {msg}"
+        );
     }
 
     #[tokio::test]

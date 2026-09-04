@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents WHERE hostname = $1",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, domain) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
   "describe": {
     "columns": [
       {
@@ -70,12 +70,12 @@
       },
       {
         "ordinal": 13,
-        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "default_pre_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
         "ordinal": 14,
-        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "default_post_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
@@ -156,6 +156,14 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "Jsonb",
+        "Jsonb",
+        "Text",
         "Text"
       ]
     },
@@ -192,5 +200,5 @@
       false
     ]
   },
-  "hash": "c3b5422ae3661500d37864830e586c5cdf04710a1a7c0fcdc994bedfe26f7a92"
+  "hash": "6ec575f7ddf2b96a6454195b09e81af0349ddc5b4ff787231082e6c4bb7b4cd1"
 }

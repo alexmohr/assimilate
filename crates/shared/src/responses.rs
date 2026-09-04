@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
+    hooks::HookCommand,
     protocol::{RepoOpKind, TunnelStatus},
     types::{
         BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
@@ -206,9 +207,9 @@ pub struct AgentResponse {
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
     /// Default commands to run before backups.
-    pub default_pre_backup_commands: Vec<String>,
+    pub default_pre_backup_commands: Vec<HookCommand>,
     /// Default commands to run after backups.
-    pub default_post_backup_commands: Vec<String>,
+    pub default_post_backup_commands: Vec<HookCommand>,
     /// Default file change patterns.
     pub default_file_change_patterns_raw: String,
     /// Whether the agent is currently connected.
@@ -651,9 +652,9 @@ pub struct ScheduleResponse {
     /// Rate limit in kilobytes per second.
     pub rate_limit_kbps: Option<i32>,
     /// Commands to run before the backup.
-    pub pre_backup_commands: Vec<String>,
+    pub pre_backup_commands: Vec<HookCommand>,
     /// Commands to run after the backup.
-    pub post_backup_commands: Vec<String>,
+    pub post_backup_commands: Vec<HookCommand>,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     pub hook_timeout_seconds: i32,
     /// How many consecutive missed backups (agent unreachable, target/config
@@ -748,9 +749,9 @@ pub struct PerAgentCommandsResponse {
     /// Identifier of the associated agent.
     pub agent_id: i64,
     /// Commands to run before the backup.
-    pub pre_backup_commands: Vec<String>,
+    pub pre_backup_commands: Vec<HookCommand>,
     /// Commands to run after the backup.
-    pub post_backup_commands: Vec<String>,
+    pub post_backup_commands: Vec<HookCommand>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2097,9 +2098,9 @@ pub struct HostExportResponse {
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
     /// Default commands to run before backups.
-    pub default_pre_backup_commands: Vec<String>,
+    pub default_pre_backup_commands: Vec<HookCommand>,
     /// Default commands to run after backups.
-    pub default_post_backup_commands: Vec<String>,
+    pub default_post_backup_commands: Vec<HookCommand>,
     /// Default file change detection patterns.
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
@@ -2177,9 +2178,9 @@ pub struct ScheduleExportResponse {
     /// Rate limit in kilobytes per second.
     pub rate_limit_kbps: Option<i32>,
     /// Commands to run before the backup.
-    pub pre_backup_commands: Vec<String>,
+    pub pre_backup_commands: Vec<HookCommand>,
     /// Commands to run after the backup.
-    pub post_backup_commands: Vec<String>,
+    pub post_backup_commands: Vec<HookCommand>,
     /// Timeout in seconds applied to each pre/post-backup hook command.
     #[serde(default = "default_hook_timeout_seconds")]
     pub hook_timeout_seconds: i32,

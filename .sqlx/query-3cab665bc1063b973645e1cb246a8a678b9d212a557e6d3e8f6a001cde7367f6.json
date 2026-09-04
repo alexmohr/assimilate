@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: sqlx::types::Json<Vec<String>>\", default_post_backup_commands AS \"default_post_backup_commands: sqlx::types::Json<Vec<String>>\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name FROM agents WHERE hostname = $1 AND domain = $2",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name",
   "describe": {
     "columns": [
       {
@@ -70,12 +70,12 @@
       },
       {
         "ordinal": 13,
-        "name": "default_pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "default_pre_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
         "ordinal": 14,
-        "name": "default_post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "default_post_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
@@ -157,6 +157,7 @@
     "parameters": {
       "Left": [
         "Text",
+        "Text",
         "Text"
       ]
     },
@@ -193,5 +194,5 @@
       false
     ]
   },
-  "hash": "58d7861fc9fa0e4b83559698e232713c5ce7ffee89902d9475c5955f1292c8c0"
+  "hash": "3cab665bc1063b973645e1cb246a8a678b9d212a557e6d3e8f6a001cde7367f6"
 }

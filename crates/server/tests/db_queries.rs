@@ -18,7 +18,10 @@ use server::{
     archive_index::codec::{self, DirEntry},
     db::{self, patterns, *},
 };
-use shared::types::{AcknowledgedFilter, QuotaAction, SystemEventType};
+use shared::{
+    hooks::HookCommand,
+    types::{AcknowledgedFilter, QuotaAction, SystemEventType},
+};
 use sqlx::PgPool;
 
 #[sqlx::test(migrations = "./migrations")]
@@ -958,8 +961,11 @@ async fn schedule_update(pool: PgPool) {
             keep_yearly: 2,
             compact_enabled: false,
             rate_limit_kbps: None,
-            pre_backup_commands: &["echo pre".to_string()],
-            post_backup_commands: &["echo post".to_string()],
+            pre_backup_commands: &[HookCommand::new("echo pre")],
+            post_backup_commands: &[HookCommand {
+                command: "echo post".to_owned(),
+                timeout_seconds: Some(7200),
+            }],
             hook_timeout_seconds: 120,
             missed_backup_threshold: 3,
             on_failure: "continue",
@@ -976,10 +982,16 @@ async fn schedule_update(pool: PgPool) {
     assert_eq!(updated.keep_daily, 14);
     assert!(!updated.compact_enabled);
     assert_eq!(updated.rate_limit_kbps, None);
-    assert_eq!(updated.pre_backup_commands.0, vec!["echo pre".to_string()]);
+    assert_eq!(
+        updated.pre_backup_commands.0,
+        vec![HookCommand::new("echo pre")]
+    );
     assert_eq!(
         updated.post_backup_commands.0,
-        vec!["echo post".to_string()]
+        vec![HookCommand {
+            command: "echo post".to_owned(),
+            timeout_seconds: Some(7200),
+        }]
     );
     assert_eq!(updated.hook_timeout_seconds, 120);
 }
@@ -10568,4 +10580,93 @@ async fn delete_run_events_before_keeps_recent(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(events.len(), 1);
+}
+
+/// Hook commands stored before per-command timeouts existed are a JSONB array
+/// of bare strings. The migration normalises the rows it finds, but a config
+/// import can still write the old shape, so decoding one must not fail - it
+/// must read as a command that inherits the schedule's timeout.
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let schedule = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "legacy-hook-commands",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "UPDATE schedules SET pre_backup_commands = '[\"echo legacy\"]'::JSONB WHERE id = $1",
+    )
+    .bind(schedule.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let loaded = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        loaded.pre_backup_commands.0,
+        vec![HookCommand::new("echo legacy")],
+        "a bare string must decode as a command with no timeout of its own"
+    );
+}
+
+/// A per-command timeout has to survive the JSONB round trip, since it is the
+/// only thing that lets one slow hook have a longer budget than its siblings.
+#[sqlx::test(migrations = "./migrations")]
+async fn agent_default_hook_commands_round_trip_their_timeouts(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "hook-timeout-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let commands = vec![
+        HookCommand {
+            command: "vzdump --all 1".to_owned(),
+            timeout_seconds: Some(7200),
+        },
+        HookCommand::new("systemctl start app"),
+    ];
+    db::update_agent(
+        &pool,
+        agent.id,
+        "hook-timeout-agent",
+        db::AgentDefaults {
+            display_name: None,
+            domain: None,
+            default_backup_paths: &[],
+            default_exclude_patterns: &[],
+            default_pre_backup_commands: &commands,
+            default_post_backup_commands: &[],
+            default_file_change_patterns_raw: "",
+        },
+    )
+    .await
+    .unwrap();
+
+    let loaded = db::get_agent_by_id(&pool, agent.id).await.unwrap();
+    assert_eq!(loaded.default_pre_backup_commands.0, commands);
 }

@@ -11,8 +11,10 @@ import {
   startEditingSection,
 } from '../test-utils'
 import { apiClient } from '../api/client'
+import { hookCommand } from '../utils/hookCommands'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import type { AgentRow } from '../types/agent'
+import type { HookCommand } from '../types/generated'
 
 vi.mock('../api/client', () => ({
   apiClient: { put: vi.fn() },
@@ -23,7 +25,7 @@ const AGENT = {
   display_name: 'Web 01',
   default_backup_paths: ['/srv', '/etc'],
   default_exclude_patterns: ['*.cache'],
-  default_pre_backup_commands: ['systemctl stop app'],
+  default_pre_backup_commands: [hookCommand('systemctl stop app')],
   default_post_backup_commands: [],
   default_file_change_patterns_raw: '/data/wal/** ignore',
   is_imported: false,
@@ -70,14 +72,48 @@ describe('AgentDefaultsCard', () => {
 
   it('lists both hook command groups when both are configured', () => {
     const wrapper = mount({
-      agent: { ...AGENT, default_post_backup_commands: ['systemctl start app', 'notify-send ok'] },
+      agent: {
+        ...AGENT,
+        default_post_backup_commands: [
+          hookCommand('systemctl start app'),
+          hookCommand('notify-send ok'),
+        ],
+      },
     })
 
-    const commands = wrapper.findAll('code.path-item').map((c) => c.text())
+    const commands = wrapper
+      .findAllComponents({ name: 'ShellScript' })
+      .map((c) => c.props('source'))
     expect(commands).toContain('systemctl stop app')
     expect(commands).toContain('systemctl start app')
     expect(commands).toContain('notify-send ok')
     expect(wrapper.text()).not.toContain('None configured.')
+  })
+
+  // The reason the read-only block is a component and not an inline `<code>`:
+  // a hook command is a whole script, and the browser collapses its newlines
+  // and indentation when it is rendered inline.
+  it('keeps a multi-line command readable in the read-only view', () => {
+    const script = 'mountpoint -q /mnt/pve/x || exit 1\nvzdump --all 1'
+    const wrapper = mount({
+      agent: { ...AGENT, default_pre_backup_commands: [hookCommand(script)] },
+    })
+    expect(wrapper.findComponent({ name: 'ShellScript' }).text()).toBe(script)
+  })
+
+  // A command with no timeout of its own is not a command with no timeout, so
+  // the read-only view has to say which of the two it is.
+  it('names each command timeout, inherited or its own', () => {
+    const wrapper = mount({
+      agent: {
+        ...AGENT,
+        default_pre_backup_commands: [hookCommand('vzdump --all 1', 7200)],
+        default_post_backup_commands: [hookCommand('rm -f /tmp/dump')],
+      },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('Timeout: 7200s')
+    expect(text).toContain("Timeout: the schedule's hook command timeout")
   })
 
   it('shows the empty message when a group has no values at all', () => {
@@ -103,8 +139,8 @@ describe('AgentDefaultsCard', () => {
   // rather than seeding the command lists with undefined.
   it('starts editing with empty command lists when the fields are missing entirely', async () => {
     const agent = { ...AGENT }
-    delete (agent as { default_pre_backup_commands?: string[] }).default_pre_backup_commands
-    delete (agent as { default_post_backup_commands?: string[] }).default_post_backup_commands
+    delete (agent as { default_pre_backup_commands?: HookCommand[] }).default_pre_backup_commands
+    delete (agent as { default_post_backup_commands?: HookCommand[] }).default_post_backup_commands
     const wrapper = mount({ agent })
     await startEditingSection(wrapper)
 
@@ -120,7 +156,7 @@ describe('AgentDefaultsCard', () => {
     expect(wrapper.find<HTMLTextAreaElement>('#defaults-paths').element.value).toBe('/srv\n/etc')
     expect(wrapper.find<HTMLTextAreaElement>('#defaults-excludes').element.value).toBe('*.cache')
     const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
-    expect(editors[0].props('modelValue')).toEqual(['systemctl stop app'])
+    expect(editors[0].props('modelValue')).toEqual([hookCommand('systemctl stop app')])
     expect(editors[1].props('modelValue')).toEqual([])
     // Each command list still carries an accessible name, since swapping the
     // old single `<textarea id>` for a variable-length list of fields means
@@ -140,7 +176,7 @@ describe('AgentDefaultsCard', () => {
     await wrapper.find('#defaults-paths').setValue('/var\n/opt')
     await wrapper
       .findAllComponents({ name: 'CommandListEditor' })[1]
-      .vm.$emit('update:modelValue', ['systemctl start app'])
+      .vm.$emit('update:modelValue', [hookCommand('systemctl start app')])
     await clickSectionButton(wrapper, 'Save')
 
     expect(apiClient.put).toHaveBeenCalledTimes(1)
@@ -151,8 +187,8 @@ describe('AgentDefaultsCard', () => {
         domain: undefined,
         default_backup_paths: ['/var', '/opt'],
         default_exclude_patterns: ['*.cache'],
-        default_pre_backup_commands: ['systemctl stop app'],
-        default_post_backup_commands: ['systemctl start app'],
+        default_pre_backup_commands: [hookCommand('systemctl stop app')],
+        default_post_backup_commands: [hookCommand('systemctl start app')],
         default_file_change_patterns_raw: '/data/wal/** ignore',
       },
       { params: {} },
@@ -163,13 +199,13 @@ describe('AgentDefaultsCard', () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
     const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
-    await editors[0].vm.$emit('update:modelValue', ['pre-one', 'pre-two'])
-    await editors[1].vm.$emit('update:modelValue', ['post-one'])
+    await editors[0].vm.$emit('update:modelValue', [hookCommand('pre-one'), hookCommand('pre-two')])
+    await editors[1].vm.$emit('update:modelValue', [hookCommand('post-one')])
     await clickSectionButton(wrapper, 'Save')
 
     expect(vi.mocked(apiClient.put).mock.calls[0][1]).toMatchObject({
-      default_pre_backup_commands: ['pre-one', 'pre-two'],
-      default_post_backup_commands: ['post-one'],
+      default_pre_backup_commands: [hookCommand('pre-one'), hookCommand('pre-two')],
+      default_post_backup_commands: [hookCommand('post-one')],
     })
   })
 

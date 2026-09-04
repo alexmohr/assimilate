@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: sqlx::types::Json<Vec<String>>\", post_backup_commands AS \"post_backup_commands: sqlx::types::Json<Vec<String>>\", hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE id = $1",
+  "query": "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, hook_timeout_seconds, missed_backup_threshold) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, $21, $22) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
   "describe": {
     "columns": [
       {
@@ -100,12 +100,12 @@
       },
       {
         "ordinal": 19,
-        "name": "pre_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "pre_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
         "ordinal": 20,
-        "name": "post_backup_commands: sqlx::types::Json<Vec<String>>",
+        "name": "post_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
@@ -156,7 +156,28 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Text",
+        "Text",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Int4",
+        "Jsonb",
+        "Jsonb",
+        "Text",
+        "Int8",
+        "Int4",
+        "Int4"
       ]
     },
     "nullable": [
@@ -192,5 +213,5 @@
       null
     ]
   },
-  "hash": "0ee933e2935cea0c55e38eb026541d96051de7e5ef3133b9f91399195f2039cc"
+  "hash": "a0b8c59c30e7dcbc23698057afc9ea3273f019de5f0cb5dffb153a599cd3e537"
 }

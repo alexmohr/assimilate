@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref, watch } from 'vue'
 import { getRunEvents } from '../api/runs'
 import { formatBytes, formatDuration, relativeTime } from '../utils/format'
-import { normalizeBackupStatus } from '../utils/backupStatus'
+import { normalizeBackupStatus, reportMessageLabel } from '../utils/backupStatus'
 import { backupStatusBadgeClass } from '../utils/badge'
 import { logger } from '../utils/logger'
 import { useWebSocket } from '../composables/useWebSocket'
@@ -67,14 +67,13 @@ const hasDetail = computed(
  * Something to *read*, as opposed to `hasDetail`, which also counts a run
  * whose only detail is a power-management timeline. The preview rows offer a
  * jump straight to it; a row that would expand into "no power-management
- * activity for this run" is not worth a button there.
+ * activity for this run" is not worth a button there. Null when there is
+ * nothing to read, so the label is the predicate too.
+ *
+ * The rule lives in `backupStatus` because the schedule Overview's own
+ * preview rows have to reach the same verdict for the same run.
  */
-const hasMessage = computed(
-  () => warnings.value.length > 0 || (!!props.report.error_message && !isSuccess.value),
-)
-
-/** Names what the jump lands on, so it reads the same as the block it opens. */
-const messageLabel = computed(() => (warnings.value.length > 0 ? 'View warnings' : 'View error'))
+const messageLabel = computed(() => reportMessageLabel(props.report))
 
 const runEvents = ref<RunEventResponse[]>([])
 const loadingEvents = ref(false)
@@ -226,7 +225,7 @@ onMessage('RunEvent', (payload) => {
       broke and nothing on the row says why.
     -->
     <button
-      v-if="!showDetail && hasMessage"
+      v-if="!showDetail && messageLabel"
       class="btn btn-sm btn-ghost"
       type="button"
       title="Open this run on the Backups tab"

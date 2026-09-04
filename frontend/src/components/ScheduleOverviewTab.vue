@@ -10,7 +10,11 @@ import type { AgentRow } from '../types/agent'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import { computed } from 'vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
-import { normalizeBackupStatus, filterSettledReports } from '../utils/backupStatus'
+import {
+  normalizeBackupStatus,
+  filterSettledReports,
+  reportMessageLabel,
+} from '../utils/backupStatus'
 import { scheduleRunStatus } from '../utils/scheduleHealth'
 import { backupStatusBadgeClass } from '../utils/badge'
 import BackupProgressCard from './BackupProgressCard.vue'
@@ -103,11 +107,6 @@ const backupPreview = computed(() =>
     .slice(0, BACKUP_PREVIEW_COUNT),
 )
 
-/** Guarded like AgentBackupRow's: a report can reach the UI without them. */
-function warningsOf(r: ReportRow): readonly string[] {
-  return r.warnings ?? []
-}
-
 /**
  * The Backups tab lists archives, and builds them from exactly these runs -
  * so a preview row offers the jump only when the tab has somewhere to land.
@@ -115,21 +114,6 @@ function warningsOf(r: ReportRow): readonly string[] {
 function hasArchive(r: ReportRow): boolean {
   const status = normalizeBackupStatus(r.status)
   return !!r.archive_name && (status === 'success' || status === 'warning')
-}
-
-/**
- * Warnings or an error, i.e. output worth reading. It lives on the host's
- * own Backups tab, since this schedule's Backups tab is an archive browser
- * and a failed run has no archive to show there.
- */
-function hasMessage(r: ReportRow): boolean {
-  return (
-    warningsOf(r).length > 0 || (!!r.error_message && normalizeBackupStatus(r.status) !== 'success')
-  )
-}
-
-function messageLabel(r: ReportRow): string {
-  return warningsOf(r).length > 0 ? 'View warnings' : 'View error'
 }
 
 /**
@@ -316,16 +300,17 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
           <!--
             A run that broke is the reason someone opens this page, and the
             row itself has no room for the output - so it points at the host
-            row that renders it in full.
+            row that renders it in full. Same verdict, from the same shared
+            helper, as the host Overview's own rows reach for that run.
           -->
           <button
-            v-if="hasMessage(r)"
+            v-if="reportMessageLabel(r)"
             class="btn btn-sm btn-ghost"
             type="button"
             title="Open this run on the host's Backups tab"
             @click="emit('openReportDetail', r)"
           >
-            {{ messageLabel(r) }}
+            {{ reportMessageLabel(r) }}
           </button>
         </div>
       </div>

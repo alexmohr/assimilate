@@ -371,6 +371,24 @@ impl DomainXml {
         }
     }
 
+    /// Points `<nvram>` at the restored copy of the variables file. Its path is
+    /// element text rather than an attribute, so [`Self::repath`], which
+    /// matches a quoted value, cannot reach it. Leaving it alone would send the
+    /// restored machine at the original domain's variables, which is either
+    /// missing on this host or still in use by the domain it was copied from.
+    fn repath_nvram(&mut self, to: &str) {
+        let Some((head, rest)) = self.text.split_once("<nvram") else {
+            return;
+        };
+        let Some((attrs, rest)) = rest.split_once('>') else {
+            return;
+        };
+        let Some((_, tail)) = rest.split_once("</nvram>") else {
+            return;
+        };
+        self.text = format!("{head}<nvram{attrs}>{to}</nvram>{tail}");
+    }
+
     fn into_text(self) -> String {
         self.text
     }
@@ -658,9 +676,7 @@ impl VmStager {
                     action: format!("place {}", placed.display()),
                     source: e,
                 })?;
-            if let Some(old) = Self::nvram_path(&xml.text) {
-                xml.repath(&old, &placed.to_string_lossy());
-            }
+            xml.repath_nvram(&placed.to_string_lossy());
         }
 
         xml.replace_element("name", &request.name);
@@ -939,13 +955,7 @@ impl VmStager {
                 source,
             })?;
 
-        if let Some(nvram) = xml
-            .split_once("<nvram")
-            .and_then(|(_, rest)| rest.split_once('>'))
-            .and_then(|(_, rest)| rest.split_once("</nvram>"))
-            .map(|(path, _)| path.trim())
-            .filter(|path| !path.is_empty())
-        {
+        if let Some(nvram) = Self::nvram_path(&xml) {
             let source = PathBuf::from(nvram);
             if is_file(&source).await {
                 tokio::fs::copy(&source, dest.join("nvram.fd"))
@@ -2240,5 +2250,138 @@ mod tests {
         assert!(xml.contains("<name>assimilate-20260904T020000Z</name>"));
         assert!(xml.contains("<disk name=\"vda\" checkpoint=\"bitmap\"/>"));
         assert!(xml.contains("<disk name=\"vdb\" checkpoint=\"bitmap\"/>"));
+    }
+
+    #[tokio::test]
+    async fn a_domain_with_no_writable_disks_stages_only_its_definition() {
+        // A machine whose only device is a CD-ROM still has a definition worth
+        // keeping, so it is staged rather than failed or skipped.
+        let host = FakeHost::new().await;
+        append(&host.state().join("domains"), "iso-only\n").await;
+        append(&host.state().join("states"), "iso-only shut off\n").await;
+        tokio::fs::write(host.state().join("disks-iso-only"), "file cdrom sda -\n")
+            .await
+            .expect("disks");
+
+        let outcomes = host.stager(host.config()).stage_all().await;
+        let outcome = only(&outcomes);
+
+        assert_eq!(outcome.action, VmRunAction::Unchanged);
+        assert_eq!(outcome.mode, VmSnapshotMode::OfflineCopy);
+        assert_eq!(outcome.chain_length, 0);
+        assert!(outcome.error.is_none());
+        assert!(is_file(&host.staged("iso-only").join("domain.xml")).await);
+        assert_eq!(host.chain("iso-only").await, "");
+    }
+
+    #[tokio::test]
+    async fn a_uefi_domains_nvram_is_staged_beside_its_definition() {
+        // Without the variables file a restored UEFI machine boots to defaults
+        // and loses its boot entries, so it is staged with the images.
+        let host = FakeHost::new().await;
+        host.define("uefi01", "shut off", "uefi01.qcow2", 64).await;
+        let vars = host.root.path().join("images").join("uefi01_VARS.fd");
+        tokio::fs::write(&vars, vec![7u8; 2048])
+            .await
+            .expect("nvram");
+        tokio::fs::write(
+            host.state().join("nvram-uefi01"),
+            vars.to_string_lossy().as_bytes(),
+        )
+        .await
+        .expect("nvram pointer");
+
+        let outcomes = host.stager(host.config()).stage_all().await;
+
+        assert!(only(&outcomes).error.is_none());
+        let staged = host.staged("uefi01").join("nvram.fd");
+        assert!(is_file(&staged).await, "nvram staged");
+        assert_eq!(
+            tokio::fs::read(&staged).await.expect("read nvram"),
+            vec![7u8; 2048]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_uefi_domains_nvram_is_placed_and_repathed_on_restore() {
+        // The restored machine points at its own copy of the variables, not at
+        // the path the original domain used.
+        let host = FakeHost::new().await;
+        let source = restored_domain(&host, "vda vda.full.qcow2\n").await;
+        tokio::fs::write(source.join("nvram.fd"), vec![9u8; 1024])
+            .await
+            .expect("nvram");
+        let images = host.root.path().join("images-restored");
+
+        host.stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect("build");
+
+        let placed = images.join("web01-restored-nvram.fd");
+        assert!(is_file(&placed).await, "nvram placed");
+        let defined = tokio::fs::read_to_string(host.state().join("last-defined.xml"))
+            .await
+            .expect("definition");
+        assert!(defined.contains(&placed.to_string_lossy().into_owned()));
+        assert!(!defined.contains("/var/lib/libvirt/qemu/nvram/web01_VARS.fd"));
+    }
+
+    #[tokio::test]
+    async fn a_staged_domain_whose_chain_is_empty_is_refused() {
+        let host = FakeHost::new().await;
+        let source = restored_domain(&host, "vda vda.full.qcow2\n").await;
+        tokio::fs::write(source.join(CHAIN_FILE), "\n   \n")
+            .await
+            .expect("chain");
+
+        let error = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: host
+                    .root
+                    .path()
+                    .join("images-restored")
+                    .to_string_lossy()
+                    .into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect_err("no chain entries");
+
+        assert!(error.to_string().contains("chain.txt"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_disk_whose_base_image_is_missing_is_refused() {
+        let host = FakeHost::new().await;
+        let source = restored_domain(&host, "vda vda.full.qcow2\n").await;
+        tokio::fs::remove_file(source.join("vda.full.qcow2"))
+            .await
+            .expect("remove base");
+        let images = host.root.path().join("images-restored");
+
+        let error = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect_err("missing base image");
+
+        assert!(error.to_string().contains("missing"), "{error}");
+        // Refused before anything was placed, so a half-built domain is not
+        // left behind for the operator to clean up.
+        assert!(!is_file(&images.join("web01-restored-vda.qcow2")).await);
     }
 }

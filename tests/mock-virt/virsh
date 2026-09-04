@@ -38,7 +38,15 @@ case "$SUBCOMMAND" in
   dumpxml)
     domain="$1"
     [[ "$domain" == "--inactive" ]] && domain="$2"
-    printf '<domain type="kvm"><name>%s</name></domain>\n' "$domain"
+    # A UEFI domain carries an <nvram> element naming its variables file.
+    # Written by a test that puts the path in nvram-<domain>; a domain without
+    # that file dumps as a plain BIOS machine, which is the common case.
+    if [[ -f "$STATE/nvram-$domain" ]]; then
+      printf '<domain type="kvm"><name>%s</name><os><nvram>%s</nvram></os></domain>\n' \
+        "$domain" "$(cat "$STATE/nvram-$domain")"
+    else
+      printf '<domain type="kvm"><name>%s</name></domain>\n' "$domain"
+    fi
     ;;
 
   checkpoint-list)

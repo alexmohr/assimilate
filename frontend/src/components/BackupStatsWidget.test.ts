@@ -175,6 +175,30 @@ describe('BackupStatsWidget', () => {
     expect(failedTile.text()).toContain('2 reviewed')
   })
 
+  // A warned run is acknowledgeable, so the reset clears it - the panel has to
+  // account for it, or the button appears over a tile reading zero with
+  // nothing on screen explaining what it would mark reviewed.
+  it('names the warnings still awaiting review beside the failed count', async () => {
+    mockApi(
+      [
+        activityEntry(1, 'warning'),
+        activityEntry(2, 'warning'),
+        activityEntry(3, 'warning', true),
+        activityEntry(4, 'failed', true),
+        activityEntry(5, 'success'),
+      ],
+      2,
+    )
+    const wrapper = renderWithPlugins(BackupStatsWidget, { props: { repos: [] } })
+    await flushPromises()
+
+    const failedTile = wrapper.findAll('.mini-stat')[2]!
+    expect(failedTile.find('.stat-value').text()).toBe('0')
+    expect(failedTile.find('.stat-sub').text()).toContain('2 warned')
+    expect(failedTile.find('.stat-sub').text()).toContain('1 reviewed')
+    expect(wrapper.find('.stats-actions .btn').exists()).toBe(true)
+  })
+
   it('offers the reset only when the server says something is outstanding', async () => {
     mockApi([activityEntry(1, 'failed')], 0)
     const wrapper = renderWithPlugins(BackupStatsWidget, { props: { repos: [] } })

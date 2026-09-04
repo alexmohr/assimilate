@@ -35,7 +35,7 @@ Backup Stats summarises the runs in one window — 7, 14, 30, or 90 days — for
 
 ![Backup stats](assets/screenshots/dashboard-backup-stats.png)
 
-**Failed** counts only the failures nobody has reviewed yet — failed runs specifically, matching the Activity Log filter the tile links to; a run that merely warned is not counted here. Acknowledging a run — from the [Activity Log](activity.md#acknowledging-a-warning-or-failure), or in bulk from here — takes it out of that count; when the window holds runs that have been reviewed, the tile says how many under the number. Total, Success, and the average duration are history rather than a to-do list, so they keep counting every run either way.
+**Failed** counts only the failures nobody has reviewed yet — failed runs specifically, matching the Activity Log filter the tile links to. A run that merely warned is not counted in the number, but is still awaiting review and still cleared by the reset, so the line under the tile reports those too (`2 warned · 1 reviewed`). Acknowledging a run — from the [Activity Log](activity.md#acknowledging-a-warning-or-failure), or in bulk from here — takes it out of that count; when the window holds runs that have been reviewed, or warnings still awaiting review, the tile says how many under the number. Total, Success, and the average duration are history rather than a to-do list, so they keep counting every run either way.
 
 ### Resetting the failed count
 

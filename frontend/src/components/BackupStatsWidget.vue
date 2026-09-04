@@ -69,6 +69,22 @@ const failedCount = computed(
 const reviewedCount = computed(
   (): number => failedEntries.value.filter((e) => e.acknowledged).length,
 )
+// Warned runs are acknowledgeable too, so a reset clears them - and without
+// this the button could appear over a tile reading zero, with nothing on the
+// panel accounting for what it was about to mark reviewed.
+const warnedCount = computed(
+  (): number =>
+    entries.value.filter((e) => normalizeBackupStatus(e.status) === 'warning' && !e.acknowledged)
+      .length,
+)
+
+/** What the sub-line under the Failed tile has to say, if anything. */
+const failedSubLine = computed((): string => {
+  const parts: string[] = []
+  if (warnedCount.value > 0) parts.push(`${warnedCount.value} warned`)
+  if (reviewedCount.value > 0) parts.push(`${reviewedCount.value} reviewed`)
+  return parts.join(' \u00b7 ')
+})
 const successRate = computed((): number => {
   if (totalCount.value === 0) return 0
   return Math.round((successCount.value / totalCount.value) * 100)
@@ -192,10 +208,10 @@ function navigateToActivity(status?: string): void {
         </span>
         <span class="stat-label">Failed</span>
         <span
-          v-if="reviewedCount > 0"
+          v-if="failedSubLine"
           class="stat-sub"
         >
-          {{ reviewedCount }} reviewed
+          {{ failedSubLine }}
         </span>
       </div>
       <div class="mini-stat">

@@ -315,6 +315,48 @@ jobs:
       # nothing beyond in-memory state local to the run, so allowing it
       # trades no capability for removing another confirmed source of
       # wasted turns.
+      #
+      # The stdout-only shell filters (`cat`, `head`, `tail`, `wc`, `nl`,
+      # `cut`, `tr`, `ls`, `grep`, `sed -n`) are the same pattern a fourth
+      # time, and the reason they are here is the shape of the *pipeline*
+      # rather than any one command. Claude Code matches a Bash permission
+      # against every sub-command of a compound command separately, so
+      # `gh pr diff 469 | head -400` is only allowed if BOTH `gh pr diff`
+      # and `head` are listed - the `Bash(gh pr diff:*)` entry above covers
+      # the left-hand side alone. On a diff too large to take in one go,
+      # paging it is the first thing Claude reaches for, and every one of
+      # those attempts was denied. PR #469 (89 changed files, +7913/-386)
+      # burned 31 permission denials over 40 turns and ended `is_error:
+      # false` with no verdict, the same signature as #351, #399, #425 and
+      # #441 above.
+      #
+      # Only filters that write nothing and open no socket are listed, so
+      # `find`, `sed`, `sort -o`, `uniq`, `awk`, `tee`, `xargs`, `curl` and
+      # `wget` are all deliberately absent. Reading is already granted by
+      # `Read`/`Grep`/`Glob`, so this adds no capability over what the
+      # allowlist already permits - it only lets that capability be reached
+      # through a pipe.
+      #
+      # `sed` deserves its own note, because an earlier revision of this list
+      # tried to admit it as `Bash(sed -n:*)` on the theory that `-n` is a
+      # print-only mode. It is not, in two separate ways. A Bash permission
+      # matches a prefix of the literal command, so `sed -n -i '...' file`
+      # satisfies `Bash(sed -n:*)`; and GNU sed honours `-i` regardless of
+      # `-n`, since `-n` only suppresses the automatic print of pattern space
+      # and an explicit `p` still gets written back to the file. Verified: on
+      # GNU sed 4.9, `sed -n -i 's/.*/PWNED/p' file` replaces every line.
+      # A prefix allowlist cannot express "this flag and no other", so the
+      # only safe form of a command with a destructive flag is its absence.
+      #
+      # That is not a theoretical concern here. `.github/scripts/*.js` is
+      # sparse-checked-out from the default branch before the review runs and
+      # is still on disk, unrefreshed, when the later steps `require()` it
+      # under `actions/github-script@v7` with this workflow's own token
+      # (`pull-requests: write`, `issues: write`, `checks: write`). Any Bash
+      # command in this list that can write a file lets PR-supplied content -
+      # a diff, a title, a description, all attacker-controlled on a
+      # `pull_request_target` workflow - reach that token by rewriting a
+      # script this job is about to run. Nothing in this list may write.
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
@@ -335,7 +377,7 @@ jobs:
           allowed_bots: "github-actions"
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,TodoWrite"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(nl:*),Bash(cut:*),Bash(tr:*),Bash(ls:*),Bash(grep:*),mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,TodoWrite"
           prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.
@@ -386,6 +428,48 @@ jobs:
             after your verdict lands (squash-merging automatically once CI is green and every
             other gate is clear, but only for a real approval - never just because a label is
             present). Your job ends at submitting the verdict.
+
+      # Every round of the allowlist fix above had to guess which tool was
+      # being denied, because the action runs with `show_full_output` off
+      # (deliberately - this is a `pull_request_target` workflow) and the
+      # denials are only ever visible as a single `permission_denials_count`
+      # integer in the result message. The execution log the action writes
+      # has the actual entries, so print a per-tool tally of them: the next
+      # time a review ends with no verdict, the run log says which call it
+      # kept reaching for instead of leaving the next person to infer it.
+      # Tool names plus a 200-character sample of the input, not the model's
+      # prose, so this stays well short of turning full output back on.
+      # Never fails the job - a missing or unexpectedly shaped log is worth
+      # a line of output, not a red check.
+      - name: Summarize permission denials
+        if: always() && steps.precheck.outputs.run_claude == 'true'
+        env:
+          EXECUTION_LOG: ${{ runner.temp }}/claude-execution-output.json
+        run: |
+          if [ ! -f "$EXECUTION_LOG" ]; then
+            echo "No execution log at $EXECUTION_LOG - nothing to summarize."
+            exit 0
+          fi
+          # `permission_denials_count` is the one field here observed in a
+          # real run's log (PR #469 reported 31), so it is the honest total.
+          # The per-tool breakdown below reads a richer shape that this repo
+          # cannot verify, since it comes from the action's own log format.
+          # Printing the total first is what keeps an empty breakdown
+          # readable: total 0 means there were no denials, while a non-zero
+          # total with nothing under it means this query needs updating -
+          # which is the one thing a silent empty list could not tell anyone.
+          total=$(jq -r '
+            [.. | objects | .permission_denials_count? | numbers] | add // "unknown"
+          ' "$EXECUTION_LOG" 2>/dev/null || echo "unknown")
+          echo "Permission denials reported by the run: $total"
+          echo "Breakdown by tool (empty with a non-zero total above means this query is stale):"
+          jq -r '
+            [.. | objects | select(has("permission_denials")) | .permission_denials[]?]
+            | group_by(.tool_name)
+            | sort_by(-length)
+            | .[]
+            | "  \(length)x \(.[0].tool_name): \(.[0].tool_input | tostring | .[0:200])"
+          ' "$EXECUTION_LOG" || echo "  (could not parse $EXECUTION_LOG)"
 
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-

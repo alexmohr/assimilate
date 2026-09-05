@@ -1,0 +1,94 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, included, limit_bytes, state, mode, disk_count, disk_bytes, staged_bytes, chain_length, last_error, last_scanned_at, last_staged_at FROM agent_vms WHERE agent_id = $1 ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "included",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "limit_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "mode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "disk_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "disk_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "staged_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "chain_length",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "last_scanned_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_staged_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "bc2a63a52bbff3fae5837032b515809069d836b5c09120cece6167f15f5ca500"
+}

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+set -euo pipefail
+
+if [[ -n "${MOCK_VIRT_STATE:-}" ]]; then
+  printf 'qemu-img %s\n' "$*" >>"$MOCK_VIRT_STATE/calls.log"
+fi
+
+if [[ "${1:-}" == "info" ]]; then
+  image="${*: -1}"
+  case "$image" in
+    *.qcow2) printf 'image: %s\nfile format: qcow2\n' "$image" ;;
+    *) printf 'image: %s\nfile format: raw\n' "$image" ;;
+  esac
+  exit 0
+fi
+
+exit 0

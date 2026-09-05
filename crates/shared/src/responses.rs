@@ -13,6 +13,7 @@ use crate::{
         FindingStatus, IndexStatus, OnFailure, QuotaAction, RunEventTarget, RunEventType,
         ScheduleType, SearchEntry, Visibility,
     },
+    vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
 
 /// Default hook timeout for schedule exports predating the
@@ -236,6 +237,78 @@ pub struct AgentResponse {
     /// Power-management settings: waking this agent's host before a backup,
     /// and starting/stopping the agent process itself over SSH.
     pub power: AgentPowerSettingsResponse,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// A host's virtual-machine staging settings, and the domains its agent last
+/// reported.
+pub struct AgentVmSnapshotResponse {
+    /// The host's settings.
+    pub settings: AgentVmSnapshotSettingsResponse,
+    /// The domains of this host, by name.
+    pub vms: Vec<AgentVmResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// How a host stages its libvirt/QEMU domains before a backup. The settings
+/// belong to the host because the staging directory is shared by every
+/// schedule that targets it.
+pub struct AgentVmSnapshotSettingsResponse {
+    /// Whether this host stages its domains at all.
+    pub enabled: bool,
+    /// Absolute directory receiving one subdirectory per domain.
+    pub staging_dir: String,
+    /// Increments written before a new full image is taken.
+    pub full_interval: u32,
+    /// Seconds one domain's snapshot may take.
+    pub timeout_seconds: u32,
+    /// Bytes a domain may occupy unless it carries its own limit. Zero means
+    /// no limit.
+    #[ts(type = "number")]
+    pub default_limit_bytes: u64,
+    /// Which domains the per-domain flags select: every domain except the
+    /// ones turned off, or only the ones turned on.
+    pub selection: VmSelectionMode,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// One domain of a host: what the last scan saw, what the last run staged, and
+/// the settings the operator made.
+pub struct AgentVmResponse {
+    /// libvirt domain name, unique on its host.
+    pub name: String,
+    /// Whether the domain is staged at all.
+    pub included: bool,
+    /// The operator's own limit in bytes, or `None` when the domain inherits
+    /// the host's default.
+    #[ts(type = "number | null")]
+    pub limit_bytes: Option<u64>,
+    /// The limit that actually applies, in bytes. Zero means no limit.
+    #[ts(type = "number")]
+    pub effective_limit_bytes: u64,
+    /// Run state at the last scan.
+    pub state: VmState,
+    /// How this domain is captured.
+    pub mode: VmSnapshotMode,
+    /// Writable disks that would be staged.
+    pub disk_count: u32,
+    /// Space the domain's disks occupy on the host.
+    #[ts(type = "number")]
+    pub disk_bytes: u64,
+    /// Space the domain occupies below the staging directory.
+    #[ts(type = "number")]
+    pub staged_bytes: u64,
+    /// Increments in the chain after the last run.
+    pub chain_length: u32,
+    /// Why the last run failed for this domain, when it did.
+    pub last_error: Option<String>,
+    /// When the host last reported this domain.
+    pub last_scanned_at: Option<DateTime<Utc>>,
+    /// When a run last staged this domain.
+    pub last_staged_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -627,6 +700,10 @@ pub struct ScheduleResponse {
     pub enabled: bool,
     /// Whether canary deployments are enabled.
     pub canary_enabled: bool,
+    /// Whether this schedule stages the host's virtual machines before backing
+    /// up. Requires the host itself to have staging enabled.
+    #[serde(default)]
+    pub vm_snapshot_enabled: bool,
     /// Timestamp of when the last run occurred.
     pub last_run_at: Option<DateTime<Utc>>,
     /// Timestamp of when the next run occurred.
@@ -2150,6 +2227,10 @@ pub struct ScheduleExportResponse {
     pub enabled: bool,
     /// Whether canary deployments are enabled.
     pub canary_enabled: bool,
+    /// Whether this schedule stages the host's virtual machines before backing
+    /// up. Requires the host itself to have staging enabled.
+    #[serde(default)]
+    pub vm_snapshot_enabled: bool,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,

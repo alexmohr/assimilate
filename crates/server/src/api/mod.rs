@@ -65,3 +65,5 @@ pub mod totp;
 pub mod tunnels;
 /// User management endpoints.
 pub mod users;
+/// Virtual-machine staging settings and domains for a host.
+pub mod vms;

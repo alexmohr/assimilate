@@ -21,6 +21,7 @@ use server::{
 use shared::{
     hooks::HookCommand,
     types::{AcknowledgedFilter, QuotaAction, SystemEventType},
+    vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
 use sqlx::PgPool;
 
@@ -897,6 +898,7 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -951,6 +953,7 @@ async fn schedule_update(pool: PgPool) {
             cron_expression: "0 6 * * *",
             enabled: false,
             canary_enabled: true,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "*.cache",
             file_change_patterns_raw: "",
             ignore_global_excludes: true,
@@ -1091,6 +1094,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -1125,6 +1129,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             cron_expression: "0 5 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -1475,6 +1480,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: raw,
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -1555,6 +1561,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "# logs\n*.log\n\n*.tmp",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -1647,6 +1654,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "*/schedule-specific* ignore",
             ignore_global_excludes: false,
@@ -2821,6 +2829,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -2923,6 +2932,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -2959,6 +2969,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             cron_expression: "0 5 * * *",
             enabled: false,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -5767,6 +5778,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -7044,6 +7056,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -7262,6 +7275,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -7518,6 +7532,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             cron_expression: "0 3 * * 0",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -8538,6 +8553,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             cron_expression: "0 4 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -10816,6 +10832,7 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
+            vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
@@ -10887,4 +10904,266 @@ async fn agent_default_hook_commands_round_trip_their_timeouts(pool: PgPool) {
 
     let loaded = db::get_agent_by_id(&pool, agent.id).await.unwrap();
     assert_eq!(loaded.default_pre_backup_commands.0, commands);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn vm_selection_defaults_to_staging_every_domain(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-default", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let config = db::vms::load_config(&pool, agent.id).await.unwrap();
+
+    assert_eq!(config.selection, VmSelectionMode::All);
+    assert!(
+        config.includes("anything"),
+        "a host nobody has configured backs its machines up"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn vm_selection_survives_a_round_trip(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-selection", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let stored = db::vms::update_agent_vm_snapshot(
+        &pool,
+        agent.id,
+        db::vms::VmSnapshotPatch {
+            enabled: true,
+            dir: "/srv/vm",
+            full_interval: 7,
+            timeout_seconds: 1800,
+            default_limit_bytes: 0,
+            selection: VmSelectionMode::Selected,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(stored.vm_snapshot_selection, "selected");
+    assert_eq!(
+        db::vms::load_config(&pool, agent.id)
+            .await
+            .unwrap()
+            .selection,
+        VmSelectionMode::Selected
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_scanned_domain_carries_no_decision_until_someone_makes_one(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-undecided", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::vms::record_scan(&pool, agent.id, &[discovered("web01")])
+        .await
+        .unwrap();
+
+    let config = db::vms::load_config(&pool, agent.id).await.unwrap();
+    let domain = config
+        .domains
+        .iter()
+        .find(|candidate| candidate.name == "web01")
+        .expect("the scan stored the domain");
+    assert_eq!(
+        domain.included, None,
+        "a scan reports what is on the host, it does not decide what to back up"
+    );
+
+    // The same stored row reads both ways, which is the whole point of
+    // keeping "undecided" distinct from "included".
+    assert!(config.includes("web01"));
+    let selected = VmSnapshotConfig {
+        selection: VmSelectionMode::Selected,
+        ..config
+    };
+    assert!(!selected.includes("web01"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_rescan_forgets_domains_nobody_decided_about_and_keeps_the_rest(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-rescan", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::vms::record_scan(
+        &pool,
+        agent.id,
+        &[
+            discovered("untouched"),
+            discovered("picked"),
+            discovered("refused"),
+            discovered("limited"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    db::vms::set_vm_settings(&pool, agent.id, "picked", Some(true), None)
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "refused", Some(false), None)
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "limited", Some(true), Some(4096))
+        .await
+        .unwrap();
+
+    // Every domain is gone from the host now.
+    db::vms::record_scan(&pool, agent.id, &[]).await.unwrap();
+
+    let names: Vec<String> = db::vms::list_agent_vms(&pool, agent.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.name)
+        .collect();
+
+    assert!(
+        !names.contains(&"untouched".to_owned()),
+        "a row a rescan can rebuild from scratch is not worth keeping"
+    );
+    for kept in ["picked", "refused", "limited"] {
+        assert!(
+            names.contains(&kept.to_owned()),
+            "{kept} carries a decision that must outlive the domain"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_rescan_keeps_a_selection_that_the_old_prune_would_have_dropped(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-selected-prune", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::vms::update_agent_vm_snapshot(
+        &pool,
+        agent.id,
+        db::vms::VmSnapshotPatch {
+            enabled: true,
+            dir: "/srv/vm",
+            full_interval: 7,
+            timeout_seconds: 1800,
+            default_limit_bytes: 0,
+            selection: VmSelectionMode::Selected,
+        },
+    )
+    .await
+    .unwrap();
+    db::vms::record_scan(&pool, agent.id, &[discovered("picked")])
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "picked", Some(true), None)
+        .await
+        .unwrap();
+
+    // The domain disappears for a reboot and comes back.
+    db::vms::record_scan(&pool, agent.id, &[]).await.unwrap();
+    db::vms::record_scan(&pool, agent.id, &[discovered("picked")])
+        .await
+        .unwrap();
+
+    assert!(
+        db::vms::load_config(&pool, agent.id)
+            .await
+            .unwrap()
+            .includes("picked"),
+        "an opt-in selection must survive the domain vanishing from a scan"
+    );
+}
+
+/// Setting only a limit must not decide whether a domain is staged. The UI
+/// sends the resolved include flag it is displaying, and under `selected` the
+/// resolved value for an undecided domain would otherwise write an opt-in
+/// that nobody asked for - a budget is a cap, not consent.
+#[sqlx::test(migrations = "./migrations")]
+async fn setting_a_limit_leaves_an_undecided_domain_undecided(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-limit", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    db::vms::record_scan(&pool, agent.id, &[discovered("undecided")])
+        .await
+        .unwrap();
+
+    let row = db::vms::set_vm_settings(&pool, agent.id, "undecided", None, Some(4096))
+        .await
+        .unwrap();
+    assert_eq!(
+        row.included, None,
+        "a limit-only edit must leave the domain undecided"
+    );
+    assert_eq!(
+        row.limit_bytes,
+        Some(4096),
+        "the limit must still be stored"
+    );
+
+    db::vms::update_agent_vm_snapshot(
+        &pool,
+        agent.id,
+        db::vms::VmSnapshotPatch {
+            enabled: true,
+            dir: "/srv/vm",
+            full_interval: 7,
+            timeout_seconds: 1800,
+            default_limit_bytes: 0,
+            selection: VmSelectionMode::Selected,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !db::vms::load_config(&pool, agent.id)
+            .await
+            .unwrap()
+            .includes("undecided"),
+        "giving a domain a budget must not opt it into an opt-in host"
+    );
+}
+
+/// The other direction: an explicit decision survives a later limit-only
+/// edit, so preserving the undecided state has not made the flag unwritable.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_limit_edit_preserves_an_explicit_decision(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-limit-keep", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    db::vms::record_scan(
+        &pool,
+        agent.id,
+        &[discovered("kept"), discovered("dropped")],
+    )
+    .await
+    .unwrap();
+
+    db::vms::set_vm_settings(&pool, agent.id, "kept", Some(true), None)
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "dropped", Some(false), None)
+        .await
+        .unwrap();
+
+    let kept = db::vms::set_vm_settings(&pool, agent.id, "kept", None, Some(8192))
+        .await
+        .unwrap();
+    let dropped = db::vms::set_vm_settings(&pool, agent.id, "dropped", None, Some(8192))
+        .await
+        .unwrap();
+
+    assert_eq!(kept.included, Some(true), "an opt-in must survive");
+    assert_eq!(dropped.included, Some(false), "an opt-out must survive");
+}
+
+fn discovered(name: &str) -> DiscoveredVm {
+    DiscoveredVm {
+        name: name.to_owned(),
+        state: VmState::Running,
+        mode: VmSnapshotMode::Incremental,
+        disk_count: 1,
+        disk_bytes: 1024,
+    }
 }

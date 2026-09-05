@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+set -euo pipefail
+
+STATE="${MOCK_VIRT_STATE:?MOCK_VIRT_STATE must point at a mock state directory}"
+mkdir -p "$STATE"
+printf 'virsh %s\n' "$*" >>"$STATE/calls.log"
+
+SUBCOMMAND="${1:-}"
+shift || true
+
+case "$SUBCOMMAND" in
+  help)
+    if [[ "${MOCK_VIRT_NO_BACKUP_BEGIN:-0}" == "1" && "${1:-}" == "backup-begin" ]]; then
+      printf 'error: command not found: %s\n' "${1:-}" >&2
+      exit 1
+    fi
+    ;;
+
+  list)
+    cat "$STATE/domains"
+    ;;
+
+  domstate)
+    sed -n "s/^$1 //p" "$STATE/states"
+    ;;
+
+  domblklist)
+    # Called as: domblklist --details <domain>
+    printf ' Type   Device   Target   Source\n'
+    printf ' ----------------------------------\n'
+    while read -r disk_type disk_device disk_target disk_source; do
+      printf ' %s   %s   %s   %s\n' "$disk_type" "$disk_device" "$disk_target" "$disk_source"
+    done <"$STATE/disks-$2"
+    ;;
+
+  dumpxml)
+    domain="$1"
+    [[ "$domain" == "--inactive" ]] && domain="$2"
+    # A UEFI domain carries an <nvram> element naming its variables file.
+    # Written by a test that puts the path in nvram-<domain>; a domain without
+    # that file dumps as a plain BIOS machine, which is the common case.
+    if [[ -f "$STATE/nvram-$domain" ]]; then
+      printf '<domain type="kvm"><name>%s</name><os><nvram>%s</nvram></os></domain>\n' \
+        "$domain" "$(cat "$STATE/nvram-$domain")"
+    else
+      printf '<domain type="kvm"><name>%s</name></domain>\n' "$domain"
+    fi
+    ;;
+
+  checkpoint-list)
+    # Called as: checkpoint-list <domain> --name
+    touch "$STATE/checkpoints-$1"
+    cat "$STATE/checkpoints-$1"
+    ;;
+
+  checkpoint-delete)
+    touch "$STATE/checkpoints-$1"
+    grep -v "^$2\$" "$STATE/checkpoints-$1" >"$STATE/checkpoints-$1.tmp" || true
+    mv "$STATE/checkpoints-$1.tmp" "$STATE/checkpoints-$1"
+    ;;
+
+  backup-begin)
+    # Called as: backup-begin <domain> <backup xml> <checkpoint xml>
+    domain="$1"
+    cp "$2" "$STATE/last-backup-$domain.xml"
+    cp "$3" "$STATE/last-checkpoint-$domain.xml"
+    if [[ "${MOCK_VIRT_FAIL_BACKUP:-0}" == "1" ]]; then
+      printf 'error: unsupported configuration: incremental backup is not supported\n' >&2
+      exit 1
+    fi
+    while read -r target_file; do
+      dd if=/dev/zero of="$target_file" bs=1024 count="${MOCK_VIRT_BACKUP_KIB:-4}" status=none
+    done < <(sed -n 's:.*<target file="\([^"]*\)".*:\1:p' "$2")
+    sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$3" >>"$STATE/checkpoints-$domain"
+    ;;
+
+  domjobinfo)
+    if [[ "${2:-}" == "--completed" ]]; then
+      if [[ "${MOCK_VIRT_JOB_FAILED:-0}" == "1" ]]; then
+        printf 'Job type:         Failed\n'
+      else
+        printf 'Job type:         Completed\nOperation:        Backup\n'
+      fi
+    else
+      printf 'Job type:         None\n'
+    fi
+    ;;
+
+  domjobabort) ;;
+
+  snapshot-create-as)
+    # Called as: snapshot-create-as --domain <domain> --name <name> ...
+    domain="$2"
+    snapshot="$4"
+    if [[ "${MOCK_VIRT_NO_QUIESCE:-0}" == "1" && "$*" == *--quiesce* ]]; then
+      printf 'error: Guest agent is not responding\n' >&2
+      exit 1
+    fi
+    while read -r _ _ _ disk_source; do
+      printf 'mock overlay\n' >"$disk_source.$snapshot"
+    done <"$STATE/disks-$domain"
+    ;;
+
+  define)
+    if [[ "${MOCK_VIRT_FAIL_DEFINE:-0}" == "1" ]]; then
+      printf 'error: Failed to define domain from %s\n' "${1:-}" >&2
+      exit 1
+    fi
+    # Kept so a test can assert what the definition was rewritten to.
+    cp "${1:-}" "$STATE/last-defined.xml" 2>/dev/null || true
+    printf 'Domain defined from %s\n' "${1:-}"
+    ;;
+
+  start)
+    if [[ "${MOCK_VIRT_FAIL_START:-0}" == "1" ]]; then
+      printf 'error: Failed to start domain %s\n' "${1:-}" >&2
+      exit 1
+    fi
+    printf 'Domain %s started\n' "${1:-}"
+    ;;
+
+  blockcommit)
+    if [[ "${MOCK_VIRT_FAIL_COMMIT:-0}" == "1" ]]; then
+      printf 'error: block commit failed\n' >&2
+      exit 1
+    fi
+    ;;
+
+  *)
+    printf 'mock virsh: unhandled subcommand %s\n' "$SUBCOMMAND" >&2
+    exit 1
+    ;;
+esac

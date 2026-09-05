@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agents SET vm_snapshot_enabled = $2, vm_snapshot_dir = $3, vm_snapshot_full_interval = $4, vm_snapshot_timeout_seconds = $5, vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = $7 WHERE id = $1 RETURNING vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "vm_snapshot_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "vm_snapshot_dir",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "vm_snapshot_full_interval",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "vm_snapshot_timeout_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "vm_snapshot_default_limit_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "vm_snapshot_selection",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool",
+        "Text",
+        "Int4",
+        "Int4",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3d0cf004db72c4c044c6eda6339fbb5265f7a4411d2972e4688085980290cfcd"
+}

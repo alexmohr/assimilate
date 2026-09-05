@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
   "describe": {
     "columns": [
       {
@@ -40,130 +40,134 @@
       },
       {
         "ordinal": 7,
+        "name": "vm_snapshot_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
         "name": "last_run_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "next_run_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "exclude_patterns_raw",
         "type_info": "Text"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "file_change_patterns_raw",
         "type_info": "Text"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "ignore_global_excludes",
         "type_info": "Bool"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "keep_hourly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "keep_daily",
         "type_info": "Int4"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "keep_weekly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "keep_monthly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "keep_yearly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 17,
+        "ordinal": 18,
         "name": "compact_enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 18,
+        "ordinal": 19,
         "name": "rate_limit_kbps",
         "type_info": "Int4"
       },
       {
-        "ordinal": 19,
+        "ordinal": 20,
         "name": "pre_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 20,
+        "ordinal": 21,
         "name": "post_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
         "name": "hook_timeout_seconds",
         "type_info": "Int4"
       },
       {
-        "ordinal": 22,
+        "ordinal": 23,
         "name": "missed_backup_threshold",
         "type_info": "Int4"
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "execution_mode",
         "type_info": "Text"
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "on_failure",
         "type_info": "Text"
       },
       {
-        "ordinal": 25,
+        "ordinal": 26,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 26,
+        "ordinal": 27,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Int8",
-        "Text"
+        "Int8"
       ]
     },
     "nullable": [
       false,
       true,
+      false,
       false,
       false,
       false,
@@ -194,5 +198,5 @@
       null
     ]
   },
-  "hash": "cd7522b15330e351ada044981680e7c87beda2e79406f98f1b5da8629bc92c72"
+  "hash": "aca352862152d8ba88c2e8310b888683048722096cf7736d0eee9556a3d2459e"
 }

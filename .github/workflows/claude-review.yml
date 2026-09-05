@@ -325,6 +325,14 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # The primary path into this workflow is the `needs-review`
+          # repository_dispatch that sync-pr-labels.js fires under
+          # GITHUB_TOKEN, so the actor is github-actions[bot] and the action
+          # refuses to run without this ("Workflow initiated by non-human
+          # actor"). Named rather than `*`: the only bot that reaches here is
+          # this repository's own automation, and the gate job above already
+          # decides which events are allowed to start the job at all.
+          allowed_bots: "github-actions"
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,TodoWrite"

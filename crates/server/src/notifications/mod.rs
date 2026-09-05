@@ -597,9 +597,9 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
                 .and_then(serde_json::Value::as_str);
             if let Some(name) = archive_name {
                 let encoded = name.replace(':', "%3A").replace(' ', "%20");
-                format!("/agents/{hostname}?tab=backups&archive={encoded}")
+                format!("/agents/{hostname}?tab=logs&archive={encoded}")
             } else {
-                format!("/agents/{hostname}?tab=backups")
+                format!("/agents/{hostname}?tab=logs")
             }
         } else {
             format!("/agents/{hostname}")
@@ -909,17 +909,17 @@ mod tests {
         }));
         assert_eq!(
             build_push_url(&p),
-            "/agents/myhost?tab=backups&archive=myhost-2026-06-03T12%3A30%3A00.000000"
+            "/agents/myhost?tab=logs&archive=myhost-2026-06-03T12%3A30%3A00.000000"
         );
     }
 
     #[test]
-    fn backup_warning_without_archive_name_goes_to_backups_tab() {
+    fn backup_warning_without_archive_name_goes_to_logs_tab() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",
             "hostname": "myhost",
         }));
-        assert_eq!(build_push_url(&p), "/agents/myhost?tab=backups");
+        assert_eq!(build_push_url(&p), "/agents/myhost?tab=logs");
     }
 
     #[test]
@@ -931,17 +931,17 @@ mod tests {
         }));
         assert_eq!(
             build_push_url(&p),
-            "/agents/myhost?tab=backups&archive=myhost-2026-06-03T08%3A00%3A00.000000"
+            "/agents/myhost?tab=logs&archive=myhost-2026-06-03T08%3A00%3A00.000000"
         );
     }
 
     #[test]
-    fn backup_failed_without_archive_name_goes_to_backups_tab() {
+    fn backup_failed_without_archive_name_goes_to_logs_tab() {
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
             "hostname": "myhost",
         }));
-        assert_eq!(build_push_url(&p), "/agents/myhost?tab=backups");
+        assert_eq!(build_push_url(&p), "/agents/myhost?tab=logs");
     }
 
     #[test]
@@ -998,7 +998,7 @@ mod tests {
         }));
         assert_eq!(
             build_push_url(&p),
-            "/agents/myhost?tab=backups&archive=my%20host%20archive"
+            "/agents/myhost?tab=logs&archive=my%20host%20archive"
         );
     }
 

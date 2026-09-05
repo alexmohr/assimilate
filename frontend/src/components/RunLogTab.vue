@@ -12,8 +12,22 @@ import type { ReportRow } from '../types/report'
 
 export type BackupFilter = 'all' | 'success' | 'warning' | 'failed'
 
+/**
+ * The run log: every backup run regardless of status, one line each, with
+ * expandable detail for a warned or failed one - what used to be an agent's
+ * "Backups" tab, now shared with a schedule's "Logs" tab too, since neither
+ * page's log view was ever agent-specific.
+ *
+ * `reports` is only the rows loaded so far - the server has always capped a
+ * bare fetch, and `total` is how the caller says whether "Load more" has
+ * anything left to fetch. The status counts above the rows are therefore
+ * counts of what's loaded, not of `total`; a filter can undercount until
+ * every page is in.
+ */
 const props = defineProps<{
   reports: readonly ReportRow[]
+  total: number
+  loadingMore: boolean
   filter: BackupFilter
   sortAscending: boolean
   expandedReportId: number | null
@@ -26,7 +40,10 @@ const emit = defineEmits<{
   'update:sortAscending': [value: boolean]
   toggle: [report: ReportRow]
   open: [report: ReportRow]
+  loadMore: []
 }>()
+
+const hasMore = computed(() => props.reports.length < props.total)
 
 function countOf(status: BackupFilter): number {
   if (status === 'all') return props.reports.length
@@ -99,6 +116,22 @@ const visible = computed(() => {
         @open="emit('open', r)"
       />
     </div>
+
+    <div
+      v-if="reports.length > 0"
+      class="load-more-row"
+    >
+      <button
+        v-if="hasMore"
+        class="btn btn-sm btn-ghost"
+        type="button"
+        :disabled="loadingMore"
+        @click="emit('loadMore')"
+      >
+        {{ loadingMore ? 'Loading...' : `Load ${Math.min(50, total - reports.length)} more` }}
+      </button>
+      <span class="load-more-note">Showing {{ reports.length }} of {{ total }} runs</span>
+    </div>
   </div>
 </template>
 
@@ -115,5 +148,16 @@ const visible = computed(() => {
 
 .backups-sort {
   margin-left: auto;
+}
+
+.load-more-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.load-more-note {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
 }
 </style>

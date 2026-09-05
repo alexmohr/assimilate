@@ -11,6 +11,18 @@ async function openFirstSchedule(page: Page): Promise<string> {
   return '1'
 }
 
+// Shared by both Run-now toast tests below, which don't care about report
+// content - only that Run now (not Cancel backup) is the visible action.
+async function mockEmptyReports(page: Page, id: string): Promise<void> {
+  await page.route(`**/api/schedules/${id}/reports**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ reports: [], total: 0 }),
+    }),
+  )
+}
+
 // Minimal report row that satisfies the view's status checks.
 function makeReport(status: 'started' | 'pending' | 'success' | 'cancelled'): object {
   return {
@@ -43,7 +55,7 @@ test('cancel button is shown when a backup is in progress', async ({ page }) => 
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify([makeReport('started')]),
+      body: JSON.stringify({ reports: [makeReport('started')], total: 1 }),
     }),
   )
   await page.reload()
@@ -61,7 +73,7 @@ test('clicking cancel sends the request and shows a toast', async ({ page }) => 
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify([makeReport('started')]),
+      body: JSON.stringify({ reports: [makeReport('started')], total: 1 }),
     }),
   )
   await page.reload()
@@ -80,8 +92,12 @@ test('after cancel the Run now button is restored on next report poll', async ({
   // Return a started report until isCancelled flips (avoids race with WS DataChanged).
   let isCancelled = false
   await page.route(`**/api/schedules/${id}/reports**`, (route) => {
-    const body = isCancelled ? [makeReport('cancelled')] : [makeReport('started')]
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    const reports = isCancelled ? [makeReport('cancelled')] : [makeReport('started')]
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ reports, total: reports.length }),
+    })
   })
   // Mock the cancel endpoint - schedule 1 has no real running backup.
   await page.route(`**/api/schedules/${id}/cancel`, (route) =>
@@ -106,9 +122,7 @@ test('Run now shows a success toast when the API accepts the request', async ({ 
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
 
-  await page.route(`**/api/schedules/${id}/reports**`, (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
+  await mockEmptyReports(page, id)
   await page.route(`**/api/schedules/${id}/run`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
   )
@@ -125,9 +139,7 @@ test('Run now shows an error toast when the API rejects the request', async ({ p
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
 
-  await page.route(`**/api/schedules/${id}/reports**`, (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
+  await mockEmptyReports(page, id)
   await page.route(`**/api/schedules/${id}/run`, (route) =>
     route.fulfill({
       status: 409,

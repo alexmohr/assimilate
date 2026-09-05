@@ -925,6 +925,27 @@ if [ -z "$DB01_REVIEWED_REPORT_ID" ]; then
 fi
 api POST "/api/stats/activity/$DB01_REVIEWED_REPORT_ID/acknowledge" > /dev/null
 
+echo "==> Backfilling db-server-01's hourly run history past the first Logs page..."
+# The Agent detail Logs tab paginates 50 runs at a time with a "Load more"
+# button - db-server-01 is the one host whose real hourly cron would
+# eventually produce that many runs, but the demo container is nowhere near
+# old enough for the scheduler to have actually ticked that often. Backfill
+# the history directly so the Logs tab's pagination has more than one page
+# to show. archive_name stays NULL for the same reason as the incident rows
+# above: it lets these survive if the repo is ever resynced.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status)
+SELECT $DB01_ID, $REPO_HOURLY_ID, s.id,
+       NOW() - (n || ' hours')::interval - interval '3 minutes',
+       NOW() - (n || ' hours')::interval,
+       'success'
+FROM generate_series(10, 65) AS n
+CROSS JOIN LATERAL (
+    SELECT id FROM schedules WHERE repo_id = $REPO_HOURLY_ID ORDER BY id LIMIT 1
+) s;
+SQL
+
 echo "==> Seeding a cancelled run on web-server-01..."
 # Feeds the Schedules view's run-history strip: a cancelled run must render
 # distinctly from a failed one (a muted, non-alarming bar) rather than

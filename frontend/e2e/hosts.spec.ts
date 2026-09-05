@@ -105,7 +105,7 @@ test.describe('Hosts management', () => {
     await failedChip.click()
     await page.waitForLoadState('networkidle')
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=backups&status=failed/)
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=logs&status=failed/)
   })
 
   test('two hosts can share a hostname as long as their domains differ', async ({ page }) => {

@@ -364,11 +364,14 @@ async function toggleRow(row: ActivityEntry): Promise<void> {
   expandedDetail.value = null
   expandedLoading.value = true
   try {
-    const res = await listAgentReports(row.hostname, { limit: 100, target: row.target_name })
-    const match = res.find(
+    const { reports } = await listAgentReports(row.hostname, {
+      limit: 100,
+      target: row.target_name,
+    })
+    const match = reports.find(
       (r) => r.started_at === row.started_at || r.duration_secs === row.duration_secs,
     )
-    expandedDetail.value = match ?? res[0] ?? null
+    expandedDetail.value = match ?? reports[0] ?? null
   } finally {
     expandedLoading.value = false
   }

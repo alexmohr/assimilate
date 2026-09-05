@@ -197,7 +197,7 @@ While a backup is running for an agent, its card on the Agents list shows a **Ru
 
 ## Agent Detail View
 
-The agent detail page opens on a persistent header — hostname, connection status, and a meta strip carrying the agent version, revision, build time, registration date and last-seen time — followed by four tabs.
+The agent detail page opens on a persistent header — hostname, connection status, and a meta strip carrying the agent version, revision, build time, registration date and last-seen time — followed by five tabs.
 
 ![Agent Detail](assets/screenshots/host-detail.png)
 
@@ -235,11 +235,19 @@ When every failure in the window is consecutive, the tile adds an **Incident** c
 !!! note
     Fleet-wide success *rates* over a selectable window live on the [Dashboard](dashboard.md), where every agent shares one window and the comparison is meaningful.
 
-### Schedules and Backups
+### Schedules
 
-Both tabs render one line per entry: a status stripe, a name, a time, and stats aligned to the right. Schedule rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets. Backup rows link to their archive whenever the run produced one — including a run that finished with warnings — and a warned or failed run also expands its warning or error output in place.
+The Schedules tab renders one line per schedule that targets this agent: a status stripe, a name, a time, and stats aligned to the right. Rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets.
 
-Each tab label carries a count, including zero.
+The tab label carries a count, including zero.
+
+### Backups
+
+The Backups tab is the archive browser: one section per repository this agent backs up to, each the same archive list and file browser the [repository](archives.md) and [schedule](scheduling.md#backups-tab) Backups tabs render, pre-filtered to this agent's own archives. Select an archive to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories.
+
+### Logs Tab
+
+The Logs tab is the flat run history — every backup this agent has attempted, any status, oldest failures included, one line each: a status stripe, the target repository and schedule, and stats aligned to the right. A run that produced an archive links straight to it in the Backups tab; a warned or failed run expands its warning or error output in place. The tab label carries the true total, and the list itself loads the 50 most recent runs at a time, with a **Load N more** button for the rest rather than silently stopping at that first page.
 
 A failed run usually produced no borg archive, so there is nothing on disk to lose by clearing its history — and the rare failed run that did produce one (e.g. a prune or post-backup hook failing after a successful `borg create`) is left alone rather than deleted. When there are one or more archive-less failed runs, an admin can clear them via **Clean up failed backups (N)** in the header's overflow menu; it deletes every such failed report for this agent after a confirmation dialog. This is a manual, on-demand action for this agent alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* agent automatically by age.
 

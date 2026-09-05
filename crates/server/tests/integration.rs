@@ -7094,10 +7094,12 @@ async fn test_delete_failed_reports_removes_only_failed_agent_reports() {
     let remaining: Value =
         serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let statuses: Vec<&str> = remaining
+        .get("reports")
+        .unwrap()
         .as_array()
         .unwrap()
         .iter()
-        .map(|r| r["status"].as_str().unwrap())
+        .map(|r| r.get("status").unwrap().as_str().unwrap())
         .collect();
     assert_eq!(statuses, vec!["success"]);
 }
@@ -7274,7 +7276,7 @@ async fn test_failed_report_count_is_not_bounded_by_the_report_list_limit() {
     let resp = oneshot(&mut app, req).await;
     let list: Value =
         serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list.get("reports").unwrap().as_array().unwrap().len(), 1);
 
     let req = get_request("/api/agents/count-unbounded-host/reports/failed/count");
     let resp = oneshot(&mut app, req).await;

@@ -7,7 +7,8 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::responses::{
-    DeleteFailedReportsResponse, FailedReportCountResponse, ReportResponse, RunEventResponse,
+    DeleteFailedReportsResponse, FailedReportCountResponse, ReportListResponse, ReportResponse,
+    RunEventResponse,
 };
 use tracing::warn;
 
@@ -51,33 +52,36 @@ mod tests {
     #[test]
     fn row_to_report_response_parses_valid_status() {
         let row = make_row("success");
-        let resp = row_to_report_response(row, "myhost".to_owned());
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, BackupStatus::Success);
     }
 
     #[test]
     fn row_to_report_response_parses_failed_status() {
         let row = make_row("failed");
-        let resp = row_to_report_response(row, "myhost".to_owned());
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, BackupStatus::Failed);
     }
 
     #[test]
     fn row_to_report_response_falls_back_to_success_on_invalid_status() {
         let row = make_row("corrupted_status_value");
-        let resp = row_to_report_response(row, "myhost".to_owned());
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
         assert_eq!(resp.status, BackupStatus::Success);
     }
 
     #[test]
     fn row_to_report_response_hostname_is_set() {
         let row = make_row("success");
-        let resp = row_to_report_response(row, "webserver-01".to_owned());
+        let resp = row_to_report_response(row, Some("webserver-01".to_owned()));
         assert_eq!(resp.hostname, Some("webserver-01".to_owned()));
     }
 }
 
-fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportResponse {
+pub(crate) fn row_to_report_response(
+    row: db::ReportRow,
+    hostname: Option<String>,
+) -> ReportResponse {
     ReportResponse {
         id: row.id,
         agent_id: row.agent_id,
@@ -103,7 +107,7 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
         borg_version: row.borg_version,
         archive_name: row.archive_name,
         borg_command: row.borg_command,
-        hostname: Some(hostname),
+        hostname,
         repo_name: Some(row.repo_name),
         schedule_name: row.schedule_name,
         run_id: row.run_id,
@@ -117,6 +121,8 @@ pub struct ListReportsQuery {
     pub target: Option<String>,
     /// Maximum number of reports to return.
     pub limit: Option<i64>,
+    /// Number of reports to skip, for paging past `limit`.
+    pub offset: Option<i64>,
     /// Domain, required if the hostname is shared by multiple agents.
     pub domain: Option<String>,
 }
@@ -130,16 +136,17 @@ pub struct ListReportsQuery {
         ("hostname" = String, Path, description = "Agent hostname"),
         ("target" = Option<String>, Query, description = "Filter by target repo name"),
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
+        ("offset" = Option<i64>, Query, description = "Number of reports to skip"),
         ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
-        (status = 200, description = "List of backup reports", body = Vec<ReportResponse>),
+        (status = 200, description = "Paged reports, with total count", body = ReportListResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Agent not found"),
         (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
-/// List backup reports for an agent.
+/// List backup reports for an agent, newest first.
 ///
 /// # Errors
 ///
@@ -149,17 +156,25 @@ pub async fn list_reports(
     _auth: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<ListReportsQuery>,
-) -> Result<Json<Vec<ReportResponse>>, ApiError> {
+) -> Result<Json<ReportListResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let limit = query.limit.unwrap_or(50);
-    let hostname_clone = hostname.clone();
-    let reports: Vec<ReportResponse> =
-        db::list_reports_for_agent(&state.pool, agent.id, query.target.as_deref(), limit)
-            .await?
-            .into_iter()
-            .map(|r| row_to_report_response(r, hostname_clone.clone()))
-            .collect();
-    Ok(Json(reports))
+    let offset = query.offset.unwrap_or(0);
+    let (rows, total) = tokio::try_join!(
+        db::list_reports_for_agent(
+            &state.pool,
+            agent.id,
+            query.target.as_deref(),
+            limit,
+            offset
+        ),
+        db::count_reports_for_agent(&state.pool, agent.id, query.target.as_deref()),
+    )?;
+    let reports: Vec<ReportResponse> = rows
+        .into_iter()
+        .map(|r| row_to_report_response(r, Some(hostname.clone())))
+        .collect();
+    Ok(Json(ReportListResponse { reports, total }))
 }
 
 fn row_to_run_event_response(row: db::run_events::RunEventRow) -> RunEventResponse {

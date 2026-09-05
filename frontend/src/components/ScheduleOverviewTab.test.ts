@@ -182,7 +182,7 @@ describe('ScheduleOverviewTab', () => {
     ).not.toContain('Recent backups')
   })
 
-  it('previews recent backups and emits openBackups from the view-all link', async () => {
+  it('previews recent backups and emits openLogs from the view-all link', async () => {
     const agents = new Map<number, AgentRow>([
       [10, { id: 10, hostname: 'web-server-01', display_name: null } as unknown as AgentRow],
     ])
@@ -213,7 +213,7 @@ describe('ScheduleOverviewTab', () => {
     expect(wrapper.text()).toContain('failed')
 
     await wrapper.find('.section-link').trigger('click')
-    expect(wrapper.emitted('openBackups')).toHaveLength(1)
+    expect(wrapper.emitted('openLogs')).toHaveLength(1)
   })
 
   // The preview is where a run's outcome is noticed, so it is also where the

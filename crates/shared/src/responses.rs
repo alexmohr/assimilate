@@ -830,6 +830,9 @@ pub struct ReportResponse {
 pub struct ReportListResponse {
     /// reports.
     pub reports: Vec<ReportResponse>,
+    #[ts(type = "number")]
+    /// Total number of matching reports, ignoring `limit`/`offset`.
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

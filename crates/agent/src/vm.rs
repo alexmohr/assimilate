@@ -902,19 +902,44 @@ impl VmStager {
         let mode = self.mode_for(domain, state, &disks).await;
         let limit = self.config.limit_for(domain);
 
-        let action = match mode {
-            VmSnapshotMode::Incremental => {
-                self.stage_with_checkpoints(domain, &disks, dest, limit)
-                    .await?
-            }
-            VmSnapshotMode::FullCopy => {
-                self.copy_running(domain, &disks, dest, limit).await?;
-                VmRunAction::Copy
-            }
-            VmSnapshotMode::OfflineCopy => self.copy_offline(domain, &disks, dest, limit).await?,
-            VmSnapshotMode::Excluded | VmSnapshotMode::Unknown => {
-                return Err(VmError::Job(format!(
+        // The deadline covers whichever capture mode runs, not just the
+        // incremental one. `wait_for_job` applies the same timeout to the
+        // libvirt job it polls, but a fallback copy has no job to poll: it
+        // is an external snapshot, a disk copy and a blockcommit, any of
+        // which can hang - an unresponsive guest agent during `--quiesce`,
+        // or a stalled copy - with nothing to abort it. The setting is
+        // documented as the seconds one domain's snapshot may take before it
+        // is aborted, with no mention of a mode, and the manual recovery
+        // note in docs/vm-snapshots.md is written for exactly the fallback
+        // copy that could not previously time out.
+        let capture = async {
+            match mode {
+                VmSnapshotMode::Incremental => {
+                    self.stage_with_checkpoints(domain, &disks, dest, limit)
+                        .await
+                }
+                VmSnapshotMode::FullCopy => {
+                    self.copy_running(domain, &disks, dest, limit).await?;
+                    Ok(VmRunAction::Copy)
+                }
+                VmSnapshotMode::OfflineCopy => self.copy_offline(domain, &disks, dest, limit).await,
+                VmSnapshotMode::Excluded | VmSnapshotMode::Unknown => Err(VmError::Job(format!(
                     "domain {domain} is in a state this agent cannot stage"
+                ))),
+            }
+        };
+
+        let action = match tokio::time::timeout(
+            Duration::from_secs(self.config.timeout_seconds.into()),
+            capture,
+        )
+        .await
+        {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(VmError::Job(format!(
+                    "staging {domain} timed out after {} seconds",
+                    self.config.timeout_seconds
                 )));
             }
         };
@@ -1851,6 +1876,38 @@ mod tests {
             }
         }
         assert_eq!(overlays, 0, "the snapshot overlay must be committed away");
+    }
+
+    /// The timeout is documented as the seconds one domain's snapshot may
+    /// take, with no mention of a capture mode, and the manual-recovery note
+    /// in docs/vm-snapshots.md is written for a fallback copy killed by it.
+    /// The fallback path has no libvirt job to poll, so only the staging
+    /// deadline can end it: without one, an unresponsive guest agent during
+    /// `--quiesce` hangs the whole backup with no operator-visible signal.
+    #[tokio::test]
+    async fn a_hung_fallback_copy_is_ended_by_the_snapshot_timeout() {
+        let host = FakeHost::new().await;
+        host.define("build01", "running", "build01.raw", 16).await;
+        let stager = host.stager_with_env(
+            VmSnapshotConfig {
+                timeout_seconds: 1,
+                ..host.config()
+            },
+            vec![("MOCK_VIRT_HANG_SNAPSHOT".to_owned(), "30".to_owned())],
+        );
+
+        let outcomes = tokio::time::timeout(Duration::from_secs(20), stager.stage_all())
+            .await
+            .expect("the staging deadline must end the run well before the double does");
+
+        let error = only(&outcomes)
+            .error
+            .as_ref()
+            .expect("a hung fallback copy must fail the domain, not stage it silently");
+        assert!(
+            error.contains("timed out"),
+            "the failure must name the timeout, got {error}"
+        );
     }
 
     #[tokio::test]

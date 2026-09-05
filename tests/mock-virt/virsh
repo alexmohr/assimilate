@@ -98,6 +98,12 @@ case "$SUBCOMMAND" in
       printf 'error: Guest agent is not responding\n' >&2
       exit 1
     fi
+    # Stands in for a guest agent that accepts the freeze and never answers.
+    # There is no libvirt job to poll on this path, so nothing but the
+    # staging deadline can end it.
+    if [[ -n "${MOCK_VIRT_HANG_SNAPSHOT:-}" ]]; then
+      sleep "$MOCK_VIRT_HANG_SNAPSHOT"
+    fi
     while read -r _ _ _ disk_source; do
       printf 'mock overlay\n' >"$disk_source.$snapshot"
     done <"$STATE/disks-$domain"

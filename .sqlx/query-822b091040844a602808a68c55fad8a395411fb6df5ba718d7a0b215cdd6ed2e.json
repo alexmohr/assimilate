@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", latest.finished_at AS \"last_backup_at?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.finished_at, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", completed.finished_at AS \"last_backup_at?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
   "describe": {
     "columns": [
       {
@@ -76,5 +76,5 @@
       false
     ]
   },
-  "hash": "8e0849e09517916fc11ba5ef22b169a57be0acfca71249e905b050e52fcbdff1"
+  "hash": "822b091040844a602808a68c55fad8a395411fb6df5ba718d7a0b215cdd6ed2e"
 }

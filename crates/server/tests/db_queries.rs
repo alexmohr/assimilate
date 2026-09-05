@@ -2872,6 +2872,51 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
     );
 }
 
+/// A newer run that has started but not finished yet must not hide the
+/// previous completed backup's timestamp: `last_status` reflects the
+/// in-flight run (so the UI can show it as running), but `last_backup_at`
+/// must keep pointing at the last *completed* run, since that is what
+/// cadence/overdue calculations and "last backup" displays depend on.
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+
+    db::insert_backup_pending(
+        &pool,
+        agent.id,
+        repo.id,
+        Some(schedule.id),
+        "run-in-progress",
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    let health = db::get_health_summary(&pool).await.unwrap();
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
+
+    assert_eq!(
+        entry.last_status.as_deref(),
+        Some("pending"),
+        "last_status must reflect the run currently in flight"
+    );
+    assert!(
+        entry.last_backup_at.is_some(),
+        "the previous completed backup's timestamp must survive a run in progress"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_reports_status_check_constraint_rejects_invalid_status(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;

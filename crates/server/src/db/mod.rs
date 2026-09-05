@@ -4901,20 +4901,27 @@ pub async fn get_activity_feed(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
-    // Single LATERAL join per (schedule, agent) row instead of three separate correlated
-    // subqueries that each re-sorted the same filtered backup_reports rows -- matches the
-    // pattern already used by dashboard::targets() for the equivalent "latest report" lookup.
+    // Two LATERAL joins per (schedule, agent) row: `latest` is the most recent report
+    // regardless of status, which is what tells the UI a backup is currently running
+    // (status 'pending'/'started'); `completed` is the most recent *settled* report, whose
+    // `finished_at` is the real "last backup" timestamp cadence/overdue checks need. A
+    // single lookup used to serve both, so while a backup was in flight its placeholder
+    // `finished_at` (set to the start time) displaced the previous completed backup's
+    // timestamp entirely, making a host with an active backup look like it had none.
     sqlx::query_as!(
         HealthRow,
         "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
-         latest.status AS \"last_status?\", latest.finished_at AS \"last_backup_at?\", \
+         latest.status AS \"last_status?\", completed.finished_at AS \"last_backup_at?\", \
          latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS \
          schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, \
          s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = \
          s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN \
-         LATERAL ( SELECT br.status, br.finished_at, br.error_message FROM backup_reports br \
-         WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) \
-         latest ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+         LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id \
+         = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT \
+         JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id \
+         AND br.agent_id = a.id AND br.status NOT IN ('pending', 'started') ORDER BY \
+         br.started_at DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY \
+         a.hostname, r.name",
     )
     .fetch_all(pool)
     .await

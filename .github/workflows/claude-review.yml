@@ -348,15 +348,18 @@ jobs:
       # A prefix allowlist cannot express "this flag and no other", so the
       # only safe form of a command with a destructive flag is its absence.
       #
-      # That is not a theoretical concern here. `.github/scripts/*.js` is
-      # sparse-checked-out from the default branch before the review runs and
-      # is still on disk, unrefreshed, when the later steps `require()` it
-      # under `actions/github-script@v7` with this workflow's own token
-      # (`pull-requests: write`, `issues: write`, `checks: write`). Any Bash
-      # command in this list that can write a file lets PR-supplied content -
-      # a diff, a title, a description, all attacker-controlled on a
-      # `pull_request_target` workflow - reach that token by rewriting a
-      # script this job is about to run. Nothing in this list may write.
+      # Do not read that as a claim that the list below cannot write. It is
+      # not one, and a prefix allowlist cannot make it one: `>` and `>>`
+      # follow any command, so `cat x > file` matches `Bash(cat:*)` for the
+      # same reason `sed -n -i` matched `Bash(sed -n:*)`. Dropping `sed` was
+      # still right - it removes a write that needs no shell syntax at all -
+      # but it narrows the vector rather than closing it, and the difference
+      # matters because `.github/scripts/*.js` is on disk here and every step
+      # after the review loads it under a token with write scopes. What
+      # actually closes it is the "Restore scripts from default branch" step
+      # below, which puts the trusted copy back before anything loads it.
+      # Keep both: the allowlist stays as tight as reading requires, and the
+      # restore is what the security argument rests on.
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
@@ -470,6 +473,43 @@ jobs:
             | .[]
             | "  \(length)x \(.[0].tool_name): \(.[0].tool_input | tostring | .[0:200])"
           ' "$EXECUTION_LOG" || echo "  (could not parse $EXECUTION_LOG)"
+
+      # Restores .github/scripts from the default branch after the review has
+      # run, and before anything `require()`s it again.
+      #
+      # The review step reads attacker-controlled input - a PR's diff, title
+      # and description - on a `pull_request_target` workflow holding
+      # `pull-requests: write`, `issues: write` and `checks: write`. Every
+      # step below this one loads a script from that directory and executes
+      # it with that token, so a single file write between the two is a path
+      # from PR content to the token. #474 closed one such path by dropping
+      # `Bash(sed -n:*)` from the allowlist, on the finding that a prefix
+      # permission cannot forbid a trailing `-i`. The same reasoning applies
+      # to the rest of the list: `>` and `>>` follow any command at all, so
+      # `cat x > .github/scripts/sync-pr-labels.js` satisfies `Bash(cat:*)`
+      # exactly as `sed -n -i` satisfied `Bash(sed -n:*)`. Enumerating write
+      # vectors one at a time is the losing half of that argument.
+      #
+      # So this does not try to. Overwriting the directory from the default
+      # branch makes the question moot: whatever the review may have written
+      # there is replaced by the trusted copy before it can be loaded. The
+      # tools stay available for paging a large diff, which is what #474 was
+      # for, and the guarantee no longer rests on the allowlist being
+      # airtight. The inputs mirror the checkout at the top of this job so
+      # the two cannot drift, except for `persist-credentials: false`: this
+      # copy runs after untrusted content has been processed, and nothing
+      # below it uses git - the steps that follow authenticate through
+      # `actions/github-script`. `if: always()` runs it whatever the review
+      # did, since a failed review is exactly when the label-syncing scripts
+      # below matter most.
+      - name: Restore scripts from default branch
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            .github/scripts
+          persist-credentials: false
 
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-

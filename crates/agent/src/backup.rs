@@ -2010,6 +2010,42 @@ mod tests {
         assert!(result.error_message.is_none());
     }
 
+    /// The patterns in `docs/file-change-patterns.md` and in the file change
+    /// pattern editor's hint have to match the messages they claim to: a
+    /// leading `*` cannot cross `/`, so a documented pattern that opens with
+    /// one silently never fires.
+    #[test]
+    fn documented_patterns_match_the_messages_they_document() {
+        let matches = |pattern: &str, message: &str| {
+            let patterns = vec![FileChangePattern {
+                path: pattern.to_owned(),
+                action: shared::types::FileChangeAction::Ignore,
+            }];
+            filter_file_change_warnings(vec![message.to_owned()], &patterns)
+                .unwrap()
+                .is_empty()
+        };
+        let access_log = "/var/log/nginx/access.log: file changed while we backed it up";
+        let nested = "/tmp/logs/nested/deep.log: file changed while we backed it up";
+
+        assert!(matches("/var/log/nginx/access.log*", access_log));
+        assert!(matches("/var/log/nginx/**", access_log));
+        assert!(matches("**/access.log*", access_log));
+        assert!(matches(
+            "/etc/config: *",
+            "/etc/config: file changed while we backed it up"
+        ));
+        assert!(matches("/tmp/logs/**", nested));
+        assert!(matches(
+            "/var/www/cache/**",
+            "/var/www/cache/session/abc: file changed while we backed it up"
+        ));
+
+        // The forms these replaced, kept as the reason the docs changed.
+        assert!(!matches("*access.log*", access_log));
+        assert!(!matches("*/tmp/logs*", nested));
+    }
+
     #[test]
     fn test_filter_file_change_warnings_fatal() {
         let patterns = vec![FileChangePattern {

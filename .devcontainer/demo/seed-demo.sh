@@ -102,7 +102,7 @@ export AGENT_TOKEN_3="$MEDIA_TOKEN"
 echo "==> Setting an agent-level default file change pattern on db-server-01 (fallback for every schedule targeting this host)..."
 api PUT "/api/agents/db-server-01" '{
     "display_name": "Primary Database",
-    "default_file_change_patterns_raw": "*/var/lib/postgresql/*.tmp* ignore\n*checkpoint_wal* warn"
+    "default_file_change_patterns_raw": "/var/lib/postgresql/**/*.tmp* ignore\n**/checkpoint_wal* warn"
 }' > /dev/null
 
 # Agent-level hook commands, so the Backup defaults pane shows the read-only
@@ -337,7 +337,7 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\", \"/etc/nginx\"],
-    \"file_change_patterns_raw\": \"*/var/log/nginx/access.log* ignore\n*/var/www/cache* fatal\n*/etc/nginx/nginx.conf* warn\"
+    \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\"
 }" | jq -r '.id')
 
 api POST "/api/schedules" "{
@@ -524,7 +524,7 @@ api POST "/api/schedules" "{
         {\"agent_id\": $WEB01_ID, \"raw_text\": \"*.log\"},
         {\"agent_id\": $DB01_ID, \"raw_text\": \"*.tmp\"}
     ],
-    \"file_change_patterns_raw\": \"*/var/log/nginx/access.log* ignore\n*/var/www/cache* fatal\n*/etc/nginx/nginx.conf* warn\",
+    \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
     \"file_change_patterns_per_agent\": [
         {\"agent_id\": $WEB01_ID, \"raw_text\": \"*/var/log/nginx/error.log* ignore\"}
     ]

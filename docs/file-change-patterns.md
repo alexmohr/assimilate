@@ -23,19 +23,21 @@ File change patterns can be configured at three levels:
 
 Navigate to **Schedules** → select a schedule → **File Change Patterns** section.
 
-Each line contains an optional action keyword followed by a glob pattern. Patterns are matched against the full warning message text (see [Pattern Syntax](#pattern-syntax) below), so they typically need a leading or trailing `*`:
+Each line is a glob pattern, optionally followed by an action keyword. Patterns are matched against the full warning message text, which is the path plus borg's `: file changed while we backed it up` (see [Pattern Syntax](#pattern-syntax) below) — write the path out from the root and let a trailing `*` or `**` cover the rest of the message:
 
 ```text
-*/tmp/logs* ignore
-*/etc/config* fatal
-*/var/www/cache* warn
+/tmp/logs/** ignore
+/etc/config: * fatal
+/var/www/cache/** warn
 ```
 
 If no action is specified, `warn` is assumed:
 
 ```text
-*/tmp/logs*          ← equivalent to `*/tmp/logs* warn`
+/tmp/logs/**          ← equivalent to `/tmp/logs/** warn`
 ```
+
+Blank lines and lines starting with `#` are skipped, so patterns can be commented.
 
 ### Per-agent override within a schedule
 
@@ -72,7 +74,14 @@ This means schedule-specific configuration always takes priority over a host's d
 - `**` matches any number of characters **including `/`** — use it to cover every file anywhere under a directory, no matter how deeply nested.
 - `?` matches any single character.
 
-The pattern is matched against the full warning message text, not just the file path — a bare path like `/etc/config` will only match if the _entire_ message is exactly `/etc/config`, which is never the case. Use `*` to match the surrounding message text. For example, a warning message like `/var/log/nginx/access.log: file changed while we backed it up` can be matched with a pattern like `*access.log: file changed while we backed it up` or the simpler `*access.log*`.
+The pattern is matched against the full warning message text, not just the file path — a bare path like `/etc/config` will only match if the _entire_ message is exactly `/etc/config`, which is never the case, because the message continues with `: file changed while we backed it up`. Cover that trailing text too, and anchor the pattern at the root of the path rather than opening it with a `*`: a leading `*` cannot cross `/` either, so `*access.log*` never matches an absolute path. For the message `/var/log/nginx/access.log: file changed while we backed it up`:
+
+```text
+/var/log/nginx/access.log*    ← that one file, whatever the message says after it
+/var/log/nginx/**             ← every file under that directory
+**/access.log*                ← a file of that name wherever it lives
+/etc/config: *                ← an exact path with no directory below it
+```
 
 Directories with deeply nested, frequently-changing files (e.g. a database's write-ahead log) need a trailing `**`, not a single `*`:
 

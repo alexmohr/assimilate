@@ -315,6 +315,28 @@ jobs:
       # nothing beyond in-memory state local to the run, so allowing it
       # trades no capability for removing another confirmed source of
       # wasted turns.
+      #
+      # The stdout-only shell filters (`cat`, `head`, `tail`, `wc`, `nl`,
+      # `cut`, `tr`, `ls`, `grep`, `sed -n`) are the same pattern a fourth
+      # time, and the reason they are here is the shape of the *pipeline*
+      # rather than any one command. Claude Code matches a Bash permission
+      # against every sub-command of a compound command separately, so
+      # `gh pr diff 469 | head -400` is only allowed if BOTH `gh pr diff`
+      # and `head` are listed - the `Bash(gh pr diff:*)` entry above covers
+      # the left-hand side alone. On a diff too large to take in one go,
+      # paging it is the first thing Claude reaches for, and every one of
+      # those attempts was denied. PR #469 (89 changed files, +7913/-386)
+      # burned 31 permission denials over 40 turns and ended `is_error:
+      # false` with no verdict, the same signature as #351, #399, #425 and
+      # #441 above.
+      #
+      # Only filters that write nothing and open no socket are listed:
+      # `sed` is restricted to `sed -n` (its print-only form) because plain
+      # `sed -i` edits files in place, and `find`, `sort -o`, `uniq`, `awk`,
+      # `tee`, `xargs`, `curl` and `wget` are all deliberately absent for
+      # the same reason. Reading is already granted by `Read`/`Grep`/`Glob`,
+      # so this adds no capability over what the allowlist already permits -
+      # it only lets that capability be reached through a pipe.
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
@@ -335,7 +357,7 @@ jobs:
           allowed_bots: "github-actions"
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,TodoWrite"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(nl:*),Bash(cut:*),Bash(tr:*),Bash(ls:*),Bash(grep:*),Bash(sed -n:*),mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,TodoWrite"
           prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.

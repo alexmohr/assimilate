@@ -505,13 +505,17 @@ jobs:
       # restore.
       #
       # This step deliberately has no `continue-on-error`. If the checkout
-      # fails, the trusted copy is not on disk, and the three steps below
-      # all `require()` from it under a token with write scopes - so failing
-      # here, and taking them with it, is the safe outcome rather than a
-      # gap. Their `if:` conditions carry no status function, which GitHub
-      # implicitly ANDs with `success()`, so they skip on their own. What
-      # that would otherwise cost is the failure signal #430 and #441 built,
-      # which is why the step after this one exists.
+      # fails, the trusted copy is not on disk, and two of the three steps
+      # below - `Sync claude-review-failed signal` and `Re-sync labels
+      # after Claude review` - `require()` from it under a token with write
+      # scopes, so failing here and taking them with it is the safe outcome
+      # rather than a gap. (`Clear a stale bot-authored changes-requested
+      # review` loads nothing from that directory and only calls
+      # `github.rest.pulls.*`; it is unaffected either way, and skipping it
+      # too costs nothing.) Their `if:` conditions carry no status function,
+      # which GitHub implicitly ANDs with `success()`, so they skip on their
+      # own. What that would otherwise cost is the failure signal #430 and
+      # #441 built, which is why the step after this one exists.
       #
       # `always()` covers a failed review, which is when the label-syncing
       # below matters most; the `run_claude` guard matches the step above,

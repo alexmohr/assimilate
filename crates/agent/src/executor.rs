@@ -1209,7 +1209,24 @@ async fn stage_virtual_machines(
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) -> Result<(), String> {
     info!("Staging virtual machines into {}", config.staging_dir);
-    let outcomes = VmStager::new(config).stage_all().await;
+    let outcomes = match VmStager::new(config).stage_all().await {
+        Ok(outcomes) => outcomes,
+        Err(e) => {
+            // Tell the server the phase ran and found nothing, then fail the
+            // backup: an archive that silently holds no virtual machines is
+            // worse than a run the operator is told about.
+            let msg = AgentToServer::VmSnapshotReport {
+                schedule_id,
+                outcomes: Vec::new(),
+            };
+            if let Err(send) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send, "outbound send failed");
+            }
+            return Err(format!(
+                "could not list the virtual machines of this host: {e}"
+            ));
+        }
+    };
 
     let failures: Vec<String> = outcomes
         .iter()

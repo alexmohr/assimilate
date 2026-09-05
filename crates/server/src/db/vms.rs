@@ -36,7 +36,10 @@ pub struct AgentVmSnapshotRow {
     pub vm_snapshot_selection: String,
 }
 
-/// New staging settings for a host.
+/// New staging settings for a host. A `None` selection keeps the mode the
+/// host already has, resolved inside the `UPDATE` rather than by reading it
+/// first: a separate read would let a concurrent write land between the two
+/// and be silently reverted by this one.
 #[derive(Debug, Clone, Copy)]
 pub struct VmSnapshotPatch<'a> {
     /// Whether this host stages its domains at all.
@@ -49,8 +52,9 @@ pub struct VmSnapshotPatch<'a> {
     pub timeout_seconds: i32,
     /// Bytes a domain may occupy unless it carries its own limit.
     pub default_limit_bytes: i64,
-    /// Which domains the per-domain flags select.
-    pub selection: VmSelectionMode,
+    /// Which domains the per-domain flags select, or `None` to keep the
+    /// host's stored mode.
+    pub selection: Option<VmSelectionMode>,
 }
 
 /// One domain of a host: what the last scan saw, what the last run staged, and
@@ -134,16 +138,17 @@ pub async fn update_agent_vm_snapshot(
         AgentVmSnapshotRow,
         "UPDATE agents SET vm_snapshot_enabled = $2, vm_snapshot_dir = $3, \
          vm_snapshot_full_interval = $4, vm_snapshot_timeout_seconds = $5, \
-         vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = $7 WHERE id = $1 RETURNING \
-         vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, \
-         vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection",
+         vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = COALESCE($7, \
+         agents.vm_snapshot_selection) WHERE id = $1 RETURNING vm_snapshot_enabled, \
+         vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, \
+         vm_snapshot_default_limit_bytes, vm_snapshot_selection",
         agent_id,
         patch.enabled,
         patch.dir,
         patch.full_interval,
         patch.timeout_seconds,
         patch.default_limit_bytes,
-        patch.selection.to_string(),
+        patch.selection.map(|selection| selection.to_string()) as Option<String>,
     )
     .fetch_one(pool)
     .await

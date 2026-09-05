@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE agents SET vm_snapshot_enabled = $2, vm_snapshot_dir = $3, vm_snapshot_full_interval = $4, vm_snapshot_timeout_seconds = $5, vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = $7 WHERE id = $1 RETURNING vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection",
+  "query": "UPDATE agents SET vm_snapshot_enabled = $2, vm_snapshot_dir = $3, vm_snapshot_full_interval = $4, vm_snapshot_timeout_seconds = $5, vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = COALESCE($7, agents.vm_snapshot_selection) WHERE id = $1 RETURNING vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection",
   "describe": {
     "columns": [
       {
@@ -54,5 +54,5 @@
       false
     ]
   },
-  "hash": "3d0cf004db72c4c044c6eda6339fbb5265f7a4411d2972e4688085980290cfcd"
+  "hash": "9d658205169710eefc0f028ab3dbec67e1e42adeb5e25f01754cf5f59d20e585"
 }

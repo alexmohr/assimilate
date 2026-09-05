@@ -115,9 +115,14 @@ A limit caps what one domain may occupy below the staging directory, counted as 
 
 The limit is enforced at three points:
 
-1. **Before an increment.** When the chain plus the expected next increment would cross the limit, the run writes a new full image instead. That drops the whole chain first, so the domain falls back to a single image and the space is reclaimed.
+1. **Before an increment.** When the chain plus the expected next increment would cross the limit, the run writes a new full image instead. The domain then falls back to a single image and the space the chain held is reclaimed.
 2. **Before a full image.** A full image that cannot fit is refused before anything is deleted or written, so the previous chain stays restorable. The domain's row shows why.
 3. **After the run.** The directory is measured again. An overshoot fails the domain, because the estimate in step 1 can only ever be a guess.
+
+A new image is written alongside the chain it replaces, and the old one is only deleted once the new one is complete. A run that fails partway - a snapshot libvirt refuses, a stalled copy, a host losing power - therefore leaves the previous backup restorable rather than nothing at all. The cost is that a domain transiently occupies both while the run is in flight, so it can exceed its limit for the duration. Step 3 measures the resting state, once the old chain is gone, and that is the figure the limit governs.
+
+!!! warning "Free space during a run"
+    Size the host's filesystem for a domain's peak, not its limit: while a full image or a copy is being written, that domain needs room for the new one and the old one at the same time.
 
 A domain whose disks alone are larger than its limit can never be staged, and every run says so. Raise its limit, or lower the full-image interval so the chain stays shorter.
 

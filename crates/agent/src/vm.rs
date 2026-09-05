@@ -335,17 +335,35 @@ impl DomainXml {
     fn disk_source(&self, target: &str) -> Option<String> {
         for block in self.text.split("<disk ").skip(1) {
             let block = block.split("</disk>").next().unwrap_or(block);
-            if Self::attribute(block, "dev").is_none_or(|dev| dev != target) {
+            if Self::child_attribute(block, "target", "dev").is_none_or(|dev| dev != target) {
                 continue;
             }
-            return Self::attribute(block, "file").or_else(|| Self::attribute(block, "dev_path"));
+            // `file` for a type='file' disk, `dev` for a type='block' one -
+            // an LVM volume handed straight to the guest is written
+            // `<source dev='/dev/mapper/vg-lv'/>`.
+            return Self::child_attribute(block, "source", "file")
+                .or_else(|| Self::child_attribute(block, "source", "dev"));
         }
         None
     }
 
+    /// Reads an attribute from a named child element of a `<disk>` block.
+    ///
+    /// Scanning the whole block for a bare attribute name is not enough: a
+    /// `type='block'` disk carries `dev` on both `<source>` and `<target>`,
+    /// and `<source>` comes first, so a block-wide search for `dev` returns
+    /// the host path where the target name was meant. Narrowing to one
+    /// element keeps the two apart.
+    fn child_attribute(block: &str, element: &str, name: &str) -> Option<String> {
+        let start = block.find(&format!("<{element}"))?;
+        let rest = block.get(start..)?;
+        let end = rest.find('>')?;
+        Self::attribute(rest.get(..end)?, name)
+    }
+
     /// Reads an attribute value written with either quote style. Only the
-    /// first occurrence in `block` is considered, which is what the disk
-    /// elements need: `dev` names the target, `file` the source.
+    /// first occurrence in `block` is considered, so callers that care which
+    /// element an attribute came from go through [`Self::child_attribute`].
     fn attribute(block: &str, name: &str) -> Option<String> {
         for quote in ['\'', '"'] {
             let needle = format!("{name}={quote}");
@@ -825,20 +843,19 @@ impl VmStager {
     /// Stages every included domain, one after another, and reports what it
     /// did to each. A domain that fails does not stop the others: the caller
     /// decides whether the backup goes ahead.
-    pub async fn stage_all(&self) -> Vec<VmSnapshotOutcome> {
-        let domains = match self.list_domains().await {
-            Ok(domains) => domains,
-            Err(e) => {
-                warn!(error = %e, "could not list the domains of this host");
-                return Vec::new();
-            }
-        };
+    pub async fn stage_all(&self) -> Result<Vec<VmSnapshotOutcome>, VmError> {
+        // A host whose domains cannot be listed at all - libvirtd down, virsh
+        // off the PATH, no access to qemu:///system - is not a host with
+        // nothing to stage. Reporting it as an empty run would let the backup
+        // succeed carrying none of the machines it is supposed to carry,
+        // which is the one outcome this feature exists to prevent.
+        let domains = self.list_domains().await?;
 
         let mut outcomes = Vec::with_capacity(domains.len());
         for domain in domains {
             outcomes.push(self.stage_domain(&domain).await);
         }
-        outcomes
+        Ok(outcomes)
     }
 
     /// Stages one domain, turning any failure into an outcome the server can
@@ -1140,16 +1157,25 @@ impl VmStager {
         let stamp = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
         let checkpoint_name = format!("{OWNED_PREFIX}-{stamp}");
 
-        if from.is_none() {
+        // A forced full drops the checkpoints, which only costs the next run
+        // its incremental (it falls back to a full, which is where this run
+        // was headed anyway). The images are the restorable data, so they
+        // stay until the new full is on disk - see the swap after
+        // `wait_for_job`. Writing the new one under `.part` keeps it clear of
+        // the chain it is replacing until then; the cost is that the domain
+        // transiently holds both, which can exceed its limit while the run is
+        // in flight. `stage_included` measures the resting state after the
+        // swap, and the alternative is a window with nothing restorable.
+        let forced_full = from.is_none();
+        if forced_full {
             Self::check_full_fits(domain, disks, limit).await?;
             self.drop_checkpoints(domain).await;
-            self.clear_images(dest).await;
         }
 
         let suffix = if from.is_some() {
             format!("{stamp}.qcow2")
         } else {
-            "full.qcow2".to_owned()
+            "full.qcow2.part".to_owned()
         };
 
         let backup_xml = Self::backup_xml(dest, disks, from.as_deref(), &suffix);
@@ -1178,6 +1204,28 @@ impl VmStager {
         started?;
 
         self.wait_for_job(domain).await?;
+
+        // The new full exists now, so the chain it replaces can go and it can
+        // take the name. A failure anywhere above returns before this, leaving
+        // the previous chain untouched and only a `.part` file behind, which
+        // the next forced full overwrites.
+        let suffix = if forced_full {
+            self.clear_images(dest).await;
+            for disk in disks {
+                let partial = dest.join(format!("{}.{suffix}", disk.target));
+                let target = dest.join(format!("{}.full.qcow2", disk.target));
+                tokio::fs::rename(&partial, &target)
+                    .await
+                    .map_err(|source| VmError::Io {
+                        action: format!("place {}", target.display()),
+                        source,
+                    })?;
+            }
+            "full.qcow2".to_owned()
+        } else {
+            suffix
+        };
+
         self.record_chain(dest, disks, &suffix).await?;
 
         Ok(if from.is_some() {
@@ -1319,8 +1367,19 @@ impl VmStager {
     ) -> Result<(), VmError> {
         Self::check_full_fits(domain, disks, limit).await?;
         self.drop_checkpoints(domain).await;
-        self.clear_images(dest).await;
 
+        // The previous copy stays on disk until this one is complete. This
+        // path runs on every FullCopy backup, so clearing first would mean
+        // any failure - a snapshot libvirt refuses, a stalled copy, a host
+        // under load - destroys the last restorable copy of the domain and
+        // leaves nothing in its place. `check_full_fits` guards the case
+        // where the new copy would not fit; it cannot guard the rest.
+        //
+        // The cost is that the directory transiently holds both copies, so a
+        // forced full can exceed the domain's limit while it runs. The limit
+        // governs the resting state, which `stage_included` still measures
+        // after the swap, and the alternative is a window with no restorable
+        // copy at all.
         let snapshot = format!(
             "{OWNED_PREFIX}-tmp-{}",
             Utc::now().format("%Y%m%dT%H%M%S%3fZ")
@@ -1359,8 +1418,8 @@ impl VmStager {
 
         let mut copy_error = None;
         for disk in disks {
-            let target = dest.join(format!("{}.img", disk.target));
-            if let Err(source) = tokio::fs::copy(&disk.source, &target).await {
+            let partial = dest.join(format!("{}.img.part", disk.target));
+            if let Err(source) = tokio::fs::copy(&disk.source, &partial).await {
                 copy_error = Some(VmError::Io {
                     action: format!("copy {}", disk.source.display()),
                     source,
@@ -1401,8 +1460,30 @@ impl VmStager {
         }
 
         if let Some(error) = copy_error {
+            // The previous copy is still the good one, so the debris goes and
+            // it stays.
+            for disk in disks {
+                let _ =
+                    tokio::fs::remove_file(dest.join(format!("{}.img.part", disk.target))).await;
+            }
             return Err(error);
         }
+
+        // Every disk copied. Only now does the old chain go, and the new
+        // copies take its place - `clear_images` matches `.qcow2` and `.img`,
+        // so the `.part` files it is about to promote survive it.
+        self.clear_images(dest).await;
+        for disk in disks {
+            let partial = dest.join(format!("{}.img.part", disk.target));
+            let target = dest.join(format!("{}.img", disk.target));
+            tokio::fs::rename(&partial, &target)
+                .await
+                .map_err(|source| VmError::Io {
+                    action: format!("place {}", target.display()),
+                    source,
+                })?;
+        }
+
         self.record_chain(dest, disks, "img").await
     }
 
@@ -1429,10 +1510,24 @@ impl VmStager {
                     "unchanged, keeping the previous copy"
                 );
             } else {
-                tokio::fs::copy(&disk.source, &target)
+                // Copy beside the target and rename into place, so the
+                // previous good copy is only replaced once this one is
+                // complete. An in-place overwrite that dies partway leaves a
+                // truncated file carrying a fresh mtime, which
+                // `is_unchanged` would then read as newer than the source
+                // and keep forever - a corrupt image in every later archive,
+                // with nothing ever reported.
+                let partial = dest.join(format!("{}.img.part", disk.target));
+                tokio::fs::copy(&disk.source, &partial)
                     .await
                     .map_err(|source| VmError::Io {
                         action: format!("copy {}", disk.source.display()),
+                        source,
+                    })?;
+                tokio::fs::rename(&partial, &target)
+                    .await
+                    .map_err(|source| VmError::Io {
+                        action: format!("place {}", target.display()),
                         source,
                     })?;
                 copied = true;
@@ -1446,8 +1541,15 @@ impl VmStager {
             return Ok(VmRunAction::Copy);
         };
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.path().extension().is_some_and(|ext| ext == "qcow2") {
-                let _ = tokio::fs::remove_file(entry.path()).await;
+            // `.part` is the debris of a copy that died before its rename;
+            // it is never referenced by the chain, so it is only wasting the
+            // domain's budget.
+            let path = entry.path();
+            if path
+                .extension()
+                .is_some_and(|ext| ext == "qcow2" || ext == "part")
+            {
+                let _ = tokio::fs::remove_file(path).await;
             }
         }
 
@@ -1649,7 +1751,7 @@ mod tests {
         host.define("web01", "running", "web01.qcow2", 8).await;
         let stager = host.stager(host.config());
 
-        let first = stager.stage_all().await;
+        let first = stager.stage_all().await.unwrap();
         assert_eq!(only(&first).action, VmRunAction::FullImage);
         assert_eq!(only(&first).mode, VmSnapshotMode::Incremental);
         assert!(only(&first).error.is_none(), "{:?}", only(&first).error);
@@ -1664,7 +1766,7 @@ mod tests {
         );
         assert_eq!(host.checkpoints("web01").await.len(), 1);
 
-        let second = stager.stage_all().await;
+        let second = stager.stage_all().await.unwrap();
         assert_eq!(only(&second).action, VmRunAction::Increment);
         assert!(
             host.last_backup_xml("web01")
@@ -1684,9 +1786,9 @@ mod tests {
         config.full_interval = 2;
         let stager = host.stager(config);
 
-        stager.stage_all().await;
-        stager.stage_all().await;
-        let third = stager.stage_all().await;
+        stager.stage_all().await.unwrap();
+        stager.stage_all().await.unwrap();
+        let third = stager.stage_all().await.unwrap();
 
         assert_eq!(only(&third).action, VmRunAction::FullImage);
         assert!(
@@ -1712,11 +1814,11 @@ mod tests {
             vec![("MOCK_VIRT_BACKUP_KIB".to_owned(), "256".to_owned())],
         );
 
-        stager.stage_all().await;
-        let second = stager.stage_all().await;
+        stager.stage_all().await.unwrap();
+        let second = stager.stage_all().await.unwrap();
         assert_eq!(only(&second).action, VmRunAction::Increment);
 
-        let third = stager.stage_all().await;
+        let third = stager.stage_all().await.unwrap();
         assert_eq!(only(&third).action, VmRunAction::FullImage);
         assert!(only(&third).error.is_none(), "{:?}", only(&third).error);
         assert!(only(&third).staged_bytes <= 700 * 1024);
@@ -1732,7 +1834,7 @@ mod tests {
             config.clone(),
             vec![("MOCK_VIRT_BACKUP_KIB".to_owned(), "256".to_owned())],
         );
-        stager.stage_all().await;
+        stager.stage_all().await.unwrap();
         assert!(is_file(&host.staged("web01").join("vda.full.qcow2")).await);
 
         // The budget now cannot hold even the domain's own disks.
@@ -1741,7 +1843,7 @@ mod tests {
             config,
             vec![("MOCK_VIRT_BACKUP_KIB".to_owned(), "256".to_owned())],
         );
-        let outcome = starved.stage_all().await;
+        let outcome = starved.stage_all().await.unwrap();
 
         let error = only(&outcome).error.as_deref().expect("refused");
         assert!(error.contains("exceeds the limit"), "{error}");
@@ -1750,6 +1852,50 @@ mod tests {
             "the previous chain must survive a refused run"
         );
         assert_eq!(host.chain("web01").await.trim(), "vda vda.full.qcow2");
+    }
+
+    /// `check_full_fits` guards the run that would not fit. It cannot guard
+    /// a capture that fails for any other reason, and a `FullCopy` domain
+    /// re-copies on every single run - so clearing the old copy first would
+    /// mean one refused snapshot leaves the domain with nothing restorable
+    /// at all.
+    #[tokio::test]
+    async fn a_failed_full_copy_leaves_the_previous_copy_in_place() {
+        let host = FakeHost::new().await;
+        host.define("build01", "running", "build01.raw", 16).await;
+
+        let good = host.stager(host.config());
+        assert_eq!(
+            only(&good.stage_all().await.unwrap()).action,
+            VmRunAction::Copy
+        );
+        let copy = host.staged("build01").join("vda.img");
+        assert!(is_file(&copy).await, "the first run must leave a copy");
+        let before = tokio::fs::read(&copy).await.unwrap();
+
+        let failing = host.stager_with_env(
+            host.config(),
+            vec![("MOCK_VIRT_FAIL_SNAPSHOT".to_owned(), "1".to_owned())],
+        );
+        let outcomes = failing.stage_all().await.unwrap();
+        assert!(
+            only(&outcomes).error.is_some(),
+            "a snapshot libvirt refuses must fail the domain"
+        );
+
+        assert!(
+            is_file(&copy).await,
+            "the previous copy must survive a failed run"
+        );
+        assert_eq!(
+            tokio::fs::read(&copy).await.unwrap(),
+            before,
+            "the previous copy must be untouched, not truncated"
+        );
+        assert!(
+            !is_file(&host.staged("build01").join("vda.img.part")).await,
+            "the debris of the failed copy must not be left behind"
+        );
     }
 
     #[tokio::test]
@@ -1763,7 +1909,7 @@ mod tests {
             limit_bytes: None,
         }];
 
-        let outcomes = host.stager(config).stage_all().await;
+        let outcomes = host.stager(config).stage_all().await.unwrap();
 
         assert_eq!(only(&outcomes).action, VmRunAction::Skipped);
         assert_eq!(only(&outcomes).mode, VmSnapshotMode::Excluded);
@@ -1783,7 +1929,7 @@ mod tests {
             limit_bytes: None,
         }];
 
-        let outcomes = host.stager(config).stage_all().await;
+        let outcomes = host.stager(config).stage_all().await.unwrap();
 
         let web = outcomes
             .iter()
@@ -1819,7 +1965,7 @@ mod tests {
             "a machine created after the last scan waits to be selected"
         );
 
-        let outcomes = host.stager(config).stage_all().await;
+        let outcomes = host.stager(config).stage_all().await.unwrap();
         assert_eq!(only(&outcomes).action, VmRunAction::Skipped);
         assert!(!is_file(&host.staged("fresh").join("vda.full.qcow2")).await);
     }
@@ -1830,19 +1976,19 @@ mod tests {
         let source = host.define("mail01", "shut off", "mail01.raw", 16).await;
         let stager = host.stager(host.config());
 
-        let first = stager.stage_all().await;
+        let first = stager.stage_all().await.unwrap();
         assert_eq!(only(&first).action, VmRunAction::Copy);
         assert_eq!(only(&first).mode, VmSnapshotMode::OfflineCopy);
         assert!(is_file(&host.staged("mail01").join("vda.img")).await);
         assert_eq!(host.chain("mail01").await.trim(), "vda vda.img");
 
-        let second = stager.stage_all().await;
+        let second = stager.stage_all().await.unwrap();
         assert_eq!(only(&second).action, VmRunAction::Unchanged);
 
         tokio::fs::write(&source, vec![1u8; 16usize.saturating_mul(1024)])
             .await
             .expect("touch image");
-        let third = stager.stage_all().await;
+        let third = stager.stage_all().await.unwrap();
         assert_eq!(only(&third).action, VmRunAction::Copy);
     }
 
@@ -1851,7 +1997,7 @@ mod tests {
         let host = FakeHost::new().await;
         host.define("build01", "running", "build01.raw", 16).await;
 
-        let outcomes = host.stager(host.config()).stage_all().await;
+        let outcomes = host.stager(host.config()).stage_all().await.unwrap();
 
         assert_eq!(only(&outcomes).action, VmRunAction::Copy);
         assert_eq!(only(&outcomes).mode, VmSnapshotMode::FullCopy);
@@ -1878,6 +2024,70 @@ mod tests {
         assert_eq!(overlays, 0, "the snapshot overlay must be committed away");
     }
 
+    /// An LVM volume handed straight to the guest is written
+    /// `<source dev='...'/>`, and `dev` then appears on both `<source>` and
+    /// `<target>` within the same `<disk>`. Reading the block as a whole
+    /// returns the host path where the target name belongs, so the disk is
+    /// never matched and a restore leaves it pointing at the original host's
+    /// volume - which may not exist there, or may still be in use.
+    #[test]
+    fn a_block_device_disk_is_matched_by_its_target_and_repathed() {
+        let mut xml = DomainXml::new(DOMAIN_XML.to_owned());
+
+        assert_eq!(
+            xml.disk_source("vdc").as_deref(),
+            Some("/dev/mapper/vg-lv01"),
+            "a type='block' disk resolves through its source dev"
+        );
+        assert_eq!(
+            xml.disk_source("vda").as_deref(),
+            Some("/var/lib/libvirt/images/web01.qcow2"),
+            "a type='file' disk still resolves through its source file"
+        );
+
+        xml.repath("/dev/mapper/vg-lv01", "/srv/restore/vdc.img");
+        assert!(
+            xml.text.contains("<source dev='/srv/restore/vdc.img'/>"),
+            "the restored definition must point at the restored image"
+        );
+        assert!(
+            !xml.text.contains("vg-lv01"),
+            "the original host's volume must not survive the repath"
+        );
+    }
+
+    /// A host whose domains cannot be listed at all is not a host with
+    /// nothing to stage. Reporting an empty run would let the backup succeed
+    /// carrying none of the machines it exists to carry - the executor
+    /// derives its failures from the outcome list, so zero outcomes reads as
+    /// zero failures.
+    #[tokio::test]
+    async fn a_host_whose_domains_cannot_be_listed_fails_rather_than_staging_nothing() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 16).await;
+
+        // A virsh that is not there at all, which is what a broken PATH or a
+        // missing libvirt client looks like to the agent.
+        let stager = VmStager::with_binaries(
+            host.config(),
+            host.state().join("no-such-virsh"),
+            host.state().join("no-such-qemu-img"),
+            vec![(
+                "MOCK_VIRT_STATE".to_owned(),
+                host.state().to_string_lossy().into_owned(),
+            )],
+        );
+
+        let error = stager
+            .stage_all()
+            .await
+            .expect_err("a total listing failure must not read as an empty run");
+        assert!(
+            matches!(error, VmError::Spawn { .. } | VmError::Command { .. }),
+            "the failure must name the command that could not run, got {error:?}"
+        );
+    }
+
     /// The timeout is documented as the seconds one domain's snapshot may
     /// take, with no mention of a capture mode, and the manual-recovery note
     /// in docs/vm-snapshots.md is written for a fallback copy killed by it.
@@ -1898,7 +2108,8 @@ mod tests {
 
         let outcomes = tokio::time::timeout(Duration::from_secs(20), stager.stage_all())
             .await
-            .expect("the staging deadline must end the run well before the double does");
+            .expect("the staging deadline must end the run well before the double does")
+            .unwrap();
 
         let error = only(&outcomes)
             .error
@@ -1919,7 +2130,7 @@ mod tests {
             vec![("MOCK_VIRT_NO_QUIESCE".to_owned(), "1".to_owned())],
         );
 
-        let outcomes = stager.stage_all().await;
+        let outcomes = stager.stage_all().await.unwrap();
 
         assert_eq!(only(&outcomes).action, VmRunAction::Copy);
         assert!(
@@ -1946,7 +2157,7 @@ mod tests {
             vec![("MOCK_VIRT_FAIL_BACKUP".to_owned(), "1".to_owned())],
         );
 
-        let outcomes = stager.stage_all().await;
+        let outcomes = stager.stage_all().await.unwrap();
 
         assert!(only(&outcomes).error.is_some());
         assert!(!is_file(&host.staged("web01").join("vda.full.qcow2")).await);
@@ -1976,6 +2187,11 @@ mod tests {
     </disk>
     <disk type='file' device='cdrom'>
       <target dev='sda' bus='sata'/>
+    </disk>
+    <disk type='block' device='disk'>
+      <driver name='qemu' type='raw'/>
+      <source dev='/dev/mapper/vg-lv01'/>
+      <target dev='vdc' bus='virtio'/>
     </disk>
     <interface type='bridge'>
       <mac address='52:54:00:6b:3c:58'/>
@@ -2374,7 +2590,7 @@ mod tests {
             .await
             .expect("disks");
 
-        let outcomes = host.stager(host.config()).stage_all().await;
+        let outcomes = host.stager(host.config()).stage_all().await.unwrap();
         let outcome = only(&outcomes);
 
         assert_eq!(outcome.action, VmRunAction::Unchanged);
@@ -2402,7 +2618,7 @@ mod tests {
         .await
         .expect("nvram pointer");
 
-        let outcomes = host.stager(host.config()).stage_all().await;
+        let outcomes = host.stager(host.config()).stage_all().await.unwrap();
 
         assert!(only(&outcomes).error.is_none());
         let staged = host.staged("uefi01").join("nvram.fd");

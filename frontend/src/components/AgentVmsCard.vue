@@ -291,8 +291,14 @@ function onIncludedChange(vm: AgentVmResponse, included: boolean): void {
   void saveVm(vm, included, limitInput(vm))
 }
 
+/**
+ * A finished restore refreshes the table but leaves the wizard open. The
+ * wizard emits this the moment stage two succeeds, not when the operator
+ * dismisses it, so closing here would tear the dialog down before its
+ * outcome summary and Done button ever render. Closing is the `close`
+ * event's job.
+ */
 function restored(): void {
-  restoring.value = null
   void load()
 }
 

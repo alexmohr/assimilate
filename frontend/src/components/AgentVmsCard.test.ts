@@ -388,19 +388,28 @@ describe('AgentVmsCard', () => {
     expect(wrapper.findComponent(VmRestoreWizard).exists()).toBe(false)
   })
 
-  it('reloads the domains once a restore has finished', async () => {
+  it('reloads the domains but keeps the wizard open once a restore finishes', async () => {
     const wrapper = await mount()
     const restore = wrapper.findAll('button').find((b) => b.text() === 'Restore')
     await restore?.trigger('click')
     await flushPromises()
     vi.mocked(apiClient.get).mockClear()
 
+    // The wizard emits this the moment stage two succeeds, not when the
+    // operator dismisses it. Closing here would unmount the wizard before its
+    // outcome summary and Done button ever render.
     wrapper.findComponent(VmRestoreWizard).vm.$emit('restored')
     await flushPromises()
 
-    // The wizard closes and the table is re-read, so a restored domain's new
-    // staged size is what the operator sees.
+    expect(apiClient.get, 'the table is re-read so the new staged size shows').toHaveBeenCalled()
+    expect(
+      wrapper.findComponent(VmRestoreWizard).exists(),
+      'the operator still has the outcome to read',
+    ).toBe(true)
+
+    // Dismissing is what closes it.
+    wrapper.findComponent(VmRestoreWizard).vm.$emit('close')
+    await flushPromises()
     expect(wrapper.findComponent(VmRestoreWizard).exists()).toBe(false)
-    expect(apiClient.get).toHaveBeenCalled()
   })
 })

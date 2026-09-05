@@ -10936,7 +10936,7 @@ async fn vm_selection_survives_a_round_trip(pool: PgPool) {
             full_interval: 7,
             timeout_seconds: 1800,
             default_limit_bytes: 0,
-            selection: VmSelectionMode::Selected,
+            selection: Some(VmSelectionMode::Selected),
         },
     )
     .await
@@ -11046,7 +11046,7 @@ async fn a_rescan_keeps_a_selection_that_the_old_prune_would_have_dropped(pool: 
             full_interval: 7,
             timeout_seconds: 1800,
             default_limit_bytes: 0,
-            selection: VmSelectionMode::Selected,
+            selection: Some(VmSelectionMode::Selected),
         },
     )
     .await
@@ -11070,6 +11070,40 @@ async fn a_rescan_keeps_a_selection_that_the_old_prune_would_have_dropped(pool: 
             .unwrap()
             .includes("picked"),
         "an opt-in selection must survive the domain vanishing from a scan"
+    );
+}
+
+/// An absent selection is resolved inside the UPDATE, not by reading the row
+/// first. A read-then-write would let a concurrent save of the mode land
+/// between the two statements and be silently reverted by this one.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_settings_save_without_a_selection_keeps_the_stored_mode(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-selection-keep", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let patch = |selection| db::vms::VmSnapshotPatch {
+        enabled: true,
+        dir: "/srv/vm",
+        full_interval: 7,
+        timeout_seconds: 1800,
+        default_limit_bytes: 0,
+        selection,
+    };
+
+    db::vms::update_agent_vm_snapshot(&pool, agent.id, patch(Some(VmSelectionMode::Selected)))
+        .await
+        .unwrap();
+
+    // Stands in for the other admin's save: no selection of its own, so it
+    // must leave the mode alone rather than write back what it last read.
+    let row = db::vms::update_agent_vm_snapshot(&pool, agent.id, patch(None))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        row.vm_snapshot_selection, "selected",
+        "a save without a selection must not revert the stored mode"
     );
 }
 
@@ -11109,7 +11143,7 @@ async fn setting_a_limit_leaves_an_undecided_domain_undecided(pool: PgPool) {
             full_interval: 7,
             timeout_seconds: 1800,
             default_limit_bytes: 0,
-            selection: VmSelectionMode::Selected,
+            selection: Some(VmSelectionMode::Selected),
         },
     )
     .await

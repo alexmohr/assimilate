@@ -256,15 +256,10 @@ pub async fn update_agent_vm_snapshot(
                 .map_err(|_| ApiError::BadRequest("timeout_seconds out of range".to_owned()))?,
             default_limit_bytes: i64::try_from(req.default_limit_bytes)
                 .map_err(|_| ApiError::BadRequest("default_limit_bytes out of range".to_owned()))?,
-            selection: match req.selection {
-                Some(selection) => selection,
-                None => VmSelectionMode::from_str(
-                    &db::vms::get_agent_vm_snapshot(&state.pool, agent.id)
-                        .await?
-                        .vm_snapshot_selection,
-                )
-                .unwrap_or_default(),
-            },
+            // Passed straight through: the UPDATE resolves an absent mode
+            // against the stored row, so two admins saving at once cannot
+            // revert each other's choice.
+            selection: req.selection,
         },
     )
     .await?;

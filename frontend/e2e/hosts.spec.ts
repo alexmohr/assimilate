@@ -34,7 +34,15 @@ test.describe('Hosts management', () => {
     await expect(page.locator('.fleet-summary-counts')).toContainText('agent')
 
     const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
-    await expect(card.locator('.coverage-meter')).toBeVisible()
+    const meter = card.locator('.coverage-meter')
+    await expect(meter).toBeVisible()
+
+    // The bar is only readable if it says what it is filling with, so the
+    // caption, the progress-bar role and the explaining tooltip all ship.
+    await expect(meter.locator('.group-label')).toHaveText('Time since last backup')
+    const track = meter.locator('.coverage-track')
+    await expect(track).toHaveAttribute('role', 'progressbar')
+    await expect(track).toHaveAttribute('title', /cadence|no enabled backup schedule/)
   })
 
   test('clicking a host navigates to its detail page', async ({ page }) => {

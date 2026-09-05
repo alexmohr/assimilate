@@ -40,7 +40,12 @@ const fillPercent = computed(() => {
 })
 
 const usageLabel = computed(() => {
-  if (elapsedSecs.value === null) return 'No backups yet'
+  // With a cadence but nothing run yet, repeating the status verbatim wasted
+  // the line - name the cadence the bar will fill over instead.
+  if (elapsedSecs.value === null) {
+    if (props.cadenceSecs === null) return 'No backups yet'
+    return `Awaiting first backup, ${formatDuration(props.cadenceSecs)} cadence`
+  }
   if (props.cadenceSecs === null) {
     return `${formatDuration(Math.round(elapsedSecs.value))} since last backup`
   }
@@ -56,13 +61,49 @@ const STATUS_LABELS: Record<CoverageHealth, string> = {
 }
 
 const statusLabel = computed(() => STATUS_LABELS[health.value])
+
+// The bar on its own is ambiguous - a full green bar reads like "complete"
+// when it actually means "a backup is about to fall due". The caption names
+// what the fill measures, and this sentence (tooltip plus the progress bar's
+// accessible value) spells out the scale it is measured against.
+const meterExplanation = computed(() => {
+  const elapsed = elapsedSecs.value
+  if (props.cadenceSecs === null) {
+    const since =
+      elapsed === null
+        ? 'No completed backup yet.'
+        : `${formatDuration(Math.round(elapsed))} since the last backup.`
+    return `${since} This agent has no enabled backup schedule, so there is no cadence to measure against.`
+  }
+  const cadence = formatDuration(props.cadenceSecs)
+  if (elapsed === null) {
+    return `No completed backup yet. The bar fills over ${cadence}, the shortest cadence among this agent's enabled schedules.`
+  }
+  return `${formatDuration(Math.round(elapsed))} since the last backup, ${Math.round(fillPercent.value)}% of the ${cadence} cadence. The bar fills as the next backup falls due, turning amber at the cadence and red at twice it.`
+})
 </script>
 
 <template>
   <div class="coverage-meter">
+    <div class="coverage-row">
+      <span class="group-label">Time since last backup</span>
+      <span
+        class="coverage-status"
+        :class="`coverage-status-${health}`"
+      >
+        {{ statusLabel }}
+      </span>
+    </div>
     <div
       class="coverage-track"
       :class="{ 'coverage-track-unknown': health === 'no-cadence' || health === 'no-data' }"
+      role="progressbar"
+      aria-label="Time since last backup, against the backup cadence"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      :aria-valuenow="Math.round(fillPercent)"
+      :aria-valuetext="meterExplanation"
+      :title="meterExplanation"
     >
       <div
         class="coverage-fill"
@@ -72,12 +113,6 @@ const statusLabel = computed(() => STATUS_LABELS[health.value])
     </div>
     <div class="coverage-row">
       <span class="coverage-usage">{{ usageLabel }}</span>
-      <span
-        class="coverage-status"
-        :class="`coverage-status-${health}`"
-      >
-        {{ statusLabel }}
-      </span>
     </div>
   </div>
 </template>

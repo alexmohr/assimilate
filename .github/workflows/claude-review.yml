@@ -409,6 +409,36 @@ jobs:
             other gate is clear, but only for a real approval - never just because a label is
             present). Your job ends at submitting the verdict.
 
+      # Every round of the allowlist fix above had to guess which tool was
+      # being denied, because the action runs with `show_full_output` off
+      # (deliberately - this is a `pull_request_target` workflow) and the
+      # denials are only ever visible as a single `permission_denials_count`
+      # integer in the result message. The execution log the action writes
+      # has the actual entries, so print a per-tool tally of them: the next
+      # time a review ends with no verdict, the run log says which call it
+      # kept reaching for instead of leaving the next person to infer it.
+      # Tool names plus a 200-character sample of the input, not the model's
+      # prose, so this stays well short of turning full output back on.
+      # Never fails the job - a missing or unexpectedly shaped log is worth
+      # a line of output, not a red check.
+      - name: Summarize permission denials
+        if: always() && steps.precheck.outputs.run_claude == 'true'
+        env:
+          EXECUTION_LOG: ${{ runner.temp }}/claude-execution-output.json
+        run: |
+          if [ ! -f "$EXECUTION_LOG" ]; then
+            echo "No execution log at $EXECUTION_LOG - nothing to summarize."
+            exit 0
+          fi
+          echo "Permission denials by tool (no lines below means none):"
+          jq -r '
+            [.. | objects | select(has("permission_denials")) | .permission_denials[]?]
+            | group_by(.tool_name)
+            | sort_by(-length)
+            | .[]
+            | "  \(length)x \(.[0].tool_name): \(.[0].tool_input | tostring | .[0:200])"
+          ' "$EXECUTION_LOG" || echo "  (could not parse $EXECUTION_LOG)"
+
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-
       # diff.js each own their label): sets/refreshes both when this attempt

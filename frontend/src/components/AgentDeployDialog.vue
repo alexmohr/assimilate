@@ -127,6 +127,13 @@ async function loadExistingServiceUnit(options: { silent?: boolean } = {}): Prom
   }
 }
 
+// Both a thrown request failure and a structured unsuccessful result read the
+// same way to a user, and only one can be present at a time.
+const submitError = computed<string | null>(
+  () =>
+    deployError.value ?? (deployResult.value?.success === false ? deployResult.value.error : null),
+)
+
 function dialogTitle(): string {
   if (isRedeploy.value) return 'Redeploy'
   return props.agentVersion ? 'Upgrade' : 'Deploy'
@@ -360,18 +367,6 @@ async function submitDeploy(): Promise<void> {
           </span>
         </BaseDisclosure>
       </div>
-      <div
-        v-if="deployError"
-        class="form-error"
-      >
-        {{ deployError }}
-      </div>
-      <div
-        v-if="deployResult && !deployResult.success"
-        class="form-error"
-      >
-        {{ deployResult.error }}
-      </div>
     </template>
 
     <template v-else>
@@ -414,6 +409,15 @@ async function submitDeploy(): Promise<void> {
 
     <template #footer>
       <template v-if="!deployResult?.success">
+        <!-- In the footer rather than under the form: a long form scrolls in
+             the body, which would leave the failure off-screen next to the
+             button that caused it. -->
+        <div
+          v-if="submitError"
+          class="form-error"
+        >
+          {{ submitError }}
+        </div>
         <button
           class="btn btn-ghost"
           @click="emit('close')"

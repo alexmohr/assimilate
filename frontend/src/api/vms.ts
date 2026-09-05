@@ -3,7 +3,12 @@
 
 import { apiClient } from './client'
 import { domainParams } from '../utils/agent'
-import type { AgentVmSnapshotResponse, VmBuildAction, VmBuildOutcome } from '../types/generated'
+import type {
+  AgentVmSnapshotResponse,
+  VmBuildAction,
+  VmBuildOutcome,
+  VmSelectionMode,
+} from '../types/generated'
 
 /** New staging settings for a host. */
 export interface UpdateAgentVmSnapshotRequest {
@@ -12,6 +17,8 @@ export interface UpdateAgentVmSnapshotRequest {
   full_interval: number
   timeout_seconds: number
   default_limit_bytes: number
+  /** Omitted keeps whichever mode the host already had. */
+  selection?: VmSelectionMode
 }
 
 /** New settings for one domain of a host. */

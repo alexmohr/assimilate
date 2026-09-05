@@ -13,7 +13,7 @@ use crate::{
         FindingStatus, IndexStatus, OnFailure, QuotaAction, RunEventTarget, RunEventType,
         ScheduleType, SearchEntry, Visibility,
     },
-    vm::{VmSnapshotMode, VmState},
+    vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
 
 /// Default hook timeout for schedule exports predating the
@@ -268,6 +268,9 @@ pub struct AgentVmSnapshotSettingsResponse {
     /// no limit.
     #[ts(type = "number")]
     pub default_limit_bytes: u64,
+    /// Which domains the per-domain flags select: every domain except the
+    /// ones turned off, or only the ones turned on.
+    pub selection: VmSelectionMode,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

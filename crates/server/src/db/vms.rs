@@ -7,8 +7,12 @@
 //! backing up the same host would otherwise each claim it with their own
 //! limits.
 
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
-use shared::vm::{DiscoveredVm, VmDomainConfig, VmSnapshotConfig, VmSnapshotOutcome};
+use shared::vm::{
+    DiscoveredVm, VmDomainConfig, VmSelectionMode, VmSnapshotConfig, VmSnapshotOutcome,
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -27,6 +31,9 @@ pub struct AgentVmSnapshotRow {
     /// Bytes a domain may occupy unless it carries its own limit. Zero is
     /// unlimited.
     pub vm_snapshot_default_limit_bytes: i64,
+    /// Which direction the per-domain include flags are read in, as the
+    /// wire name of a [`VmSelectionMode`].
+    pub vm_snapshot_selection: String,
 }
 
 /// New staging settings for a host.
@@ -42,6 +49,8 @@ pub struct VmSnapshotPatch<'a> {
     pub timeout_seconds: i32,
     /// Bytes a domain may occupy unless it carries its own limit.
     pub default_limit_bytes: i64,
+    /// Which domains the per-domain flags select.
+    pub selection: VmSelectionMode,
 }
 
 /// One domain of a host: what the last scan saw, what the last run staged, and
@@ -52,8 +61,9 @@ pub struct AgentVmRow {
     pub id: i64,
     /// libvirt domain name, unique on its host.
     pub name: String,
-    /// Whether the domain is staged at all.
-    pub included: bool,
+    /// The operator's own choice about staging this domain, or `None` when
+    /// nobody has made one and the host's selection mode decides.
+    pub included: Option<bool>,
     /// Bytes this domain may occupy, or `None` to inherit the host default.
     pub limit_bytes: Option<i64>,
     /// Run state at the last scan, as [`shared::vm::VmState`] renders it.
@@ -97,7 +107,8 @@ pub async fn get_agent_vm_snapshot(
     sqlx::query_as!(
         AgentVmSnapshotRow,
         "SELECT vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, \
-         vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes FROM agents WHERE id = $1",
+         vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection FROM \
+         agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -123,15 +134,16 @@ pub async fn update_agent_vm_snapshot(
         AgentVmSnapshotRow,
         "UPDATE agents SET vm_snapshot_enabled = $2, vm_snapshot_dir = $3, \
          vm_snapshot_full_interval = $4, vm_snapshot_timeout_seconds = $5, \
-         vm_snapshot_default_limit_bytes = $6 WHERE id = $1 RETURNING vm_snapshot_enabled, \
-         vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, \
-         vm_snapshot_default_limit_bytes",
+         vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = $7 WHERE id = $1 RETURNING \
+         vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, \
+         vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection",
         agent_id,
         patch.enabled,
         patch.dir,
         patch.full_interval,
         patch.timeout_seconds,
         patch.default_limit_bytes,
+        patch.selection.to_string(),
     )
     .fetch_one(pool)
     .await
@@ -195,9 +207,13 @@ pub async fn record_scan(
 
     let seen: Vec<String> = vms.iter().map(|vm| vm.name.clone()).collect();
 
+    // A row for a domain that is gone is only worth keeping when it carries a
+    // decision somebody made. A NULL `included` is the absence of one, in
+    // either selection mode, so this drops exactly the rows a rescan can
+    // recreate from scratch.
     sqlx::query!(
-        "DELETE FROM agent_vms WHERE agent_id = $1 AND NOT (name = ANY($2)) AND included AND \
-         limit_bytes IS NULL",
+        "DELETE FROM agent_vms WHERE agent_id = $1 AND NOT (name = ANY($2)) AND included IS NULL \
+         AND limit_bytes IS NULL",
         agent_id,
         &seen,
     )
@@ -300,6 +316,7 @@ pub async fn load_config(pool: &PgPool, agent_id: i64) -> Result<VmSnapshotConfi
         full_interval: u32::try_from(settings.vm_snapshot_full_interval).unwrap_or(1),
         timeout_seconds: u32::try_from(settings.vm_snapshot_timeout_seconds).unwrap_or(1),
         default_limit_bytes: u64::try_from(settings.vm_snapshot_default_limit_bytes).unwrap_or(0),
+        selection: VmSelectionMode::from_str(&settings.vm_snapshot_selection).unwrap_or_default(),
         domains: vms
             .into_iter()
             .map(|vm| VmDomainConfig {

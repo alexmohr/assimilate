@@ -23,9 +23,10 @@ Open the agent, then **Settings → Virtual machines**.
 ![The Virtual machines settings pane, listing a host's domains with their staged size against each limit](assets/screenshots/agent-vms.png)
 
 1. Turn on **Stage virtual machines**.
-2. Set the **staging directory**. It must be an absolute path; the agent creates one subdirectory per domain below it. Nothing about this path is assumed anywhere else in Assimilate.
-3. Set **new full image after** (increments per chain), the **snapshot timeout** per domain, and the **default limit per domain**.
-4. Click **Rescan host**. The agent enumerates the domains and reports what it found: their state, how each would be captured, and how much their disks occupy.
+2. Choose **which domains** to stage. **All except excluded** backs up every domain on the host and lets you drop individual ones; **Only selected** backs up nothing until you pick the domains you want. See [Choosing which domains to stage](#choosing-which-domains-to-stage).
+3. Set the **staging directory**. It must be an absolute path; the agent creates one subdirectory per domain below it. Nothing about this path is assumed anywhere else in Assimilate.
+4. Set **new full image after** (increments per chain), the **snapshot timeout** per domain, and the **default limit per domain**.
+5. Click **Rescan host**. The agent enumerates the domains and reports what it found: their state, how each would be captured, and how much their disks occupy.
 
 Give the QEMU process access to the staging directory first. On distributions where QEMU drops to its own user, the directory must be owned by that user:
 
@@ -49,9 +50,24 @@ The domain table lists what the agent last reported, plus the settings you make:
 | Mode | How the domain is captured, decided by the agent from its state and disk formats |
 | Staged size | What the domain occupies now, against the limit that applies to it |
 | Limit | This domain's own budget in GiB. Empty inherits the host's default |
-| Include | Whether the domain is staged at all |
+| Include | Whether the domain is staged at all, read in whichever direction **which domains** is set to |
 
-A domain the operator has never touched is included, so a machine created after the last scan is backed up rather than silently missed. Removing a domain from the host drops it from the table, unless you gave it settings, in which case it stays with an unknown state so your settings are not lost.
+Removing a domain from the host drops it from the table, unless you gave it settings, in which case it stays with an unknown state so your settings are not lost.
+
+## Choosing which domains to stage
+
+**Which domains** decides what the **Include** switch means, and what happens to a machine nobody has decided about:
+
+| Mode | Include switch | A domain created after the last scan |
+|------|----------------|--------------------------------------|
+| **All except excluded** | Turn a domain **off** to leave it out of the backup | Backed up, rather than silently missed |
+| **Only selected** | Turn a domain **on** to back it up | Left alone until you select it |
+
+**All except excluded** is the default, and is what you want when the host exists to run production machines and a new one should be protected the moment it appears. Switch to **Only selected** when most of the host is scratch — build agents, test machines, throwaway clones — and only a handful of domains are worth the storage.
+
+Switching modes never changes a decision you already made: a domain you turned off stays off, and one you turned on stays on. Only the domains you have not touched move, which is the entire difference between the two.
+
+Giving a domain a **limit** is not a decision about staging. Under **Only selected** a domain with a limit but no include switch is still left alone, so setting a budget ahead of time does not quietly pull a machine into the backup.
 
 ## How a domain is captured
 

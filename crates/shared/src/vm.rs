@@ -248,14 +248,66 @@ pub struct VmBuildOutcome {
     pub started: bool,
 }
 
+/// How a host decides which of its domains get staged.
+///
+/// The two modes read the same per-domain flag from opposite directions, which
+/// is what makes the choice worth storing rather than inferring: under
+/// [`Self::All`] the flag marks the exceptions to stage nothing of, under
+/// [`Self::Selected`] it marks the only domains to stage. A domain the
+/// operator has never touched carries no flag at all, and the mode is what
+/// decides where that domain lands.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum VmSelectionMode {
+    /// Stage every domain on the host except the ones the operator turned
+    /// off. A machine created after the last scan is backed up rather than
+    /// silently missed, which is why this is the default.
+    #[default]
+    All,
+    /// Stage only the domains the operator turned on. A machine created after
+    /// the last scan is left alone until someone selects it.
+    Selected,
+}
+
+impl VmSelectionMode {
+    /// Whether a domain with no settings of its own is staged under this mode.
+    ///
+    /// This is also the flag value that carries no operator intent, so it is
+    /// what tells a rescan which rows for vanished domains are safe to drop.
+    #[must_use]
+    pub const fn includes_untouched(self) -> bool {
+        match self {
+            Self::All => true,
+            Self::Selected => false,
+        }
+    }
+}
+
 /// Per-domain settings the operator made, delivered to the agent alongside the
 /// host's settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VmDomainConfig {
     /// libvirt domain name.
     pub name: String,
-    /// Whether this domain is staged at all.
-    pub included: bool,
+    /// Whether this domain is staged at all, or `None` when nobody has
+    /// decided and the host's [`VmSnapshotConfig::selection`] answers instead.
+    #[serde(default)]
+    pub included: Option<bool>,
     /// Bytes this domain may occupy below the staging directory. `None`
     /// inherits the host's default.
     #[serde(default)]
@@ -278,6 +330,9 @@ pub struct VmSnapshotConfig {
     /// Bytes a domain may occupy below the staging directory unless it carries
     /// its own limit. Zero means no limit.
     pub default_limit_bytes: u64,
+    /// Which domains the per-domain flags select.
+    #[serde(default)]
+    pub selection: VmSelectionMode,
     /// Per-domain settings, for the domains the operator has touched.
     #[serde(default)]
     pub domains: Vec<VmDomainConfig>,
@@ -291,6 +346,7 @@ impl Default for VmSnapshotConfig {
             full_interval: DEFAULT_FULL_INTERVAL,
             timeout_seconds: DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
             default_limit_bytes: 0,
+            selection: VmSelectionMode::default(),
             domains: Vec::new(),
         }
     }
@@ -308,20 +364,23 @@ impl VmSnapshotConfig {
             .unwrap_or(self.default_limit_bytes)
     }
 
-    /// Whether a domain is staged. Domains the operator has never touched are
-    /// included, so a machine created on the host after the last scan is
-    /// backed up rather than silently missed.
+    /// Whether a domain is staged, under whichever direction
+    /// [`VmSnapshotConfig::selection`] reads the per-domain flags in. A domain
+    /// the operator has never touched follows the mode's own default.
     #[must_use]
     pub fn includes(&self, domain: &str) -> bool {
         self.domains
             .iter()
             .find(|candidate| candidate.name == domain)
-            .is_none_or(|candidate| candidate.included)
+            .and_then(|candidate| candidate.included)
+            .unwrap_or_else(|| self.selection.includes_untouched())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     fn config() -> VmSnapshotConfig {
@@ -331,13 +390,18 @@ mod tests {
             domains: vec![
                 VmDomainConfig {
                     name: "web01".to_owned(),
-                    included: true,
+                    included: Some(true),
                     limit_bytes: Some(500),
                 },
                 VmDomainConfig {
                     name: "win-ci".to_owned(),
-                    included: false,
+                    included: Some(false),
                     limit_bytes: None,
+                },
+                VmDomainConfig {
+                    name: "db01".to_owned(),
+                    included: None,
+                    limit_bytes: Some(900),
                 },
             ],
             ..VmSnapshotConfig::default()
@@ -349,6 +413,29 @@ mod tests {
         assert_eq!(config().limit_for("web01"), 500);
         assert_eq!(config().limit_for("win-ci"), 200);
         assert_eq!(config().limit_for("never-seen"), 200);
+        assert_eq!(
+            config().limit_for("db01"),
+            900,
+            "a limit applies whether or not anyone decided about staging"
+        );
+    }
+
+    #[test]
+    fn a_limit_alone_is_not_a_decision_about_staging() {
+        let all = config();
+        let selected = VmSnapshotConfig {
+            selection: VmSelectionMode::Selected,
+            ..config()
+        };
+
+        assert!(
+            all.includes("db01"),
+            "under all, a domain with only a limit is still staged"
+        );
+        assert!(
+            !selected.includes("db01"),
+            "under selected, giving a domain a limit must not select it"
+        );
     }
 
     #[test]
@@ -356,6 +443,82 @@ mod tests {
         assert!(config().includes("never-seen"));
         assert!(config().includes("web01"));
         assert!(!config().includes("win-ci"));
+    }
+
+    #[test]
+    fn selected_mode_stages_only_the_domains_turned_on() {
+        let config = VmSnapshotConfig {
+            selection: VmSelectionMode::Selected,
+            ..config()
+        };
+
+        assert!(config.includes("web01"), "an included domain is staged");
+        assert!(!config.includes("win-ci"), "an excluded domain is not");
+        assert!(
+            !config.includes("never-seen"),
+            "a domain nobody selected is left alone rather than picked up"
+        );
+    }
+
+    #[test]
+    fn the_two_modes_disagree_only_about_untouched_domains() {
+        let all = config();
+        let selected = VmSnapshotConfig {
+            selection: VmSelectionMode::Selected,
+            ..config()
+        };
+
+        for domain in ["web01", "win-ci"] {
+            assert_eq!(
+                all.includes(domain),
+                selected.includes(domain),
+                "{domain} carries its own flag, so the mode must not override it"
+            );
+        }
+        for domain in ["never-seen", "db01"] {
+            assert_ne!(
+                all.includes(domain),
+                selected.includes(domain),
+                "{domain} carries no decision, so the mode is what answers"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mode_says_what_an_untouched_domain_does() {
+        assert!(VmSelectionMode::All.includes_untouched());
+        assert!(!VmSelectionMode::Selected.includes_untouched());
+        assert_eq!(VmSelectionMode::default(), VmSelectionMode::All);
+    }
+
+    #[test]
+    fn selection_modes_survive_a_round_trip_through_their_wire_names() {
+        for mode in [VmSelectionMode::All, VmSelectionMode::Selected] {
+            let rendered = mode.to_string();
+            assert_eq!(
+                VmSelectionMode::from_str(&rendered),
+                Ok(mode),
+                "{rendered} must parse back to the mode that wrote it"
+            );
+        }
+        assert_eq!(VmSelectionMode::All.to_string(), "all");
+        assert_eq!(VmSelectionMode::Selected.to_string(), "selected");
+    }
+
+    #[test]
+    fn a_config_without_a_selection_defaults_to_staging_everything() {
+        let stored = r#"{
+            "enabled": true,
+            "staging_dir": "/srv/vm",
+            "full_interval": 7,
+            "timeout_seconds": 1800,
+            "default_limit_bytes": 0
+        }"#;
+        let config: VmSnapshotConfig = serde_json::from_str(stored)
+            .expect("a config predating the selection mode still deserializes");
+
+        assert_eq!(config.selection, VmSelectionMode::All);
+        assert!(config.includes("never-seen"));
     }
 
     #[test]

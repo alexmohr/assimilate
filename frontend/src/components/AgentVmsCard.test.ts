@@ -8,7 +8,7 @@ import { apiClient } from '../api/client'
 import AgentVmsCard from './AgentVmsCard.vue'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
-import type { AgentVmResponse, AgentVmSnapshotResponse } from '../types/generated'
+import type { AgentVmResponse, AgentVmSnapshotResponse, VmSelectionMode } from '../types/generated'
 
 vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn(), put: vi.fn(), post: vi.fn() },
@@ -37,7 +37,10 @@ function vm(overrides: Partial<AgentVmResponse> = {}): AgentVmResponse {
   }
 }
 
-function response(vms: AgentVmResponse[] = [vm()]): AgentVmSnapshotResponse {
+function response(
+  vms: AgentVmResponse[] = [vm()],
+  selection: VmSelectionMode = 'all',
+): AgentVmSnapshotResponse {
   return {
     settings: {
       enabled: true,
@@ -45,6 +48,7 @@ function response(vms: AgentVmResponse[] = [vm()]): AgentVmSnapshotResponse {
       full_interval: 7,
       timeout_seconds: 1800,
       default_limit_bytes: 200 * GIB,
+      selection,
     },
     vms,
   }
@@ -151,6 +155,7 @@ describe('AgentVmsCard', () => {
         full_interval: 14,
         timeout_seconds: 1800,
         default_limit_bytes: 500 * GIB,
+        selection: 'all',
       },
       { params: {} },
     )
@@ -288,6 +293,62 @@ describe('AgentVmsCard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('domain is unknown to this host')
+  })
+
+  it('summarizes which domains the host stages', async () => {
+    expect((await mount()).text()).toContain('Every domain except the ones excluded below')
+  })
+
+  it('summarizes an opt-in host as staging only what was selected', async () => {
+    vi.mocked(apiClient.get).mockImplementation(((url: string) =>
+      Promise.resolve({
+        data: url.endsWith('/reports') ? [] : response([vm()], 'selected'),
+      })) as never)
+
+    expect((await mount()).text()).toContain('Only the domains selected below')
+  })
+
+  it('tells the operator what the include switch decides, per mode', async () => {
+    const including = await mount()
+    expect(including.text()).toContain('Turn a domain off to leave it out of the backup')
+
+    vi.mocked(apiClient.get).mockImplementation(((url: string) =>
+      Promise.resolve({
+        data: url.endsWith('/reports') ? [] : response([vm()], 'selected'),
+      })) as never)
+    const selecting = await mount()
+    expect(selecting.text()).toContain('Turn a domain on to back it up')
+  })
+
+  it('switches the host to staging only the domains that were selected', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+
+    const onlySelected = wrapper
+      .findAll('[role="radio"]')
+      .find((option) => option.text() === 'Only selected')
+    await onlySelected?.trigger('click')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/virt-host-01/vm-snapshot',
+      expect.objectContaining({ selection: 'selected' }),
+      { params: {} },
+    )
+  })
+
+  it('abandons a change of mode on cancel', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+
+    const onlySelected = wrapper
+      .findAll('[role="radio"]')
+      .find((option) => option.text() === 'Only selected')
+    await onlySelected?.trigger('click')
+    await clickSectionButton(wrapper, 'Cancel')
+
+    expect(wrapper.text()).toContain('Every domain except the ones excluded below')
+    expect(apiClient.put).not.toHaveBeenCalled()
   })
 
   it('opens the restore wizard for one domain and closes it again', async () => {

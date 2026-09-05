@@ -332,6 +332,7 @@ api PUT "/api/repos/$REPO_WEEKLY_ID/power" '{
 echo "==> Configuring virtual machine staging..."
 api PUT "/api/agents/db-server-01/vm-snapshot" '{
     "enabled": true,
+    "selection": "all",
     "staging_dir": "/srv/vm-staging",
     "full_interval": 7,
     "timeout_seconds": 1800,
@@ -342,14 +343,18 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL >
 INSERT INTO agent_vms (agent_id, name, included, limit_bytes, state, mode, disk_count,
                        disk_bytes, staged_bytes, chain_length, last_error,
                        last_scanned_at, last_staged_at)
+-- `included` is deliberately three-valued here. NULL is a domain nobody has
+-- decided about, which the host's selection mode answers for: under the demo's
+-- "all except excluded" they are staged, and switching the host to "only
+-- selected" drops them while leaving db01 and win-ci exactly as they are.
 VALUES
-    ($DB01_ID, 'web01', TRUE, NULL, 'running', 'incremental', 1,
+    ($DB01_ID, 'web01', NULL, NULL, 'running', 'incremental', 1,
      45097156608, 45943046144, 4, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
     ($DB01_ID, 'db01', TRUE, 536870912000, 'running', 'incremental', 2,
      472446402560, 502511173632, 6, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
-    ($DB01_ID, 'build01', TRUE, 21474836480, 'running', 'full_copy', 1,
+    ($DB01_ID, 'build01', NULL, 21474836480, 'running', 'full_copy', 1,
      20401094656, 21045969715, 0, NULL, NOW() - interval '4 minutes', NOW() - interval '3 hours'),
-    ($DB01_ID, 'mail01', TRUE, NULL, 'shut_off', 'offline_copy', 1,
+    ($DB01_ID, 'mail01', NULL, NULL, 'shut_off', 'offline_copy', 1,
      33714665062, 33714665062, 0, NULL, NOW() - interval '4 minutes', NOW() - interval '1 day'),
     ($DB01_ID, 'win-ci', FALSE, NULL, 'paused', 'excluded', 1,
      64424509440, 0, 0, NULL, NOW() - interval '4 minutes', NULL)

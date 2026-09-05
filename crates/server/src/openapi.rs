@@ -264,6 +264,7 @@ use crate::{
         shared::responses::AgentVmResponse,
         shared::vm::VmState,
         shared::vm::VmSnapshotMode,
+        shared::vm::VmSelectionMode,
         crate::api::vms::UpdateAgentVmSnapshotRequest,
         crate::api::vms::UpdateAgentVmRequest,
         crate::api::vms::BuildAgentVmRequest,

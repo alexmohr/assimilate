@@ -10,6 +10,7 @@ import { getAgentVms, scanAgentVms, updateAgentVm, updateAgentVmSnapshot } from 
 import { badgeClass, type BadgeTone } from '../utils/badge'
 import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import EditableSection from './EditableSection.vue'
 import EmptyState from './EmptyState.vue'
@@ -19,6 +20,7 @@ import type { AgentRow } from '../types/agent'
 import type {
   AgentVmResponse,
   AgentVmSnapshotResponse,
+  VmSelectionMode,
   VmSnapshotMode,
   VmState,
 } from '../types/generated'
@@ -58,7 +60,30 @@ const rowError = ref<string | null>(null)
 const restoring = ref<string | null>(null)
 
 const enabled = ref(false)
+const selection = ref<VmSelectionMode>('all')
 const stagingDir = ref('')
+
+const SELECTION_OPTIONS: readonly SegmentedOption<VmSelectionMode>[] = [
+  { value: 'all', label: 'All except excluded' },
+  { value: 'selected', label: 'Only selected' },
+]
+
+const SELECTION_LABELS: Record<VmSelectionMode, string> = {
+  all: 'Every domain except the ones excluded below',
+  selected: 'Only the domains selected below',
+}
+
+/**
+ * What the Include column decides, which is the opposite thing in each mode.
+ * Under `all` turning a domain off is what takes it out of the backup; under
+ * `selected` turning one on is what puts it in, and a domain nobody has
+ * touched stays out.
+ */
+const includeHint = computed<string>(() =>
+  selection.value === 'all'
+    ? 'Turn a domain off to leave it out of the backup. A machine created after the last scan is included automatically.'
+    : 'Turn a domain on to back it up. A machine created after the last scan is left alone until you select it.',
+)
 const fullInterval = ref(7)
 const timeoutSeconds = ref(1800)
 const defaultLimitGib = ref(0)
@@ -146,6 +171,7 @@ function stateBadge(state: VmState): string {
 function applyResponse(response: AgentVmSnapshotResponse): void {
   data.value = response
   enabled.value = response.settings.enabled
+  selection.value = response.settings.selection
   stagingDir.value = response.settings.staging_dir
   fullInterval.value = response.settings.full_interval
   timeoutSeconds.value = response.settings.timeout_seconds
@@ -190,6 +216,7 @@ async function save(): Promise<void> {
         props.agent.hostname,
         {
           enabled: enabled.value,
+          selection: selection.value,
           staging_dir: stagingDir.value.trim(),
           full_interval: fullInterval.value,
           timeout_seconds: timeoutSeconds.value,
@@ -300,6 +327,8 @@ onMounted(load)
           <dl class="info-grid">
             <dt>Stage virtual machines</dt>
             <dd>{{ enabled ? 'Enabled' : 'Disabled' }}</dd>
+            <dt>Which domains</dt>
+            <dd>{{ SELECTION_LABELS[selection] }}</dd>
             <dt>Staging directory</dt>
             <dd class="mono">{{ stagingDir }}</dd>
             <dt>New full image after</dt>
@@ -332,6 +361,16 @@ onMounted(load)
               v-model="enabled"
               label="Stage virtual machines"
             />
+          </div>
+
+          <div class="field">
+            <span class="field-label">Which domains</span>
+            <BaseSegmented
+              v-model="selection"
+              :options="SELECTION_OPTIONS"
+              label="Which domains to stage"
+            />
+            <span class="field-hint">{{ includeHint }}</span>
           </div>
 
           <div class="field">
@@ -425,6 +464,8 @@ onMounted(load)
           {{ scanning ? 'Scanning...' : 'Rescan host' }}
         </button>
       </div>
+
+      <p class="field-hint">{{ includeHint }}</p>
 
       <p
         v-if="scanError"

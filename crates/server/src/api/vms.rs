@@ -15,7 +15,7 @@ use serde::Deserialize;
 use shared::{
     protocol::ServerToAgent,
     responses::{AgentVmResponse, AgentVmSnapshotResponse, AgentVmSnapshotSettingsResponse},
-    vm::{VmBuildAction, VmBuildOutcome, VmBuildRequest, VmSnapshotMode, VmState},
+    vm::{VmBuildAction, VmBuildOutcome, VmBuildRequest, VmSelectionMode, VmSnapshotMode, VmState},
 };
 use tokio::sync::oneshot;
 use utoipa::ToSchema;
@@ -58,6 +58,11 @@ pub struct UpdateAgentVmSnapshotRequest {
     /// Bytes a domain may occupy unless it carries its own limit. Zero means
     /// no limit.
     pub default_limit_bytes: u64,
+    /// Which domains the per-domain flags select. Absent keeps whichever mode
+    /// the host already had, so a client that predates the setting cannot
+    /// silently flip a host to staging nothing.
+    #[serde(default)]
+    pub selection: Option<VmSelectionMode>,
 }
 
 /// New settings for one domain of a host.
@@ -69,13 +74,25 @@ pub struct UpdateAgentVmRequest {
     pub limit_bytes: Option<u64>,
 }
 
-/// Renders one stored domain row, resolving the limit that actually applies
-/// and reporting an excluded domain as excluded whatever the last scan saw.
-fn vm_to_response(row: AgentVmRow, default_limit_bytes: u64) -> AgentVmResponse {
+/// Renders one stored domain row, resolving the limit that actually applies,
+/// resolving a domain nobody has decided about against the host's selection
+/// mode, and reporting an excluded domain as excluded whatever the last scan
+/// saw.
+fn vm_to_response(
+    row: AgentVmRow,
+    default_limit_bytes: u64,
+    selection: VmSelectionMode,
+) -> AgentVmResponse {
     let limit_bytes = row
         .limit_bytes
         .map(|limit| u64::try_from(limit).unwrap_or(0));
-    let mode = if row.included {
+    // The client is told what will actually happen, not what is stored: an
+    // undecided domain reads as included under `all` and excluded under
+    // `selected`, which is what the agent will do with it.
+    let included = row
+        .included
+        .unwrap_or_else(|| selection.includes_untouched());
+    let mode = if included {
         VmSnapshotMode::from_str(&row.mode).unwrap_or_default()
     } else {
         VmSnapshotMode::Excluded
@@ -83,7 +100,7 @@ fn vm_to_response(row: AgentVmRow, default_limit_bytes: u64) -> AgentVmResponse 
 
     AgentVmResponse {
         name: row.name,
-        included: row.included,
+        included,
         limit_bytes,
         effective_limit_bytes: limit_bytes.unwrap_or(default_limit_bytes),
         state: VmState::from_str(&row.state).unwrap_or_default(),
@@ -106,6 +123,7 @@ async fn build_response(
     let settings = db::vms::get_agent_vm_snapshot(&state.pool, agent_id).await?;
     let rows = db::vms::list_agent_vms(&state.pool, agent_id).await?;
     let default_limit_bytes = u64::try_from(settings.vm_snapshot_default_limit_bytes).unwrap_or(0);
+    let selection = VmSelectionMode::from_str(&settings.vm_snapshot_selection).unwrap_or_default();
 
     Ok(AgentVmSnapshotResponse {
         settings: AgentVmSnapshotSettingsResponse {
@@ -114,10 +132,11 @@ async fn build_response(
             full_interval: u32::try_from(settings.vm_snapshot_full_interval).unwrap_or(1),
             timeout_seconds: u32::try_from(settings.vm_snapshot_timeout_seconds).unwrap_or(1),
             default_limit_bytes,
+            selection,
         },
         vms: rows
             .into_iter()
-            .map(|row| vm_to_response(row, default_limit_bytes))
+            .map(|row| vm_to_response(row, default_limit_bytes, selection))
             .collect(),
     })
 }
@@ -234,6 +253,15 @@ pub async fn update_agent_vm_snapshot(
                 .map_err(|_| ApiError::BadRequest("timeout_seconds out of range".to_owned()))?,
             default_limit_bytes: i64::try_from(req.default_limit_bytes)
                 .map_err(|_| ApiError::BadRequest("default_limit_bytes out of range".to_owned()))?,
+            selection: match req.selection {
+                Some(selection) => selection,
+                None => VmSelectionMode::from_str(
+                    &db::vms::get_agent_vm_snapshot(&state.pool, agent.id)
+                        .await?
+                        .vm_snapshot_selection,
+                )
+                .unwrap_or_default(),
+            },
         },
     )
     .await?;
@@ -536,7 +564,7 @@ pub async fn build_agent_vm(
 mod tests {
     use super::*;
 
-    fn row(included: bool, limit_bytes: Option<i64>) -> AgentVmRow {
+    fn row(included: Option<bool>, limit_bytes: Option<i64>) -> AgentVmRow {
         AgentVmRow {
             id: 1,
             name: "web01".to_owned(),
@@ -556,23 +584,46 @@ mod tests {
 
     #[test]
     fn a_domain_without_its_own_limit_inherits_the_host_default() {
-        let response = vm_to_response(row(true, None), 200);
+        let response = vm_to_response(row(Some(true), None), 200, VmSelectionMode::All);
         assert_eq!(response.limit_bytes, None);
         assert_eq!(response.effective_limit_bytes, 200);
     }
 
     #[test]
     fn a_domain_with_its_own_limit_keeps_it() {
-        let response = vm_to_response(row(true, Some(500)), 200);
+        let response = vm_to_response(row(Some(true), Some(500)), 200, VmSelectionMode::All);
         assert_eq!(response.limit_bytes, Some(500));
         assert_eq!(response.effective_limit_bytes, 500);
     }
 
     #[test]
     fn an_excluded_domain_reports_as_excluded_whatever_the_scan_saw() {
-        let response = vm_to_response(row(false, None), 200);
+        let response = vm_to_response(row(Some(false), None), 200, VmSelectionMode::All);
         assert_eq!(response.mode, VmSnapshotMode::Excluded);
         assert_eq!(response.state, VmState::Running);
+    }
+
+    #[test]
+    fn an_undecided_domain_follows_the_host_selection_mode() {
+        let staged = vm_to_response(row(None, None), 200, VmSelectionMode::All);
+        assert!(staged.included);
+        assert_eq!(staged.mode, VmSnapshotMode::Incremental);
+
+        let left_alone = vm_to_response(row(None, None), 200, VmSelectionMode::Selected);
+        assert!(!left_alone.included);
+        assert_eq!(
+            left_alone.mode,
+            VmSnapshotMode::Excluded,
+            "the client is told what will happen, not what the last scan saw"
+        );
+    }
+
+    #[test]
+    fn a_decided_domain_ignores_the_host_selection_mode() {
+        for selection in [VmSelectionMode::All, VmSelectionMode::Selected] {
+            assert!(vm_to_response(row(Some(true), None), 200, selection).included);
+            assert!(!vm_to_response(row(Some(false), None), 200, selection).included);
+        }
     }
 
     #[test]

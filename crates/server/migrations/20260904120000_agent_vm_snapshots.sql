@@ -16,7 +16,13 @@ ALTER TABLE agents
         CHECK (vm_snapshot_timeout_seconds > 0),
     -- Bytes one domain may occupy below the staging directory. 0 is unlimited.
     ADD COLUMN vm_snapshot_default_limit_bytes BIGINT NOT NULL DEFAULT 0
-        CHECK (vm_snapshot_default_limit_bytes >= 0);
+        CHECK (vm_snapshot_default_limit_bytes >= 0),
+    -- Which direction agent_vms.included is read in. 'all' stages every
+    -- domain except the ones turned off; 'selected' stages only the ones
+    -- turned on. The default keeps a machine created after the last scan
+    -- backed up rather than silently missed.
+    ADD COLUMN vm_snapshot_selection TEXT NOT NULL DEFAULT 'all'
+        CHECK (vm_snapshot_selection IN ('all', 'selected'));
 
 -- Staging into a relative path would resolve against the agent's working
 -- directory, which is not something the operator can see or reason about.
@@ -31,8 +37,13 @@ CREATE TABLE agent_vms (
     id BIGSERIAL PRIMARY KEY,
     agent_id BIGINT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    -- Operator settings.
-    included BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Operator settings. NULL is a domain nobody has decided about yet: a
+    -- scan creates the row, and agents.vm_snapshot_selection then says
+    -- whether it is staged. Storing that as NULL rather than defaulting to
+    -- TRUE is what keeps "the operator included this" distinguishable from
+    -- "the operator never looked", which is the whole difference between the
+    -- two selection modes.
+    included BOOLEAN,
     -- NULL inherits the agent's default limit.
     limit_bytes BIGINT CHECK (limit_bytes IS NULL OR limit_bytes >= 0),
     -- Last scan.

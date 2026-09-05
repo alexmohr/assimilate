@@ -1609,7 +1609,7 @@ mod tests {
         let mut config = host.config();
         config.domains = vec![shared::vm::VmDomainConfig {
             name: "win-ci".to_owned(),
-            included: false,
+            included: Some(false),
             limit_bytes: None,
         }];
 
@@ -1734,7 +1734,7 @@ mod tests {
         let mut config = host.config();
         config.domains = vec![shared::vm::VmDomainConfig {
             name: "win-ci".to_owned(),
-            included: false,
+            included: Some(false),
             limit_bytes: None,
         }];
 
@@ -1743,6 +1743,60 @@ mod tests {
         assert_eq!(only(&outcomes).action, VmRunAction::Skipped);
         assert_eq!(only(&outcomes).mode, VmSnapshotMode::Excluded);
         assert!(!is_file(&host.staged("win-ci")).await);
+    }
+
+    #[tokio::test]
+    async fn selected_mode_stages_only_the_domains_the_operator_picked() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        host.define("win-ci", "running", "win-ci.qcow2", 8).await;
+        let mut config = host.config();
+        config.selection = shared::vm::VmSelectionMode::Selected;
+        config.domains = vec![shared::vm::VmDomainConfig {
+            name: "web01".to_owned(),
+            included: Some(true),
+            limit_bytes: None,
+        }];
+
+        let outcomes = host.stager(config).stage_all().await;
+
+        let web = outcomes
+            .iter()
+            .find(|outcome| outcome.name == "web01")
+            .expect("web01");
+        assert_ne!(web.action, VmRunAction::Skipped);
+        assert!(is_file(&host.staged("web01").join("vda.full.qcow2")).await);
+
+        let win = outcomes
+            .iter()
+            .find(|outcome| outcome.name == "win-ci")
+            .expect("win-ci");
+        assert_eq!(win.action, VmRunAction::Skipped);
+        assert_eq!(
+            win.mode,
+            VmSnapshotMode::Excluded,
+            "a domain nobody selected is left alone rather than staged"
+        );
+        assert!(!is_file(&host.staged("win-ci").join("vda.full.qcow2")).await);
+    }
+
+    #[tokio::test]
+    async fn selected_mode_leaves_a_newly_created_domain_alone() {
+        let host = FakeHost::new().await;
+        host.define("fresh", "running", "fresh.qcow2", 8).await;
+        let mut config = host.config();
+        config.selection = shared::vm::VmSelectionMode::Selected;
+
+        let found = host.stager(config.clone()).scan().await.expect("scan");
+        assert_eq!(
+            found.first().expect("one domain").mode,
+            VmSnapshotMode::Excluded,
+            "a machine created after the last scan waits to be selected"
+        );
+
+        let outcomes = host.stager(config).stage_all().await;
+        assert_eq!(only(&outcomes).action, VmRunAction::Skipped);
+        assert!(!is_file(&host.staged("fresh").join("vda.full.qcow2")).await);
     }
 
     #[tokio::test]

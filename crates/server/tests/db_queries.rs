@@ -21,6 +21,7 @@ use server::{
 use shared::{
     hooks::HookCommand,
     types::{AcknowledgedFilter, QuotaAction, SystemEventType},
+    vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
 use sqlx::PgPool;
 
@@ -10903,4 +10904,181 @@ async fn agent_default_hook_commands_round_trip_their_timeouts(pool: PgPool) {
 
     let loaded = db::get_agent_by_id(&pool, agent.id).await.unwrap();
     assert_eq!(loaded.default_pre_backup_commands.0, commands);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn vm_selection_defaults_to_staging_every_domain(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-default", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let config = db::vms::load_config(&pool, agent.id).await.unwrap();
+
+    assert_eq!(config.selection, VmSelectionMode::All);
+    assert!(
+        config.includes("anything"),
+        "a host nobody has configured backs its machines up"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn vm_selection_survives_a_round_trip(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-selection", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let stored = db::vms::update_agent_vm_snapshot(
+        &pool,
+        agent.id,
+        db::vms::VmSnapshotPatch {
+            enabled: true,
+            dir: "/srv/vm",
+            full_interval: 7,
+            timeout_seconds: 1800,
+            default_limit_bytes: 0,
+            selection: VmSelectionMode::Selected,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(stored.vm_snapshot_selection, "selected");
+    assert_eq!(
+        db::vms::load_config(&pool, agent.id)
+            .await
+            .unwrap()
+            .selection,
+        VmSelectionMode::Selected
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_scanned_domain_carries_no_decision_until_someone_makes_one(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-undecided", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::vms::record_scan(&pool, agent.id, &[discovered("web01")])
+        .await
+        .unwrap();
+
+    let config = db::vms::load_config(&pool, agent.id).await.unwrap();
+    let domain = config
+        .domains
+        .iter()
+        .find(|candidate| candidate.name == "web01")
+        .expect("the scan stored the domain");
+    assert_eq!(
+        domain.included, None,
+        "a scan reports what is on the host, it does not decide what to back up"
+    );
+
+    // The same stored row reads both ways, which is the whole point of
+    // keeping "undecided" distinct from "included".
+    assert!(config.includes("web01"));
+    let selected = VmSnapshotConfig {
+        selection: VmSelectionMode::Selected,
+        ..config
+    };
+    assert!(!selected.includes("web01"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_rescan_forgets_domains_nobody_decided_about_and_keeps_the_rest(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-rescan", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::vms::record_scan(
+        &pool,
+        agent.id,
+        &[
+            discovered("untouched"),
+            discovered("picked"),
+            discovered("refused"),
+            discovered("limited"),
+        ],
+    )
+    .await
+    .unwrap();
+
+    db::vms::set_vm_settings(&pool, agent.id, "picked", true, None)
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "refused", false, None)
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "limited", true, Some(4096))
+        .await
+        .unwrap();
+
+    // Every domain is gone from the host now.
+    db::vms::record_scan(&pool, agent.id, &[]).await.unwrap();
+
+    let names: Vec<String> = db::vms::list_agent_vms(&pool, agent.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.name)
+        .collect();
+
+    assert!(
+        !names.contains(&"untouched".to_owned()),
+        "a row a rescan can rebuild from scratch is not worth keeping"
+    );
+    for kept in ["picked", "refused", "limited"] {
+        assert!(
+            names.contains(&kept.to_owned()),
+            "{kept} carries a decision that must outlive the domain"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_rescan_keeps_a_selection_that_the_old_prune_would_have_dropped(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-selected-prune", None, "hash", None, None)
+        .await
+        .unwrap();
+    db::vms::update_agent_vm_snapshot(
+        &pool,
+        agent.id,
+        db::vms::VmSnapshotPatch {
+            enabled: true,
+            dir: "/srv/vm",
+            full_interval: 7,
+            timeout_seconds: 1800,
+            default_limit_bytes: 0,
+            selection: VmSelectionMode::Selected,
+        },
+    )
+    .await
+    .unwrap();
+    db::vms::record_scan(&pool, agent.id, &[discovered("picked")])
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "picked", true, None)
+        .await
+        .unwrap();
+
+    // The domain disappears for a reboot and comes back.
+    db::vms::record_scan(&pool, agent.id, &[]).await.unwrap();
+    db::vms::record_scan(&pool, agent.id, &[discovered("picked")])
+        .await
+        .unwrap();
+
+    assert!(
+        db::vms::load_config(&pool, agent.id)
+            .await
+            .unwrap()
+            .includes("picked"),
+        "an opt-in selection must survive the domain vanishing from a scan"
+    );
+}
+
+fn discovered(name: &str) -> DiscoveredVm {
+    DiscoveredVm {
+        name: name.to_owned(),
+        state: VmState::Running,
+        mode: VmSnapshotMode::Incremental,
+        disk_count: 1,
+        disk_bytes: 1024,
+    }
 }

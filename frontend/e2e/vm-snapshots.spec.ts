@@ -63,6 +63,43 @@ test.describe('Virtual machine staging', () => {
     await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Overridden')
   })
 
+  test('switching to only-selected drops the domains nobody picked', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.waitForLoadState('networkidle')
+
+    const pane = page.locator('.settings-pane')
+    await expect(pane).toContainText('Every domain except the ones excluded below')
+    // web01 is seeded with no decision either way, so the host's mode is what
+    // decides for it. db01 was explicitly included and win-ci explicitly not.
+    const undecided = page.locator('tbody tr', { hasText: 'web01' })
+    const included = page.locator('tbody tr', { hasText: 'db01' })
+    await expect(undecided).toContainText('Incremental')
+
+    await pane.getByRole('button', { name: 'Edit' }).click()
+    await pane.getByRole('radio', { name: 'Only selected' }).click()
+    await pane.getByRole('button', { name: 'Save' }).click()
+    await expect(pane.getByRole('button', { name: 'Edit' })).toBeVisible()
+
+    await expect(pane).toContainText('Only the domains selected below')
+    await expect(undecided).toContainText('Excluded')
+    await expect(
+      included,
+      'a domain the operator selected is unaffected by the mode',
+    ).toContainText('Incremental')
+
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Excluded')
+
+    // Put the demo back the way the seed left it, so the surrounding specs
+    // still see the host they expect.
+    await page.locator('.settings-pane').getByRole('button', { name: 'Edit' }).click()
+    await page.locator('.settings-pane').getByRole('radio', { name: 'All except excluded' }).click()
+    await page.locator('.settings-pane').getByRole('button', { name: 'Save' }).click()
+    await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Incremental')
+  })
+
   test('the restore wizard walks both stages', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents/db-server-01?tab=settings&section=vms')

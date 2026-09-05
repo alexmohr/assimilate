@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes FROM agents WHERE id = $1",
+  "query": "SELECT vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection FROM agents WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,11 @@
         "ordinal": 4,
         "name": "vm_snapshot_default_limit_bytes",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "vm_snapshot_selection",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -39,8 +44,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "32c7edd8f47366727c13091b8d460ce9aaf6a6871ffb17612a79e13c18926c94"
+  "hash": "3b01694422b0d2af781793724712be46d8ac2ec03bd73a14c9186d048aa946f9"
 }

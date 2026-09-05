@@ -60,7 +60,7 @@ This means schedule-specific configuration always takes priority over a host's d
 
 | Action   | Behavior                                                              |
 | -------- | --------------------------------------------------------------------- |
-| `ignore` | The warning is silently discarded; the backup continues with no alert |
+| `ignore` | The warning is silently discarded; the backup continues with no alert. A run whose warnings were _all_ ignored is recorded as a success, even though borg itself exited with its warning status |
 | `warn`   | The warning is preserved in the report (default; backward compatible) |
 | `fatal`  | The backup is stopped and reported as failed with an error message    |
 

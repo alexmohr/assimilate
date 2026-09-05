@@ -864,6 +864,37 @@ if [ -z "$WEB01_WARNING_REPORT_ID" ]; then
 fi
 api POST "/api/stats/activity/$WEB01_WARNING_REPORT_ID/acknowledge" > /dev/null
 
+echo "==> Seeding a warning run borg never explained on media-store-01..."
+# borg exits 1 for "finished with warnings" but does not always say what the
+# warning was; all the agent used to have was borg's own `--show-rc` footer,
+# "terminating with warning status, rc 1", which repeats the exit code and
+# explains nothing (see docs/activity.md). The agent now drops that footer and
+# records what it does know instead, so the demo carries one run in that shape.
+# Acknowledged immediately, like web-server-01's above, so it does not add an
+# outstanding finding - switch the Activity Log's Acknowledged filter to Shown
+# to see it. archive_name stays NULL for the same reason as the db-server-01
+# incident below: media-weekly is synced, and a report naming an archive that
+# no real `borg list` returns is reconciled away within minutes.
+MEDIA_UNEXPLAINED_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status,
+     original_size, compressed_size, deduplicated_size, files_processed,
+     duration_secs, error_message, warnings)
+SELECT $MEDIA_ID, $REPO_WEEKLY_ID, s.id,
+       NOW() - interval '2 days' - interval '11 minutes',
+       NOW() - interval '2 days',
+       'warning',
+       21474836480, 15032385536, 2147483648, 18435, 660,
+       'borg exited with code 1 but reported no warning or error explaining why; last borg output: Creating archive at \"ssh://borg@localhost/./backup/repos/media-weekly::media-store-01-weekly\"',
+       ARRAY['borg exited with code 1 but reported no warning or error explaining why; last borg output: Creating archive at \"ssh://borg@localhost/./backup/repos/media-weekly::media-store-01-weekly\"']
+FROM (SELECT id FROM schedules WHERE repo_id = $REPO_WEEKLY_ID ORDER BY id LIMIT 1) s
+RETURNING id")
+if [ -z "$MEDIA_UNEXPLAINED_REPORT_ID" ]; then
+    echo "expected to seed a media-store-01 warning report, inserted none" >&2
+    exit 1
+fi
+api POST "/api/stats/activity/$MEDIA_UNEXPLAINED_REPORT_ID/acknowledge" > /dev/null
+
 echo "==> Seeding a recovered outage on db-server-01..."
 # Feeds the agent detail Overview's run strip, which draws one cell per run
 # rather than reducing a window of days to a percentage. Three *consecutive*

@@ -38,6 +38,16 @@ case "$SUBCOMMAND" in
       fi
     fi
 
+    # A warning-status run whose only stderr message is the --show-rc footer:
+    # real borg does this when the warning came from a subprocess it did not
+    # log itself, and it is the case that used to reach the UI as a bare
+    # "terminating with warning status, rc 1".
+    if [[ "${MOCK_BORG_SIMULATE_UNEXPLAINED_WARNING:-0}" == "1" ]]; then
+      if [[ " $* " == *" --log-json "* ]]; then
+        printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "INFO", "name": "borg.archiver", "message": "Creating archive at \"ssh://borg@storage/./repo::test\""}' >&2
+      fi
+    fi
+
     if [[ "${MOCK_BORG_SIMULATE_SOURCE_NOT_FOUND:-0}" == "1" ]]; then
       if [[ " $* " == *" --log-json "* ]]; then
         printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archiver", "msgid": "BackupFileNotFoundError", "message": "/mnt/missing: stat: [Errno 2] No such file or directory: '"'"'/mnt/missing'"'"'"}' >&2
@@ -77,7 +87,11 @@ case "$SUBCOMMAND" in
 JSON
     fi
 
-    if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
+    if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" || "${MOCK_BORG_SIMULATE_UNEXPLAINED_WARNING:-0}" == "1" ]]; then
+      # borg's --show-rc footer, emitted whenever it exits non-zero.
+      if [[ " $* " == *" --log-json "* ]]; then
+        printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archiver", "message": "terminating with warning status, rc 1"}' >&2
+      fi
       exit 1
     fi
 

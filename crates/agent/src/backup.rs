@@ -444,33 +444,58 @@ impl BackupEngine {
                 })
             }
             1 if stderr_has_warnings(&stderr) => {
-                let warnings = parse_warnings(&stderr);
-                let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
+                let BorgDiagnostics {
+                    warnings: reported_warnings,
+                    context,
+                } = parse_diagnostics(&stderr);
+                let reported = reported_warnings.len();
+                let warnings =
+                    filter_file_change_warnings(reported_warnings, &target.file_change_patterns)?;
+                // rc 1 is borg's "finished, with warnings". Every warning it
+                // reported may have matched an `ignore` pattern, which the user
+                // asked to be silent about; when it reported none at all the run
+                // still has to say something the bare exit code does not.
+                let (status, warnings) = if !warnings.is_empty() {
+                    (BackupStatus::Warning, warnings)
+                } else if reported > 0 {
+                    (BackupStatus::Success, Vec::new())
+                } else {
+                    (
+                        BackupStatus::Warning,
+                        vec![unexplained_exit(exit_code, &context)],
+                    )
+                };
                 let summary = warnings.join("; ");
-                warn!("Borg reported warnings: {summary}");
+                if warnings.is_empty() {
+                    info!("Borg reported {reported} warning(s), all suppressed by ignore patterns");
+                } else {
+                    warn!("Borg reported warnings: {summary}");
+                }
+                // Kept populated (not None) despite duplicating `warnings`:
+                // dispatch_backup_completion_notification's backup_warning path
+                // reads only this field for the email/push body, so clearing it
+                // silently drops warning text from notifications. The
+                // duplicate-display bug this was meant to fix is handled at the
+                // UI layer instead (report detail views hide the Error box when
+                // status is Warning).
+                let error_message = (!summary.is_empty()).then_some(summary);
                 let stats = parse_json_stats(&output.stdout)?;
                 Ok(CreateResult {
-                    status: BackupStatus::Warning,
+                    status,
                     original_size: stats.original_size,
                     compressed_size: stats.compressed_size,
                     deduplicated_size: stats.deduplicated_size,
                     repo_unique_csize: stats.repo_unique_csize,
                     files_processed: stats.files_processed,
-                    // Kept populated (not None) despite duplicating `warnings`:
-                    // dispatch_backup_completion_notification's backup_warning
-                    // path reads only this field for the email/push body, so
-                    // clearing it silently drops warning text from
-                    // notifications. The duplicate-display bug this was meant
-                    // to fix is handled at the UI layer instead (report
-                    // detail views hide the Error box when status is Warning).
-                    error_message: Some(summary),
+                    error_message,
                     warnings,
                     archive_name,
                     borg_command,
                 })
             }
             _ => Err(BackupError::BorgFailed(format!(
-                "borg create exited with code {exit_code}: {stderr}"
+                "borg create exited with code {exit_code}: {}",
+                describe_borg_failure(&stderr)
             ))),
         }
     }
@@ -982,8 +1007,11 @@ enum BorgLogLevel {
 }
 
 impl BorgLogLevel {
-    fn is_warning_or_error(self) -> bool {
-        matches!(self, Self::Warning | Self::Error)
+    /// Whether a record at this level says something went wrong. `CRITICAL`
+    /// counts: borg logs hard failures at that level, and dropping them left
+    /// a failed run with nothing to show.
+    fn is_diagnostic(self) -> bool {
+        matches!(self, Self::Warning | Self::Error | Self::Critical)
     }
 }
 
@@ -1008,31 +1036,144 @@ struct BorgLogLine {
     message: Option<String>,
 }
 
-pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
-    stderr
-        .lines()
-        .filter_map(|line| {
-            let record: BorgLogLine = serde_json::from_str(line).ok()?;
-            if record.record_type != BorgLogRecordType::LogMessage {
-                return None;
-            }
-            match record.levelname {
-                Some(level) if level.is_warning_or_error() => record.message,
-                Some(_) | None => None,
-            }
-        })
-        .collect()
+/// borg's `--show-rc` footer, e.g. `terminating with warning status, rc 1`.
+/// It restates the exit code the agent already has and never says what caused
+/// it, so it is kept out of the diagnostics a report shows.
+fn is_exit_status_footer(message: &str) -> bool {
+    message.starts_with("terminating with ") && message.contains(" status, rc ")
 }
 
+/// How many of borg's non-diagnostic stderr lines are kept as context for a run
+/// that ends non-zero without saying why.
+const MAX_CONTEXT_LINES: usize = 10;
+
+/// How much of a single context line is kept - borg prints very long paths.
+const MAX_CONTEXT_LINE_CHARS: usize = 300;
+
+/// What borg's stderr said about a run.
+#[derive(Debug, Default)]
+pub(crate) struct BorgDiagnostics {
+    /// The `WARNING`, `ERROR` and `CRITICAL` log records, minus the `--show-rc`
+    /// footer: the messages that say what actually happened.
+    pub(crate) warnings: Vec<String>,
+    /// The tail of everything else borg printed - its `INFO` records and any
+    /// line it did not emit as JSON (ssh notices, tracebacks). Noise while
+    /// there are real diagnostics, and the only clue when there are none.
+    pub(crate) context: Vec<String>,
+}
+
+impl BorgDiagnostics {
+    fn push_line(&mut self, line: &str) {
+        let Ok(record) = serde_json::from_str::<BorgLogLine>(line) else {
+            self.push_context(line.to_owned());
+            return;
+        };
+        if record.record_type != BorgLogRecordType::LogMessage {
+            return;
+        }
+        let Some(message) = record.message else {
+            return;
+        };
+        match record.levelname {
+            Some(BorgLogLevel::Warning | BorgLogLevel::Error | BorgLogLevel::Critical) => {
+                if !is_exit_status_footer(&message) {
+                    self.warnings.push(message);
+                }
+            }
+            Some(BorgLogLevel::Info) => self.push_context(message),
+            Some(BorgLogLevel::Debug | BorgLogLevel::Other) | None => {}
+        }
+    }
+
+    fn push_context(&mut self, line: String) {
+        if self.context.len() >= MAX_CONTEXT_LINES {
+            self.context.remove(0);
+        }
+        self.context
+            .push(truncate_chars(line, MAX_CONTEXT_LINE_CHARS));
+    }
+}
+
+/// The message a report carries when borg ended with `exit_code` and no
+/// diagnostic to explain it: the bare exit code tells a user nothing, so
+/// whatever else borg printed is attached.
+fn unexplained_exit(exit_code: i32, context: &[String]) -> String {
+    let base = format!(
+        "borg exited with code {exit_code} but reported no warning or error explaining why"
+    );
+    if context.is_empty() {
+        base
+    } else {
+        format!("{base}; last borg output: {}", context.join(" | "))
+    }
+}
+
+fn truncate_chars(mut line: String, max_chars: usize) -> String {
+    if let Some((idx, _)) = line.char_indices().nth(max_chars) {
+        line.truncate(idx);
+        line.push_str("...");
+    }
+    line
+}
+
+/// Borg's stderr, one record per line. `\r` separates lines as well as `\n`:
+/// borg's progress output ends its updates with a carriage return, which would
+/// otherwise glue a whole run's progress and the log records printed between
+/// them into a single unparsable line.
+fn stderr_lines(stderr: &str) -> impl Iterator<Item = &str> {
+    stderr
+        .split(['\n', '\r'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+}
+
+/// Split borg's stderr into the diagnostics that explain a run and the context
+/// that is left when it explains nothing.
+pub(crate) fn parse_diagnostics(stderr: &str) -> BorgDiagnostics {
+    stderr_lines(stderr).fold(BorgDiagnostics::default(), |mut diagnostics, line| {
+        diagnostics.push_line(line);
+        diagnostics
+    })
+}
+
+pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
+    parse_diagnostics(stderr).warnings
+}
+
+/// How much of a failure description is kept; it is stored on the report and
+/// shown in full in its Error box.
+const MAX_FAILURE_CHARS: usize = 4000;
+
+/// Renders borg's stderr into an error message. The raw buffer is a wall of
+/// JSON progress records that ends up in the report's Error box, so prefer the
+/// diagnostics and fall back to the tail of whatever else borg printed.
+pub(crate) fn describe_borg_failure(stderr: &str) -> String {
+    let diagnostics = parse_diagnostics(stderr);
+    let described = diagnostics
+        .warnings
+        .iter()
+        .chain(diagnostics.context.iter())
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("; ");
+    if described.is_empty() {
+        "borg produced no output".to_owned()
+    } else {
+        truncate_chars(described, MAX_FAILURE_CHARS)
+    }
+}
+
+/// Whether borg signalled a warning or worse on stderr. Unlike
+/// [`parse_diagnostics`] this counts the `--show-rc` footer: an exit code of 1
+/// with nothing but the footer is still borg reporting a warning, it just is
+/// not saying why.
 pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
-    stderr.lines().any(|line| {
+    stderr_lines(stderr).any(|line| {
         let Ok(record) = serde_json::from_str::<BorgLogLine>(line) else {
             return false;
         };
         record.record_type == BorgLogRecordType::LogMessage
-            && record
-                .levelname
-                .is_some_and(BorgLogLevel::is_warning_or_error)
+            && record.levelname.is_some_and(BorgLogLevel::is_diagnostic)
     })
 }
 
@@ -1070,8 +1211,7 @@ pub(crate) fn filter_file_change_warnings(
 }
 
 pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
-    stderr
-        .lines()
+    stderr_lines(stderr)
         .filter_map(|line| {
             let record: BorgLogLine = serde_json::from_str(line).ok()?;
             if record.record_type != BorgLogRecordType::LogMessage {
@@ -1717,6 +1857,157 @@ mod tests {
         let result = filter_file_change_warnings(warnings, &patterns).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result[0].contains("other warning"));
+    }
+
+    #[test]
+    fn parse_diagnostics_drops_the_show_rc_footer() {
+        let stderr = [
+            concat!(
+                r#"{"type": "log_message", "levelname": "WARNING", "#,
+                r#""message": "/tmp/test.log: file changed"}"#,
+            ),
+            concat!(
+                r#"{"type": "log_message", "levelname": "WARNING", "#,
+                r#""name": "borg.archiver", "#,
+                r#""message": "terminating with warning status, rc 1"}"#,
+            ),
+        ]
+        .join("\n");
+
+        let diagnostics = parse_diagnostics(&stderr);
+
+        assert_eq!(diagnostics.warnings, vec!["/tmp/test.log: file changed"]);
+    }
+
+    #[test]
+    fn parse_diagnostics_keeps_critical_records() {
+        let stderr = concat!(
+            r#"{"type": "log_message", "levelname": "CRITICAL", "#,
+            r#""message": "Repository /repo does not exist."}"#,
+        );
+
+        let diagnostics = parse_diagnostics(stderr);
+
+        assert_eq!(
+            diagnostics.warnings,
+            vec!["Repository /repo does not exist."]
+        );
+    }
+
+    #[test]
+    fn parse_diagnostics_collects_context_from_non_json_and_info_lines() {
+        let stderr = [
+            r#"{"type": "archive_progress", "original_size": 100}"#,
+            r#"{"type": "log_message", "levelname": "INFO", "message": "Creating archive"}"#,
+            "Warning: Permanently added 'storage' to the list of known hosts.",
+        ]
+        .join("\n");
+
+        let diagnostics = parse_diagnostics(&stderr);
+
+        assert_eq!(diagnostics.warnings, [] as [String; 0]);
+        assert_eq!(
+            diagnostics.context,
+            vec![
+                "Creating archive",
+                "Warning: Permanently added 'storage' to the list of known hosts."
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_diagnostics_keeps_only_the_tail_of_the_context() {
+        let stderr = (0..MAX_CONTEXT_LINES + 5)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let diagnostics = parse_diagnostics(&stderr);
+
+        assert_eq!(diagnostics.context.len(), MAX_CONTEXT_LINES);
+        assert_eq!(diagnostics.context[0], "line 5");
+        assert_eq!(
+            diagnostics.context[MAX_CONTEXT_LINES - 1],
+            format!("line {}", MAX_CONTEXT_LINES + 4)
+        );
+    }
+
+    #[test]
+    fn parse_diagnostics_truncates_an_overlong_context_line() {
+        let stderr = "x".repeat(MAX_CONTEXT_LINE_CHARS + 50);
+
+        let diagnostics = parse_diagnostics(&stderr);
+
+        let line = &diagnostics.context[0];
+        assert_eq!(line.chars().count(), MAX_CONTEXT_LINE_CHARS + 3);
+        assert!(line.ends_with("..."));
+    }
+
+    #[test]
+    fn describe_borg_failure_prefers_diagnostics_over_raw_json() {
+        let stderr = [
+            r#"{"type": "archive_progress", "original_size": 100}"#,
+            r#"{"type": "log_message", "levelname": "ERROR", "message": "Connection closed"}"#,
+            "borg: Fatal: Repository ID mismatch.",
+        ]
+        .join("\n");
+
+        let described = describe_borg_failure(&stderr);
+
+        assert_eq!(
+            described,
+            "Connection closed; borg: Fatal: Repository ID mismatch."
+        );
+    }
+
+    #[tokio::test]
+    async fn unexplained_warning_exit_reports_why_it_is_flagged() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![(
+                "MOCK_BORG_SIMULATE_UNEXPLAINED_WARNING".to_owned(),
+                "1".to_owned(),
+            )],
+        );
+        let target = test_target();
+
+        let result = engine.run_backup(&target, None, None).await.unwrap();
+
+        assert_eq!(result.status, BackupStatus::Warning);
+        assert_eq!(result.warnings.len(), 1);
+        let warning = &result.warnings[0];
+        assert!(
+            !warning.contains("terminating with warning status"),
+            "the --show-rc footer explains nothing: {warning}"
+        );
+        assert!(
+            warning.contains("borg exited with code 1"),
+            "the warning should name the exit code: {warning}"
+        );
+        assert!(
+            warning.contains("Creating archive at"),
+            "the warning should carry borg's last output: {warning}"
+        );
+        assert_eq!(result.error_message.as_ref(), Some(warning));
+    }
+
+    #[tokio::test]
+    async fn warnings_suppressed_by_ignore_patterns_leave_a_successful_run() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![("MOCK_BORG_SIMULATE_WARNING".to_owned(), "1".to_owned())],
+        );
+        let mut target = test_target();
+        target.file_change_patterns = vec![FileChangePattern {
+            path: "**/*: file changed while we backed it up".to_owned(),
+            action: shared::types::FileChangeAction::Ignore,
+        }];
+
+        let result = engine.run_backup(&target, None, None).await.unwrap();
+
+        assert_eq!(result.status, BackupStatus::Success);
+        assert_eq!(result.warnings, [] as [String; 0]);
+        assert!(result.error_message.is_none());
     }
 
     #[test]

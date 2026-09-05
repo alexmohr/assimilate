@@ -236,7 +236,8 @@ pub async fn record_scan(
 
 /// Applies the operator's settings for one domain. The row is created when the
 /// host has not been scanned yet, so a limit can be set ahead of the first
-/// scan.
+/// scan. `included` of `None` keeps the domain's stored decision, so an edit
+/// that only changes the limit does not also decide whether it is staged.
 ///
 /// # Errors
 ///
@@ -245,15 +246,20 @@ pub async fn set_vm_settings(
     pool: &PgPool,
     agent_id: i64,
     name: &str,
-    included: bool,
+    included: Option<bool>,
     limit_bytes: Option<i64>,
 ) -> Result<AgentVmRow, ApiError> {
+    // `included` is left alone when the caller sends none, rather than
+    // overwritten with whatever the client last displayed. Editing only a
+    // limit must not turn a domain nobody has decided about into a decision,
+    // because under `selected` that would quietly opt the domain in.
     sqlx::query_as!(
         AgentVmRow,
         "INSERT INTO agent_vms (agent_id, name, included, limit_bytes) VALUES ($1, $2, $3, $4) ON \
-         CONFLICT (agent_id, name) DO UPDATE SET included = EXCLUDED.included, limit_bytes = \
-         EXCLUDED.limit_bytes RETURNING id, name, included, limit_bytes, state, mode, disk_count, \
-         disk_bytes, staged_bytes, chain_length, last_error, last_scanned_at, last_staged_at",
+         CONFLICT (agent_id, name) DO UPDATE SET included = COALESCE($3, agent_vms.included), \
+         limit_bytes = EXCLUDED.limit_bytes RETURNING id, name, included, limit_bytes, state, \
+         mode, disk_count, disk_bytes, staged_bytes, chain_length, last_error, last_scanned_at, \
+         last_staged_at",
         agent_id,
         name,
         included,

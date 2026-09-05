@@ -68,8 +68,11 @@ pub struct UpdateAgentVmSnapshotRequest {
 /// New settings for one domain of a host.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateAgentVmRequest {
-    /// Whether the domain is staged at all.
-    pub included: bool,
+    /// Whether the domain is staged at all. Absent keeps whichever decision
+    /// the domain already carried, so an edit that only changes the limit
+    /// cannot also opt an undecided domain in.
+    #[serde(default)]
+    pub included: Option<bool>,
     /// Bytes this domain may occupy, or `null` to inherit the host's default.
     pub limit_bytes: Option<u64>,
 }
@@ -623,6 +626,25 @@ mod tests {
         for selection in [VmSelectionMode::All, VmSelectionMode::Selected] {
             assert!(vm_to_response(row(Some(true), None), 200, selection).included);
             assert!(!vm_to_response(row(Some(false), None), 200, selection).included);
+        }
+    }
+
+    /// The limit editor sends no `included` at all. Deserialization has to
+    /// keep that distinct from `false`, otherwise a budget edit would read as
+    /// an explicit opt-out rather than leaving the decision untouched.
+    #[test]
+    fn an_absent_included_flag_is_not_a_decision() {
+        let limit_only: UpdateAgentVmRequest =
+            serde_json::from_str(r#"{"limit_bytes":4096}"#).unwrap();
+        assert_eq!(limit_only.included, None);
+        assert_eq!(limit_only.limit_bytes, Some(4096));
+
+        for (body, expected) in [
+            (r#"{"included":true,"limit_bytes":null}"#, Some(true)),
+            (r#"{"included":false,"limit_bytes":null}"#, Some(false)),
+        ] {
+            let decided: UpdateAgentVmRequest = serde_json::from_str(body).unwrap();
+            assert_eq!(decided.included, expected, "an explicit flag is a decision");
         }
     }
 

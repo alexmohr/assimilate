@@ -11000,13 +11000,13 @@ async fn a_rescan_forgets_domains_nobody_decided_about_and_keeps_the_rest(pool: 
     .await
     .unwrap();
 
-    db::vms::set_vm_settings(&pool, agent.id, "picked", true, None)
+    db::vms::set_vm_settings(&pool, agent.id, "picked", Some(true), None)
         .await
         .unwrap();
-    db::vms::set_vm_settings(&pool, agent.id, "refused", false, None)
+    db::vms::set_vm_settings(&pool, agent.id, "refused", Some(false), None)
         .await
         .unwrap();
-    db::vms::set_vm_settings(&pool, agent.id, "limited", true, Some(4096))
+    db::vms::set_vm_settings(&pool, agent.id, "limited", Some(true), Some(4096))
         .await
         .unwrap();
 
@@ -11054,7 +11054,7 @@ async fn a_rescan_keeps_a_selection_that_the_old_prune_would_have_dropped(pool: 
     db::vms::record_scan(&pool, agent.id, &[discovered("picked")])
         .await
         .unwrap();
-    db::vms::set_vm_settings(&pool, agent.id, "picked", true, None)
+    db::vms::set_vm_settings(&pool, agent.id, "picked", Some(true), None)
         .await
         .unwrap();
 
@@ -11071,6 +11071,91 @@ async fn a_rescan_keeps_a_selection_that_the_old_prune_would_have_dropped(pool: 
             .includes("picked"),
         "an opt-in selection must survive the domain vanishing from a scan"
     );
+}
+
+/// Setting only a limit must not decide whether a domain is staged. The UI
+/// sends the resolved include flag it is displaying, and under `selected` the
+/// resolved value for an undecided domain would otherwise write an opt-in
+/// that nobody asked for - a budget is a cap, not consent.
+#[sqlx::test(migrations = "./migrations")]
+async fn setting_a_limit_leaves_an_undecided_domain_undecided(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-limit", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    db::vms::record_scan(&pool, agent.id, &[discovered("undecided")])
+        .await
+        .unwrap();
+
+    let row = db::vms::set_vm_settings(&pool, agent.id, "undecided", None, Some(4096))
+        .await
+        .unwrap();
+    assert_eq!(
+        row.included, None,
+        "a limit-only edit must leave the domain undecided"
+    );
+    assert_eq!(
+        row.limit_bytes,
+        Some(4096),
+        "the limit must still be stored"
+    );
+
+    db::vms::update_agent_vm_snapshot(
+        &pool,
+        agent.id,
+        db::vms::VmSnapshotPatch {
+            enabled: true,
+            dir: "/srv/vm",
+            full_interval: 7,
+            timeout_seconds: 1800,
+            default_limit_bytes: 0,
+            selection: VmSelectionMode::Selected,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !db::vms::load_config(&pool, agent.id)
+            .await
+            .unwrap()
+            .includes("undecided"),
+        "giving a domain a budget must not opt it into an opt-in host"
+    );
+}
+
+/// The other direction: an explicit decision survives a later limit-only
+/// edit, so preserving the undecided state has not made the flag unwritable.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_limit_edit_preserves_an_explicit_decision(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "vm-limit-keep", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    db::vms::record_scan(
+        &pool,
+        agent.id,
+        &[discovered("kept"), discovered("dropped")],
+    )
+    .await
+    .unwrap();
+
+    db::vms::set_vm_settings(&pool, agent.id, "kept", Some(true), None)
+        .await
+        .unwrap();
+    db::vms::set_vm_settings(&pool, agent.id, "dropped", Some(false), None)
+        .await
+        .unwrap();
+
+    let kept = db::vms::set_vm_settings(&pool, agent.id, "kept", None, Some(8192))
+        .await
+        .unwrap();
+    let dropped = db::vms::set_vm_settings(&pool, agent.id, "dropped", None, Some(8192))
+        .await
+        .unwrap();
+
+    assert_eq!(kept.included, Some(true), "an opt-in must survive");
+    assert_eq!(dropped.included, Some(false), "an opt-out must survive");
 }
 
 fn discovered(name: &str) -> DiscoveredVm {

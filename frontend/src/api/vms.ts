@@ -23,7 +23,13 @@ export interface UpdateAgentVmSnapshotRequest {
 
 /** New settings for one domain of a host. */
 export interface UpdateAgentVmRequest {
-  included: boolean
+  /**
+   * Omitted keeps whichever decision the domain already carried. The limit
+   * editor omits it deliberately: the value the table shows for an undecided
+   * domain is the host's mode resolved, not a decision, and sending it back
+   * would turn the mere act of setting a budget into an opt-in.
+   */
+  included?: boolean
   /** Null inherits the host's default limit. */
   limit_bytes: number | null
 }

@@ -168,9 +168,12 @@ describe('AgentVmsCard', () => {
     await limit.trigger('change')
     await flushPromises()
 
+    // No `included` in the payload: the flag the table shows for an undecided
+    // domain is the host's mode resolved, so sending it back would turn
+    // setting a budget into an opt-in.
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/virt-host-01/vms/web01',
-      { included: true, limit_bytes: 50 * GIB },
+      { limit_bytes: 50 * GIB },
       { params: {} },
     )
   })
@@ -187,7 +190,7 @@ describe('AgentVmsCard', () => {
 
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/virt-host-01/vms/web01',
-      { included: true, limit_bytes: null },
+      { limit_bytes: null },
       { params: {} },
     )
   })
@@ -284,6 +287,25 @@ describe('AgentVmsCard', () => {
       { included: false, limit_bytes: null },
       { params: {} },
     )
+  })
+
+  it('sends the include flag only when the operator decided it', async () => {
+    const wrapper = await mount()
+
+    const limit = wrapper.find<HTMLInputElement>('input.vm-limit')
+    limit.element.value = '50'
+    await limit.trigger('change')
+    await flushPromises()
+    const limitPayload = vi.mocked(apiClient.put).mock.calls[0][1] as Record<string, unknown>
+    expect(
+      'included' in limitPayload,
+      'a budget is a cap, not consent - the flag must be absent',
+    ).toBe(false)
+
+    await wrapper.find('tbody tr [role="switch"]').trigger('click')
+    await flushPromises()
+    const togglePayload = vi.mocked(apiClient.put).mock.calls[1][1] as Record<string, unknown>
+    expect(togglePayload).toHaveProperty('included', false)
   })
 
   it('reports a per-domain change the agent rejected', async () => {

@@ -63,41 +63,66 @@ test.describe('Virtual machine staging', () => {
     await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Overridden')
   })
 
-  test('switching to only-selected drops the domains nobody picked', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/agents/db-server-01?tab=settings&section=vms')
-    await page.waitForLoadState('networkidle')
+  /**
+   * The host is shared demo state, so the mode is put back through the API
+   * rather than the UI: a failed assertion skips the rest of the test body,
+   * and a half-switched host would then break every spec that follows.
+   */
+  test.describe('selection mode', () => {
+    test.afterEach(async ({ page }) => {
+      await page.request.put('/api/agents/db-server-01/vm-snapshot', {
+        data: {
+          enabled: true,
+          selection: 'all',
+          staging_dir: '/srv/vm-staging',
+          full_interval: 7,
+          timeout_seconds: 1800,
+          default_limit_bytes: 214748364800,
+        },
+      })
+      // The limit this test sets is demo state too, so it goes back with the
+      // mode. Sending no `included` is the behaviour under test: it must
+      // leave mail01 undecided rather than deciding for it.
+      await page.request.put('/api/agents/db-server-01/vms/mail01', {
+        data: { limit_bytes: null },
+      })
+    })
 
-    const pane = page.locator('.settings-pane')
-    await expect(pane).toContainText('Every domain except the ones excluded below')
-    // web01 is seeded with no decision either way, so the host's mode is what
-    // decides for it. db01 was explicitly included and win-ci explicitly not.
-    const undecided = page.locator('tbody tr', { hasText: 'web01' })
-    const included = page.locator('tbody tr', { hasText: 'db01' })
-    await expect(undecided).toContainText('Incremental')
+    test('only-selected drops the domains nobody picked', async ({ page }) => {
+      await loginAsAdmin(page)
+      await page.goto('/agents/db-server-01?tab=settings&section=vms')
+      await page.waitForLoadState('networkidle')
 
-    await pane.getByRole('button', { name: 'Edit' }).click()
-    await pane.getByRole('radio', { name: 'Only selected' }).click()
-    await pane.getByRole('button', { name: 'Save' }).click()
-    await expect(pane.getByRole('button', { name: 'Edit' })).toBeVisible()
+      const pane = page.locator('.settings-pane')
+      await expect(pane).toContainText('Every domain except the ones excluded below')
 
-    await expect(pane).toContainText('Only the domains selected below')
-    await expect(undecided).toContainText('Excluded')
-    await expect(
-      included,
-      'a domain the operator selected is unaffected by the mode',
-    ).toContainText('Incremental')
+      // mail01 carries no decision either way. Giving it a limit first is the
+      // regression this pins: a budget is a cap, not consent, so it must not
+      // survive the switch as an opt-in.
+      const undecided = page.locator('tbody tr', { hasText: 'mail01' })
+      await undecided.locator('input.vm-limit').fill('64')
+      await undecided.locator('input.vm-limit').blur()
+      await expect(undecided).toContainText('Overridden')
+      await expect(undecided).toContainText('Offline copy')
 
-    await page.reload()
-    await page.waitForLoadState('networkidle')
-    await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Excluded')
+      await pane.getByRole('button', { name: 'Edit' }).click()
+      await pane.getByRole('radio', { name: 'Only selected' }).click()
+      await pane.getByRole('button', { name: 'Save' }).click()
+      await expect(pane.getByRole('button', { name: 'Edit' })).toBeVisible()
 
-    // Put the demo back the way the seed left it, so the surrounding specs
-    // still see the host they expect.
-    await page.locator('.settings-pane').getByRole('button', { name: 'Edit' }).click()
-    await page.locator('.settings-pane').getByRole('radio', { name: 'All except excluded' }).click()
-    await page.locator('.settings-pane').getByRole('button', { name: 'Save' }).click()
-    await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Incremental')
+      await expect(pane).toContainText('Only the domains selected below')
+      await expect(undecided, 'setting a limit must not opt an undecided domain in').toContainText(
+        'Excluded',
+      )
+      await expect(
+        page.locator('tbody tr', { hasText: 'db01' }),
+        'a domain the operator selected is unaffected by the mode',
+      ).toContainText('Incremental')
+
+      await page.reload()
+      await page.waitForLoadState('networkidle')
+      await expect(page.locator('tbody tr', { hasText: 'mail01' })).toContainText('Excluded')
+    })
   })
 
   test('the restore wizard walks both stages', async ({ page }) => {

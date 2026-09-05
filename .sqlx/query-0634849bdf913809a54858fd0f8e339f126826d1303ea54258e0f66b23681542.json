@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO agent_vms (agent_id, name, included, limit_bytes) VALUES ($1, $2, $3, $4) ON CONFLICT (agent_id, name) DO UPDATE SET included = EXCLUDED.included, limit_bytes = EXCLUDED.limit_bytes RETURNING id, name, included, limit_bytes, state, mode, disk_count, disk_bytes, staged_bytes, chain_length, last_error, last_scanned_at, last_staged_at",
+  "query": "INSERT INTO agent_vms (agent_id, name, included, limit_bytes) VALUES ($1, $2, $3, $4) ON CONFLICT (agent_id, name) DO UPDATE SET included = COALESCE($3, agent_vms.included), limit_bytes = EXCLUDED.limit_bytes RETURNING id, name, included, limit_bytes, state, mode, disk_count, disk_bytes, staged_bytes, chain_length, last_error, last_scanned_at, last_staged_at",
   "describe": {
     "columns": [
       {
@@ -93,5 +93,5 @@
       true
     ]
   },
-  "hash": "020f6e91b8180d9798aec213bdf7d9419a619f32fb09b040d74a9e21974e0d33"
+  "hash": "0634849bdf913809a54858fd0f8e339f126826d1303ea54258e0f66b23681542"
 }

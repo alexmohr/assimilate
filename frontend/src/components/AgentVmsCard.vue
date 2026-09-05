@@ -245,7 +245,17 @@ async function scan(): Promise<void> {
   }
 }
 
-async function saveVm(vm: AgentVmResponse, included: boolean, limitGib: string): Promise<void> {
+/**
+ * Saves one domain's row. `included` is sent only when the operator actually
+ * decided it, because `vm.included` is the host's mode already resolved for
+ * an undecided domain - echoing it back on a limit edit would silently
+ * promote "nobody has decided" into "explicitly included".
+ */
+async function saveVm(
+  vm: AgentVmResponse,
+  included: boolean | undefined,
+  limitGib: string,
+): Promise<void> {
   rowSaving.value = vm.name
   rowError.value = null
   const trimmed = limitGib.trim()
@@ -255,7 +265,7 @@ async function saveVm(vm: AgentVmResponse, included: boolean, limitGib: string):
         props.agent.hostname,
         vm.name,
         {
-          included,
+          ...(included === undefined ? {} : { included }),
           limit_bytes: trimmed === '' ? null : fromGib(Number(trimmed)),
         },
         props.agent.domain,
@@ -274,7 +284,7 @@ function limitInput(vm: AgentVmResponse): string {
 
 function onLimitChange(vm: AgentVmResponse, event: Event): void {
   const value = (event.target as HTMLInputElement).value
-  void saveVm(vm, vm.included, value)
+  void saveVm(vm, undefined, value)
 }
 
 function onIncludedChange(vm: AgentVmResponse, included: boolean): void {

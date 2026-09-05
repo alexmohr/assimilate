@@ -354,5 +354,49 @@ describe('AgentDeployDialog', () => {
       // extractError is stubbed to a fixed string in this file's mocks.
       expect(document.body.textContent).toContain('API error')
     })
+
+    it('renders the failure in the footer so it stays beside the buttons', async () => {
+      const post = postMock
+      post.mockResolvedValue({ data: {} })
+
+      const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      await flushPromises()
+      post.mockRejectedValueOnce(new Error('ssh refused'))
+
+      await setField('SSH host', '10.0.0.5')
+      await setField('Server URL', 'https://assimilate.example.com')
+      await submit()
+
+      const error = document.querySelector('.modal-footer .form-error')
+      expect(error?.textContent).toContain('API error')
+      expect(document.querySelector('.modal-body .form-error')).toBeNull()
+      expect(w.emitted('deployed')).toBeUndefined()
+    })
+
+    it('renders an unsuccessful deploy result in the footer too', async () => {
+      const post = postMock
+      post.mockResolvedValue({ data: {} })
+
+      const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
+      await flushPromises()
+      post.mockResolvedValueOnce({
+        data: {
+          success: false,
+          skipped: false,
+          token: null,
+          available_version: null,
+          error: 'SSH connection failed: goblin:22',
+        },
+      })
+
+      await setField('SSH host', '10.0.0.5')
+      await setField('Server URL', 'https://assimilate.example.com')
+      await submit()
+
+      const error = document.querySelector('.modal-footer .form-error')
+      expect(error?.textContent).toContain('SSH connection failed: goblin:22')
+      expect(document.querySelector('.modal-body .form-error')).toBeNull()
+      expect(w.emitted('deployed')).toBeUndefined()
+    })
   })
 })

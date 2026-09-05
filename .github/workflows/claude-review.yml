@@ -495,21 +495,82 @@ jobs:
       # there is replaced by the trusted copy before it can be loaded. The
       # tools stay available for paging a large diff, which is what #474 was
       # for, and the guarantee no longer rests on the allowlist being
-      # airtight. The inputs mirror the checkout at the top of this job so
-      # the two cannot drift, except for `persist-credentials: false`: this
-      # copy runs after untrusted content has been processed, and nothing
-      # below it uses git - the steps that follow authenticate through
-      # `actions/github-script`. `if: always()` runs it whatever the review
-      # did, since a failed review is exactly when the label-syncing scripts
-      # below matter most.
+      # airtight. The inputs repeat the checkout at the top of this job,
+      # except for `persist-credentials: false`: this copy runs after
+      # untrusted content has been processed, and nothing below it uses git
+      # - the steps that follow authenticate through `actions/github-script`.
+      # Workflow YAML has no anchors, so that repetition is by hand and the
+      # two can drift: a path added to one sparse-checkout list has to be
+      # added to the other, or this stops restoring the file it exists to
+      # restore.
+      #
+      # This step deliberately has no `continue-on-error`. If the checkout
+      # fails, the trusted copy is not on disk, and the three steps below
+      # all `require()` from it under a token with write scopes - so failing
+      # here, and taking them with it, is the safe outcome rather than a
+      # gap. Their `if:` conditions carry no status function, which GitHub
+      # implicitly ANDs with `success()`, so they skip on their own. What
+      # that would otherwise cost is the failure signal #430 and #441 built,
+      # which is why the step after this one exists.
+      #
+      # `always()` covers a failed review, which is when the label-syncing
+      # below matters most; the `run_claude` guard matches the step above,
+      # since a run where the review never executed has nothing to restore
+      # and nothing downstream to protect.
       - name: Restore scripts from default branch
-        if: always()
+        id: restore
+        if: always() && steps.precheck.outputs.run_claude == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
             .github/scripts
           persist-credentials: false
+
+      # The one signal that survives a failed restore.
+      #
+      # Everything below loads a script from `.github/scripts`, so none of it
+      # can run when the copy on disk is not known to be the trusted one.
+      # That is the right call for safety and the wrong one for visibility:
+      # it is exactly the "PR sits at `needs review` with no explanation"
+      # failure #430 and #441 were built to end, reintroduced one step
+      # upstream. So this says so, in a step that requires nothing from that
+      # directory and therefore cannot be affected by whatever happened to
+      # it. Inline `github-script` only, no `require()`, no shared helper -
+      # the point is that it has no dependency left to fail on.
+      #
+      # Keyed on the restore's own outcome rather than `failure()`, which
+      # would also fire for an unrelated earlier failure and blame the
+      # restore for it. A skipped restore leaves the outcome `skipped`, so
+      # this stays quiet on runs where the review never executed.
+      - name: Report a failed script restore
+        if: always() && steps.restore.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = Number("${{ steps.resolve.outputs.pr_number }}");
+            if (!prNumber) {
+              return;
+            }
+            const body = [
+              "The automated review could not complete safely.",
+              "",
+              "Restoring `.github/scripts` from the default branch failed, so this",
+              "run stopped before the steps that load those scripts. No review",
+              "verdict or label change was applied, and this PR keeps whatever",
+              "status it already had.",
+              "",
+              "Nothing is wrong with the PR itself - retry with `/claude-review`.",
+              "",
+              `[Run log](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+            ].join("\n");
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body,
+            });
 
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-

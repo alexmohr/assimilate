@@ -850,10 +850,10 @@ describe('HostsView issue rows', () => {
       ],
     )
 
-    // 5h elapsed against an hourly cadence is well past the 2x critical mark
-    // - the opposite of "No backups yet" - proving the timestamp was used.
-    expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
-    expect(wrapper.find('.coverage-status-no-data').exists()).toBe(false)
+    // The prior completed run is still what the card reports - the opposite
+    // of 'Never', proving the timestamp was used even though last_status is
+    // null while the new run is in flight.
+    expect(lastBackupStat(wrapper)).toBe('5h ago')
   })
 
   // A caller that hand-builds a health entry - an e2e mock intercepting

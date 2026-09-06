@@ -1176,23 +1176,6 @@ impl VmStager {
         }
     }
 
-    /// Removes the staged images of a domain, keeping its definition.
-    async fn clear_images(&self, dest: &Path) {
-        let Ok(mut entries) = tokio::fs::read_dir(dest).await else {
-            return;
-        };
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            let is_image = path
-                .extension()
-                .is_some_and(|ext| ext == "qcow2" || ext == "img");
-            if is_image {
-                let _ = tokio::fs::remove_file(&path).await;
-            }
-        }
-        let _ = tokio::fs::remove_file(dest.join(CHAIN_FILE)).await;
-    }
-
     /// Swaps a set of freshly written `.part` images into place, and rewrites
     /// the chain to name them.
     ///

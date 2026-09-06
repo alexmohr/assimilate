@@ -27,7 +27,6 @@ import { useListSort } from '../composables/useListSort'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { cronIntervalSecs } from '../utils/cadence'
 import { domainParams } from '../utils/agent'
 import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -37,7 +36,6 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
-import AgentCoverageMeter from '../components/AgentCoverageMeter.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
@@ -56,8 +54,6 @@ interface AgentHealth {
   last_error_message: string | null
   /** Most recent completed backup across this host's schedules. */
   mostRecentBackupAt: string | null
-  /** Shortest cadence among this host's enabled backup schedules, in seconds. */
-  minCadenceSecs: number | null
 }
 
 type SortField = 'hostname' | 'status' | 'last_seen' | 'version'
@@ -240,12 +236,11 @@ function agentHealthStatus(agent: AgentRow): AgentHealth | null {
   return healthByHost.value[agent.hostname] ?? null
 }
 
-function agentCoverage(agent: AgentRow): {
-  lastBackupAt: string | null
-  cadenceSecs: number | null
-} {
-  const h = agentHealthStatus(agent)
-  return { lastBackupAt: h?.mostRecentBackupAt ?? null, cadenceSecs: h?.minCadenceSecs ?? null }
+// The most recent backup that actually completed, across this agent's
+// schedules. Whether the agent is *behind* is a separate, server-computed
+// question, reported by the overdue chip rather than re-derived here.
+function lastBackupAt(agent: AgentRow): string | null {
+  return agentHealthStatus(agent)?.mostRecentBackupAt ?? null
 }
 
 interface FleetVersionCount {
@@ -392,7 +387,6 @@ async function loadAgents(): Promise<void> {
           total: 0,
           last_error_message: null,
           mostRecentBackupAt: null,
-          minCadenceSecs: null,
         }
       }
       const host = hMap[entry.hostname]
@@ -424,13 +418,6 @@ async function loadAgents(): Promise<void> {
         (!host.mostRecentBackupAt || entry.last_backup_at > host.mostRecentBackupAt)
       ) {
         host.mostRecentBackupAt = entry.last_backup_at
-      }
-      if (entry.schedule_enabled && entry.cron_expression) {
-        const secs = cronIntervalSecs(entry.cron_expression)
-        if (secs !== null) {
-          host.minCadenceSecs =
-            host.minCadenceSecs === null ? secs : Math.min(host.minCadenceSecs, secs)
-        }
       }
     })
     healthByHost.value = hMap
@@ -839,14 +826,14 @@ watch(
             </span>
           </div>
         </div>
-        <AgentCoverageMeter
-          :last-backup-at="agentCoverage(agent).lastBackupAt"
-          :cadence-secs="agentCoverage(agent).cadenceSecs"
-        />
         <div class="card-stats">
           <div class="stat">
             <span class="stat-value">{{ scheduleCount(agent) }}</span>
             <span class="stat-label">Schedules</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ formatLastSeen(lastBackupAt(agent)) }}</span>
+            <span class="stat-label">Last backup</span>
           </div>
           <div class="stat">
             <span class="stat-value">{{ formatLastSeen(agent.last_seen_at) }}</span>

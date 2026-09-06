@@ -590,13 +590,23 @@ describe('HostsView issue rows', () => {
     expect(wrapper.find('.entity-badge-row').exists()).toBe(false)
   })
 
-  it('shows "No cadence" on the coverage meter for an agent with no enabled schedule', async () => {
+  // The card reports the freshest completed backup as a stat; whether the
+  // agent is *behind* comes from the server-computed overdue chip, so these
+  // cases only assert which backup time the card picks.
+  function lastBackupStat(wrapper: ReturnType<typeof mount>): string {
+    const stat = wrapper
+      .findAll('.stat')
+      .find((s) => s.find('.stat-label').text() === 'Last backup')
+    return stat?.find('.stat-value').text() ?? ''
+  }
+
+  it('reports "Never" as the last backup for an agent that has never run one', async () => {
     const wrapper = await mountSingleAgent({})
 
-    expect(wrapper.find('.coverage-status-no-cadence').text()).toBe('No cadence')
+    expect(lastBackupStat(wrapper)).toBe('Never')
   })
 
-  it("derives the coverage meter from the agent's most recent backup and shortest cadence", async () => {
+  it("reports the agent's most recent backup across all of its schedules", async () => {
     const { wrapper } = await mountAgentsList(
       [issueAgent],
       [
@@ -625,45 +635,11 @@ describe('HostsView issue rows', () => {
       ],
     )
 
-    // Most recent backup is 90m ago; the shortest cadence is hourly, so
-    // elapsed/cadence = 1.5 - past due, but well short of the 2x critical mark.
-    expect(wrapper.find('.coverage-status-warning').exists()).toBe(true)
+    // Two schedules, 90m and 150m ago: the card reports the fresher one.
+    expect(lastBackupStat(wrapper)).toBe('1h ago')
   })
 
-  it("ignores a disabled schedule's cadence when computing agent coverage", async () => {
-    const { wrapper } = await mountAgentsList(
-      [issueAgent],
-      [
-        {
-          hostname: 'flaky-host',
-          target_name: 'offsite',
-          last_status: 'success',
-          last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
-          last_backup_status: 'success',
-          is_overdue: false,
-          last_error_message: null,
-          cron_expression: '0 */1 * * *',
-          schedule_enabled: false,
-        },
-        {
-          hostname: 'flaky-host',
-          target_name: 'onsite',
-          last_status: 'success',
-          last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
-          last_backup_status: 'success',
-          is_overdue: false,
-          last_error_message: null,
-          cron_expression: '0 */8 * * *',
-          schedule_enabled: true,
-        },
-      ],
-    )
-
-    // Only the enabled 8h schedule counts, so 1h elapsed is comfortably on time.
-    expect(wrapper.find('.coverage-status-ok').exists()).toBe(true)
-  })
-
-  it("does not count a failed run's finish time as coverage, even when it is the most recent report", async () => {
+  it("does not report a failed run's finish time as the last backup, even when it is the most recent report", async () => {
     const { wrapper } = await mountAgentsList(
       [issueAgent],
       [
@@ -694,10 +670,9 @@ describe('HostsView issue rows', () => {
       ],
     )
 
-    // Coverage must be derived from the 5h-old success, not the 5m-old
-    // failure - elapsed/cadence = 5, well past the 2x critical mark.
-    expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
-    expect(wrapper.find('.coverage-status-ok').exists()).toBe(false)
+    // The 5h-old success is the last real backup; the 5m-old failure is not
+    // one, however recent its report.
+    expect(lastBackupStat(wrapper)).toBe('5h ago')
   })
 
   it('shows coverage from the last completed backup while a newer run is in flight', async () => {

@@ -23,7 +23,7 @@ test.describe('Hosts management', () => {
     await expect(page.getByText('legacy-db-prod', { exact: true })).toBeVisible()
   })
 
-  test('hosts list shows the fleet summary band and a per-agent coverage meter', async ({
+  test('hosts list shows the fleet summary band and a per-agent last-backup stat', async ({
     page,
   }) => {
     await loginAsAdmin(page)
@@ -34,15 +34,12 @@ test.describe('Hosts management', () => {
     await expect(page.locator('.fleet-summary-counts')).toContainText('agent')
 
     const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
-    const meter = card.locator('.coverage-meter')
-    await expect(meter).toBeVisible()
-
-    // The bar is only readable if it says what it is filling with, so the
-    // caption, the progress-bar role and the explaining tooltip all ship.
-    await expect(meter.locator('.group-label')).toHaveText('Time since last backup')
-    const track = meter.locator('.coverage-track')
-    await expect(track).toHaveAttribute('role', 'progressbar')
-    await expect(track).toHaveAttribute('title', /cadence|no enabled backup schedule/)
+    // The card states the freshest completed backup outright rather than
+    // implying it through a fill; the coverage bar it replaces is gone.
+    await expect(card.locator('.coverage-meter')).toHaveCount(0)
+    const lastBackup = card.locator('.stat').filter({ hasText: 'Last backup' })
+    await expect(lastBackup).toBeVisible()
+    await expect(lastBackup.locator('.stat-value')).not.toBeEmpty()
   })
 
   test('clicking a host navigates to its detail page', async ({ page }) => {

@@ -12,6 +12,7 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
 import BaseModal from './BaseModal.vue'
 import BaseDisclosure from './BaseDisclosure.vue'
+import ModalFormActions from './ModalFormActions.vue'
 
 const DEFAULT_INSTALL_PATH = '/usr/local/bin/assimilate-agent'
 
@@ -127,13 +128,23 @@ async function loadExistingServiceUnit(options: { silent?: boolean } = {}): Prom
   }
 }
 
+// Both a thrown request failure and a structured unsuccessful result read the
+// same way to a user, and only one can be present at a time.
+const submitError = computed<string | null>(
+  () =>
+    deployError.value ?? (deployResult.value?.success === false ? deployResult.value.error : null),
+)
+
 function dialogTitle(): string {
   if (isRedeploy.value) return 'Redeploy'
   return props.agentVersion ? 'Upgrade' : 'Deploy'
 }
 
+function submittingLabel(): string {
+  return isRedeploy.value ? 'Redeploying...' : 'Deploying...'
+}
+
 function submitLabel(): string {
-  if (deployLoading.value) return isRedeploy.value ? 'Redeploying...' : 'Deploying...'
   if (isRedeploy.value) return 'Redeploy Agent'
   if (isUpgrade.value) {
     return showAvailableVersion.value ? `Upgrade to ${props.availableVersion}` : 'Upgrade Agent'
@@ -360,18 +371,6 @@ async function submitDeploy(): Promise<void> {
           </span>
         </BaseDisclosure>
       </div>
-      <div
-        v-if="deployError"
-        class="form-error"
-      >
-        {{ deployError }}
-      </div>
-      <div
-        v-if="deployResult && !deployResult.success"
-        class="form-error"
-      >
-        {{ deployResult.error }}
-      </div>
     </template>
 
     <template v-else>
@@ -413,21 +412,22 @@ async function submitDeploy(): Promise<void> {
     </template>
 
     <template #footer>
-      <template v-if="!deployResult?.success">
-        <button
-          class="btn btn-ghost"
-          @click="emit('close')"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-primary"
-          :disabled="deployLoading || !deployForm.ssh_host || !deployForm.server_url"
-          @click="submitDeploy"
-        >
-          {{ submitLabel() }}
-        </button>
-      </template>
+      <!-- The error belongs in the footer, not under the form: a long form
+           scrolls in the body, which would leave the failure off-screen next
+           to the button that caused it. `ModalFormActions` owns that row, so
+           a later change to it (an aria-live region, say) reaches this dialog
+           too. -->
+      <ModalFormActions
+        v-if="!deployResult?.success"
+        :submitting="deployLoading"
+        :disabled="!deployForm.ssh_host || !deployForm.server_url"
+        :error="submitError"
+        :submit-label="submitLabel()"
+        :submitting-label="submittingLabel()"
+        type="button"
+        @cancel="emit('close')"
+        @confirm="submitDeploy"
+      />
       <template v-else>
         <button
           class="btn btn-primary"

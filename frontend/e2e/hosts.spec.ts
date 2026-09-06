@@ -39,7 +39,11 @@ test.describe('Hosts management', () => {
     await expect(card.locator('.coverage-meter')).toHaveCount(0)
     const lastBackup = card.locator('.stat').filter({ hasText: 'Last backup' })
     await expect(lastBackup).toBeVisible()
-    await expect(lastBackup.locator('.stat-value')).not.toBeEmpty()
+    // The demo seeds this host 14 daily archives, the freshest a day old, so
+    // the stat has to render a real relative time. Asserting the shape rather
+    // than just "non-empty" is what makes the case exercise the completed-
+    // backup path - 'Never' is non-empty too.
+    await expect(lastBackup.locator('.stat-value')).toHaveText(/^(Just now|\d+[mhd] ago)$/)
   })
 
   test('clicking a host navigates to its detail page', async ({ page }) => {

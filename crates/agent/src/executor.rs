@@ -1411,7 +1411,18 @@ pub fn backup_target_from_repo(
         .or_else(|| repo.schedules.first());
     // Staging needs both halves: the schedule opting in, and the host having
     // it switched on at all.
-    let stages_vms = schedule.is_some_and(|s| s.vm_snapshot_enabled) && vm_snapshot.enabled;
+    let schedule_wants_vms = schedule.is_some_and(|s| s.vm_snapshot_enabled);
+    let stages_vms = schedule_wants_vms && vm_snapshot.enabled;
+    if schedule_wants_vms && !vm_snapshot.enabled {
+        // Both halves are required, so this is not a bug - but silently
+        // backing up no virtual machines is the one outcome an operator who
+        // ticked the box would not expect, and nothing else would ever say so.
+        warn!(
+            schedule_id = ?schedule.map(|s| s.id),
+            "the schedule asks for virtual machines but this host has staging turned off, so \
+             none will be included"
+        );
+    }
     let mut backup_sources = schedule.map_or_else(Vec::new, |s| s.backup_sources.clone());
     // The staging directory is part of the backup by virtue of staging, so the
     // operator never has to remember to list it as a source.

@@ -13,4 +13,5 @@ export type VmState =
   | "paused"
   | "shut_off"
   | "suspended"
+  | "crashed"
   | "unknown";

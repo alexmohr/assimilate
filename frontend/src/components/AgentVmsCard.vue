@@ -159,6 +159,7 @@ const STATE_LABELS: Record<VmState, string> = {
   paused: 'Paused',
   shut_off: 'Shut off',
   suspended: 'Suspended',
+  crashed: 'Crashed',
   unknown: 'Unknown',
 }
 
@@ -171,6 +172,9 @@ const STATE_TONES: Record<VmState, BadgeTone> = {
   paused: 'warning',
   suspended: 'warning',
   shut_off: 'neutral',
+  // A crashed domain is still staged - its disks are static - but it is not
+  // a neutral fact about the host the way a shut off one is.
+  crashed: 'danger',
   unknown: 'neutral',
 }
 

@@ -20,7 +20,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     convert::Infallible,
     fmt::Write as _,
-    os::unix::fs::MetadataExt as _,
+    os::unix::fs::{FileTypeExt as _, MetadataExt as _},
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
@@ -37,7 +37,7 @@ use shared::{
         VmSnapshotMode, VmSnapshotOutcome, VmState,
     },
 };
-use tokio::{process::Command, sync::Mutex as TokioMutex};
+use tokio::{io::AsyncSeekExt as _, process::Command, sync::Mutex as TokioMutex};
 use tracing::{info, warn};
 
 /// Prefix of the checkpoints and temporary snapshots this agent owns, so a
@@ -261,6 +261,28 @@ impl JobType {
 /// apparent size, so a sparse image is not charged for the holes in it.
 fn allocated_bytes(metadata: &std::fs::Metadata) -> u64 {
     metadata.blocks().saturating_mul(512)
+}
+
+/// Space one disk source needs, whether it is an image file or a block device.
+///
+/// `stat` on a block special file describes the node in `/dev`, not the volume
+/// behind it, so the block count is zero and an LVM-backed domain looks free.
+/// That is the disk type `DomainXml` was extended to support, and sizing it at
+/// nothing defeats the guard that refuses a full copy which cannot fit - the
+/// one check that runs before anything is deleted. Seeking to the end of the
+/// device reports its real size, and a volume is not sparse, so the whole of
+/// it is what a copy needs.
+async fn source_size(path: &Path) -> u64 {
+    let Ok(metadata) = tokio::fs::symlink_metadata(path).await else {
+        return 0;
+    };
+    if !metadata.file_type().is_block_device() {
+        return path_usage(path).await;
+    }
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return 0;
+    };
+    file.seek(std::io::SeekFrom::End(0)).await.unwrap_or(0)
 }
 
 /// Space a path occupies: for a directory, everything below it. Walked with
@@ -661,10 +683,19 @@ impl VmStager {
         Ok(output
             .lines()
             .filter_map(|line| {
-                let fields: Vec<&str> = line.split_whitespace().collect();
-                let [_type, device, target, source] = fields.as_slice() else {
-                    return None;
-                };
+                // The source is the last column and a path may hold spaces, so
+                // only the three fixed columns are split off - collecting every
+                // whitespace-separated token and matching exactly four dropped
+                // such a disk from the list entirely, and a disk missing from
+                // the list is a disk missing from the backup, silently.
+                let mut fields = line.split_whitespace();
+                let _type = fields.next()?;
+                let device = fields.next()?;
+                let target = fields.next()?;
+                let source = line
+                    .split_once(target)
+                    .map(|(_, rest)| rest.trim())
+                    .filter(|rest| !rest.is_empty())?;
                 if BlockDeviceKind::from_str(device).unwrap_or_default() != BlockDeviceKind::Disk {
                     return None;
                 }
@@ -674,7 +705,7 @@ impl VmStager {
                     return None;
                 };
                 Some(Disk {
-                    target: (*target).to_owned(),
+                    target: target.to_owned(),
                     source,
                 })
             })
@@ -1120,15 +1151,24 @@ impl VmStager {
             }
         };
 
+        // Overshooting the limit is reported on the outcome rather than
+        // returned as an error, because by now the capture has happened: the
+        // chain really did grow, and saying so is the point of the row the
+        // operator reads. Returning `Err` here discarded `action` and `mode`,
+        // so a domain that had just written an increment and gone over budget
+        // was reported as Skipped and Unknown - which understates what
+        // happened to its stored data. The failure itself is carried by
+        // `error`, which is what fails the backup.
         let staged_bytes = path_usage(dest).await;
-        if limit > 0 && staged_bytes > limit {
-            return Err(VmError::OverLimit(format!(
+        let error = (limit > 0 && staged_bytes > limit).then(|| {
+            VmError::OverLimit(format!(
                 "staged {} exceeds the limit of {}. Raise the limit for this domain or lower the \
                  full-image interval.",
                 format_bytes(staged_bytes),
                 format_bytes(limit)
-            )));
-        }
+            ))
+            .to_string()
+        });
 
         Ok(VmSnapshotOutcome {
             name: domain.to_owned(),
@@ -1136,7 +1176,7 @@ impl VmStager {
             mode,
             staged_bytes,
             chain_length: self.chain_increments(dest).await,
-            error: None,
+            error,
         })
     }
 
@@ -1320,7 +1360,7 @@ impl VmStager {
     async fn full_size(disks: &[Disk]) -> u64 {
         let mut total: u64 = 0;
         for disk in disks {
-            total = total.saturating_add(path_usage(&disk.source).await);
+            total = total.saturating_add(source_size(&disk.source).await);
         }
         total
     }
@@ -2341,6 +2381,72 @@ mod tests {
         assert_eq!(outcome.mode, VmSnapshotMode::Unknown);
     }
 
+    /// A domain that captured successfully and then went over its budget did
+    /// real work: its chain grew. Reporting that as Skipped/Unknown, because
+    /// the over-limit path returned an error and discarded what had already
+    /// been decided, understates what happened to the domain's stored data.
+    #[tokio::test]
+    async fn an_over_limit_domain_reports_what_it_actually_did() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        let mut config = host.config();
+        // Large enough to let the capture run, small enough that the staged
+        // result overshoots it.
+        config.default_limit_bytes = 200 * 1024;
+        let stager = host.stager_with_env(
+            config,
+            vec![("MOCK_VIRT_BACKUP_KIB".to_owned(), "512".to_owned())],
+        );
+
+        let outcomes = stager.stage_all().await.unwrap();
+        let outcome = only(&outcomes);
+        let error = outcome
+            .error
+            .as_deref()
+            .expect("the overshoot must fail it");
+        assert!(error.contains("exceeds the limit"), "{error}");
+        assert_ne!(
+            outcome.action,
+            VmRunAction::Skipped,
+            "the domain was captured, not skipped"
+        );
+        assert_ne!(
+            outcome.mode,
+            VmSnapshotMode::Unknown,
+            "the capture mode was known by the time the limit was measured"
+        );
+    }
+
+    /// A disk whose image path holds a space is still a disk. Splitting the
+    /// `domblklist` line on every space and requiring exactly four fields
+    /// dropped it from the list, and a disk missing from the list is a disk
+    /// missing from the archive - with nothing said about it.
+    #[tokio::test]
+    async fn a_disk_source_with_spaces_is_still_staged() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        // libvirt reports the source verbatim, spaces and all.
+        let spaced = host.root.path().join("images").join("data disk one.qcow2");
+        tokio::fs::write(&spaced, vec![0u8; 4096]).await.unwrap();
+        append(
+            &host.state().join("disks-web01"),
+            &format!("file disk vdb {}\n", spaced.display()),
+        )
+        .await;
+
+        let outcomes = host.stager(host.config()).stage_all().await.unwrap();
+        assert!(
+            only(&outcomes).error.is_none(),
+            "{:?}",
+            only(&outcomes).error
+        );
+        assert!(
+            host.chain("web01").await.contains("vdb"),
+            "the spaced disk must reach the chain, got:\n{}",
+            host.chain("web01").await
+        );
+    }
+
     /// Two schedules on the same host may both stage it, and they arrive as
     /// separate backups that the repository-keyed operation queue is designed
     /// to run concurrently. Both would write the same `chain.txt` and the same
@@ -3118,6 +3224,16 @@ mod tests {
         assert_eq!(parse_domain_state("paused\n"), VmState::Paused);
         assert_eq!(parse_domain_state("pmsuspended"), VmState::Suspended);
         assert_eq!(parse_domain_state("in shutdown"), VmState::Unknown);
+        // `idle` is a running domain that is off CPU, usually waiting on I/O -
+        // what a busy machine reports much of the time. Reading it as unknown
+        // refused to stage the domain, so a database VM's backup failed or not
+        // depending on what `virsh domstate` caught it doing.
+        assert_eq!(parse_domain_state("idle"), VmState::Running);
+        assert!(parse_domain_state("idle").is_live());
+        // A crashed domain is not executing, so its disks are static and it
+        // copies like a shut off one rather than failing the backup.
+        assert_eq!(parse_domain_state("crashed"), VmState::Crashed);
+        assert!(!parse_domain_state("crashed").is_live());
     }
 
     #[test]

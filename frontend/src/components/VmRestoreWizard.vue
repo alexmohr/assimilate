@@ -51,6 +51,17 @@ const loadingReports = ref(false)
 const selected = ref<{ repoId: number; archive: string } | null>(null)
 
 const restoreFiles = ref(true)
+/**
+ * Whether stage one already put the files on disk in this session.
+ *
+ * Stage two only reads what stage one wrote, so a build that fails can be
+ * retried against the same files - which is what the step's own copy promises.
+ * Without this the retry fetched the whole domain from borg again, which for a
+ * multi-gigabyte machine is the slowest possible way to re-run the fast half.
+ * It is cleared whenever an input to the fetch changes, because then the files
+ * on disk are no longer the ones the operator is asking for.
+ */
+const filesRestored = ref(false)
 const workingDir = ref('/var/tmp/assimilate-restore')
 const sourceDirInput = ref('')
 
@@ -87,7 +98,10 @@ const restorable = computed<RestorableReport[]>(() =>
  * asks borg to extract, and the tail of where it ends up on disk.
  */
 const stagedPath = computed<string>(
-  () => `${props.stagingDir.replace(/^\/+/, '')}/${props.domainName}`,
+  // Both ends: borg stores the path relative, so the leading slash comes off,
+  // and a staging directory saved with a trailing one would otherwise produce
+  // a doubled separator that matches nothing in the archive.
+  () => `${props.stagingDir.replace(/^\/+/, '').replace(/\/+$/, '')}/${props.domainName}`,
 )
 
 const restoredPath = computed<string>(
@@ -120,6 +134,7 @@ function reset(): void {
   step.value = 1
   selected.value = null
   restoreFiles.value = true
+  filesRestored.value = false
   workingDir.value = '/var/tmp/assimilate-restore'
   sourceDirInput.value = ''
   restoreAs.value = `${props.domainName}-restored`
@@ -142,6 +157,12 @@ watch(
   { immediate: true },
 )
 
+// The files on disk belong to one archive, extracted to one directory. Change
+// either and they are no longer what the next run should build from.
+watch([selected, workingDir, restoreFiles], () => {
+  filesRestored.value = false
+})
+
 function pickArchive(report: RestorableReport): void {
   selected.value = { repoId: report.repo_id, archive: report.archive_name }
 }
@@ -163,7 +184,7 @@ async function run(): Promise<void> {
   try {
     // `canProceed` will not let step one be left without an archive picked,
     // so a restore that reaches here always has one.
-    if (restoreFiles.value && selected.value !== null) {
+    if (restoreFiles.value && !filesRestored.value && selected.value !== null) {
       const response = await restoreArchiveFiles(selected.value.repoId, selected.value.archive, {
         paths: [stagedPath.value],
         target_path: workingDir.value.trim(),
@@ -172,6 +193,7 @@ async function run(): Promise<void> {
       if (!response.success) {
         throw new Error(response.error_message ?? 'The files could not be restored')
       }
+      filesRestored.value = true
     }
     stageOneDone.value = true
 

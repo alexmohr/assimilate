@@ -183,6 +183,38 @@ describe('VmRestoreWizard', () => {
     expect(wrapper.text()).toContain('the chain of vda is incomplete')
   })
 
+  it('does not fetch from borg again when a failed build is retried', async () => {
+    let builds = 0
+    vi.mocked(apiClient.post).mockImplementation((url: string) => {
+      if (!url.endsWith('/build')) return Promise.resolve({ data: { success: true } } as never)
+      builds += 1
+      // The first build fails, the second succeeds.
+      return builds === 1
+        ? Promise.reject(new Error('the chain of vda is incomplete'))
+        : Promise.resolve({ data: { name: 'web01-restored', images: [], merged_increments: 0, defined: true, started: false } } as never)
+    })
+    const wrapper = await mount()
+    await wrapper.find('input[name="vm-restore-archive"]').trigger('change')
+    await button(wrapper, 'Next')?.trigger('click')
+    await button(wrapper, 'Next')?.trigger('click')
+    await button(wrapper, 'Restore')?.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('the chain of vda is incomplete')
+
+    const restoreCalls = () =>
+      vi.mocked(apiClient.post).mock.calls.filter(([url]) => !String(url).endsWith('/build')).length
+    const afterFirst = restoreCalls()
+
+    await button(wrapper, 'Restore')?.trigger('click')
+    await flushPromises()
+
+    // Stage two only reads what stage one wrote, which is what the step's own
+    // copy promises - re-fetching a multi-gigabyte domain to re-run the fast
+    // half is exactly what that promise rules out.
+    expect(restoreCalls(), 'the retry must build from the files already on disk').toBe(afterFirst)
+    expect(builds, 'but it must build again').toBe(2)
+  })
+
   it('will not proceed without an archive to restore from', async () => {
     const wrapper = await mount()
     expect(button(wrapper, 'Next')?.attributes('disabled')).toBeDefined()

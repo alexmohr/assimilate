@@ -5,7 +5,11 @@
 //! how its agent stages libvirt/QEMU domains before a backup, the domains it
 //! reported, and the per-domain settings the operator makes.
 
-use std::{str::FromStr, time::Duration};
+use std::{
+    path::{Component, Path as StdPath},
+    str::FromStr,
+    time::Duration,
+};
 
 use axum::{
     Json,
@@ -42,7 +46,6 @@ const BUILD_TIMEOUT: Duration = Duration::from_hours(4);
 
 /// Largest staging directory depth we accept, to keep a typo from pointing the
 /// staging directory at a filesystem root.
-const MIN_STAGING_DIR_LEN: usize = 2;
 
 /// New staging settings for a host.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
@@ -155,23 +158,7 @@ async fn build_response(
 /// directory, and a filesystem root would put every domain beside the system's
 /// own directories.
 fn validate_staging_dir(dir: &str) -> Result<(), ApiError> {
-    let trimmed = dir.trim();
-    if !trimmed.starts_with('/') {
-        return Err(ApiError::BadRequest(
-            "the staging directory must be an absolute path".to_owned(),
-        ));
-    }
-    if trimmed.len() < MIN_STAGING_DIR_LEN {
-        return Err(ApiError::BadRequest(
-            "the staging directory must not be the filesystem root".to_owned(),
-        ));
-    }
-    if trimmed.contains("..") {
-        return Err(ApiError::BadRequest(
-            "the staging directory must not contain '..'".to_owned(),
-        ));
-    }
-    Ok(())
+    validate_absolute_dir("staging directory", dir)
 }
 
 #[utoipa::path(
@@ -306,9 +293,10 @@ pub async fn update_agent_vm(
     Query(query): Query<DomainQuery>,
     ApiJson(req): ApiJson<UpdateAgentVmRequest>,
 ) -> Result<Json<AgentVmSnapshotResponse>, ApiError> {
-    if name.trim().is_empty() {
-        return Err(ApiError::BadRequest("a domain name is required".to_owned()));
-    }
+    // The same rule the agent-reported path applies before storing a name, so
+    // the two directions actually agree: a name this endpoint would accept but
+    // a scan would refuse could never be reconciled with the row it names.
+    validate_domain_name(&name)?;
 
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let limit_bytes = req
@@ -455,14 +443,27 @@ fn validate_absolute_dir(label: &str, path: &str) -> Result<(), ApiError> {
             "the {label} must be an absolute path"
         )));
     }
-    if trimmed.len() < MIN_STAGING_DIR_LEN {
+
+    // Length does not answer either question. `/.` and `//` are short paths
+    // that still resolve to the filesystem root, and searching for `..` as a
+    // substring also rejects an ordinary name like `backups..old`. Walking the
+    // components answers both exactly: at least one real name, and no step
+    // back up the tree.
+    let mut names = false;
+    for component in StdPath::new(trimmed).components() {
+        match component {
+            Component::Normal(_) => names = true,
+            Component::ParentDir => {
+                return Err(ApiError::BadRequest(format!(
+                    "the {label} must not contain '..'"
+                )));
+            }
+            Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
+        }
+    }
+    if !names {
         return Err(ApiError::BadRequest(format!(
             "the {label} must not be the filesystem root"
-        )));
-    }
-    if trimmed.contains("..") {
-        return Err(ApiError::BadRequest(format!(
-            "the {label} must not contain '..'"
         )));
     }
     Ok(())
@@ -567,6 +568,32 @@ pub async fn build_agent_vm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A short path is not the same thing as a safe one. `/.` and `//` are
+    /// two characters that resolve to the filesystem root, which a length
+    /// check waves through - and a domain would then be staged into `/`.
+    #[test]
+    fn a_staging_directory_that_resolves_to_the_root_is_refused() {
+        for root in ["/", "/.", "//", "/./", "/.//."] {
+            assert!(
+                validate_staging_dir(root).is_err(),
+                "{root} resolves to the filesystem root and must be refused"
+            );
+        }
+    }
+
+    /// Walking components rather than searching for a substring: `..` as a
+    /// path step is refused, `..` inside a name is an ordinary directory.
+    #[test]
+    fn parent_steps_are_refused_but_dots_inside_a_name_are_not() {
+        assert!(validate_staging_dir("/srv/../etc").is_err());
+        assert!(validate_staging_dir("/srv/vms/..").is_err());
+        assert!(
+            validate_staging_dir("/srv/backups..old/vms").is_ok(),
+            "a name that merely contains dots is a directory like any other"
+        );
+        assert!(validate_staging_dir("/var/lib/assimilate/vms").is_ok());
+    }
 
     fn row(included: Option<bool>, limit_bytes: Option<i64>) -> AgentVmRow {
         AgentVmRow {

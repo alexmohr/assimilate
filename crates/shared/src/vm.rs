@@ -44,6 +44,14 @@ pub const DEFAULT_SNAPSHOT_TIMEOUT_SECONDS: u32 = 1800;
 #[ts(export)]
 pub enum VmState {
     /// The domain is running.
+    ///
+    /// `idle` is libvirt's word for a running domain that is not currently on
+    /// CPU - blocked on I/O, most often. It is what a busy machine reports
+    /// much of the time, not a fault, so it has to read as running: anything
+    /// this parser does not know becomes `Unknown`, which the agent refuses to
+    /// stage, and a database VM would then fail its backup depending on what
+    /// `virsh domstate` happened to catch it doing.
+    #[strum(to_string = "running", serialize = "idle")]
     Running,
     /// The domain is paused, but its memory is still resident.
     Paused,
@@ -53,6 +61,13 @@ pub enum VmState {
     /// The domain is suspended to RAM or disk by the guest.
     #[strum(to_string = "suspended", serialize = "pmsuspended")]
     Suspended,
+    /// The domain crashed and is no longer executing.
+    ///
+    /// Its disks are static, so it is captured the way a shut off domain is.
+    /// Refusing to stage it instead would fail the whole backup over a
+    /// machine whose data is exactly what an operator most wants kept.
+    #[strum(to_string = "crashed")]
+    Crashed,
     /// libvirt reported a state this build does not know, or the host has not
     /// been scanned yet.
     #[default]

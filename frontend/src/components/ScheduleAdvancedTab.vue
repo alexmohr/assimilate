@@ -49,12 +49,12 @@ const refOpen = ref(false)
         <ToggleSwitch v-model="form.compact_enabled" />
       </div>
       <div class="field field-inline">
-        <label class="field-label">Stage virtual machines</label>
+        <label class="field-label">Back up virtual machines</label>
         <ToggleSwitch v-model="form.vm_snapshot_enabled" />
       </div>
       <span class="field-hint">
         Snapshots the libvirt domains of every host this schedule targets before the backup starts,
-        using each host's own staging settings. Hosts with staging switched off are unaffected.
+        using each host's own staging settings. Hosts that do not allow it are skipped.
       </span>
       <div class="field">
         <label class="field-label">Remote rate limit (kB/s)</label>

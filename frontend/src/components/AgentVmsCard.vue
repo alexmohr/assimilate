@@ -380,8 +380,8 @@ onMounted(load)
             <span class="group-label group-label--lg">Staging</span>
           </div>
           <dl class="info-grid">
-            <dt>Stage virtual machines</dt>
-            <dd>{{ enabled ? 'Enabled' : 'Disabled' }}</dd>
+            <dt>Allow schedules to back up virtual machines</dt>
+            <dd>{{ enabled ? 'Allowed' : 'Blocked' }}</dd>
             <dt>Which domains</dt>
             <dd>{{ SELECTION_LABELS[selection] }}</dd>
             <dt>Staging directory</dt>
@@ -407,14 +407,15 @@ onMounted(load)
 
           <div class="field field-inline">
             <div class="field-body">
-              <p class="field-title">Stage virtual machines</p>
+              <p class="field-title">Allow schedules to back up virtual machines</p>
               <p class="field-hint">
-                When off, a schedule that opts in stages nothing on this host.
+                Each schedule decides whether its own runs include them. Blocked here means no
+                schedule backs up this host's virtual machines, whatever the schedule asks for.
               </p>
             </div>
             <ToggleSwitch
               v-model="enabled"
-              label="Stage virtual machines"
+              label="Allow schedules to back up virtual machines"
             />
           </div>
 

@@ -37,13 +37,18 @@ test.describe('Hosts management', () => {
     // The card states the freshest completed backup outright rather than
     // implying it through a fill; the coverage bar it replaces is gone.
     await expect(card.locator('.coverage-meter')).toHaveCount(0)
-    const lastBackup = card.locator('.stat').filter({ hasText: 'Last backup' })
-    await expect(lastBackup).toBeVisible()
-    // The demo seeds this host 14 daily archives, the freshest a day old, so
-    // the stat has to render a real relative time. Asserting the shape rather
-    // than just "non-empty" is what makes the case exercise the completed-
-    // backup path - 'Never' is non-empty too.
-    await expect(lastBackup.locator('.stat-value')).toHaveText(/^(Just now|\d+[mhd] ago)$/)
+    // web-server-01's demo archives are written by borg directly, with no
+    // scheduled run reported back, and `last_backup_at` comes from a
+    // backup_reports row per (schedule, agent) - so 'Never' is the correct
+    // reading here rather than a gap in the stat.
+    await expect(card.locator('.stat').filter({ hasText: 'Last backup' })).toHaveText(/Never/)
+
+    // stale-report-01 is the host the demo gives a real completed report
+    // (backdated four days, see seed-demo.sh), so it is the one that
+    // exercises the freshest-completed-backup path end to end.
+    const reported = page.locator('.entity-card').filter({ hasText: 'stale-report-01' }).first()
+    const lastBackup = reported.locator('.stat').filter({ hasText: 'Last backup' })
+    await expect(lastBackup.locator('.stat-value')).toHaveText(/^\d+d ago$/)
   })
 
   test('clicking a host navigates to its detail page', async ({ page }) => {

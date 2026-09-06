@@ -16,6 +16,12 @@ import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/schedul
  * The backup schedule's Advanced tab: borg options, exclude patterns, file
  * change patterns and hook commands, each of which can be overridden per agent
  * on a multi-host schedule.
+ *
+ * Every setting is a `.pane-row`: what it is on the left, the control on
+ * the right. The pane used to be `.field-inline` rows, which put each switch
+ * at the far edge of the pane with its label a screen away, and let every hint
+ * run the full width of the window - six paragraphs at the same visual weight
+ * as the settings they explain.
  */
 defineProps<{
   agentIds: number[]
@@ -36,208 +42,327 @@ const refOpen = ref(false)
     </p>
     <section class="pane-section">
       <span class="group-label group-label--lg">Options</span>
-      <div class="field field-inline">
-        <label class="field-label">Canary verification</label>
-        <ToggleSwitch v-model="form.canary_enabled" />
-      </div>
-      <div class="field field-inline">
-        <label class="field-label">Ignore global excludes</label>
-        <ToggleSwitch v-model="form.ignore_global_excludes" />
-      </div>
-      <div class="field field-inline">
-        <label class="field-label">Compact after backup</label>
-        <ToggleSwitch v-model="form.compact_enabled" />
-      </div>
-      <div class="field field-inline">
-        <label class="field-label">Stage virtual machines</label>
-        <ToggleSwitch v-model="form.vm_snapshot_enabled" />
-      </div>
-      <span class="field-hint">
-        Snapshots the libvirt domains of every host this schedule targets before the backup starts,
-        using each host's own staging settings. Hosts with staging switched off are unaffected.
-      </span>
-      <div class="field">
-        <label class="field-label">Remote rate limit (kB/s)</label>
-        <input
-          v-model.number="form.rate_limit_kbps"
-          type="number"
-          min="0"
-          class="input"
-        />
-        <span class="field-hint">Caps borg's upload bandwidth. Set to 0 for unlimited.</span>
+      <div class="pane-rows">
+        <div class="pane-row">
+          <div class="field-body">
+            <p class="field-title">Canary verification</p>
+            <p class="field-hint">
+              Writes a canary file before the backup and verifies it afterwards, so a silent failure
+              does not pass as a success.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="form.canary_enabled"
+              label="Canary verification"
+            />
+          </div>
+        </div>
+        <div class="pane-row">
+          <div class="field-body">
+            <p class="field-title">Ignore global excludes</p>
+            <p class="field-hint">
+              Back up using only this schedule's patterns, not the server-wide exclude list.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="form.ignore_global_excludes"
+              label="Ignore global excludes"
+            />
+          </div>
+        </div>
+        <div class="pane-row">
+          <div class="field-body">
+            <p class="field-title">Compact after backup</p>
+            <p class="field-hint">
+              Runs borg compact once pruning is done, to reclaim the space it freed.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="form.compact_enabled"
+              label="Compact after backup"
+            />
+          </div>
+        </div>
+        <div class="pane-row">
+          <div class="field-body">
+            <p class="field-title">Stage virtual machines</p>
+            <p class="field-hint">
+              Snapshots each targeted host's libvirt domains before the backup starts, using that
+              host's own staging settings. Hosts with staging switched off are unaffected.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="form.vm_snapshot_enabled"
+              label="Stage virtual machines"
+            />
+          </div>
+        </div>
+        <div class="pane-row">
+          <div class="field-body">
+            <label
+              class="field-title"
+              for="schedule-rate-limit"
+            >
+              Remote rate limit (kB/s)
+            </label>
+            <p class="field-hint">Caps borg's upload bandwidth. Set to 0 for unlimited.</p>
+          </div>
+          <div class="pane-row-control">
+            <input
+              id="schedule-rate-limit"
+              v-model.number="form.rate_limit_kbps"
+              type="number"
+              min="0"
+              class="input"
+            />
+          </div>
+        </div>
       </div>
     </section>
 
     <section class="pane-section">
       <span class="group-label group-label--lg">Exclude patterns</span>
-      <div
-        v-if="agentIds.length > 1"
-        class="field field-inline"
-      >
-        <label class="field-label">Configure per agent</label>
-        <ToggleSwitch v-model="overrides.usePerHostExcludes" />
-      </div>
-      <div class="field">
-        <div class="field-label-row">
-          <label class="field-label">Patterns</label>
-          <button
-            type="button"
-            class="ref-toggle"
-            @click="refOpen = !refOpen"
-          >
-            {{ refOpen ? 'Close Reference' : 'Pattern Reference' }}
-          </button>
-        </div>
-        <textarea
-          v-if="!overrides.usePerHostExcludes"
-          v-model="form.exclude_patterns"
-          class="input area-input"
-          placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
-          spellcheck="false"
-        />
-        <PerAgentFields
-          v-else
-          :agent-ids="agentIds"
-          :agent-label="agentLabel"
+      <div class="pane-rows">
+        <div
+          v-if="agentIds.length > 1"
+          class="pane-row"
         >
-          <template #default="{ agentId }">
-            <textarea
-              :value="overrides.perHostExcludes[agentId] ?? ''"
-              class="input area-input area-input-sm"
-              placeholder="Exclude patterns, one per line"
-              spellcheck="false"
-              @input="
-                ($event) =>
-                  (overrides.perHostExcludes[agentId] = (
-                    $event.target as HTMLTextAreaElement
-                  ).value)
-              "
+          <div class="field-body">
+            <p class="field-title">Configure per agent</p>
+            <p class="field-hint">
+              Give each host its own patterns instead of one list for the schedule.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="overrides.usePerHostExcludes"
+              label="Configure exclude patterns per agent"
             />
-          </template>
-          <template #hint>
-            Leave an agent empty to use only global and agent-level default excludes.
-          </template>
-        </PerAgentFields>
-        <span
-          v-if="!overrides.usePerHostExcludes"
-          class="field-hint"
-        >
-          Leave empty to use only global and agent-level default excludes. Lines starting with
-          <code>#</code> are treated as comments.
-        </span>
-        <BorgPatternReference v-if="refOpen" />
+          </div>
+        </div>
+        <div class="pane-row pane-row--stack">
+          <div class="field-body">
+            <div class="field-label-row">
+              <p class="field-title">Patterns</p>
+              <button
+                type="button"
+                class="ref-toggle"
+                @click="refOpen = !refOpen"
+              >
+                {{ refOpen ? 'Close Reference' : 'Pattern Reference' }}
+              </button>
+            </div>
+            <p
+              v-if="!overrides.usePerHostExcludes"
+              class="field-hint"
+            >
+              Leave empty to use only global and agent-level default excludes. Lines starting with
+              <code>#</code> are treated as comments.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <textarea
+              v-if="!overrides.usePerHostExcludes"
+              v-model="form.exclude_patterns"
+              class="input area-input"
+              aria-label="Exclude patterns"
+              placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
+              spellcheck="false"
+            />
+            <PerAgentFields
+              v-else
+              :agent-ids="agentIds"
+              :agent-label="agentLabel"
+            >
+              <template #default="{ agentId }">
+                <textarea
+                  :value="overrides.perHostExcludes[agentId] ?? ''"
+                  class="input area-input area-input-sm"
+                  placeholder="Exclude patterns, one per line"
+                  spellcheck="false"
+                  @input="
+                    ($event) =>
+                      (overrides.perHostExcludes[agentId] = (
+                        $event.target as HTMLTextAreaElement
+                      ).value)
+                  "
+                />
+              </template>
+              <template #hint>
+                Leave an agent empty to use only global and agent-level default excludes.
+              </template>
+            </PerAgentFields>
+            <BorgPatternReference v-if="refOpen" />
+          </div>
+        </div>
       </div>
     </section>
 
     <section class="pane-section">
       <span class="group-label group-label--lg">File change patterns</span>
-      <div
-        v-if="agentIds.length > 1"
-        class="field field-inline"
-      >
-        <label class="field-label">Configure per agent</label>
-        <ToggleSwitch v-model="overrides.usePerHostFileChangePatterns" />
-      </div>
-      <div class="field">
-        <label class="field-label">Patterns</label>
-        <FileChangePatternsEditor
-          v-if="!overrides.usePerHostFileChangePatterns"
-          v-model="form.file_change_patterns"
-        />
-        <PerAgentFields
-          v-else
-          :agent-ids="agentIds"
-          :agent-label="agentLabel"
+      <div class="pane-rows">
+        <div
+          v-if="agentIds.length > 1"
+          class="pane-row"
         >
-          <template #default="{ agentId }">
-            <textarea
-              :value="overrides.perHostFileChangePatterns[agentId] ?? ''"
-              class="input area-input area-input-sm"
-              placeholder="File change patterns, one per line"
-              spellcheck="false"
-              @input="
-                ($event) =>
-                  (overrides.perHostFileChangePatterns[agentId] = (
-                    $event.target as HTMLTextAreaElement
-                  ).value)
-              "
+          <div class="field-body">
+            <p class="field-title">Configure per agent</p>
+            <p class="field-hint">
+              Give each host its own patterns instead of one list for the schedule.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="overrides.usePerHostFileChangePatterns"
+              label="Configure file change patterns per agent"
             />
-          </template>
-          <template #hint>
-            Leave an agent empty to use schedule-level file change patterns.
-          </template>
-        </PerAgentFields>
+          </div>
+        </div>
+        <div class="pane-row pane-row--stack">
+          <div class="field-body">
+            <p class="field-title">Patterns</p>
+          </div>
+          <div class="pane-row-control">
+            <FileChangePatternsEditor
+              v-if="!overrides.usePerHostFileChangePatterns"
+              v-model="form.file_change_patterns"
+            />
+            <PerAgentFields
+              v-else
+              :agent-ids="agentIds"
+              :agent-label="agentLabel"
+            >
+              <template #default="{ agentId }">
+                <textarea
+                  :value="overrides.perHostFileChangePatterns[agentId] ?? ''"
+                  class="input area-input area-input-sm"
+                  placeholder="File change patterns, one per line"
+                  spellcheck="false"
+                  @input="
+                    ($event) =>
+                      (overrides.perHostFileChangePatterns[agentId] = (
+                        $event.target as HTMLTextAreaElement
+                      ).value)
+                  "
+                />
+              </template>
+              <template #hint>
+                Leave an agent empty to use schedule-level file change patterns.
+              </template>
+            </PerAgentFields>
+          </div>
+        </div>
       </div>
     </section>
 
     <section class="pane-section">
       <span class="group-label group-label--lg">Commands</span>
-      <div
-        v-if="agentIds.length > 1"
-        class="field field-inline"
-      >
-        <label class="field-label">Configure per agent</label>
-        <ToggleSwitch v-model="overrides.usePerAgentCmds" />
-      </div>
-      <div class="field">
-        <label class="field-label">Hook command timeout (seconds)</label>
-        <input
-          v-model.number="form.hook_timeout_seconds"
-          type="number"
-          min="1"
-          max="3600"
-          class="input"
-        />
-        <span class="field-hint">
-          The default for every pre- and post-backup command that does not set its own. A command
-          still running past its timeout is killed and the backup fails.
-        </span>
-      </div>
-      <template v-if="!overrides.usePerAgentCmds">
-        <div class="field">
-          <label class="field-label">Pre-backup commands</label>
-          <CommandListEditor
-            v-model="form.pre_backup_commands"
-            placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-            aria-label="Pre-backup commands"
-            :default-timeout-seconds="form.hook_timeout_seconds"
-          />
+      <div class="pane-rows">
+        <div
+          v-if="agentIds.length > 1"
+          class="pane-row"
+        >
+          <div class="field-body">
+            <p class="field-title">Configure per agent</p>
+            <p class="field-hint">
+              Give each host its own commands instead of one set for the schedule.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="overrides.usePerAgentCmds"
+              label="Configure commands per agent"
+            />
+          </div>
         </div>
-        <div class="field">
-          <label class="field-label">Post-backup commands</label>
-          <CommandListEditor
-            v-model="form.post_backup_commands"
-            placeholder="e.g. rm /tmp/dump.sql (optional)"
-            aria-label="Post-backup commands"
-            :default-timeout-seconds="form.hook_timeout_seconds"
-          />
+        <div class="pane-row">
+          <div class="field-body">
+            <label
+              class="field-title"
+              for="schedule-hook-timeout"
+            >
+              Hook command timeout (seconds)
+            </label>
+            <p class="field-hint">
+              The default for every pre- and post-backup command that does not set its own. A
+              command still running past its timeout is killed and the backup fails.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <input
+              id="schedule-hook-timeout"
+              v-model.number="form.hook_timeout_seconds"
+              type="number"
+              min="1"
+              max="3600"
+              class="input"
+            />
+          </div>
         </div>
-      </template>
-      <PerAgentFields
-        v-else
-        :agent-ids="agentIds"
-        :agent-label="agentLabel"
-      >
-        <template #default="{ agentId }">
-          <label class="form-sublabel">Pre-backup</label>
-          <CommandListEditor
-            :model-value="overrides.perAgentPreCmds[agentId] ?? []"
-            placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-            aria-label="Pre-backup commands"
-            :default-timeout-seconds="form.hook_timeout_seconds"
-            @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
-          />
-          <label class="form-sublabel">Post-backup</label>
-          <CommandListEditor
-            :model-value="overrides.perAgentPostCmds[agentId] ?? []"
-            placeholder="e.g. rm /tmp/dump.sql (optional)"
-            aria-label="Post-backup commands"
-            :default-timeout-seconds="form.hook_timeout_seconds"
-            @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
-          />
+        <template v-if="!overrides.usePerAgentCmds">
+          <div class="pane-row pane-row--stack">
+            <div class="field-body">
+              <p class="field-title">Pre-backup commands</p>
+            </div>
+            <div class="pane-row-control">
+              <CommandListEditor
+                v-model="form.pre_backup_commands"
+                placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+                aria-label="Pre-backup commands"
+                :default-timeout-seconds="form.hook_timeout_seconds"
+              />
+            </div>
+          </div>
+          <div class="pane-row pane-row--stack">
+            <div class="field-body">
+              <p class="field-title">Post-backup commands</p>
+            </div>
+            <div class="pane-row-control">
+              <CommandListEditor
+                v-model="form.post_backup_commands"
+                placeholder="e.g. rm /tmp/dump.sql (optional)"
+                aria-label="Post-backup commands"
+                :default-timeout-seconds="form.hook_timeout_seconds"
+              />
+            </div>
+          </div>
         </template>
-        <template #hint>Leave an agent empty to run no schedule-level commands.</template>
-      </PerAgentFields>
+        <div
+          v-else
+          class="pane-row pane-row--stack"
+        >
+          <div class="pane-row-control">
+            <PerAgentFields
+              :agent-ids="agentIds"
+              :agent-label="agentLabel"
+            >
+              <template #default="{ agentId }">
+                <label class="form-sublabel">Pre-backup</label>
+                <CommandListEditor
+                  :model-value="overrides.perAgentPreCmds[agentId] ?? []"
+                  placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+                  aria-label="Pre-backup commands"
+                  :default-timeout-seconds="form.hook_timeout_seconds"
+                  @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
+                />
+                <label class="form-sublabel">Post-backup</label>
+                <CommandListEditor
+                  :model-value="overrides.perAgentPostCmds[agentId] ?? []"
+                  placeholder="e.g. rm /tmp/dump.sql (optional)"
+                  aria-label="Post-backup commands"
+                  :default-timeout-seconds="form.hook_timeout_seconds"
+                  @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
+                />
+              </template>
+              <template #hint>Leave an agent empty to run no schedule-level commands.</template>
+            </PerAgentFields>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 </template>

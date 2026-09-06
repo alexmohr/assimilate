@@ -66,6 +66,45 @@ describe('ScheduleAdvancedTab', () => {
     expect(titles).toEqual(['Options', 'Exclude patterns', 'File change patterns', 'Commands'])
   })
 
+  // Every setting is one row: the name and its description on the left, the
+  // control on the right. A control that escapes `.pane-row-control` goes
+  // back to floating at the far edge of a wide pane, which is what the row
+  // shape exists to stop.
+  it('pairs every setting with its control inside one row', () => {
+    const rows = mount().findAll('.pane-row')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.find('.pane-row-control').exists()).toBe(true)
+    }
+  })
+
+  it('describes each option under its own name rather than between the rows', () => {
+    const options = mount().findAll('.pane-section')[0].findAll('.pane-row')
+    const described = options.map((row) => ({
+      title: row.find('.field-title').text(),
+      hint: row.find('.field-body > .field-hint').exists(),
+    }))
+    expect(described).toEqual([
+      { title: 'Canary verification', hint: true },
+      { title: 'Ignore global excludes', hint: true },
+      { title: 'Compact after backup', hint: true },
+      { title: 'Stage virtual machines', hint: true },
+      { title: 'Remote rate limit (kB/s)', hint: true },
+    ])
+  })
+
+  // An editor has no use for the narrow control track: it stacks under its
+  // label and takes the full width.
+  it('stacks the rows whose control is an editor', () => {
+    const wrapper = mount()
+    expect(wrapper.find('textarea.area-input').element.closest('.pane-row--stack')).not.toBeNull()
+    expect(
+      wrapper
+        .findComponent({ name: 'FileChangePatternsEditor' })
+        .element.closest('.pane-row--stack'),
+    ).not.toBeNull()
+  })
+
   it('renders the schedule-level values it was given', () => {
     const wrapper = mount()
     const excludes = wrapper.find('textarea.area-input')
@@ -115,7 +154,7 @@ describe('ScheduleAdvancedTab', () => {
     const state = agentOverrides()
     const wrapper = mount({ overrides: state })
     const perAgentToggles = wrapper
-      .findAll('.field-inline')
+      .findAll('.pane-row')
       .filter((f) => f.text().includes('per agent'))
 
     for (const field of perAgentToggles) {
@@ -145,7 +184,7 @@ describe('ScheduleAdvancedTab', () => {
   // single agent there is nothing to vary, so the toggle must not appear.
   it('hides the per-agent switches for a single-agent schedule', () => {
     const wrapper = mount({ agentIds: [1] })
-    expect(wrapper.findAll('.field-inline').map((f) => f.text())).not.toContain(
+    expect(wrapper.findAll('.pane-row').map((f) => f.text())).not.toContain(
       expect.stringContaining('Configure per agent'),
     )
     expect(wrapper.text()).not.toContain('Configure per agent')
@@ -153,7 +192,7 @@ describe('ScheduleAdvancedTab', () => {
 
   it('offers a per-agent switch per section on a multi-agent schedule', () => {
     const wrapper = mount()
-    const perAgent = wrapper.findAll('.field-inline').filter((f) => f.text().includes('per agent'))
+    const perAgent = wrapper.findAll('.pane-row').filter((f) => f.text().includes('per agent'))
     expect(perAgent).toHaveLength(3)
   })
 

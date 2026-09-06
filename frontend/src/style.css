@@ -1101,6 +1101,73 @@
     margin: 0;
   }
 
+  /* A settings pane as a list of rows: what the setting is on the left - its
+     name and the line saying what it does - and its control on the right, in
+     a track of its own, so a pane of them reads as one column of controls
+     rather than one full-width row per field.
+
+     `.field-inline` alone (space-between, no measure) is what this replaces on
+     a wide pane: it left each switch at the far edge of the window with the
+     word it belongs to at the other, and every hint running the full width of
+     the viewport at the same weight as the setting it explains. */
+  .pane-rows {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .pane-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    align-items: center;
+    gap: var(--space-4) var(--space-7);
+    padding: var(--space-5) 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* The description belongs to the label above it, so the text column stops
+     at a readable measure instead of following the pane's width - the same
+     cap `.pane-lede` carries. */
+  .pane-row > .field-body {
+    max-width: 62ch;
+  }
+
+  /* Including a hint an editor renders for itself, below the control. Those
+     are `<span>`s, and `max-width` does nothing to an inline box - the file
+     change editor's four-sentence hint ran the full width of the window. */
+  .pane-row .field-hint {
+    display: block;
+    max-width: 62ch;
+  }
+
+  .pane-row-control {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* A row whose control is an editor - a textarea, a pattern list, a block
+     per agent - has no use for a 220px track: it keeps the label column and
+     takes the full width underneath. */
+  .pane-row--stack {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .pane-row--stack .pane-row-control {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: var(--space-5);
+  }
+
+  @media (max-width: 640px) {
+    .pane-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .pane-row-control {
+      justify-content: flex-start;
+    }
+  }
+
   /* A label sharing its row with a secondary control, e.g. a "show
      reference" toggle next to the field it documents. */
   .field-label-row {

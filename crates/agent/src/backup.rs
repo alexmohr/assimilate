@@ -450,22 +450,22 @@ impl BackupEngine {
                     error_level,
                 } = parse_diagnostics(&stderr);
                 let reported = reported_warnings.len();
-                let warnings =
+                let mut warnings =
                     filter_file_change_warnings(reported_warnings, &target.file_change_patterns)?;
+                // An `ignore` pattern matches message text alone, so a broad one
+                // can swallow an error-level record as easily as the file-change
+                // warning it was written for. That may never pass silently -
+                // neither as a success nor as a report of the warnings that
+                // happened to survive alongside it.
+                if error_level.iter().any(|m| !warnings.contains(m)) {
+                    warnings.push(suppressed_error_exit(exit_code));
+                }
                 // rc 1 is borg's "finished, with warnings". Every warning it
                 // reported may have matched an `ignore` pattern, which the user
                 // asked to be silent about; when it reported none at all the run
-                // still has to say something the bare exit code does not. An
-                // `ignore` pattern that happens to match an error-level message
-                // never buys a success: patterns match message text alone, and
-                // a broad one would otherwise hide the whole diagnostic.
+                // still has to say something the bare exit code does not.
                 let (status, warnings) = if !warnings.is_empty() {
                     (BackupStatus::Warning, warnings)
-                } else if error_level {
-                    (
-                        BackupStatus::Warning,
-                        vec![suppressed_error_exit(exit_code)],
-                    )
                 } else if reported > 0 {
                     (BackupStatus::Success, Vec::new())
                 } else {
@@ -1069,10 +1069,11 @@ pub(crate) struct BorgDiagnostics {
     /// line it did not emit as JSON (ssh notices, tracebacks). Noise while
     /// there are real diagnostics, and the only clue when there are none.
     pub(crate) context: Vec<String>,
-    /// Whether any of those records was `ERROR` or worse. File change patterns
-    /// match on message text alone, so a broad `ignore` pattern can swallow one
-    /// of these; a run may not be called a success on the strength of that.
-    pub(crate) error_level: bool,
+    /// The subset of those records that were `ERROR` or worse. File change
+    /// patterns match on message text alone, so a broad `ignore` pattern can
+    /// swallow one of these; keeping them apart lets the run say so instead of
+    /// losing the diagnostic.
+    pub(crate) error_level: Vec<String>,
 }
 
 impl BorgDiagnostics {
@@ -1090,10 +1091,12 @@ impl BorgDiagnostics {
         match record.levelname {
             Some(BorgLogLevel::Warning | BorgLogLevel::Error | BorgLogLevel::Critical) => {
                 if !is_exit_status_footer(&message) {
-                    self.error_level |= matches!(
+                    if matches!(
                         record.levelname,
                         Some(BorgLogLevel::Error | BorgLogLevel::Critical)
-                    );
+                    ) {
+                        self.error_level.push(message.clone());
+                    }
                     self.warnings.push(message);
                 }
             }
@@ -2037,13 +2040,16 @@ mod tests {
     #[test]
     fn parse_diagnostics_flags_error_level_records() {
         let warning_only = r#"{"type": "log_message", "levelname": "WARNING", "message": "oops"}"#;
-        assert!(!parse_diagnostics(warning_only).error_level);
+        assert_eq!(
+            parse_diagnostics(warning_only).error_level,
+            [] as [String; 0]
+        );
 
         let with_error = r#"{"type": "log_message", "levelname": "ERROR", "message": "boom"}"#;
-        assert!(parse_diagnostics(with_error).error_level);
+        assert_eq!(parse_diagnostics(with_error).error_level, vec!["boom"]);
 
         let with_critical = r#"{"type": "log_message", "levelname": "CRITICAL", "message": "b"}"#;
-        assert!(parse_diagnostics(with_critical).error_level);
+        assert_eq!(parse_diagnostics(with_critical).error_level, vec!["b"]);
     }
 
     #[tokio::test]
@@ -2069,6 +2075,49 @@ mod tests {
             result.warnings[0].contains("error-level message"),
             "the run should say an error-level diagnostic was suppressed: {}",
             result.warnings[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_suppressed_error_is_reported_even_when_other_warnings_survive() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![
+                (
+                    "MOCK_BORG_SIMULATE_IGNORED_ERROR".to_owned(),
+                    "1".to_owned(),
+                ),
+                ("MOCK_BORG_SIMULATE_WARNING".to_owned(), "1".to_owned()),
+            ],
+        );
+        let mut target = test_target();
+        // Matches the ERROR record's path only, leaving the two file-change
+        // warnings to survive filtering alongside it.
+        target.file_change_patterns = vec![FileChangePattern {
+            path: "**/db.sqlite: *".to_owned(),
+            action: shared::types::FileChangeAction::Ignore,
+        }];
+
+        let result = engine.run_backup(&target, None, None).await.unwrap();
+
+        assert_eq!(result.status, BackupStatus::Warning);
+        assert!(
+            result.warnings.iter().any(|w| w.contains("error-level")),
+            "a suppressed error must not vanish behind surviving warnings: {:?}",
+            result.warnings
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("/tmp/test.log: file changed")),
+            "the surviving warnings are still reported: {:?}",
+            result.warnings
+        );
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("db.sqlite")),
+            "the ignored message itself stays suppressed: {:?}",
+            result.warnings
         );
     }
 

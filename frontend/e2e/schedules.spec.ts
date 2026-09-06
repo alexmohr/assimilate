@@ -178,7 +178,7 @@ test.describe('Schedules management', () => {
 
     // Every schedule falls into exactly one time bucket (or Paused), so with
     // any seeded schedules present there is always at least one group header.
-    await expect(page.locator('.schedule-group-header').first()).toBeVisible()
+    await expect(page.locator('.list-group-header').first()).toBeVisible()
 
     const card = page.locator('.entity-card', { hasText: 'server-daily' }).first()
     await expect(card.locator('.run-history')).toBeVisible()

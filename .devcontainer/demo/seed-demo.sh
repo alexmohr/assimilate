@@ -300,9 +300,13 @@ AUTO_DISABLED_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "S
 # reported one at all ("Unknown"), and these two DB-only hosts stand in for a
 # fleet that has not been upgraded yet ("Behind"). Written directly because no
 # agent process runs for them - nothing would report an older version.
+#
+# 0.0.9 rather than a plausible-looking 0.1.x: the live agents report the agent
+# crate's own version, which is 0.1.0, so anything in that range risks colliding
+# with it and collapsing the two groups into one.
 echo "==> Backdating agent versions on the never-connected hosts..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 -c \
-    "UPDATE agents SET agent_version = '0.1.0' WHERE hostname IN ('offline-due-01', 'stale-report-01')" > /dev/null
+    "UPDATE agents SET agent_version = '0.0.9' WHERE hostname IN ('offline-due-01', 'stale-report-01')" > /dev/null
 
 # media-store-01 is the "not always on" host in this demo, so it's also the
 # one with wake/shutdown configured - giving the agent and repository Power

@@ -56,18 +56,25 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    // The demo spans three groups: the build the live agent containers run,
-    // the backdated 0.1.0 on the never-connected hosts, and the imported
-    // placeholders that have never reported one.
+    // Three groups: the version the live agent containers report (the agent
+    // crate's own, so it is not hard-coded here), the 0.0.9 the seed backdates
+    // onto the never-connected hosts, and the placeholders that have never
+    // reported one at all.
     const groups = page.locator('.list-group')
     await expect(groups).toHaveCount(3)
 
     const titles = await groups.locator('.list-group-title').allTextContents()
-    expect(titles).toContain('0.1.0')
+    expect(titles).toContain('0.0.9')
     // Unknown always sorts last, however many builds are in front of it.
     expect(titles[titles.length - 1]).toBe('Unknown')
 
-    const behind = groups.filter({ has: page.locator('.list-group-title', { hasText: '0.1.0' }) })
+    // Every card lives in a group - grouping is the grid, not an extra section
+    // above an ungrouped remainder.
+    await expect(page.locator('.list-group .entity-card')).toHaveCount(
+      await page.locator('.entity-card').count(),
+    )
+
+    const behind = groups.filter({ has: page.locator('.list-group-title', { hasText: '0.0.9' }) })
     await expect(behind.locator('.entity-card').filter({ hasText: 'offline-due-01' })).toBeVisible()
 
     // The demo server ships no arch-named agent binary, so it has no version

@@ -253,6 +253,7 @@ Everything that configures the agent lives here, behind a sub-nav:
 | **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
 | **Hostname aliases** | Glob patterns for archive matching (see below) |
 | **Power** | Waking this host and starting the agent process before a backup, admins only — see [Power Management](power-management.md) |
+| **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy, admins only — see [VM Snapshots](vm-snapshots.md) |
 | **Tags** | Agent tags, for filtering the Agents list |
 | **Danger zone** | Deleting the agent (admins only) |
 

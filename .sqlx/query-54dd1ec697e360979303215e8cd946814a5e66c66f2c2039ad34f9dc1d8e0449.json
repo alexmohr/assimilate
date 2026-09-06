@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agent_vms (agent_id, name, state, mode, disk_count, disk_bytes, last_scanned_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) ON CONFLICT (agent_id, name) DO UPDATE SET state = EXCLUDED.state, mode = EXCLUDED.mode, disk_count = EXCLUDED.disk_count, disk_bytes = EXCLUDED.disk_bytes, last_scanned_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "54dd1ec697e360979303215e8cd946814a5e66c66f2c2039ad34f9dc1d8e0449"
+}

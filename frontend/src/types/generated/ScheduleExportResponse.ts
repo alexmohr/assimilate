@@ -27,6 +27,11 @@ export type ScheduleExportResponse = {
    */
   canary_enabled: boolean;
   /**
+   * Whether this schedule stages the host's virtual machines before backing
+   * up. Requires the host itself to have staging enabled.
+   */
+  vm_snapshot_enabled: boolean;
+  /**
    * Execution mode for the schedule.
    */
   execution_mode: string;

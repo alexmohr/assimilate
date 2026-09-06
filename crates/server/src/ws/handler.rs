@@ -799,6 +799,47 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
         } => {
             handle_backup_log(hostname, agent_id, state, repo_id, schedule_id, line).await;
         }
+        AgentToServer::VmScanResult {
+            request_id,
+            vms,
+            error,
+        } => {
+            handle_vm_scan_result(hostname, agent_id, state, request_id, vms, error).await;
+        }
+        AgentToServer::VmSnapshotReport {
+            schedule_id,
+            outcomes,
+        } => {
+            tracing::info!(
+                hostname = %hostname,
+                schedule_id = ?schedule_id,
+                domains = outcomes.len(),
+                "agent staged virtual machines"
+            );
+            if let Err(e) = db::vms::record_outcomes(&state.pool, agent_id, &outcomes).await {
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "failed to record virtual machine snapshot outcomes"
+                );
+            }
+        }
+        AgentToServer::VmBuildResult {
+            request_id,
+            outcome,
+            error,
+        } => {
+            if let Some(reason) = error.as_deref() {
+                tracing::warn!(
+                    hostname = %hostname,
+                    error = %reason,
+                    "virtual machine build failed on the agent"
+                );
+            }
+            if let Some(tx) = state.pending_vm_builds.lock().await.remove(&request_id) {
+                let _ = tx.send((outcome, error));
+            }
+        }
         AgentToServer::Hello { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected Hello after handshake");
         }
@@ -918,6 +959,38 @@ async fn handle_backup_log(
         repo_id: repo_id.0,
         line,
     });
+}
+
+/// Records the domains an agent reported and hands them to whoever asked for
+/// the scan. A scan that failed still resolves the waiter, so the UI reports
+/// the reason rather than timing out.
+async fn handle_vm_scan_result(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    request_id: Option<String>,
+    vms: Vec<shared::vm::DiscoveredVm>,
+    error: Option<String>,
+) {
+    if let Some(reason) = error.as_deref() {
+        tracing::warn!(
+            hostname = %hostname,
+            error = %reason,
+            "virtual machine scan failed on the agent"
+        );
+    } else if let Err(e) = db::vms::record_scan(&state.pool, agent_id, &vms).await {
+        tracing::error!(
+            hostname = %hostname,
+            error = %e,
+            "failed to record the virtual machines an agent reported"
+        );
+    }
+
+    if let Some(request_id) = request_id
+        && let Some(tx) = state.pending_vm_scans.lock().await.remove(&request_id)
+    {
+        let _ = tx.send((vms, error));
+    }
 }
 
 async fn handle_restore_completed(
@@ -1999,6 +2072,8 @@ mod tests {
             import_tasks: crate::ImportTaskRegistry::default(),
             pending_dryruns: crate::new_pending_map(),
             pending_restores: crate::new_pending_map(),
+            pending_vm_scans: crate::new_pending_map(),
+            pending_vm_builds: crate::new_pending_map(),
             pending_migrations: crate::new_pending_map(),
             pending_deletes: crate::new_pending_map(),
             session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
@@ -2161,6 +2236,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -2285,6 +2361,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -2570,6 +2647,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -2663,6 +2741,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -2770,6 +2849,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -2802,6 +2882,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -2926,6 +3007,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -3021,6 +3103,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -3164,6 +3247,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,
@@ -3298,6 +3382,7 @@ exit 0
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
+                vm_snapshot_enabled: false,
                 exclude_patterns_raw: "",
                 file_change_patterns_raw: "",
                 ignore_global_excludes: false,

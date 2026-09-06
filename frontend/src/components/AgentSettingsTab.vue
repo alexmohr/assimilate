@@ -12,6 +12,7 @@ import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentPowerCard from './AgentPowerCard.vue'
+import AgentVmsCard from './AgentVmsCard.vue'
 import AgentDangerZone from './AgentDangerZone.vue'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
@@ -60,6 +61,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
   ...(props.isAdmin
     ? [
         { id: 'power', label: 'Power' } as const,
+        { id: 'vms', label: 'Virtual machines' } as const,
         { id: 'tags', label: 'Tags' } as const,
         { id: 'danger', label: 'Danger zone', danger: true } as const,
       ]
@@ -150,6 +152,12 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
       :agent="agent"
       :can-edit="!isImported"
       @saved="emit('saved', $event)"
+    />
+
+    <AgentVmsCard
+      v-else-if="currentSection === 'vms'"
+      :agent="agent"
+      :can-edit="!isImported"
     />
 
     <EntityTags

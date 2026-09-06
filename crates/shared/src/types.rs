@@ -1118,6 +1118,11 @@ pub struct AgentConfig {
     pub skip_targets: Vec<String>,
     /// Repositories (and their schedules) this agent should back up into.
     pub repos: Vec<RepoConfig>,
+    /// How this host stages its libvirt/QEMU domains before a backup. The
+    /// settings belong to the host rather than to a schedule, because the
+    /// staging directory is shared by every schedule that targets it.
+    #[serde(default)]
+    pub vm_snapshot: crate::vm::VmSnapshotConfig,
 }
 
 /// A single repository's configuration as delivered to the agent, including
@@ -1214,6 +1219,10 @@ pub struct ScheduleConfig {
     /// Whether canary (test-restore) verification runs after this schedule's backups.
     #[serde(default)]
     pub canary_enabled: bool,
+    /// Whether this schedule stages the host's virtual machines before backing
+    /// up. Requires the host itself to have staging enabled.
+    #[serde(default)]
+    pub vm_snapshot_enabled: bool,
     /// Glob patterns excluded from this schedule's backups, in addition to global excludes.
     #[serde(default)]
     pub exclude_patterns: Vec<String>,

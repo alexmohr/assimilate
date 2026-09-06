@@ -65,6 +65,9 @@ pub struct BackupTarget {
     pub keep_monthly: u32,
     pub keep_yearly: u32,
     pub compact_enabled: bool,
+    /// How to stage this host's virtual machines before the backup, when the
+    /// schedule opts in and the host has staging enabled.
+    pub vm_snapshot: Option<shared::vm::VmSnapshotConfig>,
     pub pre_backup_commands: Vec<HookCommand>,
     pub post_backup_commands: Vec<HookCommand>,
     pub hook_timeout_seconds: u32,
@@ -98,6 +101,7 @@ impl Default for BackupTarget {
             keep_monthly: 0,
             keep_yearly: 0,
             compact_enabled: false,
+            vm_snapshot: None,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
             hook_timeout_seconds: 60,
@@ -161,14 +165,25 @@ pub struct CanaryResult {
 pub struct BackupEngine {
     borg: Borg,
     borg_timeout: Option<Duration>,
+    /// Kept alongside `borg` so the virtual-machine staging that runs before
+    /// a backup registers its children with the same registry shutdown
+    /// drains, rather than leaving `virsh` and `qemu-img` unreachable.
+    task_registry: TaskRegistry,
 }
 
 impl BackupEngine {
     pub fn new(task_registry: TaskRegistry) -> Self {
         Self {
-            borg: Borg::new(task_registry),
+            borg: Borg::new(task_registry.clone()),
             borg_timeout: None,
+            task_registry,
         }
+    }
+
+    /// The registry every child this engine starts registers with.
+    #[must_use]
+    pub fn task_registry(&self) -> &TaskRegistry {
+        &self.task_registry
     }
 
     #[cfg(test)]
@@ -176,6 +191,7 @@ impl BackupEngine {
         Self {
             borg: Borg::with_extra_env(borg_binary, extra_env),
             borg_timeout: None,
+            task_registry: TaskRegistry::default(),
         }
     }
 
@@ -188,6 +204,7 @@ impl BackupEngine {
         Self {
             borg: Borg::with_extra_env(borg_binary, extra_env),
             borg_timeout,
+            task_registry: TaskRegistry::default(),
         }
     }
 
@@ -1128,6 +1145,7 @@ mod tests {
             keep_monthly: 6,
             keep_yearly: 0,
             compact_enabled: true,
+            vm_snapshot: None,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
             hook_timeout_seconds: 60,

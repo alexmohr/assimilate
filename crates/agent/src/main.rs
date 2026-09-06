@@ -9,6 +9,7 @@ mod borg;
 mod executor;
 mod ssh_forward;
 mod systemd;
+mod vm;
 mod ws;
 
 use std::{process, time::Duration};

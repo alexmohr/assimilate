@@ -44,9 +44,6 @@ const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 /// runs at the speed of the target host's storage, so this is generous.
 const BUILD_TIMEOUT: Duration = Duration::from_hours(4);
 
-/// Largest staging directory depth we accept, to keep a typo from pointing the
-/// staging directory at a filesystem root.
-
 /// New staging settings for a host.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateAgentVmSnapshotRequest {

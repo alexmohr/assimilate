@@ -26,6 +26,8 @@ Open the agent, then **Settings → Virtual machines**.
 2. Choose **which domains** to stage. **All except excluded** backs up every domain on the host and lets you drop individual ones; **Only selected** backs up nothing until you pick the domains you want. See [Choosing which domains to stage](#choosing-which-domains-to-stage).
 3. Set the **staging directory**. It must be an absolute path; the agent creates one subdirectory per domain below it. Nothing about this path is assumed anywhere else in Assimilate.
 4. Set **new full image after** (increments per chain), the **snapshot timeout** per domain, and the **default limit per domain**.
+
+    Set to `N`, a chain carries `N` increments before the next run writes a fresh full image. With the default of 7, a domain is captured as one full image and seven increments, then starts again.
 5. Click **Rescan host**. The agent enumerates the domains and reports what it found: their state, how each would be captured, and how much their disks occupy.
 
 Give the QEMU process access to the staging directory first. On distributions where QEMU drops to its own user, the directory must be owned by that user:

@@ -347,7 +347,10 @@ impl Executor {
                 config.vm_snapshot.clone()
             });
 
-        let (vms, error) = match VmStager::new(config).scan().await {
+        let (vms, error) = match VmStager::new(config, self.task_registry.clone())
+            .scan()
+            .await
+        {
             Ok(vms) => (vms, None),
             Err(e) => {
                 warn!("Virtual machine scan failed: {e}");
@@ -377,16 +380,17 @@ impl Executor {
             "Building virtual machine {} from {}",
             request.name, request.source_dir
         );
-        let (outcome, error) = match VmStager::new(VmSnapshotConfig::default())
-            .build(request)
-            .await
-        {
-            Ok(outcome) => (Some(outcome), None),
-            Err(e) => {
-                warn!("Virtual machine build failed: {e}");
-                (None, Some(e.to_string()))
-            }
-        };
+        let (outcome, error) =
+            match VmStager::new(VmSnapshotConfig::default(), self.task_registry.clone())
+                .build(request)
+                .await
+            {
+                Ok(outcome) => (Some(outcome), None),
+                Err(e) => {
+                    warn!("Virtual machine build failed: {e}");
+                    (None, Some(e.to_string()))
+                }
+            };
 
         let _ = outbound_tx
             .send(AgentToServer::VmBuildResult {
@@ -1089,7 +1093,13 @@ async fn run_backup_task(
     // backup: an archive that quietly holds last night's image is worse than a
     // run the operator is told about.
     if let Some(vm_config) = target.vm_snapshot.clone()
-        && let Err(reason) = stage_virtual_machines(vm_config, schedule_id, outbound_tx).await
+        && let Err(reason) = stage_virtual_machines(
+            vm_config,
+            schedule_id,
+            outbound_tx,
+            engine.task_registry().clone(),
+        )
+        .await
     {
         error!(repo_id = ?repo_id, reason = %reason, "virtual machine staging failed");
         report_backup_failure(
@@ -1207,9 +1217,10 @@ async fn stage_virtual_machines(
     config: shared::vm::VmSnapshotConfig,
     schedule_id: Option<i64>,
     outbound_tx: &mpsc::Sender<AgentToServer>,
+    task_registry: TaskRegistry,
 ) -> Result<(), String> {
     info!("Staging virtual machines into {}", config.staging_dir);
-    let outcomes = match VmStager::new(config).stage_all().await {
+    let outcomes = match VmStager::new(config, task_registry).stage_all().await {
         Ok(outcomes) => outcomes,
         Err(e) => {
             // Tell the server the phase ran and found nothing, then fail the

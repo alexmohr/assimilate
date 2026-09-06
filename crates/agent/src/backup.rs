@@ -165,14 +165,25 @@ pub struct CanaryResult {
 pub struct BackupEngine {
     borg: Borg,
     borg_timeout: Option<Duration>,
+    /// Kept alongside `borg` so the virtual-machine staging that runs before
+    /// a backup registers its children with the same registry shutdown
+    /// drains, rather than leaving `virsh` and `qemu-img` unreachable.
+    task_registry: TaskRegistry,
 }
 
 impl BackupEngine {
     pub fn new(task_registry: TaskRegistry) -> Self {
         Self {
-            borg: Borg::new(task_registry),
+            borg: Borg::new(task_registry.clone()),
             borg_timeout: None,
+            task_registry,
         }
+    }
+
+    /// The registry every child this engine starts registers with.
+    #[must_use]
+    pub fn task_registry(&self) -> &TaskRegistry {
+        &self.task_registry
     }
 
     #[cfg(test)]
@@ -180,6 +191,7 @@ impl BackupEngine {
         Self {
             borg: Borg::with_extra_env(borg_binary, extra_env),
             borg_timeout: None,
+            task_registry: TaskRegistry::default(),
         }
     }
 
@@ -192,6 +204,7 @@ impl BackupEngine {
         Self {
             borg: Borg::with_extra_env(borg_binary, extra_env),
             borg_timeout,
+            task_registry: TaskRegistry::default(),
         }
     }
 

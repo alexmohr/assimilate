@@ -28,9 +28,13 @@ use std::{
 };
 
 use chrono::Utc;
-use shared::vm::{
-    DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmRunAction, VmSnapshotConfig, VmSnapshotMode,
-    VmSnapshotOutcome, VmState,
+use shared::{
+    borg::GracefulChild,
+    task_registry::TaskRegistry,
+    vm::{
+        DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmRunAction, VmSnapshotConfig,
+        VmSnapshotMode, VmSnapshotOutcome, VmState,
+    },
 };
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -472,12 +476,19 @@ pub struct VmStager {
     /// Extra environment variables injected into every command, used by tests
     /// to point the libvirt doubles at their own state directory.
     extra_env: Vec<(String, String)>,
+    /// Where a [`GracefulChild`]'s SIGKILL-escalation reaper registers itself,
+    /// so a cancelled backup or a shutting-down agent actually stops the
+    /// `virsh` and `qemu-img` work rather than leaving it running against the
+    /// host. Shared with `Borg` for the same reason it is shared there: the
+    /// registry `main` drains on exit has to see every child this process
+    /// started.
+    task_registry: TaskRegistry,
 }
 
 impl VmStager {
     /// Builds a stager for `config`, using the libvirt tools on `PATH`.
     #[must_use]
-    pub fn new(config: VmSnapshotConfig) -> Self {
+    pub fn new(config: VmSnapshotConfig, task_registry: TaskRegistry) -> Self {
         Self {
             config,
             virsh: std::env::var("VIRSH_BINARY")
@@ -486,6 +497,7 @@ impl VmStager {
                 .map_or_else(|_| PathBuf::from("qemu-img"), PathBuf::from),
             job_poll_interval: JOB_POLL_INTERVAL,
             extra_env: Vec::new(),
+            task_registry,
         }
     }
 
@@ -504,6 +516,7 @@ impl VmStager {
             qemu_img,
             job_poll_interval: Duration::from_millis(10),
             extra_env,
+            task_registry: TaskRegistry::default(),
         }
     }
 
@@ -522,11 +535,31 @@ impl VmStager {
     /// Runs `binary` with `args` and returns its standard output.
     async fn run(&self, binary: &Path, args: &[&str]) -> Result<String, VmError> {
         let rendered = format!("{} {}", binary.display(), args.join(" "));
-        let output = Command::new(binary)
-            .args(args)
+        let mut cmd = Command::new(binary);
+        cmd.args(args)
             .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::null())
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // Not `kill_on_drop`: a dropped future would SIGKILL `qemu-img`
+        // mid-write. `GracefulChild` sends SIGTERM first and escalates, which
+        // is what lets a cancelled backup or an agent shutdown actually stop
+        // a copy instead of orphaning it to run to completion against the
+        // domain while the operator is told the backup was cancelled.
+        cmd.kill_on_drop(false);
+        let child = cmd.spawn().map_err(|source| VmError::Spawn {
+            command: rendered.clone(),
+            source,
+        })?;
+        let mut guard = GracefulChild::new(
+            child,
+            binary.to_path_buf(),
+            None,
+            self.extra_env.clone(),
+            self.task_registry.clone(),
+        );
+        let output = guard
+            .wait_with_output()
             .await
             .map_err(|source| VmError::Spawn {
                 command: rendered.clone(),
@@ -734,6 +767,22 @@ impl VmStager {
 
         if !request.action.defines() {
             return Ok(outcome);
+        }
+
+        // `virsh define` on a name that already exists does not fail - it
+        // rewrites that domain's persistent definition. Restoring onto a
+        // colliding name would silently repoint a live machine's disks at the
+        // restored images, and nothing would say so until its next boot.
+        if self
+            .list_domains()
+            .await?
+            .iter()
+            .any(|existing| existing == &request.name)
+        {
+            return Err(VmError::Job(format!(
+                "a domain named {} already exists on this host; restore under a different name                  or remove that domain first",
+                request.name
+            )));
         }
 
         let definition_path = source.join(format!(".assimilate-{}.xml", request.name));
@@ -1180,8 +1229,15 @@ impl VmStager {
         let chain_exists = is_file(&dest.join(CHAIN_FILE)).await;
         let used = path_usage(dest).await;
 
+        // Every run creates a checkpoint, the full image's included, so the
+        // number of increments actually written is one less than the count.
+        // Comparing the raw count starts a new chain an increment early -
+        // `full_interval` is documented, and labelled in the UI, as the
+        // increments written before a fresh full image is taken.
+        let increments_written =
+            u32::try_from(checkpoints.len().saturating_sub(1)).unwrap_or(u32::MAX);
         let mut from = (!checkpoints.is_empty()
-            && u32::try_from(checkpoints.len()).unwrap_or(u32::MAX) < self.config.full_interval
+            && increments_written < self.config.full_interval
             && chain_exists)
             .then(|| checkpoints.last().cloned().unwrap_or_default());
 
@@ -1254,12 +1310,24 @@ impl VmStager {
         let _ = tokio::fs::remove_file(&checkpoint_file).await;
         started?;
 
-        self.wait_for_job(domain, deadline).await?;
+        // `backup-begin` has already written `<target>.<suffix>` by the time
+        // the job is polled. An incremental suffix carries a fresh millisecond
+        // stamp, so nothing later ever reuses or overwrites that name: a
+        // failure here would leave a partial image in the staging directory
+        // for good, counted by the post-run `path_usage` check against the
+        // domain's limit on every subsequent run until it fails the domain
+        // outright. Only the forced-full `.part` name is self-overwriting.
+        if let Err(error) = self.wait_for_job(domain, deadline).await {
+            for disk in disks {
+                let _ =
+                    tokio::fs::remove_file(dest.join(format!("{}.{suffix}", disk.target))).await;
+            }
+            return Err(error);
+        }
 
         // The new full exists now, so the chain it replaces can go and it can
         // take the name. A failure anywhere above returns before this, leaving
-        // the previous chain untouched and only a `.part` file behind, which
-        // the next forced full overwrites.
+        // the previous chain untouched and nothing of this run behind.
         let suffix = if forced_full {
             self.clear_images(dest).await;
             for disk in disks {
@@ -1840,11 +1908,23 @@ mod tests {
         config.full_interval = 2;
         let stager = host.stager(config);
 
+        // Run 1 writes the full image. `full_interval = 2` then buys two
+        // increments - runs 2 and 3 - before run 4 starts a new chain. The
+        // count of checkpoints includes the one the full image made, so
+        // reading it directly used to end the chain a run early.
         stager.stage_all().await.unwrap();
-        stager.stage_all().await.unwrap();
+        let second = stager.stage_all().await.unwrap();
         let third = stager.stage_all().await.unwrap();
+        assert_eq!(only(&second).action, VmRunAction::Increment);
+        assert_eq!(
+            only(&third).action,
+            VmRunAction::Increment,
+            "the second of the two increments the interval allows"
+        );
 
-        assert_eq!(only(&third).action, VmRunAction::FullImage);
+        let fourth = stager.stage_all().await.unwrap();
+
+        assert_eq!(only(&fourth).action, VmRunAction::FullImage);
         assert!(
             !host
                 .last_backup_xml("web01")
@@ -2108,6 +2188,59 @@ mod tests {
             !xml.text.contains("vg-lv01"),
             "the original host's volume must not survive the repath"
         );
+    }
+
+    /// `backup-begin` writes the increment before the job is polled, and an
+    /// incremental filename carries a fresh millisecond stamp, so nothing
+    /// later reuses that name. A run that fails after the job starts would
+    /// otherwise leave a partial image behind for good - and the post-run
+    /// usage check counts it against the domain's limit every run after.
+    #[tokio::test]
+    async fn a_failed_incremental_leaves_no_partial_image_behind() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 16).await;
+
+        let stager = host.stager(host.config());
+        stager.stage_all().await.unwrap();
+        let before = staged_names(&host, "web01").await;
+
+        // The chain now exists, so this run takes the incremental path - and
+        // its job never finishes.
+        let failing = host.stager_with_env(
+            VmSnapshotConfig {
+                timeout_seconds: 1,
+                ..host.config()
+            },
+            vec![("MOCK_VIRT_JOB_RUNNING".to_owned(), "1".to_owned())],
+        );
+        let outcomes = tokio::time::timeout(Duration::from_secs(30), failing.stage_all())
+            .await
+            .expect("the job deadline must end the run")
+            .unwrap();
+        assert!(
+            only(&outcomes).error.is_some(),
+            "a job that never finishes must fail the domain"
+        );
+
+        assert_eq!(
+            staged_names(&host, "web01").await,
+            before,
+            "a failed incremental must leave the directory exactly as it found it"
+        );
+    }
+
+    /// The file names below a domain's staging directory, sorted, so a run's
+    /// leftovers show up as a difference rather than having to be guessed at.
+    async fn staged_names(host: &FakeHost, domain: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let Ok(mut entries) = tokio::fs::read_dir(host.staged(domain)).await else {
+            return names;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        names.sort();
+        names
     }
 
     /// A host whose domains cannot be listed at all is not a host with
@@ -2395,6 +2528,83 @@ mod tests {
             }
         }
         dir
+    }
+
+    /// The chain merge is where a restore meets the state of the files borg
+    /// put back - a truncated increment, a missing backing file, no room for
+    /// the result. A failure there must fail the restore rather than going on
+    /// to define a domain pointing at an image that was never assembled.
+    #[tokio::test]
+    async fn a_failed_chain_merge_does_not_define_a_domain() {
+        let host = FakeHost::new().await;
+        let source = restored_domain(
+            &host,
+            "vda vda.full.qcow2\nvda vda.20260902T020000000Z.qcow2\n",
+        )
+        .await;
+        let images = host.root.path().join("images-restored");
+
+        let stager = host.stager_with_env(
+            host.config(),
+            vec![("MOCK_VIRT_FAIL_MERGE".to_owned(), "commit".to_owned())],
+        );
+        let error = stager
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                name: "web01-restored".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect_err("a merge that failed must fail the restore");
+
+        assert!(
+            format!("{error}").contains("commit"),
+            "the failure must name the step that failed, got {error}"
+        );
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(
+            !calls.contains("virsh define"),
+            "a domain must not be defined over an image that was never assembled"
+        );
+    }
+
+    /// `virsh define` on an existing name rewrites that domain's persistent
+    /// definition rather than failing, so a restore onto a colliding name
+    /// would silently repoint a live machine's disks at the restored images.
+    /// The operator would find out at its next boot.
+    #[tokio::test]
+    async fn building_refuses_a_name_an_existing_domain_already_holds() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        let source = restored_domain(&host, "vda vda.full.qcow2\n").await;
+        let images = host.root.path().join("images-restored");
+
+        let error = host
+            .stager(host.config())
+            .build(&VmBuildRequest {
+                source_dir: source.to_string_lossy().into_owned(),
+                // The name of the domain already defined above.
+                name: "web01".to_owned(),
+                image_dir: images.to_string_lossy().into_owned(),
+                action: shared::vm::VmBuildAction::Define,
+            })
+            .await
+            .expect_err("a colliding name must not silently redefine the domain");
+
+        assert!(
+            format!("{error}").contains("already exists"),
+            "the failure must name the collision, got {error}"
+        );
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(
+            !calls.contains("virsh define"),
+            "nothing may be defined once the collision is known; calls were:\n{calls}"
+        );
     }
 
     #[tokio::test]

@@ -177,6 +177,26 @@ pub async fn list_agent_vms(pool: &PgPool, agent_id: i64) -> Result<Vec<AgentVmR
     .map_err(ApiError::Database)
 }
 
+/// The longest domain name this server will store. libvirt's own limit is far
+/// below this; the cap exists so a buggy or compromised agent - one already
+/// holding a valid token - cannot grow `agent_vms` without bound.
+const MAX_VM_NAME_LEN: usize = 255;
+
+/// Whether a domain name an agent reported is one this server will persist.
+///
+/// The admin-facing restore path validates names already; this is the same
+/// rule applied to the other direction, where the data arrives over the
+/// WebSocket rather than from an operator. Rows are keyed `UNIQUE(agent_id,
+/// name)` and are kept as long as the operator has configured them, so an
+/// unbounded name space is an unbounded table.
+fn is_storable_vm_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_VM_NAME_LEN
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
 /// Records the result of a host scan: every reported domain is inserted or
 /// refreshed, and a domain that has disappeared from the host is dropped
 /// unless the operator configured it, in which case it is kept with an unknown
@@ -193,6 +213,13 @@ pub async fn record_scan(
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
     for vm in vms {
+        if !is_storable_vm_name(&vm.name) {
+            tracing::warn!(
+                agent_id,
+                "an agent reported a domain name this server will not store, skipping it"
+            );
+            continue;
+        }
         sqlx::query!(
             "INSERT INTO agent_vms (agent_id, name, state, mode, disk_count, disk_bytes, \
              last_scanned_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) ON CONFLICT (agent_id, name) \
@@ -289,6 +316,14 @@ pub async fn record_outcomes(
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
     for outcome in outcomes {
+        if !is_storable_vm_name(&outcome.name) {
+            tracing::warn!(
+                agent_id,
+                "an agent reported an outcome for a domain name this server will not store, \
+                 skipping it"
+            );
+            continue;
+        }
         sqlx::query!(
             "INSERT INTO agent_vms (agent_id, name, mode, staged_bytes, chain_length, last_error, \
              last_staged_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) ON CONFLICT (agent_id, name) \

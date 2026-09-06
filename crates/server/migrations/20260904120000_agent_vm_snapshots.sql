@@ -47,8 +47,13 @@ CREATE TABLE agent_vms (
     -- NULL inherits the agent's default limit.
     limit_bytes BIGINT CHECK (limit_bytes IS NULL OR limit_bytes >= 0),
     -- Last scan.
-    state TEXT NOT NULL DEFAULT 'unknown',
-    mode TEXT NOT NULL DEFAULT 'unknown',
+    -- Both mirror closed enums in `shared::vm`, the same way
+    -- `vm_snapshot_selection` above does: a value outside the set is a bug
+    -- somewhere upstream, and the row is unreadable once written.
+    state TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (state IN ('running', 'paused', 'shut_off', 'suspended', 'unknown')),
+    mode TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (mode IN ('incremental', 'full_copy', 'offline_copy', 'excluded', 'unknown')),
     disk_count INTEGER NOT NULL DEFAULT 0 CHECK (disk_count >= 0),
     disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (disk_bytes >= 0),
     -- Last run.

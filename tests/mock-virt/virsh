@@ -19,7 +19,9 @@ case "$SUBCOMMAND" in
     ;;
 
   list)
-    cat "$STATE/domains"
+    # A host with no domains defined lists nothing and succeeds, the way real
+    # virsh does - a missing state file is an empty host, not a broken one.
+    cat "$STATE/domains" 2>/dev/null || true
     ;;
 
   domstate)

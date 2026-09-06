@@ -358,7 +358,12 @@ describe('AgentVmsCard', () => {
     expect((await mount()).text()).toContain('Only the domains selected below')
   })
 
-  it('tells the operator what the include switch decides, per mode', async () => {
+  it('heads the domain switches with what they decide', async () => {
+    const headers = (await mount()).findAll('th').map((th) => th.text())
+    expect(headers).toContain('Backed up')
+  })
+
+  it('tells the operator what the backed-up switch decides, per mode', async () => {
     const including = await mount()
     expect(including.text()).toContain('Turn a domain off to leave it out of the backup')
 
@@ -368,6 +373,17 @@ describe('AgentVmsCard', () => {
       })) as never)
     const selecting = await mount()
     expect(selecting.text()).toContain('Turn a domain on to back it up')
+  })
+
+  it('states the rule once, editing the settings or not', async () => {
+    const wrapper = await mount()
+    const rule = (): number =>
+      wrapper.findAll('.field-hint').filter((hint) => hint.text().startsWith('Turn a domain'))
+        .length
+    expect(rule()).toBe(1)
+
+    await startEditingSection(wrapper)
+    expect(rule(), 'the editor must not repeat the hint the domain table carries').toBe(1)
   })
 
   it('switches the host to staging only the domains that were selected', async () => {

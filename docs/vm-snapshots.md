@@ -52,24 +52,24 @@ The domain table lists what the agent last reported, plus the settings you make:
 | Mode | How the domain is captured, decided by the agent from its state and disk formats |
 | Staged size | What the domain occupies now, against the limit that applies to it |
 | Limit | This domain's own budget in GiB. Empty inherits the host's default |
-| Include | Whether the domain is staged at all, read in whichever direction **which domains** is set to |
+| Backed up | Whether the domain is staged at all, read in whichever direction **which domains** is set to |
 
 Removing a domain from the host drops it from the table, unless you gave it settings, in which case it stays with an unknown state so your settings are not lost.
 
 ## Choosing which domains to stage
 
-**Which domains** decides what the **Include** switch means, and what happens to a machine nobody has decided about:
+**Which domains** decides what the **Backed up** switch means, and what happens to a machine nobody has decided about:
 
-| Mode | Include switch | A domain created after the last scan |
-|------|----------------|--------------------------------------|
-| **All except excluded** | Turn a domain **off** to leave it out of the backup | Backed up, rather than silently missed |
+| Mode | Backed up switch | A domain created after the last scan |
+|------|------------------|--------------------------------------|
+| **All except excluded** | Turn a domain **off** to leave it out of the backup | Staged, rather than silently missed |
 | **Only selected** | Turn a domain **on** to back it up | Left alone until you select it |
 
 **All except excluded** is the default, and is what you want when the host exists to run production machines and a new one should be protected the moment it appears. Switch to **Only selected** when most of the host is scratch — build agents, test machines, throwaway clones — and only a handful of domains are worth the storage.
 
 Switching modes never changes a decision you already made: a domain you turned off stays off, and one you turned on stays on. Only the domains you have not touched move, which is the entire difference between the two.
 
-Giving a domain a **limit** is not a decision about staging. Under **Only selected** a domain with a limit but no include switch is still left alone, so setting a budget ahead of time does not quietly pull a machine into the backup.
+Giving a domain a **limit** is not a decision about staging. Under **Only selected** a domain with a limit but no **Backed up** switch is still left alone, so setting a budget ahead of time does not quietly pull a machine into the backup.
 
 ## How a domain is captured
 

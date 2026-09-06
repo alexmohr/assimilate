@@ -654,10 +654,7 @@ impl BackupEngine {
 
         if exit_code == 1 {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let warnings = parse_warnings(&stderr);
-            if !warnings.is_empty() {
-                warn!("borg prune warnings: {}", warnings.join("; "));
-            }
+            warn!("{}", warning_status_log("prune", exit_code, &stderr));
         }
 
         Ok(())
@@ -683,10 +680,7 @@ impl BackupEngine {
 
         if exit_code == 1 {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let warnings = parse_warnings(&stderr);
-            if !warnings.is_empty() {
-                warn!("borg compact warnings: {}", warnings.join("; "));
-            }
+            warn!("{}", warning_status_log("compact", exit_code, &stderr));
         }
 
         Ok(())
@@ -712,10 +706,7 @@ impl BackupEngine {
 
         if exit_code == 1 {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let warnings = parse_warnings(&stderr);
-            if !warnings.is_empty() {
-                warn!("borg check warnings: {}", warnings.join("; "));
-            }
+            warn!("{}", warning_status_log("check", exit_code, &stderr));
         }
 
         info!(target = %target.target_name, "borg check completed");
@@ -1126,13 +1117,37 @@ fn suppressed_error_exit(exit_code: i32) -> String {
 }
 
 fn unexplained_exit(exit_code: i32, context: &[String]) -> String {
-    let base = format!(
-        "borg exited with code {exit_code} but reported no warning or error explaining why"
-    );
+    format!(
+        "borg exited with code {exit_code} but reported no warning or error explaining why{suffix}",
+        suffix = context_suffix(context)
+    )
+}
+
+fn context_suffix(context: &[String]) -> String {
     if context.is_empty() {
-        base
+        String::new()
     } else {
-        format!("{base}; last borg output: {}", context.join(" | "))
+        format!("; last borg output: {}", context.join(" | "))
+    }
+}
+
+/// What to log when `borg <subcommand>` ends with borg's warning status. These
+/// runs report no status of their own, so the log line is the only trace they
+/// leave - and since the `--show-rc` footer is stripped from the diagnostics,
+/// a run whose footer was its only output must still say something.
+fn warning_status_log(subcommand: &str, exit_code: i32, stderr: &str) -> String {
+    let diagnostics = parse_diagnostics(stderr);
+    if diagnostics.warnings.is_empty() {
+        format!(
+            "borg {subcommand} exited with code {exit_code} but reported no warning or error \
+             explaining why{suffix}",
+            suffix = context_suffix(&diagnostics.context)
+        )
+    } else {
+        format!(
+            "borg {subcommand} warnings: {}",
+            diagnostics.warnings.join("; ")
+        )
     }
 }
 
@@ -2020,6 +2035,37 @@ mod tests {
             "the warning should carry borg's last output: {warning}"
         );
         assert_eq!(result.error_message.as_ref(), Some(warning));
+    }
+
+    #[test]
+    fn warning_status_log_speaks_up_when_the_footer_was_the_only_output() {
+        let stderr = concat!(
+            r#"{"type": "log_message", "levelname": "WARNING", "#,
+            r#""message": "terminating with warning status, rc 1"}"#,
+        );
+
+        let logged = warning_status_log("prune", 1, stderr);
+
+        assert!(
+            logged.contains("borg prune exited with code 1"),
+            "a prune that flagged something must not go unlogged: {logged}"
+        );
+    }
+
+    #[test]
+    fn warning_status_log_lists_the_diagnostics_when_there_are_any() {
+        let stderr = [
+            r#"{"type": "log_message", "levelname": "WARNING", "message": "stale lock removed"}"#,
+            concat!(
+                r#"{"type": "log_message", "levelname": "WARNING", "#,
+                r#""message": "terminating with warning status, rc 1"}"#,
+            ),
+        ]
+        .join("\n");
+
+        let logged = warning_status_log("check", 1, &stderr);
+
+        assert_eq!(logged, "borg check warnings: stale lock removed");
     }
 
     #[test]

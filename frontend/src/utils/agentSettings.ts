@@ -11,6 +11,7 @@ export const SETTINGS_SECTIONS = [
   'defaults',
   'aliases',
   'power',
+  'vms',
   'tags',
   'danger',
 ] as const

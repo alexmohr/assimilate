@@ -73,7 +73,15 @@ describe('AgentSettingsTab', () => {
       mount()
         .findAll('.settings-nav-item')
         .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults', 'Hostname aliases', 'Power', 'Tags', 'Danger zone'])
+    ).toEqual([
+      'Identity',
+      'Backup defaults',
+      'Hostname aliases',
+      'Power',
+      'Virtual machines',
+      'Tags',
+      'Danger zone',
+    ])
   })
 
   // Tags and the danger zone are admin-only, so they are absent rather than

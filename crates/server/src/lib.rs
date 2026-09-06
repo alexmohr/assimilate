@@ -106,6 +106,17 @@ impl RepoLock {
 pub type PendingDryRuns =
     Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<DryRunFile>, i64, Option<String>)>>>>;
 
+/// (`vms`, `error_message`): the domains an agent reported for a scan
+/// request, or why the scan failed.
+pub type PendingVmScans =
+    Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<shared::vm::DiscoveredVm>, Option<String>)>>>>;
+
+/// (`outcome`, `error_message`): what building a restored domain produced, or
+/// why it could not be built.
+pub type PendingVmBuilds = Arc<
+    Mutex<HashMap<String, oneshot::Sender<(Option<shared::vm::VmBuildOutcome>, Option<String>)>>>,
+>;
+
 /// (`success`, `files_restored`, `error_message`)
 pub type PendingRestores =
     Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u64, Option<String>)>>>>;
@@ -217,6 +228,10 @@ pub struct AppState {
     pub pending_dryruns: PendingDryRuns,
     /// One-shot channels for pending restore operations.
     pub pending_restores: PendingRestores,
+    /// One-shot channels for pending virtual-machine scans.
+    pub pending_vm_scans: PendingVmScans,
+    /// One-shot channels for pending virtual-machine builds.
+    pub pending_vm_builds: PendingVmBuilds,
     /// One-shot channels for pending migration operations.
     pub pending_migrations: PendingMigrations,
     /// One-shot channels for pending delete operations.

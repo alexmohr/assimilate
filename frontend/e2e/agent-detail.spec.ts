@@ -207,6 +207,7 @@ test.describe('Agent detail', () => {
       'Backup defaults',
       'Hostname aliases',
       'Power',
+      'Virtual machines',
       'Tags',
       'Danger zone',
     ])

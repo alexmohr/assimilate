@@ -2428,6 +2428,54 @@
     background: var(--text-muted);
   }
 
+  /* A share of a budget that is running out, and one that has all but gone. */
+  .progress-bar--warning {
+    background: var(--warning);
+  }
+
+  .progress-bar--danger {
+    background: var(--danger);
+  }
+
+  /* Step indicator shared by the wizards: one dot per step, filled as the
+     operator moves through them. */
+  .steps-indicator {
+    display: flex;
+    gap: var(--space-4);
+    justify-content: center;
+    margin-bottom: var(--space-8);
+  }
+
+  .step-dot {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    background: var(--bg-card);
+    border: 2px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  .step-dot.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-subtle);
+  }
+
+  .step-dot.completed {
+    border-color: var(--success);
+    background: var(--success);
+    color: var(--text-on-accent);
+  }
+
+  .step-content {
+    min-height: 140px;
+  }
+
   .progress-row {
     display: flex;
     align-items: center;

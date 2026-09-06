@@ -12,6 +12,7 @@ export interface ScheduleFormState {
   cron_expression: string
   enabled: boolean
   canary_enabled: boolean
+  vm_snapshot_enabled: boolean
   exclude_patterns: string
   file_change_patterns: string
   ignore_global_excludes: boolean
@@ -40,6 +41,7 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   cron_expression: '0 2 * * *',
   enabled: true,
   canary_enabled: true,
+  vm_snapshot_enabled: false,
   exclude_patterns: '',
   file_change_patterns: '',
   ignore_global_excludes: false,

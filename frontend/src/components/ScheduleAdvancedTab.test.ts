@@ -21,6 +21,7 @@ function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
     keep_monthly: 6,
     keep_yearly: 1,
     compact_enabled: false,
+    vm_snapshot_enabled: false,
     rate_limit_kbps: 0,
     pre_backup_commands: [],
     post_backup_commands: [],
@@ -95,6 +96,7 @@ describe('ScheduleAdvancedTab', () => {
     [0, 'canary_enabled'],
     [1, 'ignore_global_excludes'],
     [2, 'compact_enabled'],
+    [3, 'vm_snapshot_enabled'],
   ])('flips the option switch at %i onto form.%s', async (index, key) => {
     const state = form()
     const wrapper = mount({ form: state })

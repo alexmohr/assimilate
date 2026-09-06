@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+set -euo pipefail
+
+if [[ -n "${MOCK_VIRT_STATE:-}" ]]; then
+  printf 'qemu-img %s\n' "$*" >>"$MOCK_VIRT_STATE/calls.log"
+fi
+
+if [[ "${1:-}" == "info" ]]; then
+  image="${*: -1}"
+  case "$image" in
+    *.qcow2) printf 'image: %s\nfile format: qcow2\n' "$image" ;;
+    *) printf 'image: %s\nfile format: raw\n' "$image" ;;
+  esac
+  exit 0
+fi
+
+# The chain merge is the part of a restore that can fail on a real host - a
+# truncated increment, a missing backing file, no room for the result - and
+# without a way to make it fail there is no test for what the agent does then.
+if [[ "${MOCK_VIRT_FAIL_MERGE:-}" == "${1:-}" ]]; then
+  printf 'qemu-img: %s failed\n' "${1:-}" >&2
+  exit 1
+fi
+
+exit 0

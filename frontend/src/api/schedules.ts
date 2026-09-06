@@ -34,6 +34,7 @@ export interface CreateScheduleRequest {
   cron_expression: string
   enabled: boolean
   canary_enabled: boolean
+  vm_snapshot_enabled?: boolean
   exclude_patterns_raw: string
   file_change_patterns_raw: string
   ignore_global_excludes: boolean

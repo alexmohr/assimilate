@@ -826,7 +826,7 @@ describe('HostsView issue rows', () => {
     expect(lastBackupStat(wrapper)).toBe('5h ago')
   })
 
-  it('shows coverage from the last completed backup while a newer run is in flight', async () => {
+  it('reports the last completed backup while a newer run is in flight', async () => {
     const { wrapper } = await mountAgentsList(
       [issueAgent],
       [

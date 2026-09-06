@@ -28,9 +28,8 @@ function cronTimeToDisplay(hourNum: number, minNum: number): string {
 
 /**
  * The cron shapes this app understands, classified once so callers that need
- * different projections of the same expression - a human-readable string
- * here, an approximate interval in `cadence.ts` - don't each re-implement
- * field parsing and shape detection and risk drifting out of sync.
+ * different projections of the same expression don't each re-implement field
+ * parsing and shape detection and risk drifting out of sync.
  */
 export type CronShape =
   | { kind: 'hourly'; intervalHours: number }

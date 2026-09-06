@@ -20,9 +20,23 @@ import { dismissModal } from '../test-utils'
 
 vi.mock('../api/client', () => mockApiClientRw())
 
+// The handlers the view registers are kept so a test can deliver a live
+// backup event, which is otherwise unreachable behind the mock.
+const ws = vi.hoisted(() => {
+  const handlers: Record<string, (payload: { hostname: string; target_name: string }) => void> = {}
+  return {
+    handlers,
+    onMessage: vi.fn(
+      (type: string, cb: (payload: { hostname: string; target_name: string }) => void) => {
+        handlers[type] = cb
+      },
+    ),
+  }
+})
+
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: (): { onMessage: ReturnType<typeof vi.fn>; status: ReturnType<typeof ref> } => ({
-    onMessage: vi.fn(),
+    onMessage: ws.onMessage,
     status: ref('disconnected'),
   }),
 }))
@@ -599,6 +613,143 @@ describe('HostsView issue rows', () => {
       .find((s) => s.find('.stat-label').text() === 'Last backup')
     return stat?.find('.stat-value').text() ?? ''
   }
+
+  it('shows a running pill while a backup is in flight and clears it when it completes', async () => {
+    const { wrapper } = await mountAgentsList([issueAgent])
+
+    ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'offsite' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Backing up: offsite')
+
+    // A repeated start for the same target must not list it twice.
+    ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'offsite' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Backing up: offsite')
+
+    ws.handlers['BackupCompleted']({ hostname: 'flaky-host', target_name: 'offsite' })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Backing up')
+  })
+
+  it('surfaces a load failure when there is nothing already listed', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('backend is down'))
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.get('.error-banner').text()).toContain('backend is down')
+  })
+
+  // The list's own filter/sort pipeline had no coverage: every case below
+  // drives a control a user actually operates on the Agents page.
+  const filterAgents = [
+    {
+      id: 1,
+      hostname: 'alpha-host',
+      display_name: 'Alpha Box',
+      domain: null,
+      is_connected: false,
+      last_seen_at: '2026-01-03T00:00:00Z',
+      agent_version: '0.1.9',
+      is_hidden: false,
+      is_imported: false,
+    },
+    {
+      id: 2,
+      hostname: 'beta-host',
+      display_name: null,
+      domain: null,
+      is_connected: true,
+      last_seen_at: '2026-01-01T00:00:00Z',
+      agent_version: '0.1.11',
+      is_hidden: false,
+      is_imported: false,
+    },
+  ]
+
+  async function mountFilterList(): Promise<ReturnType<typeof mount>> {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: filterAgents })
+      if (url === '/agent-tags')
+        return Promise.resolve({
+          data: [{ agent_id: 2, tag_name: 'production', tag_color: '#f00' }],
+        })
+      if (url === '/tags')
+        return Promise.resolve({ data: [{ id: 7, name: 'production', color: '#f00' }] })
+      if (url === '/stats/dashboard-overview') return Promise.resolve({ data: emptyOverviewData })
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    return wrapper
+  }
+
+  function cardNames(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper.findAll('.card-name').map((c) => c.text())
+  }
+
+  it('filters the list by connection status', async () => {
+    const wrapper = await mountFilterList()
+
+    await wrapper.findAll('select')[0].setValue('online')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+
+    await wrapper.findAll('select')[0].setValue('offline')
+    expect(cardNames(wrapper)).toEqual(['alpha-host'])
+  })
+
+  it('matches the text filter against hostname, display name and tag name', async () => {
+    const wrapper = await mountFilterList()
+    const search = wrapper.get('.search-input')
+
+    await search.setValue('beta')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+
+    // Display name is searchable even though the card leads with the hostname.
+    await search.setValue('alpha box')
+    expect(cardNames(wrapper)).toEqual(['alpha-host'])
+
+    // ...and so is a tag the agent carries, which appears nowhere in its name.
+    await search.setValue('production')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+  })
+
+  it('filters by a selected tag and restores the full list when it is cleared', async () => {
+    const wrapper = await mountFilterList()
+
+    await wrapper.get('.tag-filter-wrapper button').trigger('click')
+    const tagCheckbox = wrapper.get('.tag-dropdown-item input')
+    await tagCheckbox.trigger('change')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+
+    // Toggling the same tag off is a deselect, not a second filter.
+    await tagCheckbox.trigger('change')
+    expect(cardNames(wrapper)).toEqual(['alpha-host', 'beta-host'])
+  })
+
+  it('sorts by status, last seen and version', async () => {
+    const wrapper = await mountFilterList()
+    const sortButton = (label: string): ReturnType<typeof wrapper.get> =>
+      wrapper.findAll('button').filter((b) => b.text().startsWith(label))[0]
+
+    // Online first, against alphabetical order rather than with it.
+    await sortButton('Status').trigger('click')
+    expect(cardNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
+
+    // Oldest last-seen first while ascending.
+    await sortButton('Last seen').trigger('click')
+    expect(cardNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
+
+    // Version sorts as a string, so 0.1.11 precedes 0.1.9.
+    await sortButton('Version').trigger('click')
+    expect(cardNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
+  })
 
   it('reports "Never" as the last backup for an agent that has never run one', async () => {
     const wrapper = await mountSingleAgent({})

@@ -730,6 +730,33 @@ describe('HostsView issue rows', () => {
     expect(wrapper.find('.coverage-status-no-data').exists()).toBe(false)
   })
 
+  // A caller that hand-builds a health entry - an e2e mock intercepting
+  // /api/stats/health, an older cached payload - may omit a field the real
+  // API always sends, leaving it `undefined` rather than `null`. The health
+  // aggregation must tolerate that instead of throwing partway through
+  // `healthRes.forEach`, which would abort before `healthByHost.value` is
+  // ever assigned and silently blank out every badge on the page - exactly
+  // what broke hosts.spec.ts's Failed/Overdue chip tests, whose mocked
+  // response has no `last_backup_status` key at all.
+  it('still renders failed/overdue chips when a health entry omits last_backup_status', async () => {
+    const { wrapper } = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          last_status: 'failed',
+          last_backup_at: new Date().toISOString(),
+          is_overdue: true,
+          last_error_message: 'disk full',
+        },
+      ],
+    )
+
+    expect(wrapper.find('.entity-issue-chip.sev-danger').exists()).toBe(true)
+    expect(wrapper.find('.entity-issue-chip.sev-warning').exists()).toBe(true)
+  })
+
   // navigateToAgent has to merge the domain into the query on every card
   // click, not just when a hostname happens to be unique, or a link into an
   // agent sharing its hostname with another silently resolves to whichever

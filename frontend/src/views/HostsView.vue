@@ -411,8 +411,13 @@ async function loadAgents(): Promise<void> {
       // latest run of any kind): while a newer run is in flight, `status` is
       // null (pending/started has no settled outcome), which must not hide a
       // prior success just because the current attempt hasn't finished yet.
-      const completedStatus =
-        entry.last_backup_status !== null ? normalizeBackupStatus(entry.last_backup_status) : null
+      // Truthy rather than `!== null`: a caller (an e2e mock, an older cached
+      // payload) may omit the field entirely, leaving it `undefined` rather
+      // than `null` - normalizeBackupStatus() would throw on that and abort
+      // this whole loop before `healthByHost.value` is ever assigned.
+      const completedStatus = entry.last_backup_status
+        ? normalizeBackupStatus(entry.last_backup_status)
+        : null
       if (
         entry.last_backup_at &&
         (completedStatus === 'success' || completedStatus === 'warning') &&

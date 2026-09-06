@@ -364,6 +364,17 @@ jobs:
         env:
           E2E_BASE_URL: http://localhost:8080
           VITE_COVERAGE: "true"
+      - name: Dump container logs on Playwright failure
+        if: failure()
+        run: |
+          # The coverage-collection steps below stop and tear down every
+          # container unconditionally, so a Playwright failure otherwise
+          # leaves no record of what the demo/agent containers were doing at
+          # the time - e.g. whether an agent's SSH server was ever reachable.
+          for svc in demo web-server-01 db-server-01 media-store-01 old-webserver legacy-db-prod; do
+            echo "=== docker compose logs $svc ==="
+            docker compose $COMPOSE_FILES logs "$svc" --no-color --timestamps 2>&1 || echo "(no logs for $svc)"
+          done
       - name: Generate frontend e2e coverage report
         run: npx nyc report --reporter=lcov --report-dir=coverage-e2e --temp-dir=.nyc_output
         working-directory: frontend

@@ -668,9 +668,10 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   background: var(--border);
 }
 
-/* Local layout additions on top of the shared `.card-stats` rule (which only
-   sets `display`/`gap`) - this card shows just two stats, spread to the
-   card's full width instead of left-packed. */
+/* Local layout additions on top of the shared `.card-stats` rule (which sets
+   `display`, `flex-wrap` and `gap`) - this card shows just two stats, spread
+   to the card's full width instead of left-packed. Two stats never reach the
+   shared rule's wrap point, so the row stays on one line here. */
 .card-stats {
   align-items: flex-end;
   justify-content: space-between;

@@ -20,9 +20,23 @@ import { dismissModal } from '../test-utils'
 
 vi.mock('../api/client', () => mockApiClientRw())
 
+// The handlers the view registers are kept so a test can deliver a live
+// backup event, which is otherwise unreachable behind the mock.
+const ws = vi.hoisted(() => {
+  const handlers: Record<string, (payload: { hostname: string; target_name: string }) => void> = {}
+  return {
+    handlers,
+    onMessage: vi.fn(
+      (type: string, cb: (payload: { hostname: string; target_name: string }) => void) => {
+        handlers[type] = cb
+      },
+    ),
+  }
+})
+
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: (): { onMessage: ReturnType<typeof vi.fn>; status: ReturnType<typeof ref> } => ({
-    onMessage: vi.fn(),
+    onMessage: ws.onMessage,
     status: ref('disconnected'),
   }),
 }))
@@ -590,13 +604,160 @@ describe('HostsView issue rows', () => {
     expect(wrapper.find('.entity-badge-row').exists()).toBe(false)
   })
 
-  it('shows "No cadence" on the coverage meter for an agent with no enabled schedule', async () => {
-    const wrapper = await mountSingleAgent({})
+  // The card reports the freshest completed backup as a stat; whether the
+  // agent is *behind* comes from the server-computed overdue chip, so these
+  // cases only assert which backup time the card picks.
+  function lastBackupStat(wrapper: ReturnType<typeof mount>): string {
+    const stat = wrapper
+      .findAll('.stat')
+      .find((s) => s.find('.stat-label').text() === 'Last backup')
+    return stat?.find('.stat-value').text() ?? ''
+  }
 
-    expect(wrapper.find('.coverage-status-no-cadence').text()).toBe('No cadence')
+  it('shows a running pill while a backup is in flight and clears it when it completes', async () => {
+    const { wrapper } = await mountAgentsList([issueAgent])
+
+    ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'offsite' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Backing up: offsite')
+
+    // A repeated start for the same target must not list it twice.
+    ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'offsite' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Backing up: offsite')
+
+    ws.handlers['BackupCompleted']({ hostname: 'flaky-host', target_name: 'offsite' })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Backing up')
   })
 
-  it("derives the coverage meter from the agent's most recent backup and shortest cadence", async () => {
+  it('surfaces a load failure when there is nothing already listed', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('backend is down'))
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.get('.error-banner').text()).toContain('backend is down')
+  })
+
+  // The list's own filter/sort pipeline had no coverage: every case below
+  // drives a control a user actually operates on the Agents page.
+  const filterAgents = [
+    {
+      id: 1,
+      hostname: 'alpha-host',
+      display_name: 'Alpha Box',
+      domain: null,
+      is_connected: false,
+      last_seen_at: '2026-01-03T00:00:00Z',
+      agent_version: '0.1.9',
+      is_hidden: false,
+      is_imported: false,
+    },
+    {
+      id: 2,
+      hostname: 'beta-host',
+      display_name: null,
+      domain: null,
+      is_connected: true,
+      last_seen_at: '2026-01-01T00:00:00Z',
+      agent_version: '0.1.11',
+      is_hidden: false,
+      is_imported: false,
+    },
+  ]
+
+  async function mountFilterList(): Promise<ReturnType<typeof mount>> {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: filterAgents })
+      if (url === '/agent-tags')
+        return Promise.resolve({
+          data: [{ agent_id: 2, tag_name: 'production', tag_color: '#f00' }],
+        })
+      if (url === '/tags')
+        return Promise.resolve({ data: [{ id: 7, name: 'production', color: '#f00' }] })
+      if (url === '/stats/dashboard-overview') return Promise.resolve({ data: emptyOverviewData })
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    return wrapper
+  }
+
+  function cardNames(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper.findAll('.card-name').map((c) => c.text())
+  }
+
+  it('filters the list by connection status', async () => {
+    const wrapper = await mountFilterList()
+
+    await wrapper.findAll('select')[0].setValue('online')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+
+    await wrapper.findAll('select')[0].setValue('offline')
+    expect(cardNames(wrapper)).toEqual(['alpha-host'])
+  })
+
+  it('matches the text filter against hostname, display name and tag name', async () => {
+    const wrapper = await mountFilterList()
+    const search = wrapper.get('.search-input')
+
+    await search.setValue('beta')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+
+    // Display name is searchable even though the card leads with the hostname.
+    await search.setValue('alpha box')
+    expect(cardNames(wrapper)).toEqual(['alpha-host'])
+
+    // ...and so is a tag the agent carries, which appears nowhere in its name.
+    await search.setValue('production')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+  })
+
+  it('filters by a selected tag and restores the full list when it is cleared', async () => {
+    const wrapper = await mountFilterList()
+
+    await wrapper.get('.tag-filter-wrapper button').trigger('click')
+    const tagCheckbox = wrapper.get('.tag-dropdown-item input')
+    await tagCheckbox.trigger('change')
+    expect(cardNames(wrapper)).toEqual(['beta-host'])
+
+    // Toggling the same tag off is a deselect, not a second filter.
+    await tagCheckbox.trigger('change')
+    expect(cardNames(wrapper)).toEqual(['alpha-host', 'beta-host'])
+  })
+
+  it('sorts by status, last seen and version', async () => {
+    const wrapper = await mountFilterList()
+    const sortButton = (label: string): ReturnType<typeof wrapper.get> =>
+      wrapper.findAll('button').filter((b) => b.text().startsWith(label))[0]
+
+    // Online first, against alphabetical order rather than with it.
+    await sortButton('Status').trigger('click')
+    expect(cardNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
+
+    // Oldest last-seen first while ascending.
+    await sortButton('Last seen').trigger('click')
+    expect(cardNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
+
+    // Version sorts as a string, so 0.1.11 precedes 0.1.9.
+    await sortButton('Version').trigger('click')
+    expect(cardNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
+  })
+
+  it('reports "Never" as the last backup for an agent that has never run one', async () => {
+    const wrapper = await mountSingleAgent({})
+
+    expect(lastBackupStat(wrapper)).toBe('Never')
+  })
+
+  it("reports the agent's most recent backup across all of its schedules", async () => {
     const { wrapper } = await mountAgentsList(
       [issueAgent],
       [
@@ -625,45 +786,11 @@ describe('HostsView issue rows', () => {
       ],
     )
 
-    // Most recent backup is 90m ago; the shortest cadence is hourly, so
-    // elapsed/cadence = 1.5 - past due, but well short of the 2x critical mark.
-    expect(wrapper.find('.coverage-status-warning').exists()).toBe(true)
+    // Two schedules, 90m and 150m ago: the card reports the fresher one.
+    expect(lastBackupStat(wrapper)).toBe('1h ago')
   })
 
-  it("ignores a disabled schedule's cadence when computing agent coverage", async () => {
-    const { wrapper } = await mountAgentsList(
-      [issueAgent],
-      [
-        {
-          hostname: 'flaky-host',
-          target_name: 'offsite',
-          last_status: 'success',
-          last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
-          last_backup_status: 'success',
-          is_overdue: false,
-          last_error_message: null,
-          cron_expression: '0 */1 * * *',
-          schedule_enabled: false,
-        },
-        {
-          hostname: 'flaky-host',
-          target_name: 'onsite',
-          last_status: 'success',
-          last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
-          last_backup_status: 'success',
-          is_overdue: false,
-          last_error_message: null,
-          cron_expression: '0 */8 * * *',
-          schedule_enabled: true,
-        },
-      ],
-    )
-
-    // Only the enabled 8h schedule counts, so 1h elapsed is comfortably on time.
-    expect(wrapper.find('.coverage-status-ok').exists()).toBe(true)
-  })
-
-  it("does not count a failed run's finish time as coverage, even when it is the most recent report", async () => {
+  it("does not report a failed run's finish time as the last backup, even when it is the most recent report", async () => {
     const { wrapper } = await mountAgentsList(
       [issueAgent],
       [
@@ -694,13 +821,12 @@ describe('HostsView issue rows', () => {
       ],
     )
 
-    // Coverage must be derived from the 5h-old success, not the 5m-old
-    // failure - elapsed/cadence = 5, well past the 2x critical mark.
-    expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
-    expect(wrapper.find('.coverage-status-ok').exists()).toBe(false)
+    // The 5h-old success is the last real backup; the 5m-old failure is not
+    // one, however recent its report.
+    expect(lastBackupStat(wrapper)).toBe('5h ago')
   })
 
-  it('shows coverage from the last completed backup while a newer run is in flight', async () => {
+  it('reports the last completed backup while a newer run is in flight', async () => {
     const { wrapper } = await mountAgentsList(
       [issueAgent],
       [
@@ -724,10 +850,10 @@ describe('HostsView issue rows', () => {
       ],
     )
 
-    // 5h elapsed against an hourly cadence is well past the 2x critical mark
-    // - the opposite of "No backups yet" - proving the timestamp was used.
-    expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
-    expect(wrapper.find('.coverage-status-no-data').exists()).toBe(false)
+    // The prior completed run is still what the card reports - the opposite
+    // of 'Never', proving the timestamp was used even though last_status is
+    // null while the new run is in flight.
+    expect(lastBackupStat(wrapper)).toBe('5h ago')
   })
 
   // A caller that hand-builds a health entry - an e2e mock intercepting

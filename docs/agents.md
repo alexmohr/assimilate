@@ -33,7 +33,9 @@ The Agents list page provides:
 
 A fleet summary band above the list rolls up the whole fleet: total agent count, how many are online, total schedule count, and a breakdown of agent versions in use, with the version matching the server's available binary marked current.
 
-Each agent card shows the hostname, display name, a coverage meter, schedule count, last seen time, and agent version. The coverage meter compares how long it has been since the agent's most recent completed backup against the shortest cadence among its own enabled backup schedules, so a card reads **On time**, **Due soon**, or **Overdue** without needing to open it; an agent with no enabled backup schedule shows **No cadence** instead. An offline agent tints the card and adds an **Offline** pill; a **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
+Each agent card shows the hostname, display name, schedule count, last backup time, last seen time, and agent version. An offline agent tints the card and adds an **Offline** pill; a **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
+
+**Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the card does not estimate it a second time from the cron cadence.
 
 ## Duplicate Hostnames
 

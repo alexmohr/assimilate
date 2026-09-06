@@ -23,7 +23,7 @@ test.describe('Hosts management', () => {
     await expect(page.getByText('legacy-db-prod', { exact: true })).toBeVisible()
   })
 
-  test('hosts list shows the fleet summary band and a per-agent coverage meter', async ({
+  test('hosts list shows the fleet summary band and a per-agent last-backup stat', async ({
     page,
   }) => {
     await loginAsAdmin(page)
@@ -34,7 +34,21 @@ test.describe('Hosts management', () => {
     await expect(page.locator('.fleet-summary-counts')).toContainText('agent')
 
     const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
-    await expect(card.locator('.coverage-meter')).toBeVisible()
+    // The card states the freshest completed backup outright rather than
+    // implying it through a fill; the coverage bar it replaces is gone.
+    await expect(card.locator('.coverage-meter')).toHaveCount(0)
+    // web-server-01's demo archives are written by borg directly, with no
+    // scheduled run reported back, and `last_backup_at` comes from a
+    // backup_reports row per (schedule, agent) - so 'Never' is the correct
+    // reading here rather than a gap in the stat.
+    await expect(card.locator('.stat').filter({ hasText: 'Last backup' })).toHaveText(/Never/)
+
+    // stale-report-01 is the host the demo gives a real completed report
+    // (backdated four days, see seed-demo.sh), so it is the one that
+    // exercises the freshest-completed-backup path end to end.
+    const reported = page.locator('.entity-card').filter({ hasText: 'stale-report-01' }).first()
+    const lastBackup = reported.locator('.stat').filter({ hasText: 'Last backup' })
+    await expect(lastBackup.locator('.stat-value')).toHaveText(/^\d+d ago$/)
   })
 
   test('clicking a host navigates to its detail page', async ({ page }) => {

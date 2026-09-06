@@ -1247,6 +1247,7 @@ pub async fn health(
                 target_name: row.target_name,
                 last_status: row.last_status.and_then(|s| s.parse().ok()),
                 last_backup_at: row.last_backup_at,
+                last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
                 is_overdue: overdue,
                 last_error_message: row.last_error_message,
                 cron_expression: row.cron_expression,
@@ -1769,6 +1770,7 @@ mod tests {
             target_name: "target".into(),
             last_status: Some("success".into()),
             last_backup_at: Some(chrono::Utc::now()),
+            last_backup_status: Some("success".into()),
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1782,6 +1784,7 @@ mod tests {
             target_name: row.target_name.clone(),
             last_status: row.last_status.and_then(|s| s.parse().ok()),
             last_backup_at: row.last_backup_at,
+            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
@@ -1794,6 +1797,7 @@ mod tests {
             missed_backup_threshold: row.missed_backup_threshold,
         };
         assert_eq!(response.last_status, Some(BackupStatus::Success));
+        assert_eq!(response.last_backup_status, Some(BackupStatus::Success));
     }
 
     #[test]
@@ -1817,6 +1821,7 @@ mod tests {
             target_name: "target".into(),
             last_status: Some("bogus_status".into()),
             last_backup_at: Some(chrono::Utc::now()),
+            last_backup_status: Some("bogus_status".into()),
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1830,6 +1835,7 @@ mod tests {
             target_name: row.target_name.clone(),
             last_status: row.last_status.and_then(|s| s.parse().ok()),
             last_backup_at: row.last_backup_at,
+            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
@@ -1842,6 +1848,7 @@ mod tests {
             missed_backup_threshold: row.missed_backup_threshold,
         };
         assert_eq!(response.last_status, None);
+        assert_eq!(response.last_backup_status, None);
     }
 
     #[test]
@@ -1853,6 +1860,7 @@ mod tests {
             target_name: "target".into(),
             last_status: None,
             last_backup_at: None,
+            last_backup_status: None,
             last_error_message: None,
             cron_expression: Some("0 * * * *".into()),
             schedule_enabled: Some(true),
@@ -1866,6 +1874,7 @@ mod tests {
             target_name: row.target_name.clone(),
             last_status: row.last_status.and_then(|s| s.parse().ok()),
             last_backup_at: row.last_backup_at,
+            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
@@ -1878,7 +1887,60 @@ mod tests {
             missed_backup_threshold: row.missed_backup_threshold,
         };
         assert_eq!(response.last_status, None);
+        assert_eq!(response.last_backup_status, None);
         assert!(!response.is_overdue);
+    }
+
+    /// The specific scenario the health-summary regression test at the DB
+    /// layer can't reach: a run in progress nulls out `last_status` (its raw
+    /// "pending"/"started" status has no `BackupStatus` counterpart), but
+    /// `last_backup_status` must still carry the outcome of the last
+    /// *completed* run so a coverage/staleness consumer isn't left blind by
+    /// the in-flight run.
+    #[test]
+    fn health_response_keeps_last_backup_status_while_last_status_is_in_flight() {
+        let row = crate::db::HealthRow {
+            repo_id: 1,
+            schedule_id: 1,
+            hostname: "host".into(),
+            target_name: "target".into(),
+            last_status: Some("pending".into()),
+            last_backup_at: Some(chrono::Utc::now() - chrono::Duration::hours(5)),
+            last_backup_status: Some("success".into()),
+            last_error_message: None,
+            cron_expression: Some("0 * * * *".into()),
+            schedule_enabled: Some(true),
+            consecutive_missed_backups: 0,
+            missed_backup_threshold: 3,
+        };
+        let response = HealthResponse {
+            repo_id: row.repo_id,
+            schedule_id: row.schedule_id,
+            hostname: row.hostname.clone(),
+            target_name: row.target_name.clone(),
+            last_status: row.last_status.and_then(|s| s.parse().ok()),
+            last_backup_at: row.last_backup_at,
+            last_backup_status: row.last_backup_status.and_then(|s| s.parse().ok()),
+            is_overdue: super::is_overdue(
+                row.last_backup_at,
+                row.cron_expression.as_deref(),
+                chrono_tz::UTC,
+            ),
+            last_error_message: row.last_error_message,
+            cron_expression: row.cron_expression,
+            schedule_enabled: row.schedule_enabled,
+            consecutive_missed_backups: row.consecutive_missed_backups,
+            missed_backup_threshold: row.missed_backup_threshold,
+        };
+        assert_eq!(
+            response.last_status, None,
+            "'pending' has no BackupStatus counterpart"
+        );
+        assert_eq!(
+            response.last_backup_status,
+            Some(BackupStatus::Success),
+            "the last completed run's outcome must survive a run in progress"
+        );
     }
 
     #[test]

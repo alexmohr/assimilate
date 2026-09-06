@@ -12,7 +12,7 @@
 //! Each test uses `#[sqlx::test]` which creates an isolated database per test
 //! and applies migrations automatically.
 
-use chrono::{DateTime, Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, SubsecRound, Utc};
 use chrono_tz::Tz;
 use server::{
     archive_index::codec::{self, DirEntry},
@@ -2878,6 +2878,85 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
     assert_eq!(
         entry_b.last_status, None,
         "schedule_b must not inherit schedule_a's run status"
+    );
+}
+
+/// A newer run that has started but not finished yet must not hide the
+/// previous completed backup's timestamp or outcome: `last_status` reflects
+/// the in-flight run (so the UI can show it as running), but `last_backup_at`
+/// and `last_backup_status` must keep pointing at the last *completed* run,
+/// since that is what cadence/overdue calculations and coverage/staleness
+/// displays depend on.
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    // Truncated to microseconds: Postgres `timestamptz` only stores that much
+    // precision, so comparing the round-tripped value against a `Utc::now()`
+    // with nanosecond-resolution jitter would be flaky.
+    let completed_finished_at = Utc::now()
+        .checked_sub_signed(Duration::hours(2))
+        .unwrap()
+        .trunc_subsecs(6);
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: Some(schedule.id),
+            started_at: completed_finished_at
+                .checked_sub_signed(Duration::minutes(5))
+                .unwrap(),
+            finished_at: completed_finished_at,
+            status: shared::types::BackupStatus::Success,
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            repo_unique_csize: 250_000,
+            files_processed: 1000,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::insert_backup_pending(
+        &pool,
+        agent.id,
+        repo.id,
+        Some(schedule.id),
+        "run-in-progress",
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+
+    let health = db::get_health_summary(&pool).await.unwrap();
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
+
+    assert_eq!(
+        entry.last_status.as_deref(),
+        Some("pending"),
+        "last_status must reflect the run currently in flight"
+    );
+    assert_eq!(
+        entry.last_backup_at,
+        Some(completed_finished_at),
+        "last_backup_at must be the completed run's own timestamp, not some other non-null value"
+    );
+    assert_eq!(
+        entry.last_backup_status.as_deref(),
+        Some("success"),
+        "last_backup_status must be the completed run's own outcome"
     );
 }
 

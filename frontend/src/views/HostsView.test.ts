@@ -517,6 +517,7 @@ describe('HostsView issue rows', () => {
           target_name: 'offsite',
           last_status: 'failed',
           last_backup_at: '2026-01-01T00:00:00Z',
+          last_backup_status: 'failed',
           is_overdue: false,
           last_error_message: 'Network is unreachable',
         },
@@ -525,6 +526,7 @@ describe('HostsView issue rows', () => {
           target_name: 'onsite',
           last_status: 'success',
           last_backup_at: '2026-01-01T00:00:00Z',
+          last_backup_status: 'success',
           is_overdue: true,
           last_error_message: null,
         },
@@ -603,6 +605,7 @@ describe('HostsView issue rows', () => {
           target_name: 'offsite',
           last_status: 'success',
           last_backup_at: new Date(Date.now() - 90 * 60_000).toISOString(),
+          last_backup_status: 'success',
           is_overdue: false,
           last_error_message: null,
           cron_expression: '0 */8 * * *',
@@ -613,6 +616,7 @@ describe('HostsView issue rows', () => {
           target_name: 'onsite',
           last_status: 'success',
           last_backup_at: new Date(Date.now() - 150 * 60_000).toISOString(),
+          last_backup_status: 'success',
           is_overdue: false,
           last_error_message: null,
           cron_expression: '0 */1 * * *',
@@ -635,6 +639,7 @@ describe('HostsView issue rows', () => {
           target_name: 'offsite',
           last_status: 'success',
           last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
+          last_backup_status: 'success',
           is_overdue: false,
           last_error_message: null,
           cron_expression: '0 */1 * * *',
@@ -645,6 +650,7 @@ describe('HostsView issue rows', () => {
           target_name: 'onsite',
           last_status: 'success',
           last_backup_at: new Date(Date.now() - 3600_000).toISOString(),
+          last_backup_status: 'success',
           is_overdue: false,
           last_error_message: null,
           cron_expression: '0 */8 * * *',
@@ -668,6 +674,7 @@ describe('HostsView issue rows', () => {
           // "covered" just because it has the latest finished_at.
           last_status: 'failed',
           last_backup_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+          last_backup_status: 'failed',
           is_overdue: false,
           last_error_message: 'disk full',
           cron_expression: '0 */1 * * *',
@@ -678,6 +685,7 @@ describe('HostsView issue rows', () => {
           target_name: 'offsite',
           last_status: 'success',
           last_backup_at: new Date(Date.now() - 5 * 3600_000).toISOString(),
+          last_backup_status: 'success',
           is_overdue: false,
           last_error_message: null,
           cron_expression: '0 */1 * * *',
@@ -690,6 +698,63 @@ describe('HostsView issue rows', () => {
     // failure - elapsed/cadence = 5, well past the 2x critical mark.
     expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
     expect(wrapper.find('.coverage-status-ok').exists()).toBe(false)
+  })
+
+  it('shows coverage from the last completed backup while a newer run is in flight', async () => {
+    const { wrapper } = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          // The only schedule for this host, currently mid-run: the backend
+          // can't represent "pending"/"started" as a `BackupStatus`, so
+          // `last_status` is null - exactly like the API response while a
+          // backup is in progress. `last_backup_status` must still carry the
+          // prior completed run's outcome so this doesn't read as "no
+          // backups yet".
+          last_status: null,
+          last_backup_at: new Date(Date.now() - 5 * 3600_000).toISOString(),
+          last_backup_status: 'success',
+          is_overdue: false,
+          last_error_message: null,
+          cron_expression: '0 */1 * * *',
+          schedule_enabled: true,
+        },
+      ],
+    )
+
+    // 5h elapsed against an hourly cadence is well past the 2x critical mark
+    // - the opposite of "No backups yet" - proving the timestamp was used.
+    expect(wrapper.find('.coverage-status-critical').exists()).toBe(true)
+    expect(wrapper.find('.coverage-status-no-data').exists()).toBe(false)
+  })
+
+  // A caller that hand-builds a health entry - an e2e mock intercepting
+  // /api/stats/health, an older cached payload - may omit a field the real
+  // API always sends, leaving it `undefined` rather than `null`. The health
+  // aggregation must tolerate that instead of throwing partway through
+  // `healthRes.forEach`, which would abort before `healthByHost.value` is
+  // ever assigned and silently blank out every badge on the page - exactly
+  // what broke hosts.spec.ts's Failed/Overdue chip tests, whose mocked
+  // response has no `last_backup_status` key at all.
+  it('still renders failed/overdue chips when a health entry omits last_backup_status', async () => {
+    const { wrapper } = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'offsite',
+          last_status: 'failed',
+          last_backup_at: new Date().toISOString(),
+          is_overdue: true,
+          last_error_message: 'disk full',
+        },
+      ],
+    )
+
+    expect(wrapper.find('.entity-issue-chip.sev-danger').exists()).toBe(true)
+    expect(wrapper.find('.entity-issue-chip.sev-warning').exists()).toBe(true)
   })
 
   // navigateToAgent has to merge the domain into the query on every card

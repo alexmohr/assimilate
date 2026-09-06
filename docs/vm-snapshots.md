@@ -167,6 +167,12 @@ qemu-img commit vda.20260903T020049881Z.qcow2
 !!! warning "Restore the whole chain"
     An increment is only usable together with its full image and every increment before it. Restore the complete directory for the point in time you want, not a single file. Merging rewrites the full image, so always work on the restored copy, never on the staging directory of a live host.
 
+## Two schedules on one host
+
+The settings live on the host, so more than one schedule may back it up and each may opt in to staging. Those runs go to different repositories and are otherwise free to overlap - a manual **Run now** during a scheduled run, two cron expressions that collide, or a catch-up after the agent was down.
+
+Staging is serialised per staging directory, so the second run waits for the first rather than writing over it. The wait counts against that backup's own duration, and the second run usually finds the chain already fresh and writes a small increment or skips the domain entirely.
+
 ## Caveats
 
 - Checkpoints live in libvirt, the chain lives in the staging directory. Deleting the staging directory by hand leaves stale checkpoints behind; the next run notices the missing `chain.txt`, drops those checkpoints and writes a new full image.

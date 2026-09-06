@@ -17,13 +17,14 @@
 //! previous chain stays restorable.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     convert::Infallible,
     fmt::Write as _,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 
@@ -36,7 +37,7 @@ use shared::{
         VmSnapshotMode, VmSnapshotOutcome, VmState,
     },
 };
-use tokio::process::Command;
+use tokio::{process::Command, sync::Mutex as TokioMutex};
 use tracing::{info, warn};
 
 /// Prefix of the checkpoints and temporary snapshots this agent owns, so a
@@ -65,6 +66,22 @@ fn escape_xml(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+/// One lock per staging directory, shared by every [`VmStager`] in the
+/// process.
+///
+/// A stager is built fresh for each run, so the lock cannot live on it. The
+/// directory is what is actually being contended, so that is what it is keyed
+/// on - an agent serves one host and so normally one directory, but keying on
+/// the path keeps the guarantee true rather than incidental.
+static STAGING_LOCKS: LazyLock<TokioMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>> =
+    LazyLock::new(|| TokioMutex::new(HashMap::new()));
+
+/// The lock guarding one staging directory, creating it on first use.
+async fn staging_lock(dir: &Path) -> Arc<TokioMutex<()>> {
+    let mut locks = STAGING_LOCKS.lock().await;
+    Arc::clone(locks.entry(dir.to_path_buf()).or_default())
 }
 
 /// How much longer than the configured timeout the outer capture deadline
@@ -953,6 +970,17 @@ impl VmStager {
     /// did to each. A domain that fails does not stop the others: the caller
     /// decides whether the backup goes ahead.
     pub async fn stage_all(&self) -> Result<Vec<VmSnapshotOutcome>, VmError> {
+        // Two schedules on the same host can both opt in to staging, which is
+        // the arrangement the host-level settings exist to support. They reach
+        // the agent as independent backups, and `RepoOperationKey` is keyed on
+        // the destination repository rather than the host, so it deliberately
+        // lets them run at once. Nothing else keeps them out of this
+        // directory, where both would rewrite `chain.txt` and the images it
+        // names - one run's swap silently undoing the other's, however
+        // carefully a single run is ordered.
+        let lock = staging_lock(Path::new(&self.config.staging_dir)).await;
+        let _staging = lock.lock().await;
+
         // A host whose domains cannot be listed at all - libvirtd down, virsh
         // off the PATH, no access to qemu:///system - is not a host with
         // nothing to stage. Reporting it as an empty run would let the backup
@@ -2311,6 +2339,47 @@ mod tests {
             "a failure on an included domain must not read as an opt-out"
         );
         assert_eq!(outcome.mode, VmSnapshotMode::Unknown);
+    }
+
+    /// Two schedules on the same host may both stage it, and they arrive as
+    /// separate backups that the repository-keyed operation queue is designed
+    /// to run concurrently. Both would write the same `chain.txt` and the same
+    /// images, so one run's swap would silently undo the other's - the same
+    /// read-then-write race the settings column fixed with COALESCE, one layer
+    /// down at the filesystem.
+    #[tokio::test]
+    async fn staging_the_same_directory_twice_at_once_is_serialised() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 8).await;
+        let config = host.config();
+        let dir = PathBuf::from(&config.staging_dir);
+
+        // Stand in for a run already staging this directory.
+        let held = staging_lock(&dir).await;
+        let guard = held.lock().await;
+
+        let stager = host.stager(config);
+        let second = tokio::spawn(async move { stager.stage_all().await });
+
+        // Long enough for an unserialised run to have finished staging this
+        // one small domain outright.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(
+            !second.is_finished(),
+            "a second run must wait while the directory is held, not stage over it"
+        );
+
+        drop(guard);
+        let outcomes = tokio::time::timeout(Duration::from_secs(30), second)
+            .await
+            .expect("the second run must proceed once the directory is free")
+            .expect("join")
+            .expect("stage");
+        assert!(
+            only(&outcomes).error.is_none(),
+            "and then stage normally: {:?}",
+            only(&outcomes).error
+        );
     }
 
     /// The ordering guarantee itself, tested where it can actually be broken.

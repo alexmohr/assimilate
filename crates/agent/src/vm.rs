@@ -864,12 +864,14 @@ impl VmStager {
         // dot-dot name would silently place the staging directory somewhere
         // else entirely, so the name is taken as a single component or not
         // at all.
-        let safe = domain.replace(['/', '\\'], "_");
-        let safe = if safe.is_empty() || safe == "." || safe == ".." {
-            "_"
-        } else {
-            safe.as_str()
-        };
+        let flattened = domain.replace(['/', '\\'], "_");
+        // `file_name` is None for exactly the names that are not a component
+        // of their own - empty, `.` and `..` - so it carries this rule
+        // without a string comparison spelling it out.
+        let safe = Path::new(&flattened)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("_");
         Path::new(&self.config.staging_dir).join(safe)
     }
 

@@ -63,7 +63,9 @@ describe('VmRestoreWizard', () => {
   beforeEach(() => {
     vi.mocked(apiClient.get).mockReset()
     vi.mocked(apiClient.post).mockReset()
-    vi.mocked(apiClient.get).mockResolvedValue({ data: REPORTS } as never)
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { reports: REPORTS, total: REPORTS.length },
+    } as never)
     vi.mocked(apiClient.post).mockImplementation((url: string) =>
       Promise.resolve({
         data: url.endsWith('/build') ? OUTCOME : { success: true, files_restored: 5 },

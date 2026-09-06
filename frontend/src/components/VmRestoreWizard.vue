@@ -122,7 +122,9 @@ async function loadReports(): Promise<void> {
   loadingReports.value = true
   error.value = null
   try {
-    reports.value = await listAgentReports(props.agent.hostname, undefined, props.agent.domain)
+    reports.value = (
+      await listAgentReports(props.agent.hostname, undefined, props.agent.domain)
+    ).reports
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {

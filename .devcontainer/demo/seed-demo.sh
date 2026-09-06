@@ -102,7 +102,7 @@ export AGENT_TOKEN_3="$MEDIA_TOKEN"
 echo "==> Setting an agent-level default file change pattern on db-server-01 (fallback for every schedule targeting this host)..."
 api PUT "/api/agents/db-server-01" '{
     "display_name": "Primary Database",
-    "default_file_change_patterns_raw": "*/var/lib/postgresql/*.tmp* ignore\n*checkpoint_wal* warn"
+    "default_file_change_patterns_raw": "/var/lib/postgresql/**/*.tmp* ignore\n**/checkpoint_wal* warn"
 }' > /dev/null
 
 # Agent-level hook commands, so the Backup defaults pane shows the read-only
@@ -372,7 +372,7 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\", \"/etc/nginx\"],
-    \"file_change_patterns_raw\": \"*/var/log/nginx/access.log* ignore\n*/var/www/cache* fatal\n*/etc/nginx/nginx.conf* warn\"
+    \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\"
 }" | jq -r '.id')
 
 api POST "/api/schedules" "{
@@ -560,9 +560,9 @@ api POST "/api/schedules" "{
         {\"agent_id\": $WEB01_ID, \"raw_text\": \"*.log\"},
         {\"agent_id\": $DB01_ID, \"raw_text\": \"*.tmp\"}
     ],
-    \"file_change_patterns_raw\": \"*/var/log/nginx/access.log* ignore\n*/var/www/cache* fatal\n*/etc/nginx/nginx.conf* warn\",
+    \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
     \"file_change_patterns_per_agent\": [
-        {\"agent_id\": $WEB01_ID, \"raw_text\": \"*/var/log/nginx/error.log* ignore\"}
+        {\"agent_id\": $WEB01_ID, \"raw_text\": \"/var/log/nginx/error.log* ignore\"}
     ]
 }" > /dev/null
 
@@ -899,6 +899,44 @@ if [ -z "$WEB01_WARNING_REPORT_ID" ]; then
     exit 1
 fi
 api POST "/api/stats/activity/$WEB01_WARNING_REPORT_ID/acknowledge" > /dev/null
+
+echo "==> Seeding a warning run borg never explained on media-store-01..."
+# borg exits 1 for "finished with warnings" but does not always say what the
+# warning was; all the agent used to have was borg's own `--show-rc` footer,
+# "terminating with warning status, rc 1", which repeats the exit code and
+# explains nothing (see docs/activity.md). The agent now drops that footer and
+# records what it does know instead, so the demo carries one run in that shape.
+# Acknowledged immediately, like web-server-01's above, so it does not add an
+# outstanding finding - switch the Activity Log's Acknowledged filter to Shown
+# to see it. archive_name stays NULL for the same reason as the db-server-01
+# incident below: media-weekly is synced, and a report naming an archive that
+# no real `borg list` returns is reconciled away within minutes.
+# The INSERT is wrapped in a CTE so psql prints the returned id and nothing
+# else: a bare `INSERT ... RETURNING` also prints its `INSERT 0 1` status tag,
+# which would end up inside the captured id and turn the acknowledge call below
+# into a request for a nonexistent path.
+MEDIA_UNEXPLAINED_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "
+WITH inserted AS (
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status,
+     original_size, compressed_size, deduplicated_size, files_processed,
+     duration_secs, error_message, warnings)
+SELECT $MEDIA_ID, $REPO_WEEKLY_ID, s.id,
+       NOW() - interval '2 days' - interval '11 minutes',
+       NOW() - interval '2 days',
+       'warning',
+       21474836480, 15032385536, 2147483648, 18435, 660,
+       'borg exited with code 1 but reported no warning or error explaining why; last borg output: Creating archive at \"ssh://borg@localhost/./backup/repos/media-weekly::media-store-01-weekly\"',
+       ARRAY['borg exited with code 1 but reported no warning or error explaining why; last borg output: Creating archive at \"ssh://borg@localhost/./backup/repos/media-weekly::media-store-01-weekly\"']
+FROM (SELECT id FROM schedules WHERE repo_id = $REPO_WEEKLY_ID ORDER BY id LIMIT 1) s
+RETURNING id
+)
+SELECT id FROM inserted")
+if [ -z "$MEDIA_UNEXPLAINED_REPORT_ID" ]; then
+    echo "expected to seed a media-store-01 warning report, inserted none" >&2
+    exit 1
+fi
+api POST "/api/stats/activity/$MEDIA_UNEXPLAINED_REPORT_ID/acknowledge" > /dev/null
 
 echo "==> Seeding a recovered outage on db-server-01..."
 # Feeds the agent detail Overview's run strip, which draws one cell per run

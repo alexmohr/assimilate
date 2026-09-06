@@ -70,7 +70,7 @@ function removeRow(index: number): void {
         type="text"
         class="input fcp-input"
         :placeholder="
-          props.placeholder ?? 'Glob against warning text, e.g. */etc/config* or /data/wal/**'
+          props.placeholder ?? 'Glob against warning text, e.g. /etc/config* or /data/wal/**'
         "
         spellcheck="false"
       />
@@ -101,10 +101,11 @@ function removeRow(index: number): void {
       <slot name="hint">
         Glob patterns matched against the full warning message, with actions:
         <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
-        <code>fatal</code> (fail backup). A bare path will not match - wrap it in <code>*</code>,
-        e.g. <code>*/etc/config*</code>. <code>*</code> does not match <code>/</code> - to cover
-        every file under a directory, end the pattern with <code>**</code>, e.g.
-        <code>/data/wal/**</code>. Unconfigured files still produce warnings.
+        <code>fatal</code> (fail backup). A bare path will not match - the message continues past it
+        with <code>: file changed while we backed it up</code>, so end the pattern with
+        <code>*</code>, e.g. <code>/etc/config*</code>. <code>*</code> does not match
+        <code>/</code> - to cover every file under a directory, end the pattern with
+        <code>**</code>, e.g. <code>/data/wal/**</code>. Unconfigured files still produce warnings.
       </slot>
     </span>
   </div>

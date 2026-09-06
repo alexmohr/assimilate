@@ -24,7 +24,7 @@ Click any card to expand it and see detailed statistics:
 - **Timing** — start, finish, and duration
 - **Sizes** — original, compressed, and deduplicated
 - **Stats** — files processed, borg version
-- **Warnings** — a list of warning messages (if the run completed with warnings)
+- **Warnings** — a list of warning messages (if the run completed with warnings). borg's own `terminating with warning status, rc 1` footer is left out: it restates the exit code without saying what caused it. If borg ends a run with a warning status but reports no message at all, the entry says exactly that and carries the last output borg produced, so a flagged run always states a reason — see [File Change Patterns](file-change-patterns.md) for suppressing the warnings you have already decided to live with
 - **Error** — error message, shown only for a failed run — a warning-only run's message already appears in the Warnings section above, so it isn't duplicated here
 
 ### Acknowledging a warning or failure

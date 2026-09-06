@@ -875,7 +875,12 @@ echo "==> Seeding a warning run borg never explained on media-store-01..."
 # to see it. archive_name stays NULL for the same reason as the db-server-01
 # incident below: media-weekly is synced, and a report naming an archive that
 # no real `borg list` returns is reconciled away within minutes.
+# The INSERT is wrapped in a CTE so psql prints the returned id and nothing
+# else: a bare `INSERT ... RETURNING` also prints its `INSERT 0 1` status tag,
+# which would end up inside the captured id and turn the acknowledge call below
+# into a request for a nonexistent path.
 MEDIA_UNEXPLAINED_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "
+WITH inserted AS (
 INSERT INTO backup_reports
     (agent_id, repo_id, schedule_id, started_at, finished_at, status,
      original_size, compressed_size, deduplicated_size, files_processed,
@@ -888,7 +893,9 @@ SELECT $MEDIA_ID, $REPO_WEEKLY_ID, s.id,
        'borg exited with code 1 but reported no warning or error explaining why; last borg output: Creating archive at \"ssh://borg@localhost/./backup/repos/media-weekly::media-store-01-weekly\"',
        ARRAY['borg exited with code 1 but reported no warning or error explaining why; last borg output: Creating archive at \"ssh://borg@localhost/./backup/repos/media-weekly::media-store-01-weekly\"']
 FROM (SELECT id FROM schedules WHERE repo_id = $REPO_WEEKLY_ID ORDER BY id LIMIT 1) s
-RETURNING id")
+RETURNING id
+)
+SELECT id FROM inserted")
 if [ -z "$MEDIA_UNEXPLAINED_REPORT_ID" ]; then
     echo "expected to seed a media-store-01 warning report, inserted none" >&2
     exit 1

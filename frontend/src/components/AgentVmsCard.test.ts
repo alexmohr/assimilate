@@ -72,7 +72,7 @@ describe('AgentVmsCard', () => {
     // blanket response.
     vi.mocked(apiClient.get).mockImplementation(((url: string) =>
       Promise.resolve({
-        data: url.endsWith('/reports') ? [] : response(),
+        data: url.endsWith('/reports') ? { reports: [], total: 0 } : response(),
       })) as never)
     vi.mocked(apiClient.put).mockResolvedValue({ data: response() } as never)
     vi.mocked(apiClient.post).mockResolvedValue({ data: response() } as never)
@@ -352,7 +352,7 @@ describe('AgentVmsCard', () => {
   it('summarizes an opt-in host as staging only what was selected', async () => {
     vi.mocked(apiClient.get).mockImplementation(((url: string) =>
       Promise.resolve({
-        data: url.endsWith('/reports') ? [] : response([vm()], 'selected'),
+        data: url.endsWith('/reports') ? { reports: [], total: 0 } : response([vm()], 'selected'),
       })) as never)
 
     expect((await mount()).text()).toContain('Only the domains selected below')
@@ -369,7 +369,7 @@ describe('AgentVmsCard', () => {
 
     vi.mocked(apiClient.get).mockImplementation(((url: string) =>
       Promise.resolve({
-        data: url.endsWith('/reports') ? [] : response([vm()], 'selected'),
+        data: url.endsWith('/reports') ? { reports: [], total: 0 } : response([vm()], 'selected'),
       })) as never)
     const selecting = await mount()
     expect(selecting.text()).toContain('Turn a domain on to back it up')

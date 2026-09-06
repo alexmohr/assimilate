@@ -447,6 +447,7 @@ impl BackupEngine {
                 let BorgDiagnostics {
                     warnings: reported_warnings,
                     context,
+                    error_level,
                 } = parse_diagnostics(&stderr);
                 let reported = reported_warnings.len();
                 let warnings =
@@ -454,9 +455,17 @@ impl BackupEngine {
                 // rc 1 is borg's "finished, with warnings". Every warning it
                 // reported may have matched an `ignore` pattern, which the user
                 // asked to be silent about; when it reported none at all the run
-                // still has to say something the bare exit code does not.
+                // still has to say something the bare exit code does not. An
+                // `ignore` pattern that happens to match an error-level message
+                // never buys a success: patterns match message text alone, and
+                // a broad one would otherwise hide the whole diagnostic.
                 let (status, warnings) = if !warnings.is_empty() {
                     (BackupStatus::Warning, warnings)
+                } else if error_level {
+                    (
+                        BackupStatus::Warning,
+                        vec![suppressed_error_exit(exit_code)],
+                    )
                 } else if reported > 0 {
                     (BackupStatus::Success, Vec::new())
                 } else {
@@ -1060,6 +1069,10 @@ pub(crate) struct BorgDiagnostics {
     /// line it did not emit as JSON (ssh notices, tracebacks). Noise while
     /// there are real diagnostics, and the only clue when there are none.
     pub(crate) context: Vec<String>,
+    /// Whether any of those records was `ERROR` or worse. File change patterns
+    /// match on message text alone, so a broad `ignore` pattern can swallow one
+    /// of these; a run may not be called a success on the strength of that.
+    pub(crate) error_level: bool,
 }
 
 impl BorgDiagnostics {
@@ -1077,6 +1090,10 @@ impl BorgDiagnostics {
         match record.levelname {
             Some(BorgLogLevel::Warning | BorgLogLevel::Error | BorgLogLevel::Critical) => {
                 if !is_exit_status_footer(&message) {
+                    self.error_level |= matches!(
+                        record.levelname,
+                        Some(BorgLogLevel::Error | BorgLogLevel::Critical)
+                    );
                     self.warnings.push(message);
                 }
             }
@@ -1097,6 +1114,14 @@ impl BorgDiagnostics {
 /// The message a report carries when borg ended with `exit_code` and no
 /// diagnostic to explain it: the bare exit code tells a user nothing, so
 /// whatever else borg printed is attached.
+fn suppressed_error_exit(exit_code: i32) -> String {
+    format!(
+        "borg exited with code {exit_code} after an error-level message that an ignore file \
+         change pattern suppressed; ignore patterns are meant for file-change warnings, so the \
+         run is reported rather than passed - see the backup log for borg's own output"
+    )
+}
+
 fn unexplained_exit(exit_code: i32, context: &[String]) -> String {
     let base = format!(
         "borg exited with code {exit_code} but reported no warning or error explaining why"
@@ -1989,6 +2014,44 @@ mod tests {
             "the warning should carry borg's last output: {warning}"
         );
         assert_eq!(result.error_message.as_ref(), Some(warning));
+    }
+
+    #[test]
+    fn parse_diagnostics_flags_error_level_records() {
+        let warning_only = r#"{"type": "log_message", "levelname": "WARNING", "message": "oops"}"#;
+        assert!(!parse_diagnostics(warning_only).error_level);
+
+        let with_error = r#"{"type": "log_message", "levelname": "ERROR", "message": "boom"}"#;
+        assert!(parse_diagnostics(with_error).error_level);
+
+        let with_critical = r#"{"type": "log_message", "levelname": "CRITICAL", "message": "b"}"#;
+        assert!(parse_diagnostics(with_critical).error_level);
+    }
+
+    #[tokio::test]
+    async fn an_ignore_pattern_cannot_turn_an_error_level_run_into_a_success() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![(
+                "MOCK_BORG_SIMULATE_IGNORED_ERROR".to_owned(),
+                "1".to_owned(),
+            )],
+        );
+        let mut target = test_target();
+        target.file_change_patterns = vec![FileChangePattern {
+            path: "**/*: file changed while we backed it up".to_owned(),
+            action: shared::types::FileChangeAction::Ignore,
+        }];
+
+        let result = engine.run_backup(&target, None, None).await.unwrap();
+
+        assert_eq!(result.status, BackupStatus::Warning);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(
+            result.warnings[0].contains("error-level message"),
+            "the run should say an error-level diagnostic was suppressed: {}",
+            result.warnings[0]
+        );
     }
 
     #[tokio::test]

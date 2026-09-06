@@ -1135,7 +1135,7 @@ fn context_suffix(context: &[String]) -> String {
 /// runs report no status of their own, so the log line is the only trace they
 /// leave - and since the `--show-rc` footer is stripped from the diagnostics,
 /// a run whose footer was its only output must still say something.
-fn warning_status_log(subcommand: &str, exit_code: i32, stderr: &str) -> String {
+pub(crate) fn warning_status_log(subcommand: &str, exit_code: i32, stderr: &str) -> String {
     let diagnostics = parse_diagnostics(stderr);
     if diagnostics.warnings.is_empty() {
         format!(

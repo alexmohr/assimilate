@@ -1474,10 +1474,11 @@ async fn run_restore_task(params: RestoreTaskParams, ctx: FreeTaskContext<'_>, b
 
     if exit_code == 1 {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let warnings = crate::backup::parse_warnings(&stderr);
-        if !warnings.is_empty() {
-            warn!(repo_id = ?repo_id, "borg extract warnings: {}", warnings.join("; "));
-        }
+        warn!(
+            repo_id = ?repo_id,
+            "{}",
+            crate::backup::warning_status_log("extract", exit_code, &stderr)
+        );
     }
 
     let files_restored = u64::try_from(paths.len()).unwrap_or(0);

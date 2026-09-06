@@ -30,7 +30,7 @@ use std::{
 
 use chrono::Utc;
 use shared::{
-    borg::GracefulChild,
+    borg::{GracefulChild, kill_escalation_delay},
     task_registry::TaskRegistry,
     vm::{
         DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmRunAction, VmSnapshotConfig,
@@ -83,6 +83,61 @@ async fn staging_lock(dir: &Path) -> Arc<TokioMutex<()>> {
     let mut locks = STAGING_LOCKS.lock().await;
     Arc::clone(locks.entry(dir.to_path_buf()).or_default())
 }
+
+/// Holds a staging directory for the length of a run, and keeps holding it
+/// past a cancellation until whatever the run had spawned is certainly gone.
+///
+/// Dropping the guard directly is not enough. A cancelled run tears its
+/// futures down innermost first, so `GracefulChild::drop` runs before this
+/// frame's locals: it sends SIGTERM, spawns the escalation to SIGKILL, and
+/// returns without waiting. The lock would then be free while the previous
+/// run's `qemu-img` was still writing into the directory, and an operator who
+/// cancels a stuck backup and immediately retries - the obvious thing to do -
+/// would get exactly the concurrent writers the lock exists to prevent.
+///
+/// So a release that was not asked for holds the lock until the escalation
+/// window has passed. A run that finishes normally calls [`Self::release`] and
+/// gives the directory up at once.
+struct StagingHold {
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl StagingHold {
+    /// Takes the directory, waiting for whoever holds it.
+    async fn acquire(lock: Arc<TokioMutex<()>>) -> Self {
+        Self {
+            guard: Some(lock.lock_owned().await),
+        }
+    }
+
+    /// Gives the directory up now, the run having finished on its own terms.
+    fn release(mut self) {
+        drop(self.guard.take());
+    }
+}
+
+impl Drop for StagingHold {
+    fn drop(&mut self) {
+        let Some(guard) = self.guard.take() else {
+            return;
+        };
+        // Only a cancellation reaches here. Without a runtime there is nothing
+        // to wait on and nothing still running either, so the guard just goes.
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let delay = kill_escalation_delay().saturating_add(STAGING_REAP_MARGIN);
+        handle.spawn(async move {
+            tokio::time::sleep(delay).await;
+            drop(guard);
+        });
+    }
+}
+
+/// How long past the SIGKILL escalation a cancelled run keeps its staging
+/// directory, so the reaper has certainly finished before anyone else writes
+/// there.
+const STAGING_REAP_MARGIN: Duration = Duration::from_secs(2);
 
 /// How much longer than the configured timeout the outer capture deadline
 /// runs, so the inner job deadline elapses first and gets to abort the libvirt
@@ -1009,9 +1064,18 @@ impl VmStager {
         // directory, where both would rewrite `chain.txt` and the images it
         // names - one run's swap silently undoing the other's, however
         // carefully a single run is ordered.
-        let lock = staging_lock(Path::new(&self.config.staging_dir)).await;
-        let _staging = lock.lock().await;
+        let staging =
+            StagingHold::acquire(staging_lock(Path::new(&self.config.staging_dir)).await).await;
+        // Every ordinary return, success or failure, gives the directory up at
+        // once; only a cancellation skips this and takes the delayed path.
+        let outcomes = self.stage_listed_domains().await;
+        staging.release();
+        outcomes
+    }
 
+    /// Stages every included domain of the host, with the staging directory
+    /// already held by the caller.
+    async fn stage_listed_domains(&self) -> Result<Vec<VmSnapshotOutcome>, VmError> {
         // A host whose domains cannot be listed at all - libvirtd down, virsh
         // off the PATH, no access to qemu:///system - is not a host with
         // nothing to stage. Reporting it as an empty run would let the backup
@@ -2485,6 +2549,48 @@ mod tests {
             only(&outcomes).error.is_none(),
             "and then stage normally: {:?}",
             only(&outcomes).error
+        );
+    }
+
+    /// Cancelling a run does not free the directory straight away.
+    ///
+    /// A cancelled run drops its futures innermost first, so the child guard
+    /// goes before this frame's lock: SIGTERM is sent, the escalation to
+    /// SIGKILL is spawned, and nothing waits for either. Releasing the lock
+    /// there would let an operator who cancels a stuck backup and retries -
+    /// the obvious next move - start writing the same directory the old
+    /// `qemu-img` is still writing to.
+    #[tokio::test]
+    async fn cancelling_a_run_keeps_the_directory_until_its_processes_are_gone() {
+        let host = FakeHost::new().await;
+        // A raw disk takes the fallback-copy path, which is the one that runs
+        // `snapshot-create-as` and so the one the hang knob reaches.
+        host.define("build01", "running", "build01.raw", 8).await;
+        let config = host.config();
+        let dir = PathBuf::from(&config.staging_dir);
+
+        let stager = host.stager_with_env(
+            VmSnapshotConfig {
+                timeout_seconds: 60,
+                ..config
+            },
+            // Keeps the run inside a child process, where a cancellation
+            // lands mid-write rather than between commands.
+            vec![("MOCK_VIRT_HANG_SNAPSHOT".to_owned(), "30".to_owned())],
+        );
+        let running = tokio::spawn(async move { stager.stage_all().await });
+        // Let it take the directory and get into the hanging child.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        running.abort();
+        let _ = running.await;
+
+        // The directory must still be held: the escalation window has not
+        // passed, so the cancelled run's process may still be writing.
+        let lock = staging_lock(&dir).await;
+        assert!(
+            lock.try_lock().is_err(),
+            "a cancelled run must keep the directory until its processes are certainly gone"
         );
     }
 

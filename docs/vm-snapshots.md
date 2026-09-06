@@ -173,6 +173,8 @@ The settings live on the host, so more than one schedule may back it up and each
 
 Staging is serialised per staging directory, so the second run waits for the first rather than writing over it. The wait counts against that backup's own duration, and the second run usually finds the chain already fresh and writes a small increment or skips the domain entirely.
 
+Cancelling a backup does not release the directory immediately. The agent asks the running `virsh` or `qemu-img` to stop and gives it time to do so before forcing it, and the directory stays held until then - otherwise a retry started straight after the cancellation would write into a directory the previous copy had not finished with. A backup cancelled mid-staging therefore blocks the next one for up to that grace period.
+
 ## Caveats
 
 - Checkpoints live in libvirt, the chain lives in the staging directory. Deleting the staging directory by hand leaves stale checkpoints behind; the next run notices the missing `chain.txt`, drops those checkpoints and writes a new full image.

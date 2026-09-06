@@ -74,6 +74,12 @@ pub struct UpdateAgentVmRequest {
     #[serde(default)]
     pub included: Option<bool>,
     /// Bytes this domain may occupy, or `null` to inherit the host's default.
+    ///
+    /// Required, deliberately, where `included` above is optional. `null`
+    /// here is a decision - it clears whatever limit the domain carried -
+    /// so defaulting an absent key to `None` would make forgetting the field
+    /// indistinguishable from asking to clear the limit, and silently drop a
+    /// budget the operator set. A missing key is refused instead, loudly.
     pub limit_bytes: Option<u64>,
 }
 

@@ -1092,15 +1092,8 @@ async fn run_backup_task(
     // images this run produced. A domain that could not be staged fails the
     // backup: an archive that quietly holds last night's image is worse than a
     // run the operator is told about.
-    if let Some(vm_config) = target.vm_snapshot.clone()
-        && let Err(reason) = stage_virtual_machines(
-            vm_config,
-            schedule_id,
-            outbound_tx,
-            engine.task_registry().clone(),
-        )
-        .await
-    {
+    let staging = stage_configured_machines(&target, schedule_id, outbound_tx, engine).await;
+    if let Err(reason) = staging {
         error!(repo_id = ?repo_id, reason = %reason, "virtual machine staging failed");
         report_backup_failure(
             repo_id,
@@ -1209,6 +1202,27 @@ async fn report_backup_failure(
     {
         tracing::debug!(error = %e, "outbound send failed");
     }
+}
+
+/// Stages the domains of a host whose schedule asked for them, if any. A
+/// target without virtual-machine settings is not an error, it is a backup
+/// that does not carry machines.
+async fn stage_configured_machines(
+    target: &BackupTarget,
+    schedule_id: Option<i64>,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+    engine: &BackupEngine,
+) -> Result<(), String> {
+    let Some(vm_config) = target.vm_snapshot.clone() else {
+        return Ok(());
+    };
+    stage_virtual_machines(
+        vm_config,
+        schedule_id,
+        outbound_tx,
+        engine.task_registry().clone(),
+    )
+    .await
 }
 
 /// Stages this host's domains and reports what happened to each. Returns the

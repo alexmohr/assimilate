@@ -576,6 +576,46 @@ impl VmStager {
         }
     }
 
+    /// Places a UEFI domain's variables file beside its restored images and
+    /// points the definition at the copy, so the restored machine boots the
+    /// way it did rather than falling back to defaults. A domain without one
+    /// is not a UEFI domain, which is not an error.
+    async fn place_nvram(
+        source: &Path,
+        image_dir: &Path,
+        name: &str,
+        xml: &mut DomainXml,
+    ) -> Result<(), VmError> {
+        let nvram = source.join("nvram.fd");
+        if !is_file(&nvram).await {
+            return Ok(());
+        }
+        let placed = image_dir.join(format!("{name}-nvram.fd"));
+        tokio::fs::copy(&nvram, &placed)
+            .await
+            .map_err(|e| VmError::Io {
+                action: format!("place {}", placed.display()),
+                source: e,
+            })?;
+        xml.repath_nvram(&placed.to_string_lossy());
+        Ok(())
+    }
+
+    /// Refuses a restore onto a name some domain on this host already holds.
+    ///
+    /// `virsh define` on an existing name does not fail - it rewrites that
+    /// domain's persistent definition. Restoring onto a colliding name would
+    /// silently repoint a live machine's disks at the restored images, and
+    /// nothing would say so until its next boot.
+    async fn ensure_name_is_free(&self, name: &str) -> Result<(), VmError> {
+        if self.list_domains().await?.iter().any(|d| d == name) {
+            return Err(VmError::Job(format!(
+                "a domain named {name} already exists on this host; restore under a different name"
+            )));
+        }
+        Ok(())
+    }
+
     /// The domains defined on this host, in the order libvirt lists them.
     async fn list_domains(&self) -> Result<Vec<String>, VmError> {
         Ok(self
@@ -732,25 +772,24 @@ impl VmStager {
                     source: e,
                 })?;
 
-            if let Some(old) = xml.disk_source(&entry.target) {
-                xml.repath(&old, &placed.to_string_lossy());
-            }
+            // A target in `chain.txt` that the staged definition does not
+            // describe means the two came from different runs. Repathing
+            // nothing here would leave the restored domain pointing at the
+            // original host's disk, which is either missing there or still in
+            // use by the machine it was copied from - and `virsh define`
+            // would report success either way.
+            let Some(old) = xml.disk_source(&entry.target) else {
+                return Err(VmError::Job(format!(
+                    "the staged definition has no disk {}, so the restored domain would keep the \
+                     original host's path for it",
+                    entry.target
+                )));
+            };
+            xml.repath(&old, &placed.to_string_lossy());
             images.push(placed.to_string_lossy().into_owned());
         }
 
-        // A UEFI domain keeps its variables beside its images, so the restored
-        // machine boots the way it did rather than falling back to defaults.
-        let nvram = source.join("nvram.fd");
-        if is_file(&nvram).await {
-            let placed = image_dir.join(format!("{}-nvram.fd", request.name));
-            tokio::fs::copy(&nvram, &placed)
-                .await
-                .map_err(|e| VmError::Io {
-                    action: format!("place {}", placed.display()),
-                    source: e,
-                })?;
-            xml.repath_nvram(&placed.to_string_lossy());
-        }
+        Self::place_nvram(&source, &image_dir, &request.name, &mut xml).await?;
 
         xml.replace_element("name", &request.name);
         // Dropped rather than rewritten: libvirt issues a fresh UUID, so the
@@ -769,21 +808,7 @@ impl VmStager {
             return Ok(outcome);
         }
 
-        // `virsh define` on a name that already exists does not fail - it
-        // rewrites that domain's persistent definition. Restoring onto a
-        // colliding name would silently repoint a live machine's disks at the
-        // restored images, and nothing would say so until its next boot.
-        if self
-            .list_domains()
-            .await?
-            .iter()
-            .any(|existing| existing == &request.name)
-        {
-            return Err(VmError::Job(format!(
-                "a domain named {} already exists on this host; restore under a different name                  or remove that domain first",
-                request.name
-            )));
-        }
+        self.ensure_name_is_free(&request.name).await?;
 
         let definition_path = source.join(format!(".assimilate-{}.xml", request.name));
         tokio::fs::write(&definition_path, xml.into_text())
@@ -959,6 +984,13 @@ impl VmStager {
             info!(domain, "excluded from staging");
             return outcome;
         }
+
+        // Past the include check the placeholder above stops being true, and
+        // a failure below would otherwise be reported against a domain the
+        // operator is told they excluded. `Unknown` is what a domain whose
+        // capture mode was never established actually is - staging usually
+        // fails before there is anything to establish it from.
+        outcome.mode = VmSnapshotMode::Unknown;
 
         match self.stage_included(domain, &dest).await {
             Ok(staged) => staged,
@@ -1161,6 +1193,89 @@ impl VmStager {
         let _ = tokio::fs::remove_file(dest.join(CHAIN_FILE)).await;
     }
 
+    /// Swaps a set of freshly written `.part` images into place, and rewrites
+    /// the chain to name them.
+    ///
+    /// The ordering is what makes this safe, not the rename. Renaming a file
+    /// is atomic; renaming several is not, and a domain with more than one
+    /// disk is ordinary. So:
+    ///
+    /// 1. Every part is checked first, so a missing one fails the run before
+    ///    anything on disk is touched.
+    /// 2. The chain is rewritten to name only the images about to be placed.
+    ///    At that instant those names still hold the *previous* run's images,
+    ///    which is an older but complete and self-consistent backup - and it
+    ///    drops the increments before the base they applied to changes, so no
+    ///    crash can leave a chain telling a restore to apply increments to a
+    ///    base they do not match.
+    /// 3. Each part is then renamed over the image it replaces, one atomic
+    ///    rename per disk. A crash mid-way leaves every disk holding a whole
+    ///    image that the chain names; the worst case is disks from two
+    ///    different runs, which the next run replaces wholesale.
+    /// 4. The leftovers go last, once nothing references them.
+    ///
+    /// What this deliberately does not do is delete the old images up front.
+    /// That is what left a multi-disk domain with nothing at all for the
+    /// disks whose rename had not happened yet.
+    async fn place_images(
+        &self,
+        dest: &Path,
+        disks: &[Disk],
+        part_suffix: &str,
+        final_suffix: &str,
+    ) -> Result<(), VmError> {
+        for disk in disks {
+            let partial = dest.join(format!("{}.{part_suffix}", disk.target));
+            if !is_file(&partial).await {
+                return Err(VmError::Job(format!(
+                    "{} is missing, so the run that wrote it did not finish",
+                    partial.display()
+                )));
+            }
+        }
+
+        let mut chain = String::new();
+        for disk in disks {
+            let _ = writeln!(chain, "{} {}.{final_suffix}", disk.target, disk.target);
+        }
+        let chain_path = dest.join(CHAIN_FILE);
+        tokio::fs::write(&chain_path, chain)
+            .await
+            .map_err(|source| VmError::Io {
+                action: format!("write {}", chain_path.display()),
+                source,
+            })?;
+
+        let mut placed = BTreeSet::new();
+        for disk in disks {
+            let partial = dest.join(format!("{}.{part_suffix}", disk.target));
+            let target = dest.join(format!("{}.{final_suffix}", disk.target));
+            tokio::fs::rename(&partial, &target)
+                .await
+                .map_err(|source| VmError::Io {
+                    action: format!("place {}", target.display()),
+                    source,
+                })?;
+            placed.insert(format!("{}.{final_suffix}", disk.target));
+        }
+
+        // Whatever the previous chain held that this one does not.
+        let Ok(mut entries) = tokio::fs::read_dir(dest).await else {
+            return Ok(());
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let is_image = path
+                .extension()
+                .is_some_and(|ext| ext == "qcow2" || ext == "img" || ext == "part");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if is_image && !placed.contains(&name) {
+                let _ = tokio::fs::remove_file(&path).await;
+            }
+        }
+        Ok(())
+    }
+
     /// Reads how many increments the current chain holds.
     async fn chain_increments(&self, dest: &Path) -> u32 {
         let chain = tokio::fs::read_to_string(dest.join(CHAIN_FILE))
@@ -1328,24 +1443,12 @@ impl VmStager {
         // The new full exists now, so the chain it replaces can go and it can
         // take the name. A failure anywhere above returns before this, leaving
         // the previous chain untouched and nothing of this run behind.
-        let suffix = if forced_full {
-            self.clear_images(dest).await;
-            for disk in disks {
-                let partial = dest.join(format!("{}.{suffix}", disk.target));
-                let target = dest.join(format!("{}.full.qcow2", disk.target));
-                tokio::fs::rename(&partial, &target)
-                    .await
-                    .map_err(|source| VmError::Io {
-                        action: format!("place {}", target.display()),
-                        source,
-                    })?;
-            }
-            "full.qcow2".to_owned()
+        if forced_full {
+            self.place_images(dest, disks, &suffix, "full.qcow2")
+                .await?;
         } else {
-            suffix
-        };
-
-        self.record_chain(dest, disks, &suffix).await?;
+            self.record_chain(dest, disks, &suffix).await?;
+        }
 
         Ok(if from.is_some() {
             VmRunAction::Increment
@@ -1591,22 +1694,11 @@ impl VmStager {
             return Err(error);
         }
 
-        // Every disk copied. Only now does the old chain go, and the new
-        // copies take its place - `clear_images` matches `.qcow2` and `.img`,
-        // so the `.part` files it is about to promote survive it.
-        self.clear_images(dest).await;
-        for disk in disks {
-            let partial = dest.join(format!("{}.img.part", disk.target));
-            let target = dest.join(format!("{}.img", disk.target));
-            tokio::fs::rename(&partial, &target)
-                .await
-                .map_err(|source| VmError::Io {
-                    action: format!("place {}", target.display()),
-                    source,
-                })?;
-        }
-
-        self.record_chain(dest, disks, "img").await
+        // Every disk copied, so the new copies can take the place of the old
+        // ones. Doing that disk by disk after deleting them all first is what
+        // left a multi-disk domain with nothing for the disks whose turn had
+        // not come yet.
+        self.place_images(dest, disks, "img.part", "img").await
     }
 
     /// Copies a shut off domain, skipping disks that have not changed since
@@ -1761,6 +1853,21 @@ mod tests {
             )
             .await;
             source
+        }
+
+        /// Adds another disk to a domain that is already defined, so the
+        /// multi-disk case - the ordinary one, and the one a per-disk swap
+        /// gets wrong - can be exercised.
+        async fn add_disk(&self, name: &str, target: &str, image: &str, size_kib: usize) {
+            let source = self.root.path().join("images").join(image);
+            tokio::fs::write(&source, vec![0u8; size_kib.saturating_mul(1024)])
+                .await
+                .expect("write image");
+            append(
+                &self.state().join(format!("disks-{name}")),
+                &format!("file disk {target} {}\n", source.display()),
+            )
+            .await;
         }
 
         fn stager(&self, config: VmSnapshotConfig) -> VmStager {
@@ -2187,6 +2294,153 @@ mod tests {
         assert!(
             !xml.text.contains("vg-lv01"),
             "the original host's volume must not survive the repath"
+        );
+    }
+
+    /// A domain the operator included, which then failed to stage, is not an
+    /// excluded domain. The placeholder the outcome starts with says
+    /// `Excluded`, and the failure branch used to leave it there - so the UI
+    /// showed a neutral "Excluded" badge beside a real failure, and anything
+    /// keying off the mode read a deliberate opt-out.
+    #[tokio::test]
+    async fn a_failed_domain_is_not_reported_as_excluded() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 16).await;
+
+        let stager = VmStager::with_binaries(
+            host.config(),
+            host.state().join("no-such-virsh"),
+            host.state().join("no-such-qemu-img"),
+            vec![(
+                "MOCK_VIRT_STATE".to_owned(),
+                host.state().to_string_lossy().into_owned(),
+            )],
+        );
+        // Listing works through the real double; staging is what fails.
+        let outcome = host.stager(host.config()).stage_domain("web01").await;
+        assert!(outcome.error.is_none(), "control: this one stages");
+
+        let outcome = stager.stage_domain("web01").await;
+        assert!(outcome.error.is_some(), "the domain must fail");
+        assert_ne!(
+            outcome.mode,
+            VmSnapshotMode::Excluded,
+            "a failure on an included domain must not read as an opt-out"
+        );
+        assert_eq!(outcome.mode, VmSnapshotMode::Unknown);
+    }
+
+    /// The ordering guarantee itself, tested where it can actually be broken.
+    ///
+    /// A failure partway through placing a multi-disk domain's images is not
+    /// reachable by failing a `virsh` call - the copies all succeed or the run
+    /// returns before the swap. What breaks it is a part that is not there
+    /// when its turn comes. Deleting every old image first and then renaming
+    /// one disk at a time left the remaining disks with neither image; the
+    /// check now happens before anything on disk is touched.
+    #[tokio::test]
+    async fn placing_images_touches_nothing_until_every_part_is_present() {
+        let host = FakeHost::new().await;
+        let dest = host.root.path().join("staged").join("web01");
+        tokio::fs::create_dir_all(&dest).await.unwrap();
+
+        // The previous run's backup: two disks and the chain naming them.
+        for target in ["vda", "vdb"] {
+            tokio::fs::write(dest.join(format!("{target}.img")), b"previous")
+                .await
+                .unwrap();
+        }
+        tokio::fs::write(dest.join(CHAIN_FILE), "vda vda.img\nvdb vdb.img\n")
+            .await
+            .unwrap();
+
+        // This run wrote only the first disk's replacement.
+        tokio::fs::write(dest.join("vda.img.part"), b"fresh")
+            .await
+            .unwrap();
+
+        let disks = ["vda", "vdb"].map(|target| Disk {
+            target: target.to_owned(),
+            source: PathBuf::from(format!("/var/lib/libvirt/images/{target}.raw")),
+        });
+        let error = host
+            .stager(host.config())
+            .place_images(&dest, &disks, "img.part", "img")
+            .await
+            .expect_err("an incomplete set of parts must not be placed");
+        assert!(
+            format!("{error}").contains("vdb.img.part"),
+            "the failure must name the part that is missing, got {error}"
+        );
+
+        for target in ["vda", "vdb"] {
+            assert_eq!(
+                tokio::fs::read(dest.join(format!("{target}.img")))
+                    .await
+                    .unwrap(),
+                b"previous",
+                "{target} must still hold the previous run's image"
+            );
+        }
+        assert_eq!(
+            tokio::fs::read_to_string(dest.join(CHAIN_FILE))
+                .await
+                .unwrap()
+                .trim(),
+            "vda vda.img\nvdb vdb.img",
+            "the chain must still describe the backup that is actually there"
+        );
+    }
+
+    /// The guarantee this feature exists for is that a run which fails never
+    /// leaves a domain with nothing restorable. Deleting every disk's old
+    /// image up front and then renaming the new ones in one at a time only
+    /// held that for a single-disk domain: a failure partway through left the
+    /// disks whose turn had not come with neither image. Multi-disk domains
+    /// are ordinary, and `FullCopy` runs this on every backup.
+    #[tokio::test]
+    async fn a_multi_disk_copy_never_leaves_a_disk_without_an_image() {
+        let host = FakeHost::new().await;
+        host.define("build01", "running", "build01.raw", 16).await;
+        host.add_disk("build01", "vdb", "build01-data.raw", 16)
+            .await;
+
+        let good = host.stager(host.config());
+        assert_eq!(
+            only(&good.stage_all().await.unwrap()).action,
+            VmRunAction::Copy
+        );
+        let staged = host.staged("build01");
+        assert!(is_file(&staged.join("vda.img")).await);
+        assert!(is_file(&staged.join("vdb.img")).await, "both disks staged");
+        let before = tokio::fs::read(staged.join("vdb.img")).await.unwrap();
+
+        // A run that cannot take its snapshot at all, after the previous one
+        // left two images that must survive it.
+        let failing = host.stager_with_env(
+            host.config(),
+            vec![("MOCK_VIRT_FAIL_SNAPSHOT".to_owned(), "1".to_owned())],
+        );
+        assert!(
+            only(&failing.stage_all().await.unwrap()).error.is_some(),
+            "the run must fail"
+        );
+
+        for target in ["vda", "vdb"] {
+            assert!(
+                is_file(&staged.join(format!("{target}.img"))).await,
+                "{target} must still have its previous image"
+            );
+        }
+        assert_eq!(
+            tokio::fs::read(staged.join("vdb.img")).await.unwrap(),
+            before,
+            "the second disk's image must be untouched, not truncated"
+        );
+        assert_eq!(
+            host.chain("build01").await.trim(),
+            "vda vda.img\nvdb vdb.img",
+            "the chain must still name both disks"
         );
     }
 

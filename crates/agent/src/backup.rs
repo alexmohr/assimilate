@@ -1182,7 +1182,10 @@ pub(crate) fn describe_borg_failure(stderr: &str) -> String {
         .collect::<Vec<_>>()
         .join("; ");
     if described.is_empty() {
-        "borg produced no output".to_owned()
+        // Not the same as "borg printed nothing": its `--show-rc` footer is
+        // stripped from the diagnostics, and on a failed run that footer may be
+        // the only line there was.
+        "borg reported no diagnostic beyond its exit status".to_owned()
     } else {
         truncate_chars(described, MAX_FAILURE_CHARS)
     }
@@ -2014,6 +2017,21 @@ mod tests {
             "the warning should carry borg's last output: {warning}"
         );
         assert_eq!(result.error_message.as_ref(), Some(warning));
+    }
+
+    #[test]
+    fn describe_borg_failure_says_so_when_only_the_footer_was_printed() {
+        let stderr = concat!(
+            r#"{"type": "log_message", "levelname": "WARNING", "#,
+            r#""message": "terminating with error status, rc 2"}"#,
+        );
+
+        let described = describe_borg_failure(stderr);
+
+        assert_eq!(
+            described,
+            "borg reported no diagnostic beyond its exit status"
+        );
     }
 
     #[test]

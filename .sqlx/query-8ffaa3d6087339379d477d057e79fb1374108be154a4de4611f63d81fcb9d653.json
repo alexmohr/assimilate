@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", completed.finished_at AS \"last_backup_at?\", completed.status AS \"last_backup_status?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "target_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_status?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_backup_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_backup_status?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_error_message?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "schedule_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "consecutive_missed_backups",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "missed_backup_threshold",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8ffaa3d6087339379d477d057e79fb1374108be154a4de4611f63d81fcb9d653"
+}

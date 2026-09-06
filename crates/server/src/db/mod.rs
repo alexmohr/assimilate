@@ -4232,10 +4232,13 @@ pub struct HealthRow {
     pub hostname: String,
     /// Repository display name.
     pub target_name: String,
-    /// Status of the last backup run.
+    /// Status of the most recent run of any kind, including one still in
+    /// flight (in which case this is `None` - see `get_health_summary`).
     pub last_status: Option<String>,
-    /// When the last backup finished.
+    /// When the last *completed* backup finished.
     pub last_backup_at: Option<DateTime<Utc>>,
+    /// Outcome of the last *completed* backup (`last_backup_at`'s run).
+    pub last_backup_status: Option<String>,
     /// Error message from the last failure.
     pub last_error_message: Option<String>,
     /// Schedule cron expression.
@@ -4904,24 +4907,29 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
     // Two LATERAL joins per (schedule, agent) row: `latest` is the most recent report
     // regardless of status, which is what tells the UI a backup is currently running
     // (status 'pending'/'started'); `completed` is the most recent *settled* report, whose
-    // `finished_at` is the real "last backup" timestamp cadence/overdue checks need. A
-    // single lookup used to serve both, so while a backup was in flight its placeholder
-    // `finished_at` (set to the start time) displaced the previous completed backup's
-    // timestamp entirely, making a host with an active backup look like it had none.
+    // `finished_at`/`status` are the real "last backup" timestamp/outcome cadence, overdue
+    // and coverage-staleness checks need. A single lookup used to serve both, so while a
+    // backup was in flight its placeholder `finished_at` (set to the start time) displaced
+    // the previous completed backup's timestamp entirely, making a host with an active
+    // backup look like it had none. `last_backup_status` (from `completed`) is exposed
+    // separately from `last_status` (from `latest`) so a consumer that must not treat a
+    // failed run as coverage - see HostsView.vue's mostRecentBackupAt - has the real
+    // completed-run outcome to gate on, even while a newer run is in flight and `latest`'s
+    // own status can't represent that (pending/started isn't a `BackupStatus`).
     sqlx::query_as!(
         HealthRow,
         "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
          latest.status AS \"last_status?\", completed.finished_at AS \"last_backup_at?\", \
-         latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS \
-         schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, \
-         s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = \
-         s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN \
-         LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id \
-         = s.id AND br.agent_id = a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT \
-         JOIN LATERAL ( SELECT br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id \
-         AND br.agent_id = a.id AND br.status NOT IN ('pending', 'started') ORDER BY \
-         br.started_at DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY \
-         a.hostname, r.name",
+         completed.status AS \"last_backup_status?\", latest.error_message AS \
+         \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, \
+         s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = \
+         st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, \
+         br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = \
+         a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT \
+         br.status, br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND \
+         br.agent_id = a.id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at \
+         DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await

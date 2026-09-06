@@ -407,9 +407,15 @@ async function loadAgents(): Promise<void> {
       if (status === 'warning') host.warning++
       if (entry.is_overdue) host.overdue++
 
+      // Gates on the *completed* run's own outcome, not `status` above (the
+      // latest run of any kind): while a newer run is in flight, `status` is
+      // null (pending/started has no settled outcome), which must not hide a
+      // prior success just because the current attempt hasn't finished yet.
+      const completedStatus =
+        entry.last_backup_status !== null ? normalizeBackupStatus(entry.last_backup_status) : null
       if (
         entry.last_backup_at &&
-        (status === 'success' || status === 'warning') &&
+        (completedStatus === 'success' || completedStatus === 'warning') &&
         (!host.mostRecentBackupAt || entry.last_backup_at > host.mostRecentBackupAt)
       ) {
         host.mostRecentBackupAt = entry.last_backup_at

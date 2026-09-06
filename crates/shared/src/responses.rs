@@ -1588,10 +1588,20 @@ pub struct HealthSummaryResponse {
     /// target name.
     pub target_name: String,
     #[ts(type = "string | null")]
-    /// last status.
+    /// Status of the most recent run of any kind, including one still in
+    /// progress. A run that hasn't settled yet (queued or running) has no
+    /// `BackupStatus` of its own, so this is `None` while one is in flight -
+    /// use `last_backup_status` for the outcome of the last *completed* run.
     pub last_status: Option<BackupStatus>,
-    /// Timestamp of when the last backup occurred.
+    /// Timestamp of the last *completed* backup - never an in-flight run's
+    /// placeholder timestamp, even when one is currently running.
     pub last_backup_at: Option<DateTime<Utc>>,
+    #[ts(type = "string | null")]
+    /// Outcome of the last *completed* backup (`last_backup_at`'s run),
+    /// regardless of whether a newer run is currently in flight. Coverage/
+    /// staleness displays should gate on this instead of `last_status`, so a
+    /// running backup doesn't hide a prior success's freshness.
+    pub last_backup_status: Option<BackupStatus>,
     /// Whether the schedule is overdue.
     pub is_overdue: bool,
     /// Last error message.

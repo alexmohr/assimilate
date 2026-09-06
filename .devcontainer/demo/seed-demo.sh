@@ -526,7 +526,7 @@ api POST "/api/schedules" "{
     ],
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
     \"file_change_patterns_per_agent\": [
-        {\"agent_id\": $WEB01_ID, \"raw_text\": \"*/var/log/nginx/error.log* ignore\"}
+        {\"agent_id\": $WEB01_ID, \"raw_text\": \"/var/log/nginx/error.log* ignore\"}
     ]
 }" > /dev/null
 

@@ -405,6 +405,184 @@ describe('HostsView', () => {
     )
   })
 
+  /**
+   * The version is the grid's grouping now, not a per-card stat: mounts a
+   * fleet spanning two builds plus an agent that never reported one.
+   */
+  async function mountVersionedFleet(
+    available: string | null = '0.1.108',
+  ): Promise<ReturnType<typeof mount>> {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            { ...agents[0], id: 1, hostname: 'old-host', agent_version: '0.1.98' },
+            { ...agents[0], id: 2, hostname: 'new-host', agent_version: '0.1.108' },
+            { ...agents[0], id: 3, hostname: 'quiet-host', agent_version: null },
+          ],
+        })
+      }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+          },
+        })
+      }
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: available } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('groups the agent grid by reported version, current first and unknown last', async () => {
+    const wrapper = await mountVersionedFleet()
+
+    expect(wrapper.findAll('.list-group-title').map((h) => h.text())).toEqual([
+      '0.1.108',
+      '0.1.98',
+      'Unknown',
+    ])
+    // Numeric collation, or 0.1.98 would sort above 0.1.108 as a string.
+    const groups = wrapper.findAll('.list-group')
+    expect(groups[0].find('.card-name').text()).toContain('new-host')
+    expect(groups[1].find('.card-name').text()).toContain('old-host')
+    expect(groups[2].find('.card-name').text()).toContain('quiet-host')
+    expect(groups[0].find('.list-group-count').text()).toBe('1 agent')
+  })
+
+  it('names each version group against the binary the server has', async () => {
+    const wrapper = await mountVersionedFleet()
+
+    const badges = wrapper.findAll('.list-group-header .badge')
+    expect(badges.map((b) => b.text())).toEqual(['Current', 'Behind', 'Never reported'])
+    expect(badges[0].classes()).toContain('badge--success')
+    expect(badges[1].classes()).toContain('badge--warning')
+  })
+
+  it('claims no version is behind when the server has no binary to compare against', async () => {
+    const wrapper = await mountVersionedFleet(null)
+
+    // Only the never-reported group can still be named without a comparison.
+    expect(wrapper.findAll('.list-group-header .badge').map((b) => b.text())).toEqual([
+      'Never reported',
+    ])
+  })
+
+  it('drops the agent version from the card, since the group header carries it', async () => {
+    const wrapper = await mountVersionedFleet()
+
+    const labels = wrapper.findAll('.stat-label').map((l) => l.text())
+    expect(labels).toContain('Schedules')
+    expect(labels).not.toContain('Agent')
+  })
+
+  it('marks outdated fleet version chips as behind', async () => {
+    const wrapper = await mountVersionedFleet()
+
+    const chips = wrapper.findAll('.fleet-version-chip')
+    const current = chips.find((c) => c.text().includes('(current)'))
+    const outdated = chips.find((c) => c.text().startsWith('0.1.98'))
+    expect(current?.classes()).toContain('fleet-version-chip-current')
+    expect(outdated?.classes()).toContain('fleet-version-chip-outdated')
+    // An agent that never reported one is neither current nor behind.
+    expect(chips.find((c) => c.text().startsWith('unknown'))?.classes()).toEqual([
+      'fleet-version-chip',
+    ])
+  })
+
+  it('splits the fleet band into one health segment per state', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            { ...agents[0], id: 1, hostname: 'clean-host', is_connected: true },
+            { ...agents[0], id: 2, hostname: 'failing-host', is_connected: true },
+            { ...agents[0], id: 3, hostname: 'bare-host', is_connected: true },
+            { ...agents[0], id: 4, hostname: 'gone-host', is_connected: false },
+          ],
+        })
+      }
+      if (url === '/stats/schedule-counts') {
+        return Promise.resolve({
+          data: [
+            { agent_id: 1, count: 1 },
+            { agent_id: 2, count: 1 },
+            { agent_id: 4, count: 1 },
+          ],
+        })
+      }
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [
+            {
+              hostname: 'clean-host',
+              target_name: 'daily',
+              last_status: 'success',
+              last_backup_at: '2026-01-02T00:00:00Z',
+              last_backup_status: 'success',
+              is_overdue: false,
+              last_error_message: null,
+            },
+            {
+              hostname: 'failing-host',
+              target_name: 'daily',
+              last_status: 'failed',
+              last_backup_at: null,
+              last_backup_status: null,
+              is_overdue: false,
+              last_error_message: 'boom',
+            },
+          ],
+        })
+      }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+          },
+        })
+      }
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const segments = wrapper.findAll('.fleet-seg')
+    expect(segments.map((s) => s.attributes('title'))).toEqual([
+      '1 clean',
+      '1 failing',
+      '1 unprotected',
+      '1 offline',
+    ])
+    expect(segments[0].classes()).toContain('fleet-tone--clean')
+    expect(segments[3].classes()).toContain('fleet-tone--offline')
+    expect(wrapper.find('.fleet-track').attributes('aria-label')).toBe(
+      'Fleet health: 1 clean, 1 failing, 1 unprotected, 1 offline',
+    )
+  })
+
   it('formats relative last-seen times and agent versions', async () => {
     const recent = new Date(Date.now() - 90 * 60 * 1000).toISOString()
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
@@ -500,6 +678,7 @@ describe('HostsView issue rows', () => {
   async function mountAgentsList(
     agentsData: unknown[],
     healthData: unknown[] = [],
+    scheduleCounts: unknown[] = [],
   ): Promise<{
     wrapper: ReturnType<typeof mount>
     router: ReturnType<typeof createRouter>
@@ -507,6 +686,7 @@ describe('HostsView issue rows', () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: agentsData })
       if (url === '/stats/health') return Promise.resolve({ data: healthData })
+      if (url === '/stats/schedule-counts') return Promise.resolve({ data: scheduleCounts })
       if (url === '/stats/dashboard-overview') return Promise.resolve({ data: emptyOverviewData })
       if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
       return Promise.resolve({ data: [] })
@@ -585,8 +765,9 @@ describe('HostsView issue rows', () => {
 
   async function mountSingleAgent(
     overrides: Record<string, unknown>,
+    scheduleCounts: unknown[] = [{ agent_id: 42, count: 1 }],
   ): Promise<ReturnType<typeof mount>> {
-    const { wrapper } = await mountAgentsList([{ ...issueAgent, ...overrides }])
+    const { wrapper } = await mountAgentsList([{ ...issueAgent, ...overrides }], [], scheduleCounts)
     return wrapper
   }
 
@@ -602,6 +783,135 @@ describe('HostsView issue rows', () => {
 
     expect(wrapper.find('.entity-card').classes()).not.toContain('entity-card--notable')
     expect(wrapper.find('.entity-badge-row').exists()).toBe(false)
+  })
+
+  it('badges a connected agent as online', async () => {
+    const wrapper = await mountSingleAgent({ is_connected: true })
+
+    const badge = wrapper.find('.card-top-badges .badge--success')
+    expect(badge.text()).toBe('Online')
+    // Live state, so the badge carries the dot; classification badges do not.
+    expect(badge.find('.badge-dot').exists()).toBe(true)
+  })
+
+  it('does not badge a disconnected agent as online', async () => {
+    const wrapper = await mountSingleAgent({ is_connected: false })
+
+    expect(wrapper.find('.card-top-badges .badge--success').exists()).toBe(false)
+  })
+
+  it('flags a host nothing is scheduled to back up', async () => {
+    const wrapper = await mountSingleAgent({ is_connected: true }, [{ agent_id: 42, count: 0 }])
+
+    const chip = wrapper.find('.entity-issue-chip.sev-danger')
+    expect(chip.text()).toBe('No schedules')
+  })
+
+  it('opens the schedules tab when the no-schedules chip is clicked', async () => {
+    const { wrapper, router } = await mountAgentsList(
+      [issueAgent],
+      [],
+      [{ agent_id: 42, count: 0 }],
+    )
+    const push = vi.spyOn(router, 'push')
+
+    await wrapper.find('.entity-issue-chip.sev-danger').trigger('click')
+
+    expect(push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/agents/flaky-host',
+        query: expect.objectContaining({ tab: 'schedules' }),
+      }),
+    )
+  })
+
+  it('does not claim a host is unprotected while the schedule counts are unknown', async () => {
+    // The count request failing leaves the map empty, which is not the same
+    // as every host having no schedule - the accusation waits for an answer.
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [issueAgent] })
+      if (url === '/stats/schedule-counts') return Promise.reject(new Error('down'))
+      if (url === '/stats/dashboard-overview') return Promise.resolve({ data: emptyOverviewData })
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.find('.entity-issue-chip.sev-danger').exists()).toBe(false)
+  })
+
+  it('does not call a host with health entries unprotected, whatever the counts say', async () => {
+    // Health entries only exist for scheduled targets, so the two sources have
+    // to agree before the card accuses the host of having nothing.
+    const { wrapper } = await mountWithHealth()
+
+    expect(wrapper.findAll('.entity-issue-chip').map((c) => c.text())).not.toContain('No schedules')
+  })
+
+  function statTone(wrapper: ReturnType<typeof mount>, label: string): string[] {
+    const stat = wrapper.findAll('.stat').find((s) => s.find('.stat-label').text() === label)
+    return stat?.find('.stat-value').classes() ?? []
+  }
+
+  it('tones the last-backup figure by how the host is actually doing', async () => {
+    const fresh = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const healthy = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'daily',
+          last_status: 'success',
+          last_backup_at: fresh,
+          last_backup_status: 'success',
+          is_overdue: false,
+          last_error_message: null,
+        },
+      ],
+      [{ agent_id: 42, count: 1 }],
+    )
+    expect(statTone(healthy.wrapper, 'Last backup')).toContain('stat-value--success')
+
+    const overdue = await mountWithHealth()
+    expect(statTone(overdue.wrapper, 'Last backup')).toContain('stat-value--warning')
+
+    const never = await mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'daily',
+          last_status: null,
+          last_backup_at: null,
+          last_backup_status: null,
+          is_overdue: false,
+          last_error_message: null,
+        },
+      ],
+      [{ agent_id: 42, count: 1 }],
+    )
+    expect(statTone(never.wrapper, 'Last backup')).toContain('stat-value--danger')
+  })
+
+  it('tones the last-seen figure only once an agent is gone', async () => {
+    const online = await mountSingleAgent({ is_connected: true })
+    expect(statTone(online, 'Last seen')).toEqual(['stat-value'])
+
+    const recentlyGone = await mountSingleAgent({
+      is_connected: false,
+      last_seen_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    })
+    expect(statTone(recentlyGone, 'Last seen')).toContain('stat-value--warning')
+
+    const longGone = await mountSingleAgent({
+      is_connected: false,
+      last_seen_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    expect(statTone(longGone, 'Last seen')).toContain('stat-value--danger')
   })
 
   // The card reports the freshest completed backup as a stat; whether the
@@ -728,9 +1038,11 @@ describe('HostsView issue rows', () => {
     await tagCheckbox.trigger('change')
     expect(cardNames(wrapper)).toEqual(['beta-host'])
 
-    // Toggling the same tag off is a deselect, not a second filter.
+    // Toggling the same tag off is a deselect, not a second filter. Both are
+    // back, in version-group order: beta-host reports 0.1.11, alpha-host the
+    // older 0.1.9, and the grid groups before it sorts.
     await tagCheckbox.trigger('change')
-    expect(cardNames(wrapper)).toEqual(['alpha-host', 'beta-host'])
+    expect(cardNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
   })
 
   it('sorts by status, last seen and version', async () => {

@@ -39,11 +39,7 @@ import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatus
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
-import type {
-  AgentTagEntryResponse,
-  HealthSummaryResponse,
-  ScheduleCountByAgentResponse,
-} from '../types/generated'
+import type { AgentTagEntryResponse, HealthSummaryResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 
 interface AgentHealth {
@@ -82,6 +78,10 @@ const isAdmin = computed(() => authStore.isAdmin)
 const agents = ref<AgentRow[]>([])
 const showHidden = ref(false)
 const machineScheduleCount = ref<Record<number, number>>({})
+// Whether `machineScheduleCount` reflects an answer from the server. A failed
+// request leaves it empty, and an empty map must not read as "no host has any
+// schedule".
+const scheduleCountsKnown = ref(false)
 const fleetScheduleCount = ref(0)
 const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
@@ -219,11 +219,6 @@ function formatLastSeen(iso: string | null | undefined): string {
   return `${days}d ago`
 }
 
-function formatVersion(v: string | null | undefined): string {
-  if (!v) return '\u2014'
-  return v
-}
-
 function scheduleCount(agent: AgentRow): number {
   return machineScheduleCount.value[agent.id] ?? 0
 }
@@ -234,6 +229,21 @@ function agentTags(agent: AgentRow): { name: string; color: string }[] {
 
 function agentHealthStatus(agent: AgentRow): AgentHealth | null {
   return healthByHost.value[agent.hostname] ?? null
+}
+
+/**
+ * Whether nothing at all backs this host up.
+ *
+ * Deliberately conservative, because the claim is an accusation: it needs the
+ * schedule-count request to have actually answered (a failed one leaves the
+ * map empty, which is not the same as every host having none), and it needs
+ * the health summary to agree - a host with health entries has schedules,
+ * whatever the count endpoint says.
+ */
+function isUnprotected(agent: AgentRow): boolean {
+  if (!scheduleCountsKnown.value) return false
+  if (scheduleCount(agent) > 0) return false
+  return (agentHealthStatus(agent)?.total ?? 0) === 0
 }
 
 // The most recent backup that actually completed, across this agent's
@@ -247,6 +257,7 @@ interface FleetVersionCount {
   version: string
   count: number
   current: boolean
+  outdated: boolean
 }
 
 const fleetSummary = computed(() => {
@@ -254,26 +265,193 @@ const fleetSummary = computed(() => {
   const online = agents.value.filter((a) => a.is_connected).length
   const totalSchedules = fleetScheduleCount.value
 
-  const versionCounts = new Map<string, number>()
+  // Keyed on the raw `agent_version`, `null` included, so "never reported one"
+  // stays a distinct key instead of colliding with an agent that genuinely
+  // reports the string "unknown" - and so the comparisons below never test a
+  // wide string against a literal.
+  const versionCounts = new Map<string | null, number>()
   for (const a of agents.value) {
-    const v = a.agent_version ?? 'unknown'
-    versionCounts.set(v, (versionCounts.get(v) ?? 0) + 1)
+    versionCounts.set(a.agent_version, (versionCounts.get(a.agent_version) ?? 0) + 1)
   }
+  const available = availableAgentVersion.value
   const versions: FleetVersionCount[] = [...versionCounts.entries()]
     .map(([version, count]) => ({
-      version,
+      version: version ?? 'unknown',
       count,
-      current: availableAgentVersion.value !== null && version === availableAgentVersion.value,
+      current: version !== null && version === available,
+      outdated: version !== null && available !== null && version !== available,
     }))
     .sort((a, b) => b.count - a.count)
 
   return { total, online, totalSchedules, versions }
 })
 
+/**
+ * The state a host contributes to the fleet track, worst first: a host that
+ * is unreachable cannot be assessed, one with no schedule is not being backed
+ * up at all, and only then do the outcomes of its runs decide.
+ */
+type FleetState = 'offline' | 'unprotected' | 'failing' | 'overdue' | 'clean'
+
+const FLEET_STATES: readonly { key: FleetState; label: string }[] = [
+  { key: 'clean', label: 'clean' },
+  { key: 'overdue', label: 'overdue' },
+  { key: 'failing', label: 'failing' },
+  { key: 'unprotected', label: 'unprotected' },
+  { key: 'offline', label: 'offline' },
+]
+
+function fleetStateOf(agent: AgentRow): FleetState {
+  if (!agent.is_connected) return 'offline'
+  if (isUnprotected(agent)) return 'unprotected'
+  const health = agentHealthStatus(agent)
+  if (!health) return 'clean'
+  if (health.failed > 0) return 'failing'
+  if (health.overdue > 0) return 'overdue'
+  // Scheduled, reachable, nothing failing - but nothing has ever landed, so
+  // there is no restore point yet either.
+  if (!health.mostRecentBackupAt) return 'unprotected'
+  return 'clean'
+}
+
+interface FleetHealthSegment {
+  key: FleetState
+  label: string
+  count: number
+}
+
+/**
+ * The whole fleet split by state. Counted over every listed agent rather than
+ * the filtered list: the band summarises the fleet, and a filter narrowing the
+ * grid below it should not change what the fleet is.
+ */
+const fleetHealth = computed<FleetHealthSegment[]>(() => {
+  const counts = new Map<FleetState, number>()
+  for (const agent of agents.value) {
+    const state = fleetStateOf(agent)
+    counts.set(state, (counts.get(state) ?? 0) + 1)
+  }
+  return FLEET_STATES.map(({ key, label }) => ({ key, label, count: counts.get(key) ?? 0 })).filter(
+    (segment) => segment.count > 0,
+  )
+})
+
+const fleetHealthLabel = computed(() =>
+  fleetHealth.value.map((segment) => `${segment.count} ${segment.label}`).join(', '),
+)
+
+/** A host offline for longer than this reads as gone, not as briefly away. */
+const STALE_LAST_SEEN_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The tone of the last-backup figure. A host with no schedule gets none - the
+ * card's own "No schedules" chip says why the value reads "Never", and a red
+ * figure beside a red chip would say it twice.
+ */
+function lastBackupClass(agent: AgentRow): string | null {
+  if (isUnprotected(agent)) return null
+  const health = agentHealthStatus(agent)
+  if (!health) return null
+  if (!health.mostRecentBackupAt) return 'stat-value--danger'
+  if (health.failed > 0 || health.overdue > 0) return 'stat-value--warning'
+  return 'stat-value--success'
+}
+
+/** The tone of the last-seen figure: only an agent that is gone gets one. */
+function lastSeenClass(agent: AgentRow): string | null {
+  if (agent.is_connected) return null
+  if (!agent.last_seen_at) return 'stat-value--danger'
+  const ts = new Date(agent.last_seen_at).getTime()
+  if (isNaN(ts)) return 'stat-value--danger'
+  return Date.now() - ts > STALE_LAST_SEEN_MS ? 'stat-value--danger' : 'stat-value--warning'
+}
+
+interface AgentVersionGroup {
+  key: string
+  /** The version itself, or "Unknown" for an agent that never reported one. */
+  title: string
+  /** What the group is relative to the binary the server has, when it knows. */
+  label: string | null
+  badgeClass: string
+  agents: AgentRow[]
+}
+
+/**
+ * The grid, bucketed by the agent version each host reports - the shape
+ * SchedulesView uses for its time buckets. The version is the group, so it is
+ * no longer a per-card stat: a fleet running two builds reads as two headings
+ * rather than as eight values to compare by eye.
+ */
+const agentGroups = computed<AgentVersionGroup[]>(() => {
+  const byVersion = new Map<string | null, AgentRow[]>()
+  for (const agent of filteredAgents.value) {
+    const list = byVersion.get(agent.agent_version) ?? []
+    list.push(agent)
+    byVersion.set(agent.agent_version, list)
+  }
+
+  const available = availableAgentVersion.value
+  const known = [...byVersion.keys()].filter((version): version is string => version !== null)
+  // Current first, then newest to oldest. Numeric collation so 0.1.108 sorts
+  // above 0.1.98 rather than below it, as a plain string compare would.
+  known.sort((a, b) => {
+    if (available !== null) {
+      if (a === available) return -1
+      if (b === available) return 1
+    }
+    return b.localeCompare(a, undefined, { numeric: true })
+  })
+
+  const groups: AgentVersionGroup[] = known.map((version) => {
+    const isCurrent = version === available
+    return {
+      key: version,
+      title: version,
+      // Without a server binary to compare against, "behind" is not a claim
+      // the UI can make - so it says nothing rather than guessing.
+      label: available === null ? null : isCurrent ? 'Current' : 'Behind',
+      badgeClass: isCurrent ? 'badge--success' : 'badge--warning',
+      agents: byVersion.get(version) ?? [],
+    }
+  })
+
+  const unknown = byVersion.get(null)
+  if (unknown) {
+    groups.push({
+      key: 'unknown',
+      title: 'Unknown',
+      label: 'Never reported',
+      badgeClass: 'badge--neutral',
+      agents: unknown,
+    })
+  }
+
+  return groups
+})
+
+/** Where each issue chip lands on the agent's detail page. */
+const ISSUE_QUERY: Record<'failed' | 'overdue' | 'unprotected', Record<string, string>> = {
+  failed: { tab: 'backups', status: 'failed' },
+  overdue: { tab: 'schedules', health: 'overdue' },
+  unprotected: { tab: 'schedules' },
+}
+
 function agentIssues(agent: AgentRow): EntityIssue[] {
-  const h = agentHealthStatus(agent)
-  if (!h) return []
   const issues: EntityIssue[] = []
+  // A host nothing is scheduled against is the coverage gap the dashboard
+  // already reports; on the card it was a grey `0` that read like a quiet,
+  // healthy machine.
+  if (isUnprotected(agent)) {
+    issues.push({
+      key: 'unprotected',
+      label: 'No schedules',
+      severity: 'danger',
+      title: 'Nothing is scheduled to back this host up',
+      onClick: () => navigateToAgentIssue(agent, 'unprotected'),
+    })
+  }
+  const h = agentHealthStatus(agent)
+  if (!h) return issues
   if (h.failed > 0) {
     issues.push({
       key: 'failed',
@@ -293,11 +471,8 @@ function agentIssues(agent: AgentRow): EntityIssue[] {
   return issues
 }
 
-function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue'): void {
-  const query =
-    kind === 'failed'
-      ? { tab: 'backups', status: 'failed' }
-      : { tab: 'schedules', health: 'overdue' }
+function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue' | 'unprotected'): void {
+  const query = ISSUE_QUERY[kind]
   router.push({
     path: `/agents/${agent.hostname}`,
     query: { ...query, ...domainParams(agent.domain) },
@@ -356,14 +531,18 @@ async function loadAgents(): Promise<void> {
       listAgentTags({ timeout: 8000 }).catch(() => [] as AgentTagEntryResponse[]),
       listTags('host', { timeout: 8000 }).catch(() => [] as TagRow[]),
       getScheduleHealth({ timeout: 8000 }).catch(() => [] as HealthSummaryResponse[]),
-      getScheduleCounts({ timeout: 8000 }).catch(() => [] as ScheduleCountByAgentResponse[]),
+      getScheduleCounts({ timeout: 8000 }).catch(() => null),
       listSchedules({ timeout: 8000 }).catch(() => [] as { id: number }[]),
       getDashboardOverview({ timeout: 8000 }).catch(() => emptyOverview),
     ])
-    machineScheduleCount.value = {}
-    scheduleCountsRes.forEach((entry) => {
-      machineScheduleCount.value[entry.agent_id] = entry.count
-    })
+    if (scheduleCountsRes) {
+      const counts: Record<number, number> = {}
+      scheduleCountsRes.forEach((entry) => {
+        counts[entry.agent_id] = entry.count
+      })
+      machineScheduleCount.value = counts
+      scheduleCountsKnown.value = true
+    }
     // Fleet-wide total is the distinct schedule count, not a sum of
     // per-agent counts - a schedule targeting N agents would otherwise be
     // counted N times.
@@ -743,12 +922,42 @@ watch(
           }}
         </span>
       </div>
+      <div
+        class="fleet-track"
+        role="img"
+        :aria-label="`Fleet health: ${fleetHealthLabel}`"
+      >
+        <span
+          v-for="segment in fleetHealth"
+          :key="segment.key"
+          class="fleet-seg"
+          :class="`fleet-tone--${segment.key}`"
+          :style="{ flexGrow: segment.count }"
+          :title="`${segment.count} ${segment.label}`"
+        ></span>
+      </div>
+      <div class="fleet-key">
+        <span
+          v-for="segment in fleetHealth"
+          :key="segment.key"
+          class="fleet-key-item"
+        >
+          <span
+            class="fleet-key-dot"
+            :class="`fleet-tone--${segment.key}`"
+          ></span>
+          {{ segment.count }} {{ segment.label }}
+        </span>
+      </div>
       <div class="fleet-version-row">
         <span
           v-for="v in fleetSummary.versions"
           :key="v.version"
           class="fleet-version-chip"
-          :class="{ 'fleet-version-chip-current': v.current }"
+          :class="{
+            'fleet-version-chip-current': v.current,
+            'fleet-version-chip-outdated': v.outdated,
+          }"
         >
           {{ v.version }}{{ v.current ? ' (current)' : '' }}: {{ v.count }}
         </span>
@@ -780,132 +989,161 @@ watch(
       No agents match the current filter.
     </div>
 
-    <div
-      v-else
-      class="card-grid"
-    >
-      <div
-        v-for="agent in filteredAgents"
-        :key="agent.id"
-        class="entity-card"
-        :class="{
-          'entity-card--hidden': agent.is_hidden,
-          'entity-card--notable': !isOnline(agent),
-        }"
-        @click="navigateToAgent(agent)"
+    <template v-else>
+      <section
+        v-for="group in agentGroups"
+        :key="group.key"
+        class="list-group"
       >
-        <div class="card-top">
-          <div class="card-info">
-            <span class="card-name"
-              >{{ agent.hostname
-              }}<span
-                v-if="agent.domain"
-                class="muted"
-              >
-                ({{ agent.domain }})</span
-              ></span
-            >
-            <span
-              v-if="agent.display_name"
-              class="card-display"
-              >{{ agent.display_name }}</span
-            >
-          </div>
-          <div class="card-top-badges">
-            <span
-              v-if="agent.is_hidden"
-              class="badge badge--neutral"
-            >
-              Hidden
-            </span>
-            <span
-              v-if="isImported(agent)"
-              class="badge badge--accent"
-            >
-              Imported
-            </span>
-          </div>
-        </div>
-        <div class="card-stats">
-          <div class="stat">
-            <span class="stat-value">{{ scheduleCount(agent) }}</span>
-            <span class="stat-label">Schedules</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatLastSeen(lastBackupAt(agent)) }}</span>
-            <span class="stat-label">Last backup</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatLastSeen(agent.last_seen_at) }}</span>
-            <span class="stat-label">Last seen</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value mono">{{ formatVersion(agent.agent_version) }}</span>
-            <span class="stat-label">Agent</span>
-          </div>
-        </div>
-        <EntityStatusBadges
-          :notable="!isOnline(agent)"
-          notable-label="Offline"
-          :running="hostActiveBackups(agent).length > 0"
-          :running-label="hostRunningLabel(agent)"
-          :issues="agentIssues(agent)"
-        />
-        <div
-          v-if="agentTags(agent).length > 0"
-          class="card-tags"
-        >
+        <div class="list-group-header">
+          <h2 class="list-group-title mono">{{ group.title }}</h2>
           <span
-            v-for="tag in agentTags(agent)"
-            :key="tag.name"
-            class="tag-pill"
-            :style="{
-              background: tag.color + '22',
-              color: tag.color,
-              borderColor: tag.color + '44',
-            }"
+            v-if="group.label"
+            class="badge"
+            :class="group.badgeClass"
+            >{{ group.label }}</span
           >
-            {{ tag.name }}
-          </span>
+          <span class="list-group-count"
+            >{{ group.agents.length }} agent{{ group.agents.length === 1 ? '' : 's' }}</span
+          >
+          <span class="list-group-rule"></span>
         </div>
-        <div
-          class="card-actions"
-          @click.stop
-        >
-          <template v-if="agent.is_hidden">
-            <button
-              class="btn btn-sm btn-ghost"
-              @click="unhideAgent(agent)"
+        <div class="card-grid">
+          <div
+            v-for="agent in group.agents"
+            :key="agent.id"
+            class="entity-card"
+            :class="{
+              'entity-card--hidden': agent.is_hidden,
+              'entity-card--notable': !isOnline(agent),
+            }"
+            @click="navigateToAgent(agent)"
+          >
+            <div class="card-top">
+              <div class="card-info">
+                <span class="card-name"
+                  >{{ agent.hostname
+                  }}<span
+                    v-if="agent.domain"
+                    class="muted"
+                  >
+                    ({{ agent.domain }})</span
+                  ></span
+                >
+                <span
+                  v-if="agent.display_name"
+                  class="card-display"
+                  >{{ agent.display_name }}</span
+                >
+              </div>
+              <div class="card-top-badges">
+                <span
+                  v-if="isOnline(agent)"
+                  class="badge badge--success"
+                >
+                  <span class="badge-dot"></span>
+                  Online
+                </span>
+                <span
+                  v-if="agent.is_hidden"
+                  class="badge badge--neutral"
+                >
+                  Hidden
+                </span>
+                <span
+                  v-if="isImported(agent)"
+                  class="badge badge--accent"
+                >
+                  Imported
+                </span>
+              </div>
+            </div>
+            <div class="card-stats">
+              <div class="stat">
+                <span class="stat-value">{{ scheduleCount(agent) }}</span>
+                <span class="stat-label">Schedules</span>
+              </div>
+              <div class="stat">
+                <span
+                  class="stat-value"
+                  :class="lastBackupClass(agent)"
+                  >{{ formatLastSeen(lastBackupAt(agent)) }}</span
+                >
+                <span class="stat-label">Last backup</span>
+              </div>
+              <div class="stat">
+                <span
+                  class="stat-value"
+                  :class="lastSeenClass(agent)"
+                  >{{ formatLastSeen(agent.last_seen_at) }}</span
+                >
+                <span class="stat-label">Last seen</span>
+              </div>
+            </div>
+            <EntityStatusBadges
+              :notable="!isOnline(agent)"
+              notable-label="Offline"
+              :running="hostActiveBackups(agent).length > 0"
+              :running-label="hostRunningLabel(agent)"
+              :issues="agentIssues(agent)"
+            />
+            <div
+              v-if="agentTags(agent).length > 0"
+              class="card-tags"
             >
-              Unhide
-            </button>
-          </template>
-          <template v-else>
-            <button
-              v-if="isImported(agent)"
-              class="btn btn-sm btn-ghost"
-              @click="openMergeDialog(agent)"
+              <span
+                v-for="tag in agentTags(agent)"
+                :key="tag.name"
+                class="tag-pill"
+                :style="{
+                  background: tag.color + '22',
+                  color: tag.color,
+                  borderColor: tag.color + '44',
+                }"
+              >
+                {{ tag.name }}
+              </span>
+            </div>
+            <div
+              class="card-actions"
+              @click.stop
             >
-              Merge into...
-            </button>
-            <button
-              v-if="isImported(agent)"
-              class="btn btn-sm btn-ghost"
-              @click="adoptAgent(agent)"
-            >
-              Adopt
-            </button>
-            <button
-              v-if="deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent"
-              class="btn btn-sm btn-ghost"
-              @click="openDeployDialog(agent)"
-            >
-              {{ deployButtonLabel(agent) }}
-            </button>
-          </template>
+              <template v-if="agent.is_hidden">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  @click="unhideAgent(agent)"
+                >
+                  Unhide
+                </button>
+              </template>
+              <template v-else>
+                <button
+                  v-if="isImported(agent)"
+                  class="btn btn-sm btn-ghost"
+                  @click="openMergeDialog(agent)"
+                >
+                  Merge into...
+                </button>
+                <button
+                  v-if="isImported(agent)"
+                  class="btn btn-sm btn-ghost"
+                  @click="adoptAgent(agent)"
+                >
+                  Adopt
+                </button>
+                <button
+                  v-if="deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent"
+                  class="btn btn-sm btn-ghost"
+                  @click="openDeployDialog(agent)"
+                >
+                  {{ deployButtonLabel(agent) }}
+                </button>
+              </template>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      </section>
+    </template>
 
     <!-- Add Agent Dialog. One dialog, two states: collect the hostname,
          then reveal the generated token once. -->
@@ -1168,5 +1406,71 @@ watch(
 
 .fleet-version-chip-current {
   color: var(--success);
+}
+
+/* Behind the binary the server has. Silent when the server has none: then
+   there is nothing to be behind of. */
+.fleet-version-chip-outdated {
+  color: var(--warning);
+}
+
+/* The fleet split by state, as one bar. Sized by count, so the band says at a
+   glance whether trouble is one host or most of them. */
+.fleet-track {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  margin-top: var(--space-2);
+}
+
+.fleet-seg {
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+
+.fleet-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-key-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.fleet-key-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+/* One tone per state, shared by the bar and its key. Unprotected takes the
+   danger tone rather than a neutral one: a host nothing backs up is a gap,
+   not a quiet machine. Offline is the only grey - an unreachable agent is
+   not a verdict on its backups. */
+.fleet-tone--clean {
+  background: var(--success);
+}
+
+.fleet-tone--overdue {
+  background: var(--warning);
+}
+
+.fleet-tone--failing {
+  background: var(--danger);
+}
+
+.fleet-tone--unprotected {
+  background: var(--danger);
+}
+
+.fleet-tone--offline {
+  background: var(--text-muted);
 }
 </style>

@@ -31,9 +31,32 @@ The Agents list page provides:
 - **Tag filter** — filter by one or more tags
 - **Sort buttons** — sort by Name, Status, Last seen, or Version
 
-A fleet summary band above the list rolls up the whole fleet: total agent count, how many are online, total schedule count, and a breakdown of agent versions in use, with the version matching the server's available binary marked current.
+A fleet summary band above the list rolls up the whole fleet: total agent count, how many are online, total schedule count, a health bar, and a breakdown of agent versions in use, with the version matching the server's available binary marked current.
 
-Each agent card shows the hostname, display name, schedule count, last backup time, last seen time, and agent version. An offline agent tints the card and adds an **Offline** pill; a **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
+The health bar splits every listed agent into one state each, sized by how many agents are in it and named in the key below it:
+
+| Segment | Meaning |
+|---|---|
+| Clean | Online, scheduled, nothing failing or overdue, and at least one backup has completed |
+| Overdue | At least one of the agent's schedules is past due |
+| Failing | The most recent run on at least one schedule failed |
+| Unprotected | No schedule targets this agent, or none has ever completed a backup |
+| Offline | The agent is not connected, so its backups cannot be assessed |
+
+The band counts the whole fleet, not the filtered list — narrowing the grid below it does not change what the fleet is.
+
+### Grouping by version
+
+The grid groups agents by the version each one reports, newest first, with agents that have never reported a version last under **Unknown**. When the server has an agent binary available, each group header says how it stands against it — **Current** or **Behind**; without one, the UI makes no claim beyond naming the versions.
+
+Because the group header carries the version, the cards no longer repeat it. Each agent card shows the hostname, display name, schedule count, last backup time, and last seen time. A connected agent carries an **Online** badge; an offline one tints the card and adds an **Offline** pill.
+
+Two of those figures take a colour of their own:
+
+- **Last backup** reads green when the agent's schedules are on track, amber when one is overdue or its last run failed, and red when the agent has never completed a backup.
+- **Last seen** reads amber for an agent that has just gone offline and red once it has been gone for more than a day.
+
+A **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. A **No schedules** chip marks an agent nothing is scheduled to back up at all; it opens that agent's Schedules tab. The chip is only shown once the server has actually answered with schedule counts — a failed request leaves the card silent rather than accusing every agent of having none. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
 
 **Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the card does not estimate it a second time from the cron cadence.
 

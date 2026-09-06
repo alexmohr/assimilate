@@ -526,12 +526,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       <div
         v-for="group in groupedSchedules"
         :key="group.key"
-        class="schedule-group"
+        class="list-group"
       >
-        <div class="schedule-group-header">
-          <h2 class="schedule-group-title">{{ group.title }}</h2>
-          <span class="schedule-group-count">{{ group.schedules.length }}</span>
-          <span class="schedule-group-rule"></span>
+        <div class="list-group-header">
+          <h2 class="list-group-title">{{ group.title }}</h2>
+          <span class="list-group-count">{{ group.schedules.length }}</span>
+          <span class="list-group-rule"></span>
         </div>
         <div class="card-grid">
           <div
@@ -637,35 +637,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
-}
-
-.schedule-group + .schedule-group {
-  margin-top: var(--space-8);
-}
-
-.schedule-group-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  margin-bottom: var(--space-5);
-}
-
-.schedule-group-title {
-  margin: 0;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.schedule-group-count {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-}
-
-.schedule-group-rule {
-  flex-grow: 1;
-  height: 1px;
-  background: var(--border);
 }
 
 /* Local layout additions on top of the shared `.card-stats` rule (which sets

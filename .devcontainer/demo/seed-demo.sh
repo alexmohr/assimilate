@@ -294,6 +294,16 @@ DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "S
 STALE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='stale-report-01'")
 AUTO_DISABLED_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='auto-disabled-01'")
 
+# The Agents grid groups its cards by the agent version each host reports, so
+# the demo has to span more than one: the live agent containers all run the
+# build under test (the "current" group), the imported placeholders have never
+# reported one at all ("Unknown"), and these two DB-only hosts stand in for a
+# fleet that has not been upgraded yet ("Behind"). Written directly because no
+# agent process runs for them - nothing would report an older version.
+echo "==> Backdating agent versions on the never-connected hosts..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 -c \
+    "UPDATE agents SET agent_version = '0.1.0' WHERE hostname IN ('offline-due-01', 'stale-report-01')" > /dev/null
+
 # media-store-01 is the "not always on" host in this demo, so it's also the
 # one with wake/shutdown configured - giving the agent and repository Power
 # settings panes, and the run timeline they feed, real data to show. Its

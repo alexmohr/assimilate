@@ -161,6 +161,20 @@ describe('AgentVmsCard', () => {
     )
   })
 
+  it('refuses a negative host default limit instead of uncapping every domain', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+
+    // The same trap as the per-domain field, one level up: clamping to 0
+    // would save "no limit" as the default every domain without its own
+    // inherits.
+    await wrapper.find<HTMLInputElement>('#vm-default-limit').setValue('-5')
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put, 'nothing may be saved for a negative default').not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('A limit must be zero or more GiB')
+  })
+
   it('saves a per-domain limit as soon as it is entered', async () => {
     const wrapper = await mount()
     const limit = wrapper.find<HTMLInputElement>('input.vm-limit')

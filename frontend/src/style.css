@@ -2086,9 +2086,14 @@
     gap: var(--space-3);
   }
 
+  /* Wraps rather than squeezing: a card can be as narrow as 320px, and a
+     row of four stats there would otherwise break its own values and labels
+     mid-phrase ("5h / ago", "LAST / BACKUP"). Consumers with fewer stats
+     never reach the wrap point, so their single row is unchanged. */
   .card-stats {
     display: flex;
-    gap: var(--space-7);
+    flex-wrap: wrap;
+    gap: var(--space-5) var(--space-7);
   }
 
   .card-actions {

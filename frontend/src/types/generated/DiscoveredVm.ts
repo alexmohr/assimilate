@@ -26,5 +26,5 @@ export type DiscoveredVm = {
    * Space the domain's disks occupy on the host, as allocated rather than
    * as apparent size. This is what a full image needs.
    */
-  disk_bytes: bigint;
+  disk_bytes: number;
 };

@@ -83,6 +83,10 @@ case "$SUBCOMMAND" in
       else
         printf 'Job type:         Completed\nOperation:        Backup\n'
       fi
+    elif [[ "${MOCK_VIRT_JOB_RUNNING:-0}" == "1" ]]; then
+      # A backup job that never finishes, so the poll loop runs to its
+      # deadline instead of breaking out on the first look.
+      printf 'Job type:         Unbounded\nOperation:        Backup\n'
     else
       printf 'Job type:         None\n'
     fi

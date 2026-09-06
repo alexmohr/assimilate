@@ -149,6 +149,7 @@ pub struct DiscoveredVm {
     pub disk_count: u32,
     /// Space the domain's disks occupy on the host, as allocated rather than
     /// as apparent size. This is what a full image needs.
+    #[ts(type = "number")]
     pub disk_bytes: u64,
 }
 
@@ -164,6 +165,7 @@ pub struct VmSnapshotOutcome {
     /// How the domain was captured.
     pub mode: VmSnapshotMode,
     /// Space the domain now occupies below the staging directory.
+    #[ts(type = "number")]
     pub staged_bytes: u64,
     /// Increments in the chain after this run. Zero for a copy or a full image.
     pub chain_length: u32,

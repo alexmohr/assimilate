@@ -95,9 +95,19 @@ function toGib(bytes: number): number {
   return Math.round(bytes / GIB)
 }
 
-function fromGib(gib: number): number {
-  return Math.max(0, Math.round(gib)) * GIB
+/**
+ * Bytes for a GiB figure an operator typed, or null when that figure is not a
+ * usable size. `min="0"` on a number input is a validity hint, not a barrier -
+ * a negative value still reaches the change handler - and clamping one to 0
+ * would be read downstream as "no limit", quietly removing a domain's cap on
+ * what is most likely a typo. Refusing it is the safe reading.
+ */
+function fromGib(gib: number): number | null {
+  if (!Number.isFinite(gib) || gib < 0) return null
+  return Math.round(gib) * GIB
 }
+
+const LIMIT_REJECTED = 'A limit must be zero or more GiB. Leave it empty to inherit the default.'
 
 function limitLabel(vm: AgentVmResponse): string {
   if (vm.effective_limit_bytes === 0) return 'No limit'
@@ -208,6 +218,11 @@ function cancelEdit(): void {
 }
 
 async function save(): Promise<void> {
+  const defaultLimit = fromGib(defaultLimitGib.value)
+  if (defaultLimit === null) {
+    saveError.value = LIMIT_REJECTED
+    return
+  }
   saving.value = true
   saveError.value = null
   try {
@@ -220,7 +235,7 @@ async function save(): Promise<void> {
           staging_dir: stagingDir.value.trim(),
           full_interval: fullInterval.value,
           timeout_seconds: timeoutSeconds.value,
-          default_limit_bytes: fromGib(defaultLimitGib.value),
+          default_limit_bytes: defaultLimit,
         },
         props.agent.domain,
       ),
@@ -256,9 +271,14 @@ async function saveVm(
   included: boolean | undefined,
   limitGib: string,
 ): Promise<void> {
+  const trimmed = limitGib.trim()
+  const limitBytes = trimmed === '' ? null : fromGib(Number(trimmed))
+  if (trimmed !== '' && limitBytes === null) {
+    rowError.value = LIMIT_REJECTED
+    return
+  }
   rowSaving.value = vm.name
   rowError.value = null
-  const trimmed = limitGib.trim()
   try {
     applyResponse(
       await updateAgentVm(
@@ -266,7 +286,7 @@ async function saveVm(
         vm.name,
         {
           ...(included === undefined ? {} : { included }),
-          limit_bytes: trimmed === '' ? null : fromGib(Number(trimmed)),
+          limit_bytes: limitBytes,
         },
         props.agent.domain,
       ),
@@ -309,18 +329,33 @@ onMounted(load)
   <!-- No wrapper element: SettingsRail already puts this card's content inside
        the `.settings-pane` column, and nesting a second one both duplicates the
        class on the page and re-applies the column gap a level too deep. -->
+  <!-- Only the very first read replaces the pane. A later reload - the one a
+       finished restore triggers - keeps whatever is on screen, because this
+       `v-if` owns the subtree the restore wizard lives in: swapping to the
+       spinner would unmount the open dialog and mount a fresh one, whose
+       `open` watcher resets it to step 1 and throws away the outcome the
+       operator is meant to read. -->
   <BaseSpinner
-    v-if="loading"
+    v-if="loading && !data"
     label="Loading virtual machines"
   />
   <p
-    v-else-if="loadError"
+    v-else-if="loadError && !data"
     class="form-error"
   >
     {{ loadError }}
   </p>
 
   <template v-else>
+    <!-- A reload that failed while the table was already up. The stale rows
+         stay, so the failure has to say so itself rather than being implied by
+         a pane that never changed. -->
+    <p
+      v-if="loadError"
+      class="form-error"
+    >
+      {{ loadError }}
+    </p>
     <EditableSection
       lede="Stage this host's virtual machines into a directory before a backup runs, so borg
           picks them up as ordinary files. Schedules opt in one by one."

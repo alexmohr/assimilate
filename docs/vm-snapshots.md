@@ -170,6 +170,7 @@ qemu-img commit vda.20260903T020049881Z.qcow2
 - Checkpoints live in libvirt, the chain lives in the staging directory. Deleting the staging directory by hand leaves stale checkpoints behind; the next run notices the missing `chain.txt`, drops those checkpoints and writes a new full image.
 - Domains that fall back to copies are captured crash consistent unless the QEMU guest agent is installed, in which case the file systems are frozen for the snapshot.
 - A domain killed by the snapshot timeout during a fallback copy keeps running on the snapshot overlay. Commit it manually with `virsh blockcommit <domain> <target> --active --pivot --wait`.
+- An incremental backup that passes the timeout is aborted with `virsh domjobabort`, so the libvirt job does not outlive the run that started it. The checkpoint that job was creating may or may not exist afterwards; either way the next run sees the chain it expects is incomplete and writes a new full image.
 
 ## Related pages
 

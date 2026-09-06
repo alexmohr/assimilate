@@ -22,7 +22,7 @@ export type VmSnapshotOutcome = {
   /**
    * Space the domain now occupies below the staging directory.
    */
-  staged_bytes: bigint;
+  staged_bytes: number;
   /**
    * Increments in the chain after this run. Zero for a copy or a full image.
    */

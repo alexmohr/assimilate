@@ -81,10 +81,18 @@ const restorable = computed<RestorableReport[]>(() =>
  * Where stage one leaves the files. borg recreates the archived path below the
  * directory it extracts into, so the domain lands under its staging path.
  */
-const restoredPath = computed<string>(() => {
-  const staged = `${props.stagingDir.replace(/^\/+/, '')}/${props.domainName}`
-  return `${workingDir.value.replace(/\/+$/, '')}/${staged}`
-})
+/**
+ * The domain's path inside the archive: borg stores it relative, so the
+ * leading slash of the staging directory comes off. This is what stage one
+ * asks borg to extract, and the tail of where it ends up on disk.
+ */
+const stagedPath = computed<string>(
+  () => `${props.stagingDir.replace(/^\/+/, '')}/${props.domainName}`,
+)
+
+const restoredPath = computed<string>(
+  () => `${workingDir.value.replace(/\/+$/, '')}/${stagedPath.value}`,
+)
 
 const sourceDir = computed<string>(() =>
   restoreFiles.value ? restoredPath.value : sourceDirInput.value.trim(),
@@ -157,7 +165,7 @@ async function run(): Promise<void> {
     // so a restore that reaches here always has one.
     if (restoreFiles.value && selected.value !== null) {
       const response = await restoreArchiveFiles(selected.value.repoId, selected.value.archive, {
-        paths: [`${props.stagingDir.replace(/^\/+/, '')}/${props.domainName}`],
+        paths: [stagedPath.value],
         target_path: workingDir.value.trim(),
         hostname: props.agent.hostname,
       })

@@ -120,6 +120,26 @@ fn build_test_state(pool: PgPool) -> server::AppState {
 #[cfg(test)]
 fn test_app_core_routes() -> Router<server::AppState> {
     Router::new()
+        // The VM endpoints go through the same router the binary builds, so
+        // the auth extractors, the hostname lookup and the JSON shapes are
+        // exercised rather than assumed. The agent-side staging logic has its
+        // own doubles; none of that covers this plumbing.
+        .route(
+            "/api/agents/{hostname}/vms",
+            get(server::api::vms::get_agent_vms),
+        )
+        .route(
+            "/api/agents/{hostname}/vms/scan",
+            post(server::api::vms::scan_agent_vms),
+        )
+        .route(
+            "/api/agents/{hostname}/vms/{name}",
+            put(server::api::vms::update_agent_vm),
+        )
+        .route(
+            "/api/agents/{hostname}/vm-snapshot",
+            put(server::api::vms::update_agent_vm_snapshot),
+        )
         .route("/api/health", get(server::api::health::health))
         .route("/api/auth/login", post(server::api::auth::login))
         .route("/api/auth/logout", post(server::api::auth::logout))
@@ -8786,4 +8806,171 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("session_idle_timeout_minutes").unwrap(), 60);
     assert_eq!(body.get("timezone").unwrap(), "UTC");
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
+}
+
+/// The VM endpoints are the only path by which the UI reads or changes a
+/// host's staging settings, and none of the agent-side doubles touch them.
+/// These drive the real router so the extractors, the hostname lookup, the
+/// COALESCE-based upserts and the response shapes are covered by something.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_vms_defaults_and_settings_round_trip() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('vm-host', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A host that has never been scanned still answers, with staging off and
+    // no domains, rather than 404ing the settings pane.
+    let response = oneshot(&mut app, get_request("/api/agents/vm-host/vms")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body.get("settings").unwrap().get("enabled").unwrap(), false);
+    assert_eq!(body.get("vms").unwrap().as_array().unwrap().len(), 0);
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/vm-host/vm-snapshot",
+            Some(serde_json::json!({
+                "enabled": true,
+                "selection": "all",
+                "staging_dir": "/var/lib/assimilate/vms",
+                "full_interval": 7,
+                "timeout_seconds": 900,
+                "default_limit_bytes": 0,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let settings = body_json(response).await;
+    let settings = settings.get("settings").unwrap();
+    assert_eq!(settings.get("enabled").unwrap(), true);
+    assert_eq!(settings.get("full_interval").unwrap(), 7);
+    assert_eq!(
+        settings.get("staging_dir").unwrap(),
+        "/var/lib/assimilate/vms"
+    );
+
+    // Read back through a fresh request: the write has to have landed in the
+    // database, not just in the response it echoed.
+    let response = oneshot(&mut app, get_request("/api/agents/vm-host/vms")).await;
+    let body = body_json(response).await;
+    assert_eq!(
+        body.get("settings")
+            .unwrap()
+            .get("timeout_seconds")
+            .unwrap(),
+        900
+    );
+}
+
+/// A settings write that omits `selection` must leave the stored value alone.
+/// Read-then-write here would let two operators saving different sections of
+/// the same pane silently revert each other.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_vm_settings_partial_update_keeps_selection() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('vm-sel', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let base = serde_json::json!({
+        "enabled": true,
+        "selection": "selected",
+        "staging_dir": "/srv/vms",
+        "full_interval": 5,
+        "timeout_seconds": 600,
+        "default_limit_bytes": 0,
+    });
+    let response = oneshot(
+        &mut app,
+        json_request("PUT", "/api/agents/vm-sel/vm-snapshot", Some(base)),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/agents/vm-sel/vm-snapshot",
+            Some(serde_json::json!({
+                "enabled": true,
+                "staging_dir": "/srv/vms",
+                "full_interval": 9,
+                "timeout_seconds": 600,
+                "default_limit_bytes": 0,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let settings = body_json(response).await;
+    let settings = settings.get("settings").unwrap();
+    assert_eq!(settings.get("full_interval").unwrap(), 9);
+    assert_eq!(
+        settings.get("selection").unwrap(),
+        "selected",
+        "a write that did not mention selection must not reset it"
+    );
+}
+
+/// Asking an agent that is not connected to scan cannot hang the request or
+/// pretend it worked - the oneshot channel has no one on the other end.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_scan_agent_vms_without_a_connected_agent_fails_cleanly() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('vm-offline', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = oneshot(
+        &mut app,
+        json_request("POST", "/api/agents/vm-offline/vms/scan", None),
+    )
+    .await;
+    assert_ne!(
+        response.status(),
+        StatusCode::OK,
+        "a scan with no agent behind it must not report success"
+    );
+    assert!(
+        response.status().is_client_error() || response.status().is_server_error(),
+        "got {}",
+        response.status()
+    );
+}
+
+/// An unknown hostname must 404 rather than creating settings for a host that
+/// does not exist.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_agent_vms_unknown_host_is_not_found() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let response = oneshot(&mut app, get_request("/api/agents/no-such-host/vms")).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

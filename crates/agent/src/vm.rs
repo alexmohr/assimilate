@@ -46,6 +46,28 @@ const JOB_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// in the order they must be merged to restore the domain.
 const CHAIN_FILE: &str = "chain.txt";
 
+/// Escapes the five XML metacharacters in a value this agent interpolates
+/// into a document `virsh` reads back.
+///
+/// Everything written here is machine-generated from libvirt's own output, so
+/// this is defence in depth rather than a known hole - but a disk target or a
+/// staging path carrying an `&` or a quote would otherwise produce a document
+/// libvirt cannot parse, and the failure would surface as an unexplained
+/// `backup-begin` error rather than anything naming the cause.
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// How much longer than the configured timeout the outer capture deadline
+/// runs, so the inner job deadline elapses first and gets to abort the libvirt
+/// job it is polling before the whole capture future is dropped.
+const JOB_ABORT_GRACE: Duration = Duration::from_secs(5);
+
 /// Something went wrong while staging a host's domains.
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
@@ -837,7 +859,18 @@ impl VmStager {
 
     /// The directory one domain is staged into.
     fn dest_for(&self, domain: &str) -> PathBuf {
-        Path::new(&self.config.staging_dir).join(domain)
+        // A domain name is libvirt's, and libvirt rejects `/` in one - but
+        // nothing here depends on that holding. `join` on an absolute or
+        // dot-dot name would silently place the staging directory somewhere
+        // else entirely, so the name is taken as a single component or not
+        // at all.
+        let safe = domain.replace(['/', '\\'], "_");
+        let safe = if safe.is_empty() || safe == "." || safe == ".." {
+            "_"
+        } else {
+            safe.as_str()
+        };
+        Path::new(&self.config.staging_dir).join(safe)
     }
 
     /// Stages every included domain, one after another, and reports what it
@@ -920,19 +953,30 @@ impl VmStager {
         let limit = self.config.limit_for(domain);
 
         // The deadline covers whichever capture mode runs, not just the
-        // incremental one. `wait_for_job` applies the same timeout to the
-        // libvirt job it polls, but a fallback copy has no job to poll: it
-        // is an external snapshot, a disk copy and a blockcommit, any of
-        // which can hang - an unresponsive guest agent during `--quiesce`,
-        // or a stalled copy - with nothing to abort it. The setting is
-        // documented as the seconds one domain's snapshot may take before it
-        // is aborted, with no mention of a mode, and the manual recovery
-        // note in docs/vm-snapshots.md is written for exactly the fallback
-        // copy that could not previously time out.
+        // incremental one. A fallback copy has no job to poll: it is an
+        // external snapshot, a disk copy and a blockcommit, any of which can
+        // hang - an unresponsive guest agent during `--quiesce`, or a stalled
+        // copy - with nothing to abort it. The setting is documented as the
+        // seconds one domain's snapshot may take before it is aborted, with
+        // no mention of a mode, and the manual recovery note in
+        // docs/vm-snapshots.md is written for exactly the fallback copy that
+        // could not previously time out.
+        //
+        // `wait_for_job` polls against this same instant rather than deriving
+        // its own from `timeout_seconds`. Two deadlines of equal length
+        // starting at different moments are not the same deadline: the outer
+        // one starts before the checkpoint listing, the XML writes and
+        // `backup-begin`, so it always elapsed first, dropping the poll loop
+        // mid-sleep and leaving `domjobabort` unreachable. A real libvirt job
+        // and the checkpoint `backup-begin` had just created were abandoned
+        // running, and the agent reported only that staging timed out.
+        let deadline = tokio::time::Instant::now()
+            .checked_add(Duration::from_secs(self.config.timeout_seconds.into()))
+            .unwrap_or_else(tokio::time::Instant::now);
         let capture = async {
             match mode {
                 VmSnapshotMode::Incremental => {
-                    self.stage_with_checkpoints(domain, &disks, dest, limit)
+                    self.stage_with_checkpoints(domain, &disks, dest, limit, deadline)
                         .await
                 }
                 VmSnapshotMode::FullCopy => {
@@ -946,8 +990,12 @@ impl VmStager {
             }
         };
 
+        // The grace margin is what gives the inner deadline room to fire,
+        // abort the libvirt job and report it. Without it the two would race
+        // on the same instant. This outer timeout stays as the backstop for a
+        // mode with no job to abort, and for an abort that hangs itself.
         let action = match tokio::time::timeout(
-            Duration::from_secs(self.config.timeout_seconds.into()),
+            Duration::from_secs(self.config.timeout_seconds.into()).saturating_add(JOB_ABORT_GRACE),
             capture,
         )
         .await
@@ -1124,6 +1172,7 @@ impl VmStager {
         disks: &[Disk],
         dest: &Path,
         limit: u64,
+        deadline: tokio::time::Instant,
     ) -> Result<VmRunAction, VmError> {
         let checkpoints = self.owned_checkpoints(domain).await;
         let chain_exists = is_file(&dest.join(CHAIN_FILE)).await;
@@ -1203,7 +1252,7 @@ impl VmStager {
         let _ = tokio::fs::remove_file(&checkpoint_file).await;
         started?;
 
-        self.wait_for_job(domain).await?;
+        self.wait_for_job(domain, deadline).await?;
 
         // The new full exists now, so the chain it replaces can go and it can
         // take the name. A failure anywhere above returns before this, leaving
@@ -1270,7 +1319,7 @@ impl VmStager {
     fn backup_xml(dest: &Path, disks: &[Disk], from: Option<&str>, suffix: &str) -> String {
         let mut xml = String::from("<domainbackup mode=\"push\">\n");
         if let Some(from) = from {
-            let _ = writeln!(xml, "  <incremental>{from}</incremental>");
+            let _ = writeln!(xml, "  <incremental>{}</incremental>", escape_xml(from));
         }
         xml.push_str("  <disks>\n");
         for disk in disks {
@@ -1279,8 +1328,8 @@ impl VmStager {
                 xml,
                 "    <disk name=\"{}\" backup=\"yes\" type=\"file\">\n      <driver \
                  type=\"qcow2\"/>\n      <target file=\"{}\"/>\n    </disk>",
-                disk.target,
-                target.display()
+                escape_xml(&disk.target),
+                escape_xml(&target.to_string_lossy())
             );
         }
         xml.push_str("  </disks>\n</domainbackup>\n");
@@ -1290,12 +1339,15 @@ impl VmStager {
     /// The checkpoint document libvirt reads, which is what makes the next run
     /// able to write only what changed.
     fn checkpoint_xml(disks: &[Disk], name: &str) -> String {
-        let mut xml = format!("<domaincheckpoint>\n  <name>{name}</name>\n  <disks>\n");
+        let mut xml = format!(
+            "<domaincheckpoint>\n  <name>{}</name>\n  <disks>\n",
+            escape_xml(name)
+        );
         for disk in disks {
             let _ = writeln!(
                 xml,
                 "    <disk name=\"{}\" checkpoint=\"bitmap\"/>",
-                disk.target
+                escape_xml(&disk.target)
             );
         }
         xml.push_str("  </disks>\n</domaincheckpoint>\n");
@@ -1303,11 +1355,11 @@ impl VmStager {
     }
 
     /// Waits for a domain's backup job, then reports whether it completed.
-    async fn wait_for_job(&self, domain: &str) -> Result<(), VmError> {
-        let deadline = tokio::time::Instant::now()
-            .checked_add(Duration::from_secs(self.config.timeout_seconds.into()))
-            .unwrap_or_else(tokio::time::Instant::now);
-
+    async fn wait_for_job(
+        &self,
+        domain: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), VmError> {
         loop {
             let running = self
                 .virsh(&["domjobinfo", domain])
@@ -2118,6 +2170,50 @@ mod tests {
         assert!(
             error.contains("timed out"),
             "the failure must name the timeout, got {error}"
+        );
+    }
+
+    /// The incremental path polls a real libvirt job, and `domjobabort` is
+    /// the only thing that ever stops one. It sits behind a deadline that used
+    /// to be derived independently from the same `timeout_seconds` as the
+    /// outer capture deadline - but the outer one starts earlier, before the
+    /// checkpoint listing and `backup-begin`, so it always won and dropped the
+    /// poll loop mid-sleep. The job and its fresh checkpoint were left running
+    /// on the host with nothing to clean them up.
+    #[tokio::test]
+    async fn a_hung_incremental_job_is_aborted_rather_than_abandoned() {
+        let host = FakeHost::new().await;
+        host.define("web01", "running", "web01.qcow2", 16).await;
+        let stager = host.stager_with_env(
+            VmSnapshotConfig {
+                timeout_seconds: 1,
+                ..host.config()
+            },
+            vec![("MOCK_VIRT_JOB_RUNNING".to_owned(), "1".to_owned())],
+        );
+
+        let outcomes = tokio::time::timeout(Duration::from_secs(30), stager.stage_all())
+            .await
+            .expect("the job deadline must end the run well before the double does")
+            .unwrap();
+
+        let error = only(&outcomes)
+            .error
+            .as_ref()
+            .expect("a job that never finishes must fail the domain");
+        assert!(
+            error.contains("timed out"),
+            "the failure must name the timeout, got {error}"
+        );
+        // The mock logs every call it receives, so this is the real proof the
+        // abort was reached rather than the poll loop being dropped mid-sleep.
+        let calls = tokio::fs::read_to_string(host.state().join("calls.log"))
+            .await
+            .unwrap_or_default();
+        assert!(
+            calls.contains("virsh domjobabort web01"),
+            "the timed-out job must actually be aborted, not left running on the host; calls \
+             were:\n{calls}"
         );
     }
 

@@ -178,6 +178,20 @@ describe('AgentVmsCard', () => {
     )
   })
 
+  it('refuses a negative per-domain limit instead of removing the cap', async () => {
+    const wrapper = await mount()
+    const limit = wrapper.find<HTMLInputElement>('input.vm-limit')
+    // `min="0"` does not stop this reaching the change handler. Clamping it to
+    // 0 would be saved as "no limit", so a typo would silently uncap the
+    // domain rather than being rejected.
+    limit.element.value = '-5'
+    await limit.trigger('change')
+    await flushPromises()
+
+    expect(apiClient.put, 'nothing may be saved for a negative limit').not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('A limit must be zero or more GiB')
+  })
+
   it('clears a per-domain limit back to the host default', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: response([vm({ limit_bytes: 500 * GIB, effective_limit_bytes: 500 * GIB })]),
@@ -394,6 +408,7 @@ describe('AgentVmsCard', () => {
     await restore?.trigger('click')
     await flushPromises()
     vi.mocked(apiClient.get).mockClear()
+    const wizardUid = wrapper.findComponent(VmRestoreWizard).vm.$.uid
 
     // The wizard emits this the moment stage two succeeds, not when the
     // operator dismisses it. Closing here would unmount the wizard before its
@@ -406,6 +421,14 @@ describe('AgentVmsCard', () => {
       wrapper.findComponent(VmRestoreWizard).exists(),
       'the operator still has the outcome to read',
     ).toBe(true)
+    // Existing is not enough: the reload's spinner can unmount the whole pane
+    // and mount a BRAND NEW wizard, whose `open` watcher fires `reset()` on
+    // mount and wipes the outcome. Same instance is what actually proves the
+    // dialog - and the result in it - survived the refresh.
+    expect(
+      wrapper.findComponent(VmRestoreWizard).vm.$.uid,
+      'the same wizard instance must survive the reload, not be recreated',
+    ).toBe(wizardUid)
 
     // Dismissing is what closes it.
     wrapper.findComponent(VmRestoreWizard).vm.$emit('close')

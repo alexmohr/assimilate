@@ -191,7 +191,15 @@ describe('VmRestoreWizard', () => {
       // The first build fails, the second succeeds.
       return builds === 1
         ? Promise.reject(new Error('the chain of vda is incomplete'))
-        : Promise.resolve({ data: { name: 'web01-restored', images: [], merged_increments: 0, defined: true, started: false } } as never)
+        : Promise.resolve({
+            data: {
+              name: 'web01-restored',
+              images: [],
+              merged_increments: 0,
+              defined: true,
+              started: false,
+            },
+          } as never)
     })
     const wrapper = await mount()
     await wrapper.find('input[name="vm-restore-archive"]').trigger('change')

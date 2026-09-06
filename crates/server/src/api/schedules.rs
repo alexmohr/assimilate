@@ -1867,4 +1867,46 @@ mod tests {
             "the repo reservation must already be released by the failed fetch's fallback"
         );
     }
+
+    /// Regression test: when `assemble_config` fails - a transient DB error,
+    /// or the agent row deleted mid-run - `push_config_and_trigger_target`
+    /// must report the target unreachable and send nothing, rather than
+    /// triggering a run against a config the agent never received.
+    ///
+    /// This arm was previously covered only by chance: no test drove it, and
+    /// it registered as covered only when some unrelated test happened to
+    /// fail a config assembly first. That made the line flap between covered
+    /// and uncovered from run to run and moved the repository's aggregate
+    /// coverage by a few hundredths of a percent either way, which is enough
+    /// to fail `analyze-coverage-diff.js`'s strict comparison on an unrelated
+    /// pull request.
+    ///
+    /// Uses a lazily-connected pool to a nonexistent database - the same
+    /// deterministic, no-`DATABASE_URL` pattern as
+    /// `release_manual_target_power_releases_the_reservation_even_when_the_row_fetch_fails`
+    /// above - so the fetch inside `assemble_config` fails on every run.
+    #[tokio::test]
+    async fn push_config_and_trigger_target_reports_unreachable_when_config_assembly_fails() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let state = test_app_state(pool);
+        let target = db::ScheduleRunTarget {
+            agent_id: 999_999,
+            hostname: "unreachable-host".to_owned(),
+        };
+
+        let reachable = push_config_and_trigger_target(
+            &state,
+            &target,
+            RepoId(888_888),
+            ScheduleType::Backup,
+            777_777,
+            "run-manual-config-assembly-failure",
+        )
+        .await;
+
+        assert!(
+            !reachable,
+            "a target whose config could not be assembled must be reported unreachable"
+        );
+    }
 }

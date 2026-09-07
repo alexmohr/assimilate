@@ -51,6 +51,60 @@ test.describe('Hosts management', () => {
     await expect(lastBackup.locator('.stat-value')).toHaveText(/^\d+d ago$/)
   })
 
+  test('hosts list groups its cards by the agent version each host reports', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    // Three groups: the version the live agent containers report (the agent
+    // crate's own, so it is not hard-coded here), the 0.0.9 the seed backdates
+    // onto the never-connected hosts, and the placeholders that have never
+    // reported one at all.
+    const groups = page.locator('.list-group')
+    await expect(groups).toHaveCount(3)
+
+    const titles = await groups.locator('.list-group-title').allTextContents()
+    expect(titles).toContain('0.0.9')
+    // Unknown always sorts last, however many builds are in front of it.
+    expect(titles[titles.length - 1]).toBe('Unknown')
+
+    // Every card lives in a group - grouping is the grid, not an extra section
+    // above an ungrouped remainder.
+    await expect(page.locator('.list-group .entity-card')).toHaveCount(
+      await page.locator('.entity-card').count(),
+    )
+
+    const behind = groups.filter({ has: page.locator('.list-group-title', { hasText: '0.0.9' }) })
+    await expect(behind.locator('.entity-card').filter({ hasText: 'offline-due-01' })).toBeVisible()
+
+    // The demo server ships no arch-named agent binary, so it has no version
+    // to compare against and the UI does not claim any group is behind - only
+    // "never reported one" survives without that comparison.
+    const unknown = groups.filter({
+      has: page.locator('.list-group-title', { hasText: 'Unknown' }),
+    })
+    await expect(unknown.locator('.list-group-header .badge')).toHaveText('Never reported')
+
+    // The version is the grouping now, so it is no longer a stat on the card.
+    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
+    await expect(card.locator('.stat').filter({ hasText: 'Agent' })).toHaveCount(0)
+    await expect(card.locator('.badge--success')).toHaveText('Online')
+  })
+
+  test('fleet band splits the fleet into health segments', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    const track = page.locator('.fleet-track')
+    await expect(track).toBeVisible()
+    await expect(track.locator('.fleet-seg').first()).toBeVisible()
+    // Every segment the bar draws is named in the key below it.
+    const segments = await track.locator('.fleet-seg').count()
+    await expect(page.locator('.fleet-key .fleet-key-item')).toHaveCount(segments)
+    await expect(page.locator('.fleet-key')).toContainText('offline')
+  })
+
   test('clicking a host navigates to its detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')

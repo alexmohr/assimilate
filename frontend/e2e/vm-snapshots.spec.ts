@@ -167,7 +167,7 @@ test.describe('Virtual machine staging', () => {
     await page.waitForLoadState('networkidle')
 
     const pane = page.locator('.settings-pane')
-    const optIn = pane.locator('.pane-row', { hasText: 'Stage virtual machines' })
+    const optIn = pane.locator('.pane-row', { hasText: 'Back up virtual machines' })
     await expect(optIn).toBeVisible()
     await expect(optIn.locator('[role="switch"]')).toHaveAttribute('aria-checked', 'true')
   })

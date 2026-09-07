@@ -335,8 +335,8 @@ pub struct VmDomainConfig {
 /// of its configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VmSnapshotConfig {
-    /// Whether this host stages its domains at all. A schedule that opts in
-    /// while this is off stages nothing.
+    /// Whether this host allows its domains to be backed up at all. A schedule
+    /// that asks for them while this is off backs up none of them.
     pub enabled: bool,
     /// Absolute directory that receives one subdirectory per domain.
     pub staging_dir: String,

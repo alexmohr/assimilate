@@ -88,16 +88,17 @@ const refOpen = ref(false)
         </div>
         <div class="pane-row">
           <div class="field-body">
-            <p class="field-title">Stage virtual machines</p>
+            <p class="field-title">Back up virtual machines</p>
             <p class="field-hint">
-              Snapshots each targeted host's libvirt domains before the backup starts, using that
-              host's own staging settings. Hosts with staging switched off are unaffected.
+              Snapshots the libvirt domains of every host this schedule targets before the backup
+              starts, using each host's own staging settings. Hosts that do not allow it are
+              skipped.
             </p>
           </div>
           <div class="pane-row-control">
             <ToggleSwitch
               v-model="form.vm_snapshot_enabled"
-              label="Stage virtual machines"
+              label="Back up virtual machines"
             />
           </div>
         </div>

@@ -88,7 +88,7 @@ describe('ScheduleAdvancedTab', () => {
       { title: 'Canary verification', hint: true },
       { title: 'Ignore global excludes', hint: true },
       { title: 'Compact after backup', hint: true },
-      { title: 'Stage virtual machines', hint: true },
+      { title: 'Back up virtual machines', hint: true },
       { title: 'Remote rate limit (kB/s)', hint: true },
     ])
   })

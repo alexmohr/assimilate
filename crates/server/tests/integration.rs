@@ -4549,6 +4549,20 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
     .await
     .unwrap();
 
+    // The repository a schedule writes into lives in `schedule_repos`, which
+    // `db::insert_schedule` seeds; this helper builds the row by hand, so it
+    // has to seed it too or the schedule is one no dispatch or repo listing
+    // can see.
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 0, TRUE)",
+    )
+    .bind(schedule_id)
+    .bind(repo_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
     sqlx::query(
         "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 0)",
     )
@@ -8239,6 +8253,15 @@ async fn acknowledging_a_failed_run_drops_its_dashboard_finding() {
     )
     .bind(repo_id)
     .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 0, TRUE)",
+    )
+    .bind(schedule_id)
+    .bind(repo_id)
+    .execute(&pool)
     .await
     .unwrap();
     sqlx::query("INSERT INTO schedule_targets (schedule_id, agent_id) VALUES ($1, $2)")

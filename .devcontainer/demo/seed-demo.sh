@@ -417,6 +417,14 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
 # A schedule with two target repositories: the daily repo is required, the
 # weekly one is best effort - so a failure writing the second copy warns
 # rather than failing the run. Covers docs/scheduling.md#backup-targets.
+#
+# Both repositories sit on `localhost`, because the demo serves every borg
+# repository from this one container - there is no second storage host to
+# point at, and inventing one would leave a target nothing could actually
+# write to. So the Targets pane shows the "shares a storage host" warning on
+# this schedule. That is correct and worth seeing: it is exactly what the
+# warning is for, and the demo has no way to show the local+offsite pair the
+# docs describe without a second host to serve it.
 api POST "/api/schedules" "{
     \"name\": \"Web server dual-target\",
     \"agent_ids\": [$WEB01_ID],

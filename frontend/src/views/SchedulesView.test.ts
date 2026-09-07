@@ -229,6 +229,24 @@ function setupApiSuccess(): void {
   })
 }
 
+type Wrapper = ReturnType<typeof renderWithPlugins>
+
+/** Clicks one option of the toolbar's "Group:" segmented control. */
+async function selectGroupMode(wrapper: Wrapper, label: string): Promise<void> {
+  const option = wrapper.findAll('.segmented-option').find((o) => o.text() === label)
+  expect(option, `no "${label}" group option`).toBeDefined()
+  await option!.trigger('click')
+  await flushPromises()
+}
+
+function groupTitles(wrapper: Wrapper): string[] {
+  return wrapper.findAll('.list-group-title').map((t) => t.text())
+}
+
+function groupFor(wrapper: Wrapper, title: string): ReturnType<Wrapper['find']> | undefined {
+  return wrapper.findAll('.list-group').find((g) => g.find('.list-group-title').text() === title)
+}
+
 describe('SchedulesView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -808,21 +826,16 @@ describe('SchedulesView', () => {
     // The two enabled schedules' next_run_at is in the past relative to any
     // real test-run clock, so both land in "Due now"; the disabled one is
     // always "Paused" regardless of its next_run_at.
-    const titles = wrapper.findAll('.list-group-title').map((t) => t.text())
+    const titles = groupTitles(wrapper)
     expect(titles).toContain('Due now')
     expect(titles).toContain('Paused')
 
-    const dueNowGroup = wrapper
-      .findAll('.list-group')
-      .find((g) => g.find('.list-group-title').text() === 'Due now')
+    const dueNowGroup = groupFor(wrapper, 'Due now')
     expect(dueNowGroup!.find('.list-group-count').text()).toBe('2')
     expect(dueNowGroup!.text()).toContain('server-daily')
     expect(dueNowGroup!.text()).toContain('database-hourly')
 
-    const pausedGroup = wrapper
-      .findAll('.list-group')
-      .find((g) => g.find('.list-group-title').text() === 'Paused')
-    expect(pausedGroup!.text()).toContain('media-weekly')
+    expect(groupFor(wrapper, 'Paused')!.text()).toContain('media-weekly')
   })
 
   it('buckets schedules into Next 24 hours, This week, and Later by next_run_at', async () => {
@@ -845,12 +858,179 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const groupFor = (title: string) =>
-      wrapper.findAll('.list-group').find((g) => g.find('.list-group-title').text() === title)
+    expect(groupFor(wrapper, 'Next 24 hours')!.text()).toContain('server-daily')
+    expect(groupFor(wrapper, 'This week')!.text()).toContain('database-hourly')
+    expect(groupFor(wrapper, 'Later')!.text()).toContain('media-weekly')
+  })
 
-    expect(groupFor('Next 24 hours')!.text()).toContain('server-daily')
-    expect(groupFor('This week')!.text()).toContain('database-hourly')
-    expect(groupFor('Later')!.text()).toContain('media-weekly')
+  it('groups schedules by agent, listing a multi-agent schedule under each target', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Agent')
+
+    // Sections are titled with the same "Display name (hostname)" label the
+    // filter matches on, and an agent without a display name keeps its bare
+    // hostname.
+    expect(groupTitles(wrapper)).toEqual([
+      'db-server-01',
+      'Media Store (media-store-01)',
+      'Web Server (web-server-01)',
+    ])
+
+    // server-daily targets both web-server-01 and db-server-01, so it belongs
+    // to both sections - grouping by agent answers "what backs up this
+    // machine", which one arbitrary section could not.
+    expect(groupFor(wrapper, 'Web Server (web-server-01)')!.text()).toContain('server-daily')
+    const dbGroup = groupFor(wrapper, 'db-server-01')!
+    expect(dbGroup.text()).toContain('server-daily')
+    expect(dbGroup.text()).toContain('database-hourly')
+    expect(dbGroup.find('.list-group-count').text()).toBe('2')
+
+    // Disabled schedules are no longer split off into their own bucket, so the
+    // paused one sits with its agent and keeps its Disabled pill.
+    expect(groupFor(wrapper, 'Media Store (media-store-01)')!.text()).toContain('media-weekly')
+  })
+
+  it('lists a schedule once per agent section even when a hostname repeats', async () => {
+    // Two agents can report the same hostname from different domains
+    // (`agents_hostname_domain_idx` makes only (hostname, domain) unique), so
+    // a schedule targeting both carries that hostname twice. They share one
+    // section here, and the card belongs in it once.
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [{ ...mockSchedules[1], target_hostnames: ['db-server-01', 'db-server-01'] }],
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Agent')
+
+    expect(groupTitles(wrapper)).toEqual(['db-server-01'])
+    const group = groupFor(wrapper, 'db-server-01')!
+    expect(group.findAll('.entity-card')).toHaveLength(1)
+    expect(group.find('.list-group-count').text()).toBe('1')
+  })
+
+  it('labels an agent section shared by two same-hostname agents without picking one', async () => {
+    // `edge-proxy` is two machines told apart only by domain. A schedule names
+    // the hostname alone, so the view cannot tell which of them a schedule
+    // targets: both land in one section, which must not be titled with either
+    // agent's display name and must say that it covers more than one agent.
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], target_hostnames: ['edge-proxy'] },
+            { ...mockSchedules[1], target_hostnames: ['edge-proxy'] },
+          ],
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            { id: 20, hostname: 'edge-proxy', display_name: 'DC1 edge', domain: 'dc1.example.com' },
+            { id: 21, hostname: 'edge-proxy', display_name: 'DC2 edge', domain: 'dc2.example.com' },
+          ],
+        })
+      }
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Agent')
+
+    expect(groupTitles(wrapper)).toEqual(['edge-proxy'])
+    const group = groupFor(wrapper, 'edge-proxy')!
+    expect(group.text()).not.toContain('DC1 edge')
+    expect(group.text()).not.toContain('DC2 edge')
+    const badge = group.find('.list-group-header .badge')
+    expect(badge.text()).toBe('2 agents')
+    expect(badge.attributes('title')).toContain('different domains')
+  })
+
+  it('groups schedules by repository', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Repo')
+
+    expect(groupTitles(wrapper)).toEqual(['database-hourly', 'media-weekly', 'server-daily'])
+    for (const title of ['database-hourly', 'media-weekly', 'server-daily']) {
+      expect(groupFor(wrapper, title)!.find('.list-group-count').text()).toBe('1')
+    }
+  })
+
+  it('buckets schedules with no agent or no repository into their own section', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], repo_id: null, target_hostnames: [] },
+            { ...mockSchedules[1] },
+          ],
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    await selectGroupMode(wrapper, 'Agent')
+    // The fallback section sorts last, after every named agent.
+    expect(groupTitles(wrapper)).toEqual(['db-server-01', 'No agents'])
+
+    await selectGroupMode(wrapper, 'Repo')
+    expect(groupTitles(wrapper)).toEqual(['database-hourly', 'No repository'])
+  })
+
+  it('renames the fallback section when a repository is named after it', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], repo_id: 20 },
+            { ...mockSchedules[1], repo_id: null },
+          ],
+        })
+      }
+      if (url === '/repos') {
+        return Promise.resolve({ data: [{ ...mockRepos[0], name: 'No repository' }] })
+      }
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Repo')
+
+    // The repository keeps the name its owner gave it; the keyless section is
+    // the one that gives way, so the two headings stay distinguishable.
+    expect(groupTitles(wrapper)).toEqual(['No repository', 'No repository (none assigned)'])
+  })
+
+  it('returns to the time buckets when the group mode is switched back', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    await selectGroupMode(wrapper, 'Repo')
+    expect(groupTitles(wrapper)).not.toContain('Paused')
+
+    await selectGroupMode(wrapper, 'Time')
+    expect(groupTitles(wrapper)).toContain('Paused')
   })
 
   it('navigates to the schedule detail page when a card is clicked', async () => {

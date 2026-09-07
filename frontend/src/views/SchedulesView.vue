@@ -34,6 +34,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
 import ScheduleTimelineRail, { type TimelineEntry } from '../components/ScheduleTimelineRail.vue'
@@ -79,6 +80,21 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
 type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
 type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
+
+/**
+ * How the cards are bucketed into sections. Time answers "what runs next",
+ * agent "what does this machine back up", repo "what writes into this
+ * repository" - the last two cut across the time buckets, so they are a mode
+ * rather than another sort field.
+ */
+type GroupMode = 'time' | 'agent' | 'repo'
+
+const GROUP_OPTIONS: readonly SegmentedOption<GroupMode>[] = [
+  { value: 'time', label: 'Time' },
+  { value: 'agent', label: 'Agent' },
+  { value: 'repo', label: 'Repo' },
+]
+const groupMode = ref<GroupMode>('time')
 
 const {
   field: sortField,
@@ -136,6 +152,18 @@ const agentMap = computed(() => {
   const map = new Map<string, AgentRow>()
   agents.value.forEach((agent) => map.set(agent.hostname, agent))
   return map
+})
+
+/**
+ * How many agents report each hostname. Only `(hostname, domain)` is unique
+ * (`agents_hostname_domain_idx`), so a hostname can name more than one machine
+ * - and a schedule's `target_hostnames` carries the hostname alone, with no
+ * way to tell which of them it targets.
+ */
+const agentsPerHostname = computed(() => {
+  const counts = new Map<string, number>()
+  agents.value.forEach((agent) => counts.set(agent.hostname, (counts.get(agent.hostname) ?? 0) + 1))
+  return counts
 })
 
 function hostLabel(hostname: string): string {
@@ -281,7 +309,16 @@ function timeBucketOf(s: EnrichedSchedule): TimeBucketKey {
   return 'later'
 }
 
-const groupedSchedules = computed(() => {
+interface ScheduleGroup {
+  /** Unique across the group modes, so switching mode always re-keys the list. */
+  key: string
+  title: string
+  /** Names a state of the section itself, beside its title. */
+  badge: { label: string; title: string } | null
+  schedules: EnrichedSchedule[]
+}
+
+const timeGroups = computed<ScheduleGroup[]>(() => {
   const buckets = new Map<TimeBucketKey, EnrichedSchedule[]>()
   for (const s of filteredSchedules.value) {
     const key = timeBucketOf(s)
@@ -290,10 +327,126 @@ const groupedSchedules = computed(() => {
     buckets.set(key, list)
   }
   return TIME_BUCKETS.map(({ key, title }) => ({
-    key,
+    key: `time:${key}`,
     title,
+    badge: null,
     schedules: buckets.get(key) ?? [],
   })).filter((group) => group.schedules.length > 0)
+})
+
+/**
+ * How one group mode buckets the schedules: which keys a schedule belongs
+ * under, what each key is called in its header, and what the trailing section
+ * of schedules with no key at all is called.
+ */
+interface GroupSpec<K extends string | number> {
+  /** Prefixes every key this mode emits, keeping them unique across modes. */
+  prefix: string
+  /** Empty puts the schedule in the fallback section; several fan it out. */
+  keysOf: (s: EnrichedSchedule) => K[]
+  titleOf: (key: K) => string
+  /** A state of the section worth naming beside its title, if any. */
+  badgeOf?: (key: K) => ScheduleGroup['badge']
+  fallbackTitle: string
+}
+
+/**
+ * The shape both the agent and the repo mode need: bucket by key, order the
+ * sections by the label they show, and append the keyless ones last. Only the
+ * key and the two labels differ between them, so they are a spec, not a second
+ * copy of this.
+ */
+function buildGroups<K extends string | number>(
+  schedules: EnrichedSchedule[],
+  { prefix, keysOf, titleOf, badgeOf, fallbackTitle }: GroupSpec<K>,
+): ScheduleGroup[] {
+  const byKey = new Map<K, EnrichedSchedule[]>()
+  const keyless: EnrichedSchedule[] = []
+  for (const s of schedules) {
+    const keys = keysOf(s)
+    if (keys.length === 0) {
+      keyless.push(s)
+      continue
+    }
+    for (const key of keys) {
+      const list = byKey.get(key) ?? []
+      list.push(s)
+      byKey.set(key, list)
+    }
+  }
+  const groups: ScheduleGroup[] = [...byKey.entries()]
+    .map(([key, grouped]) => ({
+      key: `${prefix}:${key}`,
+      title: titleOf(key),
+      badge: badgeOf?.(key) ?? null,
+      schedules: grouped,
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title))
+  if (keyless.length > 0) {
+    // A repository can be named "No repository", which would put two sections
+    // under one title even though their keys differ. The keyless one gives way,
+    // since the other is titled with a name its owner chose.
+    const collides = groups.some((group) => group.title === fallbackTitle)
+    groups.push({
+      key: `${prefix}:none`,
+      title: collides ? `${fallbackTitle} (none assigned)` : fallbackTitle,
+      badge: null,
+      schedules: keyless,
+    })
+  }
+  return groups
+}
+
+/**
+ * One section per targeted agent, ordered by the label shown in the header.
+ * A schedule targeting several agents is listed under each of them - the whole
+ * point of the view is to answer "what backs up this machine", which a card
+ * shown only under its first target would not.
+ */
+const agentGroups = computed<ScheduleGroup[]>(() =>
+  buildGroups(filteredSchedules.value, {
+    prefix: 'agent',
+    // Deduplicated because a hostname is unique only per domain
+    // (`agents_hostname_domain_idx`): a schedule targeting two agents that
+    // report the same hostname from different domains lists it twice, which
+    // would render its card twice in the one section they share.
+    keysOf: (s) => [...new Set(s.target_hostnames)],
+    // A display name would name one of the agents sharing the hostname and
+    // silently mislabel the others' schedules, so an ambiguous section keeps
+    // the bare hostname and carries a badge saying how many agents it covers.
+    titleOf: (hostname) =>
+      (agentsPerHostname.value.get(hostname) ?? 0) > 1 ? hostname : hostLabel(hostname),
+    badgeOf: (hostname) => {
+      const count = agentsPerHostname.value.get(hostname) ?? 0
+      if (count <= 1) return null
+      return {
+        label: `${count} agents`,
+        title:
+          `${count} agents report the hostname ${hostname} from different domains. ` +
+          'A schedule names only the hostname it targets, so their schedules share this section.',
+      }
+    },
+    fallbackTitle: 'No agents',
+  }),
+)
+
+/** One section per repository the schedules write into, unassigned ones last. */
+const repoGroups = computed<ScheduleGroup[]>(() =>
+  buildGroups(filteredSchedules.value, {
+    prefix: 'repo',
+    keysOf: (s) => (s.repo_id === null ? [] : [s.repo_id]),
+    titleOf: (repoId) => repoMap.value.get(repoId)?.name ?? `repo #${repoId}`,
+    fallbackTitle: 'No repository',
+  }),
+)
+
+// Time last rather than in a `switch`: `vue/return-in-computed-property` does
+// not follow a union's exhaustiveness, and only the selected mode's groups are
+// computed either way.
+const groupedSchedules = computed<ScheduleGroup[]>(() => {
+  if (groupMode.value === 'agent') return agentGroups.value
+  if (groupMode.value === 'repo') return repoGroups.value
+  return timeGroups.value
 })
 
 const railEntries = computed<TimelineEntry[]>(() =>
@@ -494,6 +647,14 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           <option value="failed">Failed only</option>
           <option value="overdue">Overdue only</option>
         </select>
+        <div class="group-controls">
+          <span class="sort-label">Group:</span>
+          <BaseSegmented
+            v-model="groupMode"
+            :options="GROUP_OPTIONS"
+            label="Group schedules by"
+          />
+        </div>
         <SortControls
           :field="sortField"
           :direction="sortDir"
@@ -530,6 +691,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       >
         <div class="list-group-header">
           <h2 class="list-group-title">{{ group.title }}</h2>
+          <span
+            v-if="group.badge"
+            class="badge badge--warning"
+            :title="group.badge.title"
+            >{{ group.badge.label }}</span
+          >
           <span class="list-group-count">{{ group.schedules.length }}</span>
           <span class="list-group-rule"></span>
         </div>
@@ -625,6 +792,24 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   max-width: 1100px;
   overflow-x: hidden;
   min-width: 0;
+}
+
+/* Four filter controls plus a group control and the sort strip no longer fit
+   the 1100px content column on one line, and `.schedules-view` hides its
+   overflow - so without this the sort strip is simply cut off. Wrapping keeps
+   `.sort-controls`' trailing `margin-left: auto`, so it lands right-aligned on
+   the second row. */
+.toolbar {
+  flex-wrap: wrap;
+}
+
+/* The "Group: [Time|Agent|Repo]" pair in the toolbar. `.sort-controls` beside
+   it already claims the row's trailing space, so this only has to keep its
+   caption glued to the control and out of the toolbar's shrink. */
+.group-controls {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .schedule-toggle {

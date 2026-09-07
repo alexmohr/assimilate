@@ -184,6 +184,40 @@ test.describe('Schedules management', () => {
     await expect(card.locator('.run-history')).toBeVisible()
   })
 
+  test('the group control re-sections the list by agent and by repository', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // The one segmented control on the page; no option's label is a substring
+    // of another, so a text filter picks exactly one.
+    const groupOption = (label: string) =>
+      page.locator('.segmented-option').filter({ hasText: label })
+    const groupTitles = page.locator('.list-group-title')
+
+    // The multi-host schedule seeded by seed-demo.sh targets all three demo
+    // agents, so every one of them heads a section of its own.
+    await groupOption('Agent').click()
+    await expect(groupTitles.filter({ hasText: 'web-server-01' }).first()).toBeVisible()
+    await expect(groupTitles.filter({ hasText: 'db-server-01' }).first()).toBeVisible()
+    await expect(groupTitles.filter({ hasText: 'media-store-01' }).first()).toBeVisible()
+
+    // Grouped by repository the sections are named after the repos instead,
+    // and the weekly repo holds the schedule that writes into it.
+    await groupOption('Repo').click()
+    await expect(groupTitles.filter({ hasText: 'server-daily' }).first()).toBeVisible()
+    const weekly = page
+      .locator('.list-group')
+      .filter({ has: page.locator('.list-group-title', { hasText: 'media-weekly' }) })
+    await expect(weekly.locator('.entity-card').first()).toBeVisible()
+
+    // Back to the default: the time buckets are named for when a run is due,
+    // never for an agent or a repository.
+    await groupOption('Time').click()
+    await expect(page.locator('.list-group-header').first()).toBeVisible()
+    await expect(groupTitles.filter({ hasText: 'media-weekly' })).toHaveCount(0)
+  })
+
   test('schedules list shows the 24h collision rail above the groups', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')

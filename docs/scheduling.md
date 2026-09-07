@@ -28,8 +28,22 @@ The Schedules list page shows all configured backup schedules with:
 - **Type filter** — filter by Backup, Check, or Verify
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
 - **Sort buttons** — sort by Agent, Next run, Last run, or Type
+- **Group control** — section the cards by Time, Agent, or Repo
 
-Schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
+By default schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
+
+The **Group** control beside the sort buttons switches which question the sections answer:
+
+| Group by | Sections | Use it to see |
+|---|---|---|
+| Time | Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, Paused | What runs next, and what is paused |
+| Agent | One per targeted agent, named "Display name (hostname)" | Everything that backs up a given machine |
+| Repo | One per repository the schedules write into | Everything that writes into a given repository |
+
+A schedule that targets several agents appears under each of them, so an agent's section lists everything that backs that machine up. Sorting, filtering and the 24-hour rail are unchanged by the group mode — every section is ordered by the active sort, and only schedules matching the current filters are grouped. Schedules with no agent or no repository assigned collect in a final **No agents** or **No repository** section.
+
+!!! note "Agents that share a hostname"
+    A schedule records the *hostname* it targets, and a hostname identifies a machine only together with its [domain](agents.md) — two agents in different domains can report the same one. Grouping by agent therefore puts every schedule naming that hostname in one section, whichever of those agents it actually targets. Such a section is titled with the bare hostname rather than either agent's display name, and carries an **N agents** badge saying how many machines it covers; hover it for the detail. Grouping by agent or repo drops the separate Paused section: a disabled schedule stays with its agent or repository and is identified by its **Disabled** pill instead.
 
 Above the groups, a 24-hour rail plots every enabled schedule due within the next day along a timeline from now. When two or more of those runs land within 30 minutes of each other **on the same repository**, the rail marks them and names the repository and time so you can stagger them before they contend for the same repository lock. Two runs that share a storage host but write to different repositories are not a collision — they don't block each other — and are not flagged.
 

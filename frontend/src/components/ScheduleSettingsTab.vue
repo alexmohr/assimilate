@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { ArrowDown, ArrowUp } from '@lucide/vue'
 import AgentMultiSelect from './AgentMultiSelect.vue'
 import CronBuilder from './CronBuilder.vue'

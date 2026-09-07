@@ -5,10 +5,11 @@
 -- definition produces several independent copies of the same sources.
 --
 -- `schedules.repo_id` stays, denormalised, as the schedule's primary target -
--- the lowest `execution_order` row below. Health summaries, quota accounting,
--- reports and the manual-run endpoints all key off it, and keeping it in sync
--- means multi-target is additive rather than a rewrite of everything that
--- reads a schedule's repository.
+-- the first *required* row below in write order, so it never names a copy the
+-- schedule is allowed to lose. Health summaries, quota accounting and reports
+-- key off it, and keeping it in sync means multi-target is additive rather
+-- than a rewrite of everything that reads a schedule's repository. Anything
+-- that dispatches a run resolves the whole list instead.
 
 CREATE TABLE schedule_repos (
     id BIGSERIAL PRIMARY KEY,

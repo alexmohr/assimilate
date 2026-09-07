@@ -145,7 +145,8 @@ pub struct CreateScheduleRequest {
     /// IDs of agents to assign as targets.
     pub agent_ids: Vec<i64>,
     /// Repository ID to back up to. When `repo_targets` is given, this is
-    /// ignored in favour of its first entry.
+    /// ignored in favour of that list's first *required* entry, which becomes
+    /// the schedule's denormalised primary.
     pub repo_id: i64,
     /// Every repository this schedule writes into, in write order. Omit for a
     /// single-target schedule writing to `repo_id`.

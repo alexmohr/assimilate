@@ -826,21 +826,16 @@ describe('SchedulesView', () => {
     // The two enabled schedules' next_run_at is in the past relative to any
     // real test-run clock, so both land in "Due now"; the disabled one is
     // always "Paused" regardless of its next_run_at.
-    const titles = wrapper.findAll('.list-group-title').map((t) => t.text())
+    const titles = groupTitles(wrapper)
     expect(titles).toContain('Due now')
     expect(titles).toContain('Paused')
 
-    const dueNowGroup = wrapper
-      .findAll('.list-group')
-      .find((g) => g.find('.list-group-title').text() === 'Due now')
+    const dueNowGroup = groupFor(wrapper, 'Due now')
     expect(dueNowGroup!.find('.list-group-count').text()).toBe('2')
     expect(dueNowGroup!.text()).toContain('server-daily')
     expect(dueNowGroup!.text()).toContain('database-hourly')
 
-    const pausedGroup = wrapper
-      .findAll('.list-group')
-      .find((g) => g.find('.list-group-title').text() === 'Paused')
-    expect(pausedGroup!.text()).toContain('media-weekly')
+    expect(groupFor(wrapper, 'Paused')!.text()).toContain('media-weekly')
   })
 
   it('buckets schedules into Next 24 hours, This week, and Later by next_run_at', async () => {
@@ -863,12 +858,9 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const groupFor = (title: string) =>
-      wrapper.findAll('.list-group').find((g) => g.find('.list-group-title').text() === title)
-
-    expect(groupFor('Next 24 hours')!.text()).toContain('server-daily')
-    expect(groupFor('This week')!.text()).toContain('database-hourly')
-    expect(groupFor('Later')!.text()).toContain('media-weekly')
+    expect(groupFor(wrapper, 'Next 24 hours')!.text()).toContain('server-daily')
+    expect(groupFor(wrapper, 'This week')!.text()).toContain('database-hourly')
+    expect(groupFor(wrapper, 'Later')!.text()).toContain('media-weekly')
   })
 
   it('groups schedules by agent, listing a multi-agent schedule under each target', async () => {

@@ -320,67 +320,84 @@ const timeGroups = computed<ScheduleGroup[]>(() => {
 })
 
 /**
+ * How one group mode buckets the schedules: which keys a schedule belongs
+ * under, what each key is called in its header, and what the trailing section
+ * of schedules with no key at all is called.
+ */
+interface GroupSpec<K extends string | number> {
+  /** Prefixes every key this mode emits, keeping them unique across modes. */
+  prefix: string
+  /** Empty puts the schedule in the fallback section; several fan it out. */
+  keysOf: (s: EnrichedSchedule) => K[]
+  titleOf: (key: K) => string
+  fallbackTitle: string
+}
+
+/**
+ * The shape both the agent and the repo mode need: bucket by key, order the
+ * sections by the label they show, and append the keyless ones last. Only the
+ * key and the two labels differ between them, so they are a spec, not a second
+ * copy of this.
+ */
+function buildGroups<K extends string | number>(
+  schedules: EnrichedSchedule[],
+  { prefix, keysOf, titleOf, fallbackTitle }: GroupSpec<K>,
+): ScheduleGroup[] {
+  const byKey = new Map<K, EnrichedSchedule[]>()
+  const keyless: EnrichedSchedule[] = []
+  for (const s of schedules) {
+    const keys = keysOf(s)
+    if (keys.length === 0) {
+      keyless.push(s)
+      continue
+    }
+    for (const key of keys) {
+      const list = byKey.get(key) ?? []
+      list.push(s)
+      byKey.set(key, list)
+    }
+  }
+  const groups: ScheduleGroup[] = [...byKey.entries()]
+    .map(([key, grouped]) => ({
+      key: `${prefix}:${key}`,
+      title: titleOf(key),
+      schedules: grouped,
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title))
+  if (keyless.length > 0) {
+    groups.push({ key: `${prefix}:none`, title: fallbackTitle, schedules: keyless })
+  }
+  return groups
+}
+
+/**
  * One section per targeted agent, ordered by the label shown in the header.
  * A schedule targeting several agents is listed under each of them - the whole
  * point of the view is to answer "what backs up this machine", which a card
  * shown only under its first target would not.
  */
-const agentGroups = computed<ScheduleGroup[]>(() => {
-  const byHostname = new Map<string, EnrichedSchedule[]>()
-  const untargeted: EnrichedSchedule[] = []
-  for (const s of filteredSchedules.value) {
-    if (s.target_hostnames.length === 0) {
-      untargeted.push(s)
-      continue
-    }
+const agentGroups = computed<ScheduleGroup[]>(() =>
+  buildGroups(filteredSchedules.value, {
+    prefix: 'agent',
     // Deduplicated because a hostname is unique only per domain
     // (`agents_hostname_domain_idx`): a schedule targeting two agents that
     // report the same hostname from different domains lists it twice, which
     // would render its card twice in the one section they share.
-    for (const hostname of new Set(s.target_hostnames)) {
-      const list = byHostname.get(hostname) ?? []
-      list.push(s)
-      byHostname.set(hostname, list)
-    }
-  }
-  const groups: ScheduleGroup[] = [...byHostname.entries()]
-    .map(([hostname, schedules]) => ({
-      key: `agent:${hostname}`,
-      title: hostLabel(hostname),
-      schedules,
-    }))
-    .sort((a, b) => a.title.localeCompare(b.title))
-  if (untargeted.length > 0) {
-    groups.push({ key: 'agent:none', title: 'No agents', schedules: untargeted })
-  }
-  return groups
-})
+    keysOf: (s) => [...new Set(s.target_hostnames)],
+    titleOf: hostLabel,
+    fallbackTitle: 'No agents',
+  }),
+)
 
 /** One section per repository the schedules write into, unassigned ones last. */
-const repoGroups = computed<ScheduleGroup[]>(() => {
-  const byRepo = new Map<number, EnrichedSchedule[]>()
-  const unassigned: EnrichedSchedule[] = []
-  for (const s of filteredSchedules.value) {
-    if (s.repo_id === null) {
-      unassigned.push(s)
-      continue
-    }
-    const list = byRepo.get(s.repo_id) ?? []
-    list.push(s)
-    byRepo.set(s.repo_id, list)
-  }
-  const groups: ScheduleGroup[] = [...byRepo.entries()]
-    .map(([repoId, schedules]) => ({
-      key: `repo:${repoId}`,
-      title: repoMap.value.get(repoId)?.name ?? `repo #${repoId}`,
-      schedules,
-    }))
-    .sort((a, b) => a.title.localeCompare(b.title))
-  if (unassigned.length > 0) {
-    groups.push({ key: 'repo:none', title: 'No repository', schedules: unassigned })
-  }
-  return groups
-})
+const repoGroups = computed<ScheduleGroup[]>(() =>
+  buildGroups(filteredSchedules.value, {
+    prefix: 'repo',
+    keysOf: (s) => (s.repo_id === null ? [] : [s.repo_id]),
+    titleOf: (repoId) => repoMap.value.get(repoId)?.name ?? `repo #${repoId}`,
+    fallbackTitle: 'No repository',
+  }),
+)
 
 // Time last rather than in a `switch`: `vue/return-in-computed-property` does
 // not follow a union's exhaustiveness, and only the selected mode's groups are

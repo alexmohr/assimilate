@@ -7569,6 +7569,30 @@ async fn a_schedule_is_not_due_until_its_next_run_is_set(pool: PgPool) {
     assert_eq!(db::list_due_schedules(&pool, now).await.unwrap().len(), 1);
 }
 
+/// The bug this guards: the denormalised primary took the first target in
+/// write order even when that one was best-effort, so health summaries, quota
+/// accounting and reports keyed off the copy the schedule is allowed to lose.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_primary_target_is_the_first_required_one(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+
+    // Written first, but best effort - the required one answers for the schedule.
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, false), (offsite.id, true)])
+        .await
+        .unwrap();
+
+    let row = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(row.repo_id, Some(offsite.id));
+
+    // Write order is still the list's own order, untouched by that choice.
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets.iter().map(|t| t.repo_id).collect::<Vec<_>>(),
+        vec![repo.id, offsite.id],
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn due_schedules_yield_one_row_per_target_repository(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;

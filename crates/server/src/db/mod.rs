@@ -631,7 +631,15 @@ pub async fn replace_schedule_repos(
         .map_err(ApiError::Database)?;
     }
 
-    let primary = targets.first().map(|(repo_id, _)| *repo_id);
+    // The first *required* target, not simply the first: the denormalised
+    // primary is what health, quota and reports key off, so it must not point
+    // at a copy the schedule is allowed to lose. The fallback only covers an
+    // empty list - the API never accepts one with no required target.
+    let primary = targets
+        .iter()
+        .find(|(_, required)| *required)
+        .or_else(|| targets.first())
+        .map(|(repo_id, _)| *repo_id);
     sqlx::query!(
         "UPDATE schedules SET repo_id = $2 WHERE id = $1",
         schedule_id,
@@ -2214,9 +2222,9 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     // repository agrees with the list again.
     sqlx::query!(
         "UPDATE schedules s SET repo_id = first_target.repo_id FROM (SELECT DISTINCT ON \
-         (schedule_id) schedule_id, repo_id FROM schedule_repos ORDER BY schedule_id, \
-         execution_order, repo_id) AS first_target WHERE s.id = first_target.schedule_id AND \
-         s.repo_id IS NULL",
+         (schedule_id) schedule_id, repo_id FROM schedule_repos ORDER BY schedule_id, required \
+         DESC, execution_order, repo_id) AS first_target WHERE s.id = first_target.schedule_id \
+         AND s.repo_id IS NULL",
     )
     .execute(&mut *tx)
     .await

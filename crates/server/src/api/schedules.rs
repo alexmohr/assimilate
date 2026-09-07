@@ -412,6 +412,24 @@ fn resolve_repo_targets(
     Ok(resolved)
 }
 
+/// The schedule's primary target: the first *required* repository in write
+/// order, not simply the first one.
+///
+/// `schedules.repo_id` is the denormalised primary, and health summaries,
+/// quota accounting and reports key off it - pointing it at a best-effort
+/// target would key them to the copy the schedule is explicitly allowed to
+/// lose. Write order stays free: a list may begin with a best-effort target
+/// and still be answered for by a required one. The fallback to the first
+/// entry never fires for a list `resolve_repo_targets` accepted, which always
+/// has a required target; it only covers an empty list.
+fn primary_target(targets: &[(i64, bool)]) -> Option<i64> {
+    targets
+        .iter()
+        .find(|(_, required)| *required)
+        .or_else(|| targets.first())
+        .map(|(repo_id, _)| *repo_id)
+}
+
 #[utoipa::path(
     post,
     path = "/api/schedules",
@@ -445,9 +463,7 @@ pub async fn create_schedule(
     for (repo_id, _) in &repo_targets {
         check_repo_permission(&state.pool, &auth, *repo_id, |p| p.can_modify_schedules).await?;
     }
-    let primary_repo_id = repo_targets
-        .first()
-        .map_or(req.repo_id, |(repo_id, _)| *repo_id);
+    let primary_repo_id = primary_target(&repo_targets).unwrap_or(req.repo_id);
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let schedule_type_enum = req.schedule_type.unwrap_or_default();
@@ -654,7 +670,7 @@ async fn authorize_repo_targets(
         .transpose()?;
     let effective_repo_id: Option<i64> = requested
         .as_ref()
-        .and_then(|targets| targets.first().map(|(repo_id, _)| *repo_id))
+        .and_then(|targets| primary_target(targets))
         .or(req.repo_id)
         .or(existing.repo_id);
     let existing_targets: Vec<i64> = db::list_schedule_repos(&state.pool, existing.id)
@@ -2079,6 +2095,17 @@ mod tests {
             ),
             Err(ApiError::BadRequest(_))
         ));
+    }
+
+    /// The bug this guards: `schedules.repo_id` took the first entry in write
+    /// order, so a list that writes a best-effort copy first left health,
+    /// quota and reports keyed to the target the schedule may lose.
+    #[test]
+    fn the_primary_is_the_first_required_target_not_the_first_written() {
+        assert_eq!(primary_target(&[(5, false), (6, true)]), Some(6));
+        assert_eq!(primary_target(&[(6, true), (5, false)]), Some(6));
+        assert_eq!(primary_target(&[(6, true), (7, true)]), Some(6));
+        assert_eq!(primary_target(&[]), None);
     }
 
     fn plan(

@@ -2,6 +2,7 @@
 import type { HookCommand } from "./HookCommand";
 import type { OnFailure } from "./OnFailure";
 import type { ScheduleType } from "./ScheduleType";
+import type { ScheduleWakeOverride } from "./ScheduleWakeOverride";
 
 /**
  * Response containing schedule.
@@ -123,6 +124,11 @@ export type ScheduleResponse = {
    * Visibility scope of this entity.
    */
   visibility: string;
+  /**
+   * Whether this schedule wakes the hosts it needs, overriding what those
+   * hosts default to.
+   */
+  wake_override: ScheduleWakeOverride;
   /**
    * Hostnames targeted by this schedule.
    */

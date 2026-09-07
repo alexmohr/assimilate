@@ -16,7 +16,7 @@ use shared::{
         PerAgentFileChangePatternsResponse, ScheduleBackupSourcesResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
-    types::{OnFailure, RepoId, ScheduleType},
+    types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
 };
 use sqlx::PgPool;
 
@@ -181,6 +181,10 @@ pub struct CreateScheduleRequest {
     /// Behaviour when the backup fails.
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
+    /// Whether this schedule wakes the hosts it needs, overriding the hosts'
+    /// own defaults (defaults to `host_default`).
+    #[schema(value_type = Option<String>)]
+    pub wake_override: Option<ScheduleWakeOverride>,
 }
 
 /// Request payload for updating an existing schedule.
@@ -243,6 +247,27 @@ pub struct UpdateScheduleRequest {
     /// Behaviour when the backup fails.
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
+    /// Whether this schedule wakes the hosts it needs, overriding the hosts'
+    /// own defaults. Left unchanged when omitted.
+    #[schema(value_type = Option<String>)]
+    pub wake_override: Option<ScheduleWakeOverride>,
+}
+
+/// Reads a schedule row's stored `wake_override`. A value the database
+/// somehow holds outside the enum's set falls back to the default rather
+/// than failing the request, matching how the scheduler treats `on_failure`.
+fn stored_wake_override(schedule: &db::ScheduleRow) -> ScheduleWakeOverride {
+    schedule
+        .wake_override
+        .parse::<ScheduleWakeOverride>()
+        .unwrap_or_else(|_| {
+            tracing::warn!(
+                schedule_id = schedule.id,
+                value = %schedule.wake_override,
+                "invalid wake_override value in database; defaulting to host default"
+            );
+            ScheduleWakeOverride::default()
+        })
 }
 
 #[utoipa::path(
@@ -375,6 +400,7 @@ pub async fn create_schedule(
         validate_missed_backup_threshold(req.missed_backup_threshold.unwrap_or(3))?;
 
     let params = ScheduleParams {
+        wake_override: req.wake_override.unwrap_or_default(),
         name: req.name.as_deref().unwrap_or(""),
         schedule_type,
         cron_expression: &req.cron_expression,
@@ -552,6 +578,9 @@ pub async fn update_schedule(
     let name = req.name.clone().unwrap_or_else(|| existing.name.clone());
 
     let params = ScheduleParams {
+        wake_override: req
+            .wake_override
+            .unwrap_or_else(|| stored_wake_override(&existing)),
         name: &name,
         schedule_type: &existing.schedule_type,
         cron_expression: &req.cron_expression,

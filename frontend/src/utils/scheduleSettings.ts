@@ -7,7 +7,13 @@
  * before handing it back down, rather than passing a wide `string` around.
  * Mirrors `utils/agentSettings.ts`.
  */
-export const SCHEDULE_SETTINGS_SECTIONS = ['general', 'targets', 'retention', 'advanced'] as const
+export const SCHEDULE_SETTINGS_SECTIONS = [
+  'general',
+  'targets',
+  'power',
+  'retention',
+  'advanced',
+] as const
 
 export type ScheduleSettingsSection = (typeof SCHEDULE_SETTINGS_SECTIONS)[number]
 

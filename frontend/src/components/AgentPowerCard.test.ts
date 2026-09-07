@@ -16,7 +16,7 @@ import AgentPowerCard from './AgentPowerCard.vue'
 import type { AgentRow } from '../types/agent'
 
 vi.mock('../api/client', () => ({
-  apiClient: { put: vi.fn() },
+  apiClient: { put: vi.fn(), get: vi.fn() },
 }))
 
 const AGENT = {
@@ -48,6 +48,8 @@ describe('AgentPowerCard', () => {
   beforeEach(() => {
     vi.mocked(apiClient.put).mockReset()
     vi.mocked(apiClient.put).mockResolvedValue({ data: AGENT } as never)
+    vi.mocked(apiClient.get).mockReset()
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] } as never)
   })
 
   it('summarizes the current settings in view mode', () => {
@@ -107,7 +109,10 @@ describe('AgentPowerCard', () => {
   // Both dependent groups (wake details, agent-process details) collapse
   // in the edit form the moment their toggle is switched off - the fields a
   // Save would otherwise send stale values for should not even be visible.
-  it('hides the wake-dependent fields once the wake toggle is switched off', async () => {
+  // The wake details outlive the host's own toggle now that a schedule can
+  // wake a host the toggle leaves alone: hiding them would put the MAC
+  // address a job still wakes this host with out of reach.
+  it('keeps the wake details on screen once the wake toggle is switched off', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
     expect(wrapper.find('#power-wake-mac').exists()).toBe(true)
@@ -116,7 +121,7 @@ describe('AgentPowerCard', () => {
     await wakeToggle.vm.$emit('update:modelValue', false)
     await flushPromises()
 
-    expect(wrapper.find('#power-wake-mac').exists()).toBe(false)
+    expect(wrapper.find('#power-wake-mac').exists()).toBe(true)
   })
 
   it('hides the agent-process-dependent fields once start-agent is switched off', async () => {
@@ -161,12 +166,17 @@ describe('AgentPowerCard', () => {
   // A value hidden by the toggle that gated it must not silently resubmit -
   // the server rejects `shutdown_after_backup: true` once `wake_enabled` is
   // false, and the field that could fix it is no longer on screen.
-  it('resets shutdown-after-backup once wake is switched off', async () => {
+  // Same regression as before, hanging off the field that now gates a
+  // shutdown: the server rejects `shutdown_after_backup: true` with no MAC
+  // address to wake the host with (`agents_shutdown_requires_mac`).
+  it('resets shutdown-after-backup once the MAC address is cleared', async () => {
     const wrapper = mount()
-    await expectToggleOffThenOnResetsDependentOnSave(
-      wrapper,
-      0,
-      vi.mocked(apiClient.put),
+    await startEditingSection(wrapper)
+    await wrapper.find('#power-wake-mac').setValue('')
+    await flushPromises()
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(vi.mocked(apiClient.put).mock.calls.at(-1)?.[1]).toEqual(
       expect.objectContaining({
         wake: expect.objectContaining({ shutdown_after_backup: false }),
       }),
@@ -282,5 +292,40 @@ describe('AgentPowerCard', () => {
 
     expect(wrapper.find('#power-wake-mac').exists()).toBe(false)
     expect(apiClient.put).not.toHaveBeenCalled()
+  })
+
+  // Switching this host's own wake off no longer means the host is never
+  // woken, so the pane has to name the jobs that still wake it.
+  it('names the schedules that wake this host whatever the setting says', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: [
+        {
+          id: 7,
+          name: 'Nightly workstations',
+          wake_override: 'enabled',
+          target_hostnames: ['web-01'],
+        },
+        {
+          id: 8,
+          name: 'Weekly media',
+          wake_override: 'host_default',
+          target_hostnames: ['web-01'],
+        },
+        { id: 9, name: 'Other host', wake_override: 'enabled', target_hostnames: ['db-01'] },
+      ],
+    } as never)
+    const wrapper = mount()
+    await flushPromises()
+
+    const links = wrapper.findAll('.override-link')
+    expect(links.map((l) => l.text())).toEqual(['Nightly workstations'])
+    expect(wrapper.text()).toContain('1 schedule wakes this host')
+  })
+
+  it('leaves the override note out when no schedule overrides this host', async () => {
+    const wrapper = mount()
+    await flushPromises()
+
+    expect(wrapper.findAll('.override-link')).toHaveLength(0)
   })
 })

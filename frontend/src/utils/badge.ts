@@ -90,6 +90,11 @@ export function agentPowerPhase(eventType: RunEventType): AgentPowerPhase | null
     case 'wake_sent':
     case 'host_online':
       return { label: 'Waking host...', tone: 'info' }
+    // Nothing is happening to the host: the schedule asked for a wake the
+    // host has no MAC address for, so the badge goes back to reporting
+    // connection state.
+    case 'wake_unavailable':
+      return null
     case 'agent_start_sent':
       return { label: 'Starting agent...', tone: 'info' }
     case 'shutdown_sent':

@@ -51,6 +51,7 @@ function mount(props: Record<string, unknown> = {}) {
       onFailure: 'stop',
       usePerHostPaths: false,
       perHostSources: {},
+      canSeeWakeDetails: true,
       ...props,
     },
   })
@@ -61,12 +62,15 @@ function navLabels(wrapper: ReturnType<typeof mount>): string[] {
 }
 
 describe('ScheduleSettingsTab', () => {
-  it('shows all four sections for a backup schedule', () => {
-    expect(navLabels(mount())).toEqual(['General', 'Targets', 'Retention', 'Advanced'])
+  it('shows all five sections for a backup schedule', () => {
+    expect(navLabels(mount())).toEqual(['General', 'Targets', 'Power', 'Retention', 'Advanced'])
   })
 
+  // Power stays: a check or verify run needs its hosts reachable just as much
+  // as a backup does, and it is the only one of the three that applies to
+  // every schedule type.
   it('omits Retention and Advanced for a non-backup schedule', () => {
-    expect(navLabels(mount({ isBackup: false }))).toEqual(['General', 'Targets'])
+    expect(navLabels(mount({ isBackup: false }))).toEqual(['General', 'Targets', 'Power'])
   })
 
   it('emits update:section when a nav item is clicked', async () => {

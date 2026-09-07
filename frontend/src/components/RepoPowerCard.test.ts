@@ -7,7 +7,6 @@ import {
   clickSectionButton,
   expectSaveErrorKeepsEditing,
   expectSavedEmitted,
-  expectToggleOffThenOnResetsDependentOnSave,
   renderWithPlugins,
   startEditingSection,
 } from '../test-utils'
@@ -16,7 +15,7 @@ import RepoPowerCard from './RepoPowerCard.vue'
 import type { RepoWithStats } from '../types/repo'
 
 vi.mock('../api/client', () => ({
-  apiClient: { put: vi.fn() },
+  apiClient: { put: vi.fn(), get: vi.fn() },
 }))
 
 const REPO = {
@@ -40,6 +39,8 @@ describe('RepoPowerCard', () => {
   beforeEach(() => {
     vi.mocked(apiClient.put).mockReset()
     vi.mocked(apiClient.put).mockResolvedValue({ data: REPO } as never)
+    vi.mocked(apiClient.get).mockReset()
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [] } as never)
   })
 
   it('summarizes the current settings in view mode', () => {
@@ -82,7 +83,9 @@ describe('RepoPowerCard', () => {
     expect(wrapper.find<HTMLInputElement>('#repo-power-wake-timeout').element.value).toBe('240')
   })
 
-  it('hides the wake-dependent fields once the wake toggle is switched off', async () => {
+  // See AgentPowerCard.test.ts: the wake details outlive the host's own
+  // toggle, since a schedule can wake a host the toggle leaves alone.
+  it('keeps the wake details on screen once the wake toggle is switched off', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
     expect(wrapper.find('#repo-power-wake-mac').exists()).toBe(true)
@@ -91,18 +94,20 @@ describe('RepoPowerCard', () => {
     await wakeToggle.vm.$emit('update:modelValue', false)
     await flushPromises()
 
-    expect(wrapper.find('#repo-power-wake-mac').exists()).toBe(false)
+    expect(wrapper.find('#repo-power-wake-mac').exists()).toBe(true)
   })
 
-  // A value hidden by the toggle that gated it must not silently resubmit -
-  // the server rejects `shutdown_after_backup: true` once `wake_enabled` is
-  // false, and the field that could fix it is no longer on screen.
-  it('resets shutdown-after-backup once wake is switched off', async () => {
+  // A value whose precondition is gone must not silently resubmit - the
+  // server rejects `shutdown_after_backup: true` with no MAC address to wake
+  // the host with (`repos_shutdown_requires_mac`).
+  it('resets shutdown-after-backup once the MAC address is cleared', async () => {
     const wrapper = mount()
-    await expectToggleOffThenOnResetsDependentOnSave(
-      wrapper,
-      0,
-      vi.mocked(apiClient.put),
+    await startEditingSection(wrapper)
+    await wrapper.find('#repo-power-wake-mac').setValue('')
+    await flushPromises()
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(vi.mocked(apiClient.put).mock.calls.at(-1)?.[1]).toEqual(
       expect.objectContaining({ shutdown_after_backup: false }),
     )
   })
@@ -162,5 +167,27 @@ describe('RepoPowerCard', () => {
 
     expect(wrapper.find('#repo-power-wake-mac').exists()).toBe(false)
     expect(apiClient.put).not.toHaveBeenCalled()
+  })
+
+  // See AgentPowerCard.test.ts: switching this host's own wake off no longer
+  // means the host is never woken.
+  it('names the schedules that wake this host whatever the setting says', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: [
+        { id: 7, name: 'Nightly workstations', wake_override: 'enabled' },
+        { id: 8, name: 'Weekly media', wake_override: 'host_default' },
+      ],
+    } as never)
+    const wrapper = mount()
+    await flushPromises()
+
+    expect(wrapper.findAll('.override-link').map((l) => l.text())).toEqual(['Nightly workstations'])
+  })
+
+  it('leaves the override note out when no schedule overrides this host', async () => {
+    const wrapper = mount()
+    await flushPromises()
+
+    expect(wrapper.findAll('.override-link')).toHaveLength(0)
   })
 })

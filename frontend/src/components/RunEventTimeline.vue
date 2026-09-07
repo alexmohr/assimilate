@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { Check, Clock, LogIn, Power, WifiOff, Zap } from '@lucide/vue'
+import { Check, Clock, LogIn, Power, WifiOff, Zap, ZapOff } from '@lucide/vue'
 import { formatTime } from '../utils/format'
 import type { RunEventResponse, RunEventType } from '../types/generated'
 
@@ -38,6 +38,7 @@ function eyebrowLabel(event: RunEventResponse): string {
 const ICONS: Record<RunEventType, Component> = {
   reachability_check: WifiOff,
   wake_sent: Zap,
+  wake_unavailable: ZapOff,
   host_online: Clock,
   agent_start_sent: LogIn,
   agent_connected: Check,
@@ -47,8 +48,9 @@ const ICONS: Record<RunEventType, Component> = {
   host_offline: Power,
 }
 
-const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'muted'>> = {
+const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'warning' | 'muted'>> = {
   wake_sent: 'accent',
+  wake_unavailable: 'warning',
   agent_connected: 'success',
   agent_stop_sent: 'muted',
   agent_stopped: 'muted',
@@ -138,6 +140,11 @@ const TONES: Partial<Record<RunEventType, 'accent' | 'success' | 'muted'>> = {
 .run-timeline-icon--success {
   background: var(--success-subtle);
   color: var(--success);
+}
+
+.run-timeline-icon--warning {
+  background: var(--warning-subtle);
+  color: var(--warning);
 }
 
 .run-timeline-icon--muted {

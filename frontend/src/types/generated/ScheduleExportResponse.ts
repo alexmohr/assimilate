@@ -97,6 +97,11 @@ export type ScheduleExportResponse = {
    */
   missed_backup_threshold: number;
   /**
+   * Whether this schedule wakes the hosts it needs, overriding what those
+   * hosts default to. Defaulted for exports predating the field.
+   */
+  wake_override: string;
+  /**
    * Backup source paths.
    */
   backup_sources: Array<string>;

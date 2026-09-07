@@ -340,6 +340,28 @@ api PUT "/api/repos/$REPO_WEEKLY_ID/power" '{
     "shutdown_after_backup": true
 }' > /dev/null
 
+# web-server-01 is the "wake details on file, but waking off by default" host
+# that per-schedule overrides exist for (see docs/power-management.md#
+# per-schedule-overrides): nothing wakes it unless one specific job asks, so
+# its Power pane shows the wake details surviving the toggle being off, and
+# the note naming the schedule that wakes it anyway.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c \
+    "UPDATE agents SET last_ssh_user = 'borg' WHERE hostname = 'web-server-01'" > /dev/null
+api PUT "/api/agents/web-server-01/power" '{
+    "wake": {
+        "wake_enabled": false,
+        "wake_mac_address": "A4:BB:6D:1F:22:8E",
+        "wake_broadcast_address": "192.168.1.255",
+        "wake_timeout_seconds": 180,
+        "shutdown_after_backup": true
+    },
+    "start_agent_enabled": false,
+    "stop_agent_after_backup": false,
+    "ssh_host": "web-server-01",
+    "ssh_port": 22,
+    "agent_service_name": "assimilate-agent"
+}' > /dev/null
+
 # db-server-01 stands in for a virtualization host: staging enabled, a
 # per-domain budget, and the domains a scan would have reported. The rows are
 # written directly because a real scan needs a libvirt host behind the agent.
@@ -376,11 +398,14 @@ ON CONFLICT (agent_id, name) DO NOTHING;
 SQL
 
 echo "==> Creating schedules..."
+# The one job that wakes web-server-01, whose own wake setting is off - the
+# "Enabled" side of a per-schedule override.
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"0 2 * * *\",
     \"enabled\": true,
+    \"wake_override\": \"enabled\",
     \"keep_hourly\": 0,
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
@@ -536,11 +561,14 @@ api POST "/api/schedules" "{
     \"hook_timeout_seconds\": 120
 }" > /dev/null
 
+# The "Disabled" side of a per-schedule override: media-store-01 and the
+# weekly repository both wake by default, and this one job leaves them alone.
 api POST "/api/schedules" "{
     \"agent_ids\": [$MEDIA_ID],
     \"repo_id\": $REPO_WEEKLY_ID,
     \"cron_expression\": \"0 3 * * 0\",
     \"enabled\": true,
+    \"wake_override\": \"disabled\",
     \"keep_hourly\": 0,
     \"keep_daily\": 0,
     \"keep_weekly\": 4,

@@ -107,7 +107,7 @@ pub async fn enforce_server_quota_action(
 
 #[cfg(test)]
 mod tests {
-    use shared::crypto::derive_key;
+    use shared::{crypto::derive_key, types::ScheduleWakeOverride};
     use sqlx::PgPool;
 
     use super::*;
@@ -180,6 +180,7 @@ mod tests {
             pool,
             repo_id,
             &ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name,
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",

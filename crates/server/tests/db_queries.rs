@@ -20,7 +20,7 @@ use server::{
 };
 use shared::{
     hooks::HookCommand,
-    types::{AcknowledgedFilter, QuotaAction, SystemEventType},
+    types::{AcknowledgedFilter, QuotaAction, ScheduleWakeOverride, SystemEventType},
     vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
 use sqlx::PgPool;
@@ -893,6 +893,7 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
         pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -948,6 +949,7 @@ async fn schedule_update(pool: PgPool) {
         &pool,
         schedule.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "updated-schedule",
             schedule_type: "backup",
             cron_expression: "0 6 * * *",
@@ -1089,6 +1091,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
         &pool,
         repo_b.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "schedule-b",
             schedule_type: "backup",
             cron_expression: "0 4 * * *",
@@ -1124,6 +1127,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
         &pool,
         repo_a.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "schedule-a2",
             schedule_type: "check",
             cron_expression: "0 5 * * *",
@@ -1475,6 +1479,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
         &pool,
         schedule.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -1556,6 +1561,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
         &pool,
         schedule.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -1649,6 +1655,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
         &pool,
         schedule.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -2824,6 +2831,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "second-schedule",
             schedule_type: "backup",
             cron_expression: "0 4 * * *",
@@ -3006,6 +3014,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "second-dashboard-schedule",
             schedule_type: "backup",
             cron_expression: "0 4 * * *",
@@ -3043,6 +3052,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "disabled-dashboard-schedule",
             schedule_type: "backup",
             cron_expression: "0 5 * * *",
@@ -5852,6 +5862,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "test-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -7130,6 +7141,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "multi-sched",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -7349,6 +7361,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -7606,6 +7619,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
         &pool,
         quiet_repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "quiet-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * 0",
@@ -8627,6 +8641,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "other-schedule",
             schedule_type: "backup",
             cron_expression: "0 4 * * *",
@@ -10615,8 +10630,12 @@ async fn update_agent_power_persists_all_fields(pool: PgPool) {
     assert_eq!(updated.hostname, "power-host");
 }
 
+/// Shutting down keys off having a MAC address rather than off the host's
+/// own wake toggle, since a schedule's `wake_override` can wake a host whose
+/// toggle is off -- but a host with nothing to wake still cannot be told to
+/// shut down. See the `agents_shutdown_requires_mac` CHECK constraint.
 #[sqlx::test(migrations = "./migrations")]
-async fn update_agent_power_rejects_shutdown_without_wake_at_the_db_layer(pool: PgPool) {
+async fn update_agent_power_rejects_shutdown_without_a_mac_address_at_the_db_layer(pool: PgPool) {
     let agent = db::insert_agent(&pool, "power-check-host", None, "hash", None, None)
         .await
         .unwrap();
@@ -10906,6 +10925,7 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
         &pool,
         repo.id,
         &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "legacy-hook-commands",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -11279,4 +11299,209 @@ fn discovered(name: &str) -> DiscoveredVm {
         disk_count: 1,
         disk_bytes: 1024,
     }
+}
+
+/// The pairing the relaxed constraint exists for: a host that wakes only
+/// when a schedule asks it to still has somewhere to send a shutdown.
+#[sqlx::test(migrations = "./migrations")]
+async fn update_agent_power_allows_shutdown_with_a_mac_but_wake_off(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "power-mac-only-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let updated = db::update_agent_power(
+        &pool,
+        agent.id,
+        db::AgentPowerPatch {
+            wake_enabled: false,
+            wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: true,
+            start_agent_enabled: false,
+            stop_agent_after_backup: false,
+            ssh_host: Some("power-mac-only-host"),
+            ssh_port: 22,
+            agent_service_name: "assimilate-agent",
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(!updated.wake_enabled);
+    assert!(updated.shutdown_after_backup);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_repo_power_rejects_shutdown_without_a_mac_address_at_the_db_layer(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let err = db::update_repo_power(
+        &pool,
+        repo.id,
+        db::RepoPowerPatch {
+            wake_enabled: false,
+            wake_mac_address: None,
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: true,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(err, server::error::ApiError::Database(_)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_repo_power_allows_shutdown_with_a_mac_but_wake_off(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let updated = db::update_repo_power(
+        &pool,
+        repo.id,
+        db::RepoPowerPatch {
+            wake_enabled: false,
+            wake_mac_address: Some("9C:B6:D0:1A:44:7F"),
+            wake_broadcast_address: None,
+            wake_timeout_seconds: 180,
+            shutdown_after_backup: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(!updated.wake_enabled);
+    assert!(updated.shutdown_after_backup);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+
+    let schedule = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            wake_override: ScheduleWakeOverride::Enabled,
+            name: "wake-override-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            vm_snapshot_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        schedule.wake_override,
+        ScheduleWakeOverride::Enabled.to_string()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    assert_eq!(
+        schedule.wake_override,
+        ScheduleWakeOverride::HostDefault.to_string()
+    );
+
+    let updated = db::update_schedule(
+        &pool,
+        schedule.id,
+        &ScheduleParams {
+            wake_override: ScheduleWakeOverride::Enabled,
+            name: &schedule.name,
+            schedule_type: "backup",
+            cron_expression: &schedule.cron_expression,
+            enabled: true,
+            canary_enabled: false,
+            vm_snapshot_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            on_failure: "stop",
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        updated.wake_override,
+        ScheduleWakeOverride::Enabled.to_string()
+    );
+    let listed = db::list_schedules(&pool).await.unwrap();
+    assert_eq!(
+        listed.first().unwrap().wake_override,
+        ScheduleWakeOverride::Enabled.to_string()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_wake_override_rejects_a_value_outside_the_enum(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    let err = sqlx::query!(
+        "UPDATE schedules SET wake_override = 'sometimes' WHERE id = $1",
+        schedule.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap_err();
+
+    assert!(err.to_string().contains("wake_override"), "{err}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn list_due_schedules_carries_the_wake_override(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    sqlx::query!(
+        "UPDATE schedules SET wake_override = 'disabled' WHERE id = $1",
+        schedule.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let past = Utc::now()
+        .checked_sub_signed(chrono::Duration::hours(1))
+        .unwrap();
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+
+    let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+
+    assert_eq!(
+        due.first().unwrap().wake_override,
+        ScheduleWakeOverride::Disabled.to_string()
+    );
 }

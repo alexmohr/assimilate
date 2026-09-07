@@ -32,7 +32,7 @@ use std::{
 
 use shared::{
     protocol::ServerToUi,
-    types::{RunEventTarget, RunEventType},
+    types::{RunEventTarget, RunEventType, ScheduleWakeOverride},
 };
 use tokio::{net::UdpSocket, sync::RwLock, time::sleep};
 use tracing::warn;
@@ -373,24 +373,33 @@ async fn repo_reachable(repo: &RepoRow) -> bool {
 }
 
 /// Makes sure `agent`'s host is reachable before a backup runs: if it's
-/// already connected, does nothing. Otherwise, if wake is enabled, sends a
-/// Wake-on-LAN packet and waits; if the agent still isn't connected once the
-/// host is up (or wake is disabled) and starting it over SSH is enabled,
-/// starts the agent's systemd unit and waits again. Always returns -- the
-/// caller checks reachability itself afterward, the same way it always has.
+/// already connected, does nothing. Otherwise, if waking is called for, sends
+/// a Wake-on-LAN packet and waits; if the agent still isn't connected once
+/// the host is up (or waking isn't called for) and starting it over SSH is
+/// enabled, starts the agent's systemd unit and waits again. Always returns
+/// -- the caller checks reachability itself afterward, the same way it always
+/// has.
+///
+/// `wake_override` is the running schedule's own answer to whether it wakes
+/// its hosts, resolved here against the agent's `wake_enabled` default. It
+/// governs waking only: starting the agent process follows
+/// `start_agent_enabled` in every variant, since a host that is already
+/// powered on needs no wake to be started on.
 pub async fn ensure_agent_online(
     ctx: PowerCtx<'_>,
     agent: &AgentRow,
     repo_id: i64,
     run_id: &str,
+    wake_override: ScheduleWakeOverride,
 ) -> AgentPowerOutcome {
     let mut outcome = AgentPowerOutcome::default();
     let target_ids = TargetIds {
         agent_id: agent.id,
         repo_id,
     };
+    let wake_enabled = wake_override.resolve(agent.wake_enabled);
 
-    if !agent.wake_enabled && !agent.start_agent_enabled {
+    if !wake_enabled && !agent.start_agent_enabled {
         return outcome;
     }
     if ctx.registry.is_connected(agent.id).await {
@@ -408,7 +417,7 @@ pub async fn ensure_agent_online(
     )
     .await;
 
-    if agent.wake_enabled {
+    if wake_enabled {
         // `outcome.woke` tracks whether the WOL packet was actually sent,
         // not whether the host came back online within `wake_timeout_seconds`
         // -- same reasoning as `started_agent` below: teardown must still
@@ -489,8 +498,18 @@ async fn wake_agent_host(
     else {
         warn!(
             agent_id = agent.id,
-            "wake enabled with no valid MAC address configured"
+            "wake called for with no valid MAC address configured"
         );
+        record_event(
+            ctx,
+            run_id,
+            target_ids,
+            RunEventTarget::Source,
+            RunEventType::WakeUnavailable,
+            "Cannot wake -- no MAC address configured",
+            &agent.hostname,
+        )
+        .await;
         return false;
     };
     let broadcast = agent
@@ -577,16 +596,20 @@ async fn start_agent_process(
 }
 
 /// Makes sure `repo`'s host is reachable over SSH before a backup writes to
-/// it: if it already is, does nothing. Otherwise, if wake is enabled, sends
-/// a Wake-on-LAN packet and waits. Always returns -- a repository host that
-/// never comes back online simply fails the backup naturally when borg
+/// it: if it already is, does nothing. Otherwise, if waking is called for,
+/// sends a Wake-on-LAN packet and waits. Always returns -- a repository host
+/// that never comes back online simply fails the backup naturally when borg
 /// tries to reach it, the same way it always has.
+///
+/// `wake_override` is the running schedule's own answer to whether it wakes
+/// its hosts, resolved here against the repository's `wake_enabled` default.
 pub async fn ensure_repo_online(
     ctx: PowerCtx<'_>,
     repo: &RepoRow,
     agent_id: i64,
     run_id: &str,
     hostname: &str,
+    wake_override: ScheduleWakeOverride,
 ) -> RepoPowerOutcome {
     let mut outcome = RepoPowerOutcome::default();
     let target_ids = TargetIds {
@@ -594,7 +617,7 @@ pub async fn ensure_repo_online(
         repo_id: repo.id,
     };
 
-    if !repo.wake_enabled || repo_reachable(repo).await {
+    if !wake_override.resolve(repo.wake_enabled) || repo_reachable(repo).await {
         return outcome;
     }
 
@@ -616,8 +639,18 @@ pub async fn ensure_repo_online(
     else {
         warn!(
             repo_id = repo.id,
-            "wake enabled with no valid MAC address configured"
+            "wake called for with no valid MAC address configured"
         );
+        record_event(
+            ctx,
+            run_id,
+            target_ids,
+            RunEventTarget::Repository,
+            RunEventType::WakeUnavailable,
+            "Cannot wake -- no MAC address configured",
+            hostname,
+        )
+        .await;
         return outcome;
     };
     let broadcast = repo
@@ -944,6 +977,7 @@ mod tests {
             &agent,
             repo.id,
             "run-1",
+            ScheduleWakeOverride::HostDefault,
         )
         .await;
 
@@ -991,6 +1025,7 @@ mod tests {
             &agent,
             repo.id,
             "run-1",
+            ScheduleWakeOverride::HostDefault,
         )
         .await;
 
@@ -1037,6 +1072,7 @@ mod tests {
             &agent,
             repo.id,
             "run-1",
+            ScheduleWakeOverride::HostDefault,
         )
         .await;
 
@@ -1083,6 +1119,7 @@ mod tests {
             agent.id,
             "run-1",
             "repo-host",
+            ScheduleWakeOverride::HostDefault,
         )
         .await;
 
@@ -1125,6 +1162,7 @@ mod tests {
             agent.id,
             "run-1",
             "repo-host",
+            ScheduleWakeOverride::HostDefault,
         )
         .await;
 
@@ -1413,5 +1451,299 @@ mod tests {
             .unwrap();
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(event_types, vec!["shutdown_sent"]);
+    }
+
+    /// The whole point of the per-schedule override: a host with waking
+    /// switched off is still woken by a schedule that asks for it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_agent_online_wakes_a_host_whose_own_wake_is_off_when_the_schedule_enables_it(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = test_repo(&pool).await;
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: false,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                ssh_host: None,
+                ssh_port: 22,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_agent_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+            ScheduleWakeOverride::Enabled,
+        )
+        .await;
+
+        assert!(outcome.woke);
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+    }
+
+    /// The other direction, and the guarantee that goes with it: `Disabled`
+    /// overrides a host that wakes by default, and with nothing else to do
+    /// for that host the call short-circuits exactly as it does for a host
+    /// with power management switched off entirely.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_agent_online_does_not_wake_a_host_when_the_schedule_disables_it(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = test_repo(&pool).await;
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                ssh_host: None,
+                ssh_port: 22,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_agent_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+            ScheduleWakeOverride::Disabled,
+        )
+        .await;
+
+        assert!(!outcome.woke);
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// `Disabled` is about waking only: an agent process that this run would
+    /// have started over SSH is still started, so the reachability check
+    /// still runs and only the wake is missing from the timeline.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_agent_online_still_starts_the_agent_when_the_schedule_disables_waking(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = test_repo(&pool).await;
+        let agent = db::update_agent_power(
+            &pool,
+            test_agent(&pool).await.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+                start_agent_enabled: true,
+                stop_agent_after_backup: false,
+                ssh_host: Some(UNREACHABLE_HOST),
+                ssh_port: UNREACHABLE_PORT,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_agent_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+            ScheduleWakeOverride::Disabled,
+        )
+        .await;
+
+        assert!(!outcome.woke);
+        assert!(
+            !outcome.started_agent,
+            "the SSH host refuses the connection"
+        );
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(
+            event_types,
+            vec!["reachability_check"],
+            "the start-agent path still ran (so the call did not short-circuit), and no wake was \
+             attempted"
+        );
+    }
+
+    /// A schedule can ask to wake a host that has no MAC address on file --
+    /// something the host's own `wake_enabled` flag can never do, since it
+    /// requires one. That has to say so on the run timeline rather than pass
+    /// silently.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_agent_online_records_wake_unavailable_without_a_mac_address(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = test_repo(&pool).await;
+        let agent = test_agent(&pool).await;
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_agent_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &agent,
+            repo.id,
+            "run-1",
+            ScheduleWakeOverride::Enabled,
+        )
+        .await;
+
+        assert!(!outcome.woke);
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["reachability_check", "wake_unavailable"]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_repo_online_wakes_a_host_whose_own_wake_is_off_when_the_schedule_enables_it(
+        pool: sqlx::PgPool,
+    ) {
+        let agent = test_agent(&pool).await;
+        let repo = db::update_repo_power(
+            &pool,
+            test_repo(&pool).await.id,
+            db::RepoPowerPatch {
+                wake_enabled: false,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_repo_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            agent.id,
+            "run-1",
+            "repo-host",
+            ScheduleWakeOverride::Enabled,
+        )
+        .await;
+
+        assert!(outcome.woke);
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["reachability_check", "wake_sent"]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_repo_online_does_not_wake_when_the_schedule_disables_it(pool: sqlx::PgPool) {
+        let agent = test_agent(&pool).await;
+        let repo = db::update_repo_power(
+            &pool,
+            test_repo(&pool).await.id,
+            db::RepoPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 1,
+                shutdown_after_backup: false,
+            },
+        )
+        .await
+        .unwrap();
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_repo_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            agent.id,
+            "run-1",
+            "repo-host",
+            ScheduleWakeOverride::Disabled,
+        )
+        .await;
+
+        assert!(!outcome.woke);
+        assert!(
+            db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn ensure_repo_online_records_wake_unavailable_without_a_mac_address(pool: sqlx::PgPool) {
+        let agent = test_agent(&pool).await;
+        let repo = test_repo(&pool).await;
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+
+        let outcome = ensure_repo_online(
+            ctx(&pool, &registry, &bus, &sessions),
+            &repo,
+            agent.id,
+            "run-1",
+            "repo-host",
+            ScheduleWakeOverride::Enabled,
+        )
+        .await;
+
+        assert!(!outcome.woke);
+        let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(event_types, vec!["reachability_check", "wake_unavailable"]);
     }
 }

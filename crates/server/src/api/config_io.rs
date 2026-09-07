@@ -239,6 +239,7 @@ async fn build_schedule_export(
         post_backup_commands,
         hook_timeout_seconds: sched.hook_timeout_seconds,
         missed_backup_threshold: sched.missed_backup_threshold,
+        wake_override: sched.wake_override.parse().unwrap_or_default(),
         repo_name,
         backup_sources,
         targets,
@@ -576,6 +577,7 @@ async fn import_schedule(
     let post_backup_commands = clamp_hook_command_timeouts(&sched.post_backup_commands);
 
     let params = ScheduleParams {
+        wake_override: sched.wake_override,
         name: &sched.name,
         schedule_type: &schedule_type_str,
         cron_expression: &sched.cron_expression,

@@ -11,7 +11,7 @@ use crate::{
     types::{
         BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
         FindingStatus, IndexStatus, OnFailure, QuotaAction, RunEventTarget, RunEventType,
-        ScheduleType, SearchEntry, Visibility,
+        ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -750,6 +750,9 @@ pub struct ScheduleResponse {
     #[ts(type = "string")]
     /// Visibility scope of this entity.
     pub visibility: Visibility,
+    /// Whether this schedule wakes the hosts it needs, overriding what those
+    /// hosts default to.
+    pub wake_override: ScheduleWakeOverride,
     /// Hostnames targeted by this schedule.
     pub target_hostnames: Vec<String>,
     /// How many consecutive attempts have failed to reach the schedule's target
@@ -2279,6 +2282,11 @@ pub struct ScheduleExportResponse {
     /// is marked failed and auto-disabled.
     #[serde(default = "default_missed_backup_threshold")]
     pub missed_backup_threshold: i32,
+    /// Whether this schedule wakes the hosts it needs, overriding what those
+    /// hosts default to. Defaulted for exports predating the field.
+    #[ts(type = "string")]
+    #[serde(default)]
+    pub wake_override: ScheduleWakeOverride,
     /// Backup source paths.
     pub backup_sources: Vec<String>,
     /// Per-target overrides.

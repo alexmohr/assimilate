@@ -64,6 +64,8 @@ const OWNED = [
   'field',
   'field-label',
   'field-hint',
+  'override-links',
+  'override-link',
   'input',
   'form-error',
   'page-header',

@@ -1070,6 +1070,18 @@
     color: var(--danger);
   }
 
+  /* A run of links naming other entities from inside a `.field-hint` - the
+     schedules that override a host's own wake setting, on both power panes. */
+  .override-links {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+  }
+
+  .override-link {
+    color: var(--accent);
+  }
+
   /* A field whose control sits beside its label rather than under it. Used
      for toggles, where a full-width column wastes a whole row. */
   .field-inline {

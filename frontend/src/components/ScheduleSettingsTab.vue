@@ -10,6 +10,7 @@ import CronBuilder from './CronBuilder.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
+import SchedulePowerTab from './SchedulePowerTab.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import type { ScheduleType } from '../types/schedule'
@@ -37,6 +38,8 @@ const props = defineProps<{
   agents: readonly AgentRow[]
   repos: readonly Repo[]
   agentLabel: (id: number) => string
+  /** Whether the viewer may see wake details - see `SchedulePowerTab`. */
+  canSeeWakeDetails: boolean
 }>()
 
 const emit = defineEmits<{ 'update:section': [value: ScheduleSettingsSection] }>()
@@ -50,10 +53,15 @@ const onFailure = defineModel<'stop' | 'continue'>('onFailure', { required: true
 const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true })
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
-/** Retention and Advanced only apply to backup-type schedules. */
+/**
+ * Retention and Advanced only apply to backup-type schedules. Power applies
+ * to all of them: a check or verify run needs its hosts reachable just as
+ * much as a backup does.
+ */
 const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
   { id: 'general', label: 'General' },
   { id: 'targets', label: 'Targets' },
+  { id: 'power', label: 'Power' },
   ...(props.isBackup
     ? [
         { id: 'retention', label: 'Retention' } as const,
@@ -420,6 +428,16 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </template>
+
+    <SchedulePowerTab
+      v-else-if="currentSection === 'power'"
+      v-model:form="form"
+      :agents="agents"
+      :repos="repos"
+      :selected-agent-ids="selectedAgentIds"
+      :selected-repo-id="selectedRepoId"
+      :can-see-wake-details="canSeeWakeDetails"
+    />
 
     <ScheduleAdvancedTab
       v-else-if="currentSection === 'advanced'"

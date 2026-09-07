@@ -4,12 +4,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { updateRepoPower } from '../api/repos'
+import { listRepoSchedules } from '../api/schedules'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { RepoWithStats } from '../types/repo'
+import type { ScheduleRow } from '../types/schedule'
 
 /**
  * Waking the machine hosting this repository before a backup writes to it,
@@ -36,12 +38,36 @@ const wakeBroadcast = ref('')
 const wakeTimeout = ref(180)
 const shutdownAfterBackup = ref(false)
 
-// See AgentPowerCard.vue: the field is only hidden by the parent's v-if, not
-// reset, so left stale it would resubmit a value the server rejects once
-// wake is off, with no way back to the field that fixes it.
-watch(wakeEnabled, (enabled) => {
-  if (!enabled) shutdownAfterBackup.value = false
+// See AgentPowerCard.vue: shutting down keys off having a MAC address rather
+// than off this host's own wake toggle, since a schedule can wake a host the
+// toggle leaves alone. Left stale, this would resubmit a value the server
+// rejects with the field that fixes it out of reach.
+watch(wakeMac, (mac) => {
+  if (mac.trim() === '') shutdownAfterBackup.value = false
 })
+
+/**
+ * Schedules that wake this host whatever the toggle below says - see
+ * `AgentPowerCard`. Best-effort: a failed load leaves the note out.
+ */
+const overridingSchedules = ref<ScheduleRow[]>([])
+
+onMounted(async () => {
+  try {
+    const rows = await listRepoSchedules(props.repo.id)
+    overridingSchedules.value = rows.filter((s) => s.wake_override === 'enabled')
+  } catch {
+    overridingSchedules.value = []
+  }
+})
+
+/** See `AgentPowerCard`: the wake details outlive the host's own toggle. */
+const showWakeDetails = computed(
+  () =>
+    props.repo.power.wake_enabled ||
+    props.repo.power.wake_mac_address !== null ||
+    props.repo.power.shutdown_after_backup,
+)
 
 function startEdit(): void {
   const power = props.repo.power
@@ -91,7 +117,7 @@ async function save(): Promise<void> {
       <dl class="info-grid">
         <dt>Wake host before backup</dt>
         <dd>{{ repo.power.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
-        <template v-if="repo.power.wake_enabled">
+        <template v-if="showWakeDetails">
           <dt>MAC address</dt>
           <dd class="mono">{{ repo.power.wake_mac_address ?? 'Not set' }}</dd>
           <dt>Broadcast address</dt>
@@ -102,6 +128,27 @@ async function save(): Promise<void> {
           <dd>{{ repo.power.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
         </template>
       </dl>
+      <p class="field-hint">
+        This is the default for jobs that do not set their own. A schedule can override it under its
+        Settings, in Power.
+      </p>
+      <p
+        v-if="overridingSchedules.length > 0"
+        class="field-hint"
+      >
+        {{ overridingSchedules.length }}
+        {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
+        whatever the setting above says:
+        <span class="override-links">
+          <RouterLink
+            v-for="s in overridingSchedules"
+            :key="s.id"
+            class="override-link"
+            :to="`/schedules/${s.id}?tab=settings&section=power`"
+            >{{ s.name || `Schedule #${s.id}` }}</RouterLink
+          >
+        </span>
+      </p>
     </template>
 
     <template #edit>
@@ -111,73 +158,74 @@ async function save(): Promise<void> {
           <p class="field-hint">
             Checked before every backup, reusing the same connection check as
             <em>Test connection</em> on the Repository section - the Wake-on-LAN packet below is
-            only sent if the host doesn't respond.
+            only sent if the host doesn't respond. This is the default for jobs that do not set
+            their own; a schedule can override it either way.
           </p>
         </div>
         <ToggleSwitch v-model="wakeEnabled" />
       </div>
 
-      <template v-if="wakeEnabled">
-        <div class="field">
-          <label
-            class="field-label"
-            for="repo-power-wake-mac"
-            >MAC address</label
-          >
-          <input
-            id="repo-power-wake-mac"
-            v-model="wakeMac"
-            class="input mono"
-            placeholder="9C:B6:D0:1A:44:7F"
-          />
-        </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="repo-power-wake-mac"
+          >MAC address</label
+        >
+        <input
+          id="repo-power-wake-mac"
+          v-model="wakeMac"
+          class="input mono"
+          placeholder="9C:B6:D0:1A:44:7F"
+        />
+        <span class="field-hint"
+          >Used whenever this host is woken - by the setting above, or by a schedule that asks for
+          it under its own Power settings.</span
+        >
+      </div>
 
-        <div class="field">
-          <label
-            class="field-label"
-            for="repo-power-wake-broadcast"
-            >Broadcast address</label
-          >
-          <input
-            id="repo-power-wake-broadcast"
-            v-model="wakeBroadcast"
-            class="input mono"
-            placeholder="192.168.1.255"
-          />
-          <span class="field-hint"
-            >Optional - defaults to the global broadcast address when unset.</span
-          >
-        </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="repo-power-wake-broadcast"
+          >Broadcast address</label
+        >
+        <input
+          id="repo-power-wake-broadcast"
+          v-model="wakeBroadcast"
+          class="input mono"
+          placeholder="192.168.1.255"
+        />
+        <span class="field-hint"
+          >Optional - defaults to the global broadcast address when unset.</span
+        >
+      </div>
 
-        <div class="field">
-          <label
-            class="field-label"
-            for="repo-power-wake-timeout"
-            >Wait for host (seconds)</label
-          >
-          <input
-            id="repo-power-wake-timeout"
-            v-model.number="wakeTimeout"
-            type="number"
-            min="1"
-            class="input"
-          />
-          <span class="field-hint"
-            >How long to wait for SSH before the backup is marked failed.</span
-          >
-        </div>
+      <div class="field">
+        <label
+          class="field-label"
+          for="repo-power-wake-timeout"
+          >Wait for host (seconds)</label
+        >
+        <input
+          id="repo-power-wake-timeout"
+          v-model.number="wakeTimeout"
+          type="number"
+          min="1"
+          class="input"
+        />
+        <span class="field-hint">How long to wait for SSH before the backup is marked failed.</span>
+      </div>
 
-        <div class="field field-inline">
-          <div class="field-body">
-            <p class="field-title">Shut down host after backup</p>
-            <p class="field-hint">
-              Only if this run woke it - a repository host that was already on is left running,
-              since other schedules may still be writing to it.
-            </p>
-          </div>
-          <ToggleSwitch v-model="shutdownAfterBackup" />
+      <div class="field field-inline">
+        <div class="field-body">
+          <p class="field-title">Shut down host after backup</p>
+          <p class="field-hint">
+            Only if this run woke it - a repository host that was already on is left running, since
+            other schedules may still be writing to it.
+          </p>
         </div>
-      </template>
+        <ToggleSwitch v-model="shutdownAfterBackup" />
+      </div>
     </template>
   </EditableSection>
 </template>

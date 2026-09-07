@@ -314,6 +314,7 @@ function populateForm(s: ScheduleRow): void {
     post_backup_commands: s.post_backup_commands,
     hook_timeout_seconds: s.hook_timeout_seconds,
     missed_backup_threshold: s.missed_backup_threshold,
+    wake_override: s.wake_override,
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
@@ -452,6 +453,7 @@ async function save(): Promise<void> {
       post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
       hook_timeout_seconds: form.value.hook_timeout_seconds,
       missed_backup_threshold: form.value.missed_backup_threshold,
+      wake_override: form.value.wake_override,
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
     }
 
@@ -826,6 +828,7 @@ watch(activeTab, (tab) => {
           :agents="agents"
           :repos="repos"
           :agent-label="agentLabel"
+          :can-see-wake-details="isAdmin"
         />
       </div>
 

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
+  "query": "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, exclude_patterns_raw = $6, file_change_patterns_raw = $7, ignore_global_excludes = $8, keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, hook_timeout_seconds = $19, missed_backup_threshold = $20, vm_snapshot_enabled = $21, wake_override = $22, auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = CASE WHEN enabled IS DISTINCT FROM $4 THEN 0 ELSE consecutive_failures END, failure_streak_pure_connectivity = CASE WHEN enabled IS DISTINCT FROM $4 THEN true ELSE failure_streak_pure_connectivity END WHERE id = $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, execution_mode, on_failure, owner_id, visibility, wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
   "describe": {
     "columns": [
       {
@@ -145,23 +145,49 @@
       },
       {
         "ordinal": 28,
+        "name": "wake_override",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 29,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 30,
+        "ordinal": 31,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Text",
+        "Text",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Int4",
+        "Jsonb",
+        "Jsonb",
+        "Text",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Text"
       ]
     },
     "nullable": [
@@ -195,8 +221,9 @@
       false,
       false,
       false,
+      false,
       null
     ]
   },
-  "hash": "0bb1c7306416e4c7984525cd962b5173495ba2a8000bb96f0c1b64719ee09de9"
+  "hash": "834e230a15ec8c1882ee0656437d38798b320621424eceadbef692d91b296643"
 }

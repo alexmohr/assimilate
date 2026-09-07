@@ -106,7 +106,14 @@ pub struct UpdateHostWakeRequest {
 /// -- the DB's MAC-format CHECK constraint applies unconditionally, and the
 /// UI deliberately keeps stale values in the form after the wake toggle is
 /// switched off), `wake_enabled` requiring a MAC, and `shutdown_after_backup`
-/// requiring `wake_enabled`.
+/// requiring a MAC too.
+///
+/// Shutting down deliberately keys off having a MAC address rather than off
+/// `wake_enabled`: a schedule's own `wake_override` can wake a host whose
+/// `wake_enabled` is off (see [`shared::types::ScheduleWakeOverride`]), and
+/// such a host still has to be allowed to shut down afterwards. Mirrors the
+/// `agents_shutdown_requires_mac` / `repos_shutdown_requires_mac` CHECK
+/// constraints.
 pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), ApiError> {
     if wake.wake_timeout_seconds <= 0 {
         return Err(ApiError::BadRequest(
@@ -126,16 +133,18 @@ pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), Api
             .parse::<std::net::Ipv4Addr>()
             .map_err(|_| ApiError::BadRequest("invalid broadcast address".to_owned()))?;
     }
-    if wake.wake_enabled {
-        if wake.wake_mac_address.is_none() {
+    if wake.wake_mac_address.is_none() {
+        if wake.wake_enabled {
             return Err(ApiError::BadRequest(
                 "a MAC address is required to wake this host".to_owned(),
             ));
         }
-    } else if wake.shutdown_after_backup {
-        return Err(ApiError::BadRequest(
-            "shutting down after backup requires waking the host to be enabled".to_owned(),
-        ));
+        if wake.shutdown_after_backup {
+            return Err(ApiError::BadRequest(
+                "shutting down after backup requires a MAC address to wake this host with"
+                    .to_owned(),
+            ));
+        }
     }
     Ok(())
 }

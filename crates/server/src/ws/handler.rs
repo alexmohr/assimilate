@@ -1994,6 +1994,7 @@ mod tests {
         protocol::AgentToServer,
         types::{
             AcknowledgedFilter, AgentId, BackupReport, BackupStatus, QuotaAction, RepoId, ReportId,
+            ScheduleWakeOverride,
         },
     };
     use sqlx::PgPool;
@@ -2231,6 +2232,7 @@ exit 0
             &pool,
             repo.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "test-schedule",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -2356,6 +2358,7 @@ exit 0
             pool,
             repo.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "test-schedule",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -2642,6 +2645,7 @@ exit 0
             &pool,
             repo.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "quota-schedule",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -2736,6 +2740,7 @@ exit 0
             &pool,
             repo.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "quota-schedule",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -2844,6 +2849,7 @@ exit 0
             &pool,
             repo_a.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "shared-schedule-a",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -2877,6 +2883,7 @@ exit 0
             &pool,
             repo_b.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "shared-schedule-b",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -3002,6 +3009,7 @@ exit 0
             &pool,
             repo_a.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "shared-schedule-a",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -3098,6 +3106,7 @@ exit 0
             &pool,
             repo.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "reconnect-event-schedule",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -3242,6 +3251,7 @@ exit 0
             &pool,
             repo.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "multi-target-schedule",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -3377,6 +3387,7 @@ exit 0
             &pool,
             repo.id,
             &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "uncredited-target-schedule",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",

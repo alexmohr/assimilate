@@ -49,6 +49,23 @@ jobs:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - name: Check generated TypeScript files are in sync
         run: git diff --exit-code frontend/src/types/generated/
+  ci-scripts:
+    name: CI Scripts (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # No install step: .github/scripts has no package.json and no
+      # dependencies outside node's own stdlib and the `github`/`core`
+      # objects actions/github-script injects at runtime (which the tests
+      # stub). The glob is expanded by the shell rather than passed as a
+      # directory - `node --test <dir>` is not supported on Node 20.
+      - name: Run CI script tests
+        run: node --test .github/scripts/__tests__/*.test.js
+
   frontend:
     name: Frontend (fmt + lint + test + build)
     runs-on: ubuntu-latest

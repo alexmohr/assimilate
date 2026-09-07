@@ -170,9 +170,17 @@ why a check run, not a label, is what's waited on.
   latest successful `main` CI run, downloads both `coverage-final` lcov
   artifacts, and hands them to `.github/scripts/analyze-coverage-diff.js`:
   every new/changed line must have test coverage, and the PR's aggregate
-  line coverage must not be lower than the `main` baseline (zero tolerance
-  — this catches removed/weakened tests even when the source lines they used
-  to cover weren't touched by the diff). A failure posts its own PR comment,
+  line coverage must not be lower than the `main` baseline — this catches
+  removed/weakened tests even when the source lines they used to cover
+  weren't touched by the diff. The aggregate comparison is made at the two
+  decimal places the finding reports, not on the raw floats: the baseline
+  and the PR are measured by two independent CI runs, so a line or two can
+  differ in hit status between runs of identical code, and comparing raw
+  floats made that wobble a hard failure whose message read "decreased from
+  81.04% to 81.04%" — the same number twice. Comparing at the reported
+  precision means the check can only fail for a regression visible in its
+  own message; the per-file "new/changed lines must be covered" gate is
+  unaffected and remains exact. A failure posts its own PR comment,
   sets its own `coverage failed` label, and publishes a "Coverage Diff
   Check" check run on the commit, same pattern as duplication above. A final
   step then fires a `precheck-complete` `repository_dispatch` so the merge

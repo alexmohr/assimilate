@@ -36,6 +36,39 @@ const EXCLUDED_PATHS = [
   /_test\.rs$/,
 ];
 
+// Decimals the aggregate percentage is reported to - and, deliberately, the
+// precision it is compared at. See aggregateRegressed.
+const PERCENT_DECIMALS = 2;
+
+function formatPercent(percent) {
+  return percent.toFixed(PERCENT_DECIMALS);
+}
+
+// True only when the *reported* aggregate percentage actually went down.
+//
+// The base and PR sides come from two independent CI runs, and this suite
+// has async/timing-dependent paths, so a line or two can differ in hit
+// status between runs of byte-identical code. Comparing the raw floats made
+// that wobble a hard failure: PR #485 - which touches no instrumented file
+// at all, only `.github/scripts`, workflows and a skill doc - was blocked by
+// a finding reading "decreased from 81.04% (main) to 81.04% (this PR)". The
+// same number twice, because the difference was smaller than the two
+// decimals the message prints. At ~20k instrumented lines a single line
+// flipping is ~0.005pp, so this fires on essentially any PR whose coverage
+// jitters, saying nothing a human can act on.
+//
+// Comparing at the precision actually shown means the check can only fail
+// for a regression that is visible in its own message.
+//
+// This does not weaken the real gate: uncovered new/changed lines are found
+// per-file below, straight from the PR's own lcov, and are untouched by
+// this. A genuine aggregate regression large enough to round differently
+// still fails, and the finding now carries the covered/total line counts so
+// it can be diagnosed rather than just disbelieved.
+function aggregateRegressed(baseTotals, prTotals) {
+  return Number(formatPercent(prTotals.percent)) < Number(formatPercent(baseTotals.percent));
+}
+
 function addedLineNumbers(patch) {
   const added = [];
   if (!patch) return added;
@@ -79,11 +112,13 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
 
   const prTotals = totals(prLcov);
   const baseTotals = totals(baseLcov);
-  if (prTotals.percent < baseTotals.percent) {
+  if (aggregateRegressed(baseTotals, prTotals)) {
     findings.push(
-      `Aggregate line coverage decreased from ${baseTotals.percent.toFixed(2)}% (main) to ` +
-        `${prTotals.percent.toFixed(2)}% (this PR) - check for removed or weakened tests, ` +
-        "even if no specific uncovered line is flagged below.",
+      `Aggregate line coverage decreased from ${formatPercent(baseTotals.percent)}% ` +
+        `(main, ${baseTotals.coveredLines}/${baseTotals.totalLines} lines) to ` +
+        `${formatPercent(prTotals.percent)}% ` +
+        `(this PR, ${prTotals.coveredLines}/${prTotals.totalLines} lines) - check for removed ` +
+        "or weakened tests, even if no specific uncovered line is flagged below.",
     );
   }
 
@@ -195,3 +230,7 @@ module.exports = async ({ github, context, core, prNumber, headSha, prLcovPath, 
 };
 
 module.exports.analyzeDiff = analyzeDiff;
+// Exported for __tests__/analyze-coverage-diff.test.js - the jitter-vs-real
+// -regression decision is the whole point of the aggregate check, so it's
+// worth asserting directly rather than only through a full lcov fixture.
+module.exports.aggregateRegressed = aggregateRegressed;

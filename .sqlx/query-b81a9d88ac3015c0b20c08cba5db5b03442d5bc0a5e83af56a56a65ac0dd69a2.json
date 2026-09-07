@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_missed_runs, catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -125,38 +125,53 @@
       },
       {
         "ordinal": 24,
+        "name": "catch_up_missed_runs",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 25,
+        "name": "catch_up_min_lead_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 26,
         "name": "execution_mode",
         "type_info": "Text"
       },
       {
-        "ordinal": 25,
+        "ordinal": 27,
         "name": "on_failure",
         "type_info": "Text"
       },
       {
-        "ordinal": 26,
+        "ordinal": 28,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 27,
+        "ordinal": 29,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "consecutive_failures",
         "type_info": "Int4"
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "auto_disabled_agent_unreachable",
         "type_info": "Bool"
       },
       {
-        "ordinal": 30,
+        "ordinal": 32,
         "name": "target_hostnames!",
         "type_info": "TextArray"
+      },
+      {
+        "ordinal": 33,
+        "name": "catch_up_pending_count!",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -191,12 +206,15 @@
       false,
       false,
       false,
+      false,
+      false,
       true,
       false,
       false,
       false,
+      null,
       null
     ]
   },
-  "hash": "ab547f1452ade4fa613bef8061e343785383e4f194fa9b503ed63d1a5339a542"
+  "hash": "b81a9d88ac3015c0b20c08cba5db5b03442d5bc0a5e83af56a56a65ac0dd69a2"
 }

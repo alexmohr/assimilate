@@ -985,18 +985,19 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
 /// failure was a connectivity problem (`agent_unreachable`).
 async fn fail_target(
     ctx: &SequentialTargetCtx<'_>,
-    agent_id: i64,
-    repo_id: i64,
-    hostname: &str,
+    target: &DueScheduleRow,
     agent_unreachable: bool,
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> TargetControl {
+    if agent_unreachable {
+        mark_catch_up_pending(ctx, target).await;
+    }
     record_schedule_failure_once(
         ctx,
-        agent_id,
-        repo_id,
-        hostname,
+        target.agent_id,
+        target.repo_id,
+        &target.hostname,
         agent_unreachable,
         recorded_failure,
     )
@@ -1005,6 +1006,36 @@ async fn fail_target(
     match ctx.on_failure {
         OnFailure::Stop => TargetControl::Stop,
         OnFailure::Continue => TargetControl::Continue,
+    }
+}
+
+/// Remembers that this target missed the occurrence this tick was running, so
+/// `crate::catch_up` can run it once the host reconnects. Per target rather than once
+/// per tick (unlike [`record_schedule_failure_once`], which counts a schedule-wide
+/// streak): one host coming back must not re-run the backup for targets that never
+/// missed anything.
+///
+/// Only connectivity failures get here. A local/data failure (a config-assembly error,
+/// say) is not something a reconnect fixes, so catching it up on reconnect would just
+/// repeat the same failure.
+async fn mark_catch_up_pending(ctx: &SequentialTargetCtx<'_>, target: &DueScheduleRow) {
+    if !target.catch_up_missed_runs {
+        return;
+    }
+    if let Err(e) = db::catch_up::mark_catch_up_pending(
+        ctx.pool,
+        ctx.schedule_id,
+        target.agent_id,
+        target.due_at,
+    )
+    .await
+    {
+        tracing::error!(
+            schedule_id = ctx.schedule_id,
+            hostname = %target.hostname,
+            error = %e,
+            "sequential: failed to record a pending catch-up for this target"
+        );
     }
 }
 
@@ -1199,9 +1230,7 @@ async fn fail_target_with_teardown(
     teardown_power_for_target(power).await;
     fail_target(
         ctx,
-        target.agent_id,
-        target.repo_id,
-        &target.hostname,
+        target,
         agent_unreachable,
         recorded_failure,
         triggered_tx,
@@ -2212,6 +2241,8 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -2401,6 +2432,175 @@ esac
         assert_eq!(consecutive_failures, 1, "one failure must be recorded");
         assert!(enabled, "a single failure must not disable the schedule");
         assert!(!auto_disabled);
+    }
+
+    /// The occurrence the next tick will run, i.e. the `next_run_at` that came due.
+    async fn due_occurrence(pool: &sqlx::PgPool) -> DateTime<Utc> {
+        db::list_due_schedules(pool, Utc::now())
+            .await
+            .unwrap()
+            .first()
+            .unwrap()
+            .due_at
+    }
+
+    /// Fetches a target's pending catch-up marker, for the tests below.
+    async fn catch_up_marker(
+        pool: &sqlx::PgPool,
+        schedule_id: i64,
+        agent_id: i64,
+    ) -> Option<DateTime<Utc>> {
+        sqlx::query_scalar!(
+            "SELECT catch_up_pending_for FROM schedule_targets WHERE schedule_id = $1 AND \
+             agent_id = $2",
+            schedule_id,
+            agent_id,
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn enable_catch_up(pool: &sqlx::PgPool, schedule_id: i64) {
+        sqlx::query!(
+            "UPDATE schedules SET catch_up_missed_runs = true WHERE id = $1",
+            schedule_id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Owns everything a `tick()` needs besides the pool, so a test can hand it a
+    /// borrowed `TickDeps` without threading a dozen separate locals through.
+    struct TickFixture {
+        registry: AgentRegistry,
+        key: [u8; 32],
+        tunnel: TunnelManager,
+        bus: CompletionBus,
+        repo_op_tracker: RepoOpTracker,
+        ui_broadcast: UiBroadcast,
+        background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
+        power_sessions: crate::power::PowerSessionTracker,
+        notification_service: crate::notifications::NotificationService,
+        task_registry: shared::task_registry::TaskRegistry,
+        repo_lock: RepoLock,
+    }
+
+    impl TickFixture {
+        fn new(pool: &sqlx::PgPool) -> Self {
+            Self {
+                registry: AgentRegistry::new(),
+                key: tick_test_key(),
+                tunnel: dummy_tunnel(pool.clone()),
+                bus: CompletionBus::new(),
+                repo_op_tracker: RepoOpTracker::default(),
+                ui_broadcast: UiBroadcast::new(),
+                background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: crate::power::PowerSessionTracker::default(),
+                notification_service: crate::notifications::NotificationService::new(pool.clone()),
+                task_registry: shared::task_registry::TaskRegistry::default(),
+                repo_lock: RepoLock::default(),
+            }
+        }
+
+        fn deps<'a>(&'a self, pool: &'a sqlx::PgPool) -> TickDeps<'a> {
+            TickDeps {
+                pool,
+                registry: &self.registry,
+                encryption_key: &self.key,
+                tunnel_manager: &self.tunnel,
+                completion_bus: &self.bus,
+                repo_lock: &self.repo_lock,
+                repo_op_tracker: &self.repo_op_tracker,
+                ui_broadcast: &self.ui_broadcast,
+                background_task_tracker: &self.background_task_tracker,
+                power_sessions: &self.power_sessions,
+                notification_service: &self.notification_service,
+                task_registry: &self.task_registry,
+            }
+        }
+    }
+
+    /// The occurrence a schedule with catch-up enabled misses because its agent is
+    /// unreachable must be remembered against that target, so the reconnect handler
+    /// has something to run.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_records_a_pending_catch_up_when_the_agent_is_unreachable(pool: sqlx::PgPool) {
+        let fixture = TickFixture::new(&pool);
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &fixture.key).await;
+        enable_catch_up(&pool, schedule_id).await;
+        let due_at = due_occurrence(&pool).await;
+
+        // No agent is registered on `fixture.registry`, so the target is unreachable.
+        tick(&fixture.deps(&pool)).await.unwrap();
+
+        assert_eq!(
+            catch_up_marker(&pool, schedule_id, agent_id).await,
+            Some(due_at),
+            "the missed occurrence must be recorded against the target that missed it"
+        );
+    }
+
+    /// Thirty-five missed occurrences are still one catch-up: each miss overwrites the
+    /// marker instead of queueing behind it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn repeated_misses_do_not_stack_up_catch_ups(pool: sqlx::PgPool) {
+        let fixture = TickFixture::new(&pool);
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &fixture.key).await;
+        enable_catch_up(&pool, schedule_id).await;
+        // Well past the default threshold, so the schedule is auto-disabled partway
+        // through - exactly the state a long outage leaves behind.
+        sqlx::query!(
+            "UPDATE schedules SET missed_backup_threshold = 100 WHERE id = $1",
+            schedule_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut last_due_at = None;
+        for _ in 0..35 {
+            let past = Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap();
+            db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+            last_due_at = Some(due_occurrence(&pool).await);
+            tick(&fixture.deps(&pool)).await.unwrap();
+        }
+
+        assert_eq!(
+            catch_up_marker(&pool, schedule_id, agent_id).await,
+            last_due_at,
+            "only the most recent miss is remembered, so only one run can follow"
+        );
+        let pending = db::catch_up::list_catch_up_candidates_for_agent(&pool, agent_id)
+            .await
+            .unwrap();
+        assert!(
+            pending.len() <= 1,
+            "35 missed occurrences must never produce more than one catch-up, got {}",
+            pending.len()
+        );
+    }
+
+    /// A schedule that doesn't catch up misses nothing to run later, so nothing is
+    /// recorded for it either.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_records_no_catch_up_when_the_schedule_does_not_want_one(pool: sqlx::PgPool) {
+        let fixture = TickFixture::new(&pool);
+        let (_, schedule_id, agent_id) = setup_due_schedule(&pool, &fixture.key).await;
+
+        tick(&fixture.deps(&pool)).await.unwrap();
+
+        assert_eq!(
+            catch_up_marker(&pool, schedule_id, agent_id).await,
+            None,
+            "catch-up is opt-in; a schedule with it off must not remember misses"
+        );
     }
 
     /// A cron expression that can't be evaluated (here: syntactically invalid, but the
@@ -3575,6 +3775,8 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -3738,6 +3940,8 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "continue",
             },
             None,
@@ -3902,6 +4106,8 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "continue",
             },
             None,
@@ -4006,6 +4212,8 @@ esac
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         };
 
@@ -4136,6 +4344,8 @@ esac
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,

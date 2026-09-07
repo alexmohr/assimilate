@@ -449,6 +449,33 @@ WHERE EXISTS (SELECT 1 FROM schedules WHERE name = 'Auto-disabled demo');
 SQL
 
 api POST "/api/schedules" "{
+    \"name\": \"Catch-up on reconnect demo\",
+    \"agent_ids\": [$AUTO_DISABLED_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 2 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"catch_up_missed_runs\": true,
+    \"catch_up_min_lead_minutes\": 120,
+    \"backup_sources\": [\"/srv/catch-up-demo\"]
+}" > /dev/null
+
+# Demonstrates the "Catch-up pending" badge and the Overview tab's catch-up row
+# (see docs/scheduling.md#catch-up-runs) by writing the marker the scheduler
+# writes when it can't reach a target, rather than waiting out a real outage
+# against an agent that never connects. Whatever the outage's length, exactly one
+# occurrence is ever pending - that is the feature.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE schedule_targets st
+SET catch_up_pending_for = NOW() - interval '35 days'
+FROM schedules s
+WHERE s.id = st.schedule_id AND s.name = 'Catch-up on reconnect demo';
+SQL
+
+api POST "/api/schedules" "{
     \"name\": \"Missed backups warning demo\",
     \"agent_ids\": [$AUTO_DISABLED_ID],
     \"repo_id\": $REPO_DAILY_ID,

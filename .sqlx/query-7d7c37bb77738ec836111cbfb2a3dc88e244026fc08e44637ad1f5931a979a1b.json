@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedule_targets SET catch_up_pending_for = NULL WHERE schedule_id = $1 AND catch_up_pending_for IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7d7c37bb77738ec836111cbfb2a3dc88e244026fc08e44637ad1f5931a979a1b"
+}

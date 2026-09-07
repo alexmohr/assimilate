@@ -8,6 +8,7 @@ import type { ScheduleRow } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { ReportRow } from '../types/report'
 import type { AgentRow } from '../types/agent'
+import type { ScheduleTargetResponse } from '../types/generated/ScheduleTargetResponse'
 
 const SCHEDULE = {
   id: 1,
@@ -22,10 +23,16 @@ const SCHEDULE = {
 
 const AGENT_LABELS: Record<number, string> = { 10: 'web-server-01', 11: 'db-server-01' }
 
+const TARGETS: ScheduleTargetResponse[] = [
+  { agent_id: 10, execution_order: 0, catch_up_pending_for: null },
+  { agent_id: 11, execution_order: 1, catch_up_pending_for: null },
+]
+
 function mount(overrides: Record<string, unknown> = {}) {
   return renderWithPlugins(ScheduleOverviewTab, {
     props: {
       schedule: SCHEDULE,
+      targets: TARGETS,
       repoName: 'server-daily',
       cronSummary: 'Daily at 02:00',
       agentIds: [10, 11],
@@ -53,6 +60,48 @@ describe('ScheduleOverviewTab', () => {
     expect(text).toContain('server-daily')
     expect(text).toContain('Continue')
     expect(text).toContain('Daily at 02:00')
+  })
+
+  it('says catch-up is off when the schedule does not want one', () => {
+    const wrapper = mount({
+      schedule: { ...SCHEDULE, catch_up_missed_runs: false, catch_up_min_lead_minutes: 120 },
+    })
+    expect(wrapper.text()).toContain('Catch-up')
+    expect(wrapper.text()).toContain('Off')
+  })
+
+  it('spells out the floor a catch-up still has to clear', () => {
+    const wrapper = mount({
+      schedule: { ...SCHEDULE, catch_up_missed_runs: true, catch_up_min_lead_minutes: 120 },
+    })
+    expect(wrapper.text()).toContain('On, if the next run is at least 2 hours away')
+  })
+
+  it('keeps a sub-hour floor in minutes rather than rounding it to zero hours', () => {
+    const wrapper = mount({
+      schedule: { ...SCHEDULE, catch_up_missed_runs: true, catch_up_min_lead_minutes: 45 },
+    })
+    expect(wrapper.text()).toContain('45 minutes')
+  })
+
+  it('names the host a pending catch-up is waiting on', () => {
+    const wrapper = mount({
+      schedule: { ...SCHEDULE, catch_up_missed_runs: true, catch_up_min_lead_minutes: 120 },
+      targets: [
+        { agent_id: 10, execution_order: 0, catch_up_pending_for: '2026-08-18T02:00:00Z' },
+        { agent_id: 11, execution_order: 1, catch_up_pending_for: null },
+      ],
+    })
+    expect(wrapper.text()).toContain('Pending for web-server-01')
+    expect(wrapper.text()).not.toContain('Pending for db-server-01')
+    // The target row carries its own marker, so the badge is next to the host
+    // it belongs to and not only in the summary above.
+    expect(wrapper.text()).toContain('Catch-up pending')
+  })
+
+  it('shows no catch-up badge when nothing is pending', () => {
+    const wrapper = mount()
+    expect(wrapper.text()).not.toContain('Catch-up pending')
   })
 
   it('shows Never for a null last run', () => {

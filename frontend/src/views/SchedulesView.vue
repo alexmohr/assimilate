@@ -40,7 +40,7 @@ import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryS
 import ScheduleTimelineRail, { type TimelineEntry } from '../components/ScheduleTimelineRail.vue'
 import FilterSyntaxHelp from '../components/FilterSyntaxHelp.vue'
 import type { AgentRow } from '../types/agent'
-import { scheduleDisabledLabel } from '../utils/scheduleStatus'
+import { catchUpPendingTitle, scheduleDisabledLabel } from '../utils/scheduleStatus'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
 
@@ -733,6 +733,19 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
                 :class="`type-${s.schedule_type ?? 'backup'}`"
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
+              </span>
+              <!--
+                A run waiting on a host to come back is neither in the cadence
+                nor in the last run, so the card says so rather than making
+                someone open the schedule to find out.
+              -->
+              <span
+                v-if="s.catch_up_pending_count > 0"
+                class="badge badge--info"
+                :title="catchUpPendingTitle(s.catch_up_pending_count)"
+              >
+                <span class="badge-dot" />
+                Catch-up pending
               </span>
             </div>
             <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />

@@ -978,6 +978,39 @@ async fn catch_up_marks_do_not_stack(pool: PgPool) {
     assert_eq!(candidate.min_lead_minutes, 120);
 }
 
+/// The bug this guards: a catch-up run resolved its repository from the
+/// schedule's denormalised primary, so a host coming back from a miss wrote
+/// only that copy and every secondary target fell a run further behind, with
+/// nothing reported.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_covers_every_enabled_target_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    let disabled = create_test_repo_with_host(&pool, "disabled", "disabled.local").await;
+    db::replace_schedule_repos(
+        &pool,
+        schedule.id,
+        &[(repo.id, true), (offsite.id, false), (disabled.id, false)],
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE repos SET enabled = false WHERE id = $1")
+        .bind(disabled.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let repos = db::catch_up::list_enabled_catch_up_repos(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        repos,
+        vec![repo.id, offsite.id],
+        "a catch-up must write every target the missed tick would have, in write order, and skip \
+         a disabled repository the same way a tick does"
+    );
+}
+
 /// Clearing is unconditional and per agent: whether the miss ran or was skipped,
 /// it must not be reconsidered on the next reconnect.
 #[sqlx::test(migrations = "./migrations")]

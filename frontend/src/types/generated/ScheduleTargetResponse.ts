@@ -12,4 +12,9 @@ export type ScheduleTargetResponse = {
    * Order in which agents execute the schedule.
    */
   execution_order: number;
+  /**
+   * The occurrence this target missed while its host was unreachable, waiting
+   * to be caught up when that host reconnects. `None` when nothing is pending.
+   */
+  catch_up_pending_for: string | null;
 };

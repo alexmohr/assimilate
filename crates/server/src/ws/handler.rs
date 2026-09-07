@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     AppState,
     api::repos::sync_new_archives,
-    archive_index, config_assembler, db,
+    archive_index, catch_up, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
     quota_enforcement,
     ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
@@ -219,6 +219,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     tracing::info!(hostname = %hostname, "agent connected");
 
     reenable_system_disabled_schedules_on_reconnect(&state, agent_id, &hostname).await;
+
+    // After the re-enable pass, never before it: a schedule this host's outage
+    // auto-disabled is only eligible for its pending catch-up once it is enabled
+    // again.
+    catch_up::run_catch_ups_on_reconnect(&state, agent_id, &hostname).await;
 
     if replaced_connection {
         abandon_stale_operations_on_reconnect(&state, agent_id, &hostname).await;
@@ -2051,45 +2056,7 @@ mod tests {
     static TEST_BORG_BINARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn build_test_state(pool: PgPool) -> AppState {
-        let ui_broadcast = crate::ws::ui_broadcast::UiBroadcast::new();
-        let tunnel_manager = crate::tunnel::TunnelManager::new(
-            pool.clone(),
-            ui_broadcast.clone(),
-            "127.0.0.1:0".parse().expect("valid socket address"),
-        );
-
-        AppState {
-            pool: pool.clone(),
-            encryption_key: derive_key(b"handler-test-secret-key").unwrap(),
-            registry: crate::ws::registry::AgentRegistry::new(),
-            ui_broadcast,
-            tunnel_manager,
-            log_buffer: crate::log_buffer::LogBuffer::default(),
-            notification_service: crate::notifications::NotificationService::new(pool),
-            completion_bus: crate::ws::completion_bus::CompletionBus::new(),
-            repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
-            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
-            repo_lock: crate::RepoLock::default(),
-            import_tasks: crate::ImportTaskRegistry::default(),
-            pending_dryruns: crate::new_pending_map(),
-            pending_restores: crate::new_pending_map(),
-            pending_vm_scans: crate::new_pending_map(),
-            pending_vm_builds: crate::new_pending_map(),
-            pending_migrations: crate::new_pending_map(),
-            pending_deletes: crate::new_pending_map(),
-            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
-                480,
-            )),
-            power_sessions: crate::power::PowerSessionTracker::default(),
-            shutdown_token: tokio_util::sync::CancellationToken::new(),
-            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
-            task_registry: shared::task_registry::TaskRegistry::default(),
-
-            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
-                60,
-                std::time::Duration::from_mins(1),
-            ),
-        }
+        crate::test_support::build_test_state(pool, b"handler-test-secret-key")
     }
 
     async fn write_fake_borg_binary() -> PathBuf {
@@ -2253,6 +2220,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -2379,6 +2348,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -2666,6 +2637,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -2761,6 +2734,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -2870,6 +2845,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -2904,6 +2881,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -3030,6 +3009,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -3127,6 +3108,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,
@@ -3272,6 +3255,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "continue",
             },
             None,
@@ -3408,6 +3393,8 @@ exit 0
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "continue",
             },
             None,
@@ -3463,5 +3450,224 @@ exit 0
              target is connected"
         );
         assert!(!reenabled.auto_disabled_agent_unreachable);
+    }
+
+    /// Agent, repository and catch-up-enabled schedule for the reconnect catch-up
+    /// tests below, with `agent_id` already carrying a missed occurrence.
+    async fn insert_catch_up_fixture(
+        pool: &PgPool,
+        name: &str,
+        next_run_at: chrono::DateTime<chrono::Utc>,
+    ) -> (crate::db::AgentRow, i64) {
+        let agent = crate::db::insert_agent(pool, name, None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            pool,
+            &crate::db::InsertRepoParams {
+                name: &format!("{name}-repo"),
+                repo_path: "/backups/catch-up",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        crate::db::update_repo_ssh_host_key(pool, repo.id, "ssh-ed25519 AAAACATCHUP")
+            .await
+            .expect("set repo host key");
+        let schedule = crate::db::insert_schedule(
+            pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
+                name: &format!("{name}-schedule"),
+                schedule_type: "backup",
+                cron_expression: "0 2 * * *",
+                enabled: true,
+                canary_enabled: false,
+                vm_snapshot_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
+                catch_up_missed_runs: true,
+                catch_up_min_lead_minutes: 120,
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        crate::db::set_next_run_at(pool, schedule.id, next_run_at)
+            .await
+            .expect("set next run");
+        crate::db::catch_up::mark_catch_up_pending(
+            pool,
+            schedule.id,
+            agent.id,
+            chrono::Utc::now()
+                .checked_sub_signed(chrono::Duration::days(35))
+                .unwrap(),
+        )
+        .await
+        .expect("mark catch-up pending");
+        (agent, schedule.id)
+    }
+
+    async fn pending_catch_ups(pool: &PgPool, agent_id: i64) -> usize {
+        crate::db::catch_up::list_catch_up_candidates_for_agent(pool, agent_id)
+            .await
+            .expect("list catch-up candidates")
+            .len()
+    }
+
+    async fn recorded_catch_up_events(pool: &PgPool) -> usize {
+        crate::db::get_system_events(pool, 20, AcknowledgedFilter::All)
+            .await
+            .expect("get system events")
+            .iter()
+            .filter(|e| matches!(e.event_type, SystemEventType::ScheduleCatchUp))
+            .count()
+    }
+
+    /// The happy path: a host that missed a run comes back with plenty of time before
+    /// the next scheduled one, so the run it missed is dispatched to it.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn reconnect_runs_the_occurrence_the_host_missed(pool: PgPool) {
+        let next_run = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::hours(17))
+            .unwrap();
+        let (agent, schedule_id) = insert_catch_up_fixture(&pool, "catch-up-runs", next_run).await;
+
+        let state = build_test_state(pool.clone());
+        let (tx, mut rx) = mpsc::channel(8);
+        state.registry.register(agent.id, tx, false, None).await;
+
+        catch_up::run_catch_ups_on_reconnect(&state, agent.id, &agent.hostname).await;
+
+        let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a catch-up run must be dispatched on reconnect")
+            .expect("registry channel open");
+        assert!(
+            matches!(first, ServerToAgent::ConfigUpdate(_)),
+            "the catch-up must push a fresh config first, got: {first:?}"
+        );
+        let second = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the run trigger must follow the config push")
+            .expect("registry channel open");
+        assert!(
+            matches!(second, ServerToAgent::RunBackupNow { .. }),
+            "the catch-up must trigger the missed backup, got: {second:?}"
+        );
+
+        assert_eq!(
+            pending_catch_ups(&pool, agent.id).await,
+            0,
+            "the marker must be cleared, so a second reconnect cannot run it again"
+        );
+        assert_eq!(recorded_catch_up_events(&pool).await, 1);
+        assert!(
+            crate::db::get_schedule_by_id(&pool, schedule_id)
+                .await
+                .expect("get schedule")
+                .enabled
+        );
+
+        // Lets the dispatch task's completion wait finish instead of outliving the test.
+        state.registry.unregister(agent.id).await;
+    }
+
+    /// The regular run is 30 minutes out and the floor is two hours: catching up now
+    /// would only duplicate it, so the miss is dropped instead.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn reconnect_skips_a_catch_up_when_the_next_run_is_close(pool: PgPool) {
+        let next_run = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::minutes(30))
+            .unwrap();
+        let (agent, _) = insert_catch_up_fixture(&pool, "catch-up-skips", next_run).await;
+
+        let state = build_test_state(pool.clone());
+        let (tx, mut rx) = mpsc::channel(8);
+        state.registry.register(agent.id, tx, false, None).await;
+
+        catch_up::run_catch_ups_on_reconnect(&state, agent.id, &agent.hostname).await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing may be dispatched when the next scheduled run is inside the floor"
+        );
+        assert_eq!(
+            pending_catch_ups(&pool, agent.id).await,
+            0,
+            "a skipped miss is dropped, not carried forward to the next reconnect"
+        );
+        assert_eq!(recorded_catch_up_events(&pool).await, 0);
+    }
+
+    /// Switching the setting off between the miss and the reconnect means the run is
+    /// no longer wanted - the marker still goes, so it cannot resurface later.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn reconnect_drops_a_catch_up_the_schedule_no_longer_wants(pool: PgPool) {
+        let next_run = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::hours(17))
+            .unwrap();
+        let (agent, schedule_id) = insert_catch_up_fixture(&pool, "catch-up-off", next_run).await;
+        sqlx::query!(
+            "UPDATE schedules SET catch_up_missed_runs = false WHERE id = $1",
+            schedule_id,
+        )
+        .execute(&pool)
+        .await
+        .expect("switch catch-up off");
+
+        let state = build_test_state(pool.clone());
+        let (tx, mut rx) = mpsc::channel(8);
+        state.registry.register(agent.id, tx, false, None).await;
+
+        catch_up::run_catch_ups_on_reconnect(&state, agent.id, &agent.hostname).await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "a switched-off schedule runs nothing"
+        );
+        let still_pending = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM schedule_targets WHERE agent_id = $1 AND catch_up_pending_for \
+             IS NOT NULL",
+            agent.id,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count pending");
+        assert_eq!(still_pending, Some(0), "the stale marker must be cleared");
     }
 }

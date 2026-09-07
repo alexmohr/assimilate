@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, s.missed_backup_threshold, s.wake_override FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, s.missed_backup_threshold, s.catch_up_missed_runs, s.wake_override, s.next_run_at AS \"due_at!\" FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
   "describe": {
     "columns": [
       {
@@ -55,8 +55,18 @@
       },
       {
         "ordinal": 10,
+        "name": "catch_up_missed_runs",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
         "name": "wake_override",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "due_at!",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -75,8 +85,10 @@
       false,
       false,
       false,
-      false
+      false,
+      false,
+      true
     ]
   },
-  "hash": "cbe7f06d6a80fcf3b42740661b39acaf9c8fb6897feda32a3ce19d01de50e6d9"
+  "hash": "e3001741a07aab4c363653d8c7644ea9f104cfc282c2f2974949f626d39e1d36"
 }

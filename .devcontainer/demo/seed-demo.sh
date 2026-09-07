@@ -474,6 +474,33 @@ WHERE EXISTS (SELECT 1 FROM schedules WHERE name = 'Auto-disabled demo');
 SQL
 
 api POST "/api/schedules" "{
+    \"name\": \"Catch-up on reconnect demo\",
+    \"agent_ids\": [$AUTO_DISABLED_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 2 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"catch_up_missed_runs\": true,
+    \"catch_up_min_lead_minutes\": 120,
+    \"backup_sources\": [\"/srv/catch-up-demo\"]
+}" > /dev/null
+
+# Demonstrates the "Catch-up pending" badge and the Overview tab's catch-up row
+# (see docs/scheduling.md#catch-up-runs) by writing the marker the scheduler
+# writes when it can't reach a target, rather than waiting out a real outage
+# against an agent that never connects. Whatever the outage's length, exactly one
+# occurrence is ever pending - that is the feature.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
+UPDATE schedule_targets st
+SET catch_up_pending_for = NOW() - interval '35 days'
+FROM schedules s
+WHERE s.id = st.schedule_id AND s.name = 'Catch-up on reconnect demo';
+SQL
+
+api POST "/api/schedules" "{
     \"name\": \"Missed backups warning demo\",
     \"agent_ids\": [$AUTO_DISABLED_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -581,6 +608,12 @@ api POST "/api/schedules" "{
 # archives into server-daily (see start-agent.sh), so this schedule's Backups
 # tab has archives from more than one host - which is what makes the archive
 # selector's host grouping, and its per-host totals, visible there.
+#
+# It is also what the Schedules page's "Group: Agent" mode is seeded for (see
+# docs/scheduling.md): targeting all three demo agents, this one schedule is
+# listed under each of their sections, while the single-agent schedules above
+# spread across those same sections and across the three repositories the
+# "Group: Repo" mode buckets by.
 api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
     \"repo_id\": $REPO_DAILY_ID,

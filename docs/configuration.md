@@ -140,6 +140,8 @@ Each schedule is associated with a repository and controls when and how backups 
 | `post_backup_commands` | Same shape as `pre_backup_commands`, executed on the agent after the backup completes with success or warnings. Not run if `borg create` fails outright. |
 | `hook_timeout_seconds` | Default timeout, in seconds, for every pre- and post-backup command that does not set its own `timeout_seconds`. A command still running past its timeout is killed and treated as a failure. Defaults to `60`, up to a maximum of `3600`. |
 | `missed_backup_threshold` | Number of consecutive missed backups (agent or target unreachable at trigger time) tolerated before the schedule is marked failed and automatically disabled — see [Agent status and auto-disable](agents.md#agent-status). Below this count, a miss only shows as a warning. Defaults to `3`. |
+| `catch_up_missed_runs` | When `true`, an occurrence missed because a target host was unreachable is run once that host reconnects — see [Catch-up runs](scheduling.md#catch-up-runs). Missed runs never stack: however many occurrences pass during an outage, at most one catch-up run follows. Defaults to `false`. |
+| `catch_up_min_lead_minutes` | Minimum time, in minutes, that must remain before the next scheduled run for a catch-up to still start. A host reconnecting closer than this to the next run has its pending miss dropped instead, so the catch-up never collides with the regular run. Between `1` and `10080` (7 days). Defaults to `120`. |
 
 ## Repository Configuration
 

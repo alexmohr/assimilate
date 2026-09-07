@@ -51,6 +51,8 @@ export interface CreateScheduleRequest {
   hook_timeout_seconds: number
   missed_backup_threshold: number
   wake_override: ScheduleWakeOverride
+  catch_up_missed_runs: boolean
+  catch_up_min_lead_minutes: number
   backup_sources: string[]
   backup_sources_per_agent?: ScheduleAgentBackupSourcesOverride[]
   exclude_patterns_per_agent?: ScheduleAgentTextOverride[]

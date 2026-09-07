@@ -11,6 +11,8 @@ pub mod archive_index;
 pub mod background_tasks;
 /// Borg subprocess management.
 pub mod borg;
+/// Catching up runs missed while a host was unreachable.
+pub mod catch_up;
 /// Client IP resolution from request headers.
 pub mod client_ip;
 /// Assembles per-agent configuration from the database.
@@ -38,6 +40,9 @@ pub mod quota_enforcement;
 pub mod rate_limit;
 /// Tracks active/queued repository operations for the UI.
 pub mod repo_op_tracker;
+/// Dispatching a schedule's targets outside the scheduler's tick (Run now,
+/// catch-up runs).
+pub mod run_dispatch;
 /// Scheduler that ticks schedules, syncs, retention, and session cleanup.
 pub mod scheduler;
 /// SSH key management, host key scanning, and key deployment.

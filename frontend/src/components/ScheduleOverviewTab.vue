@@ -8,6 +8,7 @@ import type { ScheduleRow } from '../types/schedule'
 import type { ReportRow } from '../types/report'
 import type { AgentRow } from '../types/agent'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
+import type { ScheduleTargetResponse } from '../types/generated/ScheduleTargetResponse'
 import { computed } from 'vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
 import {
@@ -36,6 +37,8 @@ interface ArchiveProgressData {
  */
 const props = defineProps<{
   schedule: ScheduleRow
+  /** Targets of this schedule, for the catch-up markers they carry. */
+  targets: readonly ScheduleTargetResponse[]
   repoName: string | null
   cronSummary: string
   agentIds: readonly number[]
@@ -61,6 +64,28 @@ const emit = defineEmits<{
 }>()
 
 const BACKUP_PREVIEW_COUNT = 5
+const MINUTES_PER_HOUR = 60
+
+/** The occurrence this target missed and will run when its host reconnects. */
+function catchUpPendingFor(agentId: number): string | null {
+  return props.targets.find((t) => t.agent_id === agentId)?.catch_up_pending_for ?? null
+}
+
+const pendingCatchUps = computed(() =>
+  props.agentIds.filter((id) => catchUpPendingFor(id) !== null),
+)
+
+/** "90 minutes" reads worse than "1.5 hours" only past the hour mark. */
+function leadTimeText(minutes: number): string {
+  if (minutes < MINUTES_PER_HOUR) return `${minutes} minutes`
+  const hours = minutes / MINUTES_PER_HOUR
+  return `${Number(hours.toFixed(1))} hours`
+}
+
+const catchUpText = computed(() => {
+  if (!props.schedule.catch_up_missed_runs) return 'Off'
+  return `On, if the next run is at least ${leadTimeText(props.schedule.catch_up_min_lead_minutes)} away`
+})
 
 const overdueTargets = computed(() =>
   props.agentIds.filter((id) => props.healthForAgent(id)?.is_overdue),
@@ -189,6 +214,18 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
         <dd>{{ formatDateShort(schedule.last_run_at, 'Never') }}</dd>
         <dt>Cron (human)</dt>
         <dd>{{ cronSummary }}</dd>
+        <dt>Catch-up</dt>
+        <dd>
+          <span :class="{ muted: !schedule.catch_up_missed_runs }">{{ catchUpText }}</span>
+          <span
+            v-for="id in pendingCatchUps"
+            :key="id"
+            class="badge badge--info"
+          >
+            <span class="badge-dot" />
+            Pending for {{ agentLabel(id) }}
+          </span>
+        </dd>
       </dl>
     </div>
 
@@ -231,6 +268,14 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
             class="badge badge--warning"
           >
             Overdue
+          </span>
+          <span
+            v-if="catchUpPendingFor(id)"
+            class="badge badge--info"
+            :title="`Missed the run due at ${formatDateShort(catchUpPendingFor(id))}`"
+          >
+            <span class="badge-dot" />
+            Catch-up pending
           </span>
           <span class="agent-row-stats">
             <span>last {{ lastBackupText(id) }}</span>

@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { cronToHuman } from '../utils/cron'
-import { scheduleDisabledLabel } from '../utils/scheduleStatus'
+import { catchUpPendingTitle, scheduleDisabledLabel } from '../utils/scheduleStatus'
 import EntityStatusBadges, { type EntityIssue } from './EntityStatusBadges.vue'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 
@@ -68,6 +68,19 @@ function scheduleTypeLabel(t: ScheduleType): string {
         :class="`type-${schedule.schedule_type ?? 'backup'}`"
       >
         {{ scheduleTypeLabel(schedule.schedule_type ?? 'backup') }}
+      </span>
+      <!--
+        A run waiting on a host to come back is the one thing about this
+        schedule that is neither in its cron nor its last run, so the card says
+        so rather than making someone open the schedule to find out.
+      -->
+      <span
+        v-if="schedule.catch_up_pending_count > 0"
+        class="badge badge--info"
+        :title="catchUpPendingTitle(schedule.catch_up_pending_count)"
+      >
+        <span class="badge-dot" />
+        Catch-up pending
       </span>
     </div>
     <div class="card-stats">

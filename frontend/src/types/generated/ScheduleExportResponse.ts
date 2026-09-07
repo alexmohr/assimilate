@@ -102,6 +102,16 @@ export type ScheduleExportResponse = {
    */
   wake_override: string;
   /**
+   * Whether a run missed while a target host was unreachable is caught up on
+   * reconnect.
+   */
+  catch_up_missed_runs: boolean;
+  /**
+   * How much time must be left before the next scheduled run for a catch-up
+   * to still start.
+   */
+  catch_up_min_lead_minutes: number;
+  /**
    * Backup source paths.
    */
   backup_sources: Array<string>;

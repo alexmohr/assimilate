@@ -28,8 +28,22 @@ The Schedules list page shows all configured backup schedules with:
 - **Type filter** — filter by Backup, Check, or Verify
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
 - **Sort buttons** — sort by Agent, Next run, Last run, or Type
+- **Group control** — section the cards by Time, Agent, or Repo
 
-Schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
+By default schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
+
+The **Group** control beside the sort buttons switches which question the sections answer:
+
+| Group by | Sections | Use it to see |
+|---|---|---|
+| Time | Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, Paused | What runs next, and what is paused |
+| Agent | One per targeted agent, named "Display name (hostname)" | Everything that backs up a given machine |
+| Repo | One per repository the schedules write into | Everything that writes into a given repository |
+
+A schedule that targets several agents appears under each of them, so an agent's section lists everything that backs that machine up. Sorting, filtering and the 24-hour rail are unchanged by the group mode — every section is ordered by the active sort, and only schedules matching the current filters are grouped. Schedules with no agent or no repository assigned collect in a final **No agents** or **No repository** section.
+
+!!! note "Agents that share a hostname"
+    A schedule records the *hostname* it targets, and a hostname identifies a machine only together with its [domain](agents.md) — two agents in different domains can report the same one. Grouping by agent therefore puts every schedule naming that hostname in one section, whichever of those agents it actually targets. Such a section is titled with the bare hostname rather than either agent's display name, and carries an **N agents** badge saying how many machines it covers; hover it for the detail. Grouping by agent or repo drops the separate Paused section: a disabled schedule stays with its agent or repository and is identified by its **Disabled** pill instead.
 
 Above the groups, a 24-hour rail plots every enabled schedule due within the next day along a timeline from now. When two or more of those runs land within 30 minutes of each other **on the same repository**, the rail marks them and names the repository and time so you can stagger them before they contend for the same repository lock. Two runs that share a storage host but write to different repositories are not a collision — they don't block each other — and are not flagged.
 
@@ -168,6 +182,30 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 ### Missed Backup Threshold
 
 Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Below that count, a miss only shows as an **N/threshold missed** warning chip on the schedule card; once the threshold is reached, the schedule is disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) fires if a channel has a rule for it. A single successful run resets the count back to zero.
+
+### Catch-Up Runs
+
+Settings → General has a **Catch up missed runs** toggle (`catch_up_missed_runs`, default off). Turn it on for hosts that are not online around the clock — a laptop, a workstation, a machine that is powered down overnight. When the scheduler cannot reach a host at trigger time, it records the occurrence that host missed; the moment that host reconnects, the server runs it.
+
+<!-- screenshot: schedule-catch-up -->
+
+Missed runs never stack. The record is one occurrence per host, not a queue: a host that misses thirty-five nightly backups comes back to **one** catch-up run, not thirty-five. A later miss overwrites the earlier one, so the run that follows is always the most recent occurrence.
+
+The **Only if the next run is at least ... away** field (`catch_up_min_lead_minutes`, default 120) is the floor that keeps a catch-up from colliding with the run it would land on top of. Measured against the schedule's next run: reconnect with less time than this left and the pending miss is dropped instead of run, because the regular run is about to do the same work. A host reconnecting at 09:00 under a nightly 02:00 schedule catches up immediately; one reconnecting at 01:40 waits for the 02:00 run.
+
+Each of a schedule's target hosts is tracked separately, so one laptop coming back does not re-run the backup for servers that never missed anything.
+
+A pending catch-up is visible before it runs: the schedule card carries a **Catch-up pending** badge, and the schedule's Overview tab names the host it is waiting on. When one runs, it is recorded in the [activity log](activity.md) as a **Schedule Catch Up** event, and produces a normal backup report.
+
+| Field | Default | Required | Description |
+|-------|---------|----------|-------------|
+| `catch_up_missed_runs` | `false` | No | Run an occurrence missed while a host was unreachable, once that host reconnects |
+| `catch_up_min_lead_minutes` | `120` | No | Minimum time that must remain before the next scheduled run for a catch-up to still start (1–10080) |
+
+!!! note
+    A schedule that its host's outage [auto-disabled](#missed-backup-threshold) is re-enabled first and then considered for a catch-up. Re-enabling makes it due immediately, so its pending miss falls inside the floor and is dropped — the scheduler's own run covers it seconds later.
+
+A pending miss is also dropped, without running, when the schedule or its repository is disabled at reconnect time, or when the toggle has been switched off in the meantime. The decision is made once, at reconnect; nothing is carried forward to a later one.
 
 ## Manual Trigger
 

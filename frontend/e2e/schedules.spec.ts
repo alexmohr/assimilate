@@ -100,7 +100,9 @@ async function openScheduleAdvanced(page: Page): Promise<void> {
 
 /** Adds an empty pre-backup command row, returning its field and its script box. */
 async function addPreBackupCommand(page: Page): Promise<{ field: Locator; script: Locator }> {
-  const field = page.locator('.field', { hasText: 'Pre-backup commands' })
+  // The Advanced pane renders its settings as `.pane-row`s; the General
+  // section still uses `.field` blocks.
+  const field = page.locator('.pane-row', { hasText: 'Pre-backup commands' })
   await field.getByRole('button', { name: '+ Add command' }).click()
   return { field, script: field.locator('textarea').last() }
 }
@@ -123,7 +125,7 @@ async function saveNumericScheduleField(
   jsonKey: string,
   newValue: number,
 ): Promise<Locator> {
-  const field = page.locator('.field', { hasText: fieldLabel })
+  const field = page.locator('.field, .pane-row', { hasText: fieldLabel })
   const input = field.locator('input[type="number"]')
   await expect(input).toBeVisible()
 
@@ -182,6 +184,40 @@ test.describe('Schedules management', () => {
 
     const card = page.locator('.entity-card', { hasText: 'server-daily' }).first()
     await expect(card.locator('.run-history')).toBeVisible()
+  })
+
+  test('the group control re-sections the list by agent and by repository', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    // The one segmented control on the page; no option's label is a substring
+    // of another, so a text filter picks exactly one.
+    const groupOption = (label: string) =>
+      page.locator('.segmented-option').filter({ hasText: label })
+    const groupTitles = page.locator('.list-group-title')
+
+    // The multi-host schedule seeded by seed-demo.sh targets all three demo
+    // agents, so every one of them heads a section of its own.
+    await groupOption('Agent').click()
+    await expect(groupTitles.filter({ hasText: 'web-server-01' }).first()).toBeVisible()
+    await expect(groupTitles.filter({ hasText: 'db-server-01' }).first()).toBeVisible()
+    await expect(groupTitles.filter({ hasText: 'media-store-01' }).first()).toBeVisible()
+
+    // Grouped by repository the sections are named after the repos instead,
+    // and the weekly repo holds the schedule that writes into it.
+    await groupOption('Repo').click()
+    await expect(groupTitles.filter({ hasText: 'server-daily' }).first()).toBeVisible()
+    const weekly = page
+      .locator('.list-group')
+      .filter({ has: page.locator('.list-group-title', { hasText: 'media-weekly' }) })
+    await expect(weekly.locator('.entity-card').first()).toBeVisible()
+
+    // Back to the default: the time buckets are named for when a run is due,
+    // never for an agent or a repository.
+    await groupOption('Time').click()
+    await expect(page.locator('.list-group-header').first()).toBeVisible()
+    await expect(groupTitles.filter({ hasText: 'media-weekly' })).toHaveCount(0)
   })
 
   test('schedules list shows the 24h collision rail above the groups', async ({ page }) => {
@@ -402,6 +438,74 @@ test.describe('Schedules management', () => {
 
     const card = page.locator('.entity-card', { hasText: 'server-daily' })
     await expect(card.locator('.entity-issue-chip', { hasText: 'missed' })).toHaveCount(0)
+  })
+
+  // The seed's config export/import round-trip leaves a second copy of every
+  // schedule, so the demo's name matches two cards. Only the original carries a
+  // pending marker - markers are per-target state, not configuration, so the
+  // imported copy has none - which makes the badge itself the unambiguous handle
+  // on the card these two tests mean.
+  function catchUpPendingCard(page: Page): Locator {
+    return page.locator('.entity-card', { hasText: 'Catch-up pending' })
+  }
+
+  test('a schedule waiting on a host to come back shows a catch-up pending badge', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = catchUpPendingCard(page)
+    await expect(card).toHaveCount(1)
+    await expect(card.getByText('Catch-up on reconnect demo')).toBeVisible()
+  })
+
+  test('the schedule Overview names the host a catch-up is waiting on', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    await catchUpPendingCard(page).click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.getByText(/On, if the next run is at least 2 hours away/)).toBeVisible()
+    await expect(page.getByText(/Pending for/).first()).toBeVisible()
+  })
+
+  test('schedule detail General section turns catch-up on and saves its lead time', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'General' }).click()
+
+    const toggle = page.getByRole('switch', { name: 'Catch up missed runs' })
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+    // The floor only means anything once catch-up is on, so it isn't there yet.
+    await expect(page.locator('#catch-up-lead')).toHaveCount(0)
+
+    await toggle.click()
+    const lead = page.locator('#catch-up-lead')
+    await expect(lead).toBeVisible()
+    // The default 120 minutes reads as 2 hours, so 3 here means 180 minutes.
+    await expect(lead).toHaveValue('2')
+    await lead.fill('3')
+
+    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+      ...responseBody,
+      catch_up_missed_runs: requestBody.catch_up_missed_runs,
+      catch_up_min_lead_minutes: requestBody.catch_up_min_lead_minutes,
+    }))
+
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    const saved = await waitForSave()
+    expect(saved.catch_up_missed_runs).toBe(true)
+    expect(saved.catch_up_min_lead_minutes).toBe(180)
   })
 
   test('clicking a schedule navigates to detail page', async ({ page }) => {

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT agent_id, execution_order FROM schedule_targets WHERE schedule_id = $1 ORDER BY execution_order",
+  "query": "SELECT agent_id, execution_order, catch_up_pending_for FROM schedule_targets WHERE schedule_id = $1 ORDER BY execution_order",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,11 @@
         "ordinal": 1,
         "name": "execution_order",
         "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "catch_up_pending_for",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -21,8 +26,9 @@
     },
     "nullable": [
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "558220f3cd94a27c216e111e7353df1751c4d3697d55ad949b05129d482c404b"
+  "hash": "0887fbba4db566c220cd92dfda88b91e5fb0f036098e1233efa310ab315580fa"
 }

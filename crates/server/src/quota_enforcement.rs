@@ -107,51 +107,14 @@ pub async fn enforce_server_quota_action(
 
 #[cfg(test)]
 mod tests {
-    use shared::{crypto::derive_key, types::ScheduleWakeOverride};
+    use shared::types::ScheduleWakeOverride;
     use sqlx::PgPool;
 
     use super::*;
     use crate::db::{InsertRepoParams, ScheduleParams};
 
     fn build_test_state(pool: PgPool) -> AppState {
-        let ui_broadcast = crate::ws::ui_broadcast::UiBroadcast::new();
-        let tunnel_manager = crate::tunnel::TunnelManager::new(
-            pool.clone(),
-            ui_broadcast.clone(),
-            "127.0.0.1:0".parse().expect("valid socket address"),
-        );
-
-        AppState {
-            pool: pool.clone(),
-            encryption_key: derive_key(b"quota-enforcement-test-secret-key").unwrap(),
-            registry: crate::ws::registry::AgentRegistry::new(),
-            ui_broadcast,
-            tunnel_manager,
-            log_buffer: crate::log_buffer::LogBuffer::default(),
-            notification_service: crate::notifications::NotificationService::new(pool),
-            completion_bus: crate::ws::completion_bus::CompletionBus::new(),
-            repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
-            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
-            repo_lock: crate::RepoLock::default(),
-            import_tasks: crate::ImportTaskRegistry::default(),
-            pending_dryruns: crate::new_pending_map(),
-            pending_restores: crate::new_pending_map(),
-            pending_vm_scans: crate::new_pending_map(),
-            pending_vm_builds: crate::new_pending_map(),
-            pending_migrations: crate::new_pending_map(),
-            pending_deletes: crate::new_pending_map(),
-            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
-                480,
-            )),
-            power_sessions: crate::power::PowerSessionTracker::default(),
-            shutdown_token: tokio_util::sync::CancellationToken::new(),
-            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
-            task_registry: shared::task_registry::TaskRegistry::default(),
-            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
-                60,
-                std::time::Duration::from_mins(1),
-            ),
-        }
+        crate::test_support::build_test_state(pool, b"quota-enforcement-test-secret-key")
     }
 
     async fn insert_test_repo(pool: &PgPool, name: &str, ssh_host: &str) -> i64 {
@@ -201,6 +164,8 @@ mod tests {
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,

@@ -28,6 +28,8 @@ export interface ScheduleFormState {
   hook_timeout_seconds: number
   missed_backup_threshold: number
   wake_override: ScheduleWakeOverride
+  catch_up_missed_runs: boolean
+  catch_up_min_lead_minutes: number
   backup_sources: string
 }
 
@@ -58,6 +60,8 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   hook_timeout_seconds: 60,
   missed_backup_threshold: 3,
   wake_override: 'host_default',
+  catch_up_missed_runs: false,
+  catch_up_min_lead_minutes: 120,
   backup_sources: '',
 }
 

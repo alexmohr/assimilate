@@ -28,6 +28,12 @@ fn default_missed_backup_threshold() -> i32 {
     3
 }
 
+/// Default catch-up lead time for schedule exports predating the
+/// `catch_up_min_lead_minutes` field, matching the DB column's default.
+fn default_catch_up_min_lead_minutes() -> i32 {
+    120
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing health check.
@@ -739,6 +745,14 @@ pub struct ScheduleResponse {
     /// failed and auto-disabled. Below this count, a miss only shows as a
     /// warning.
     pub missed_backup_threshold: i32,
+    /// Whether a run missed because a target host was unreachable is caught up
+    /// once that host reconnects. Misses never stack: however many occurrences
+    /// pass while the host is away, at most one catch-up run follows.
+    pub catch_up_missed_runs: bool,
+    /// How much time must be left before the next scheduled run for a catch-up
+    /// to still start. A reconnect closer than this to the next run drops the
+    /// pending miss instead, so the catch-up never collides with the regular run.
+    pub catch_up_min_lead_minutes: i32,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,
@@ -755,6 +769,11 @@ pub struct ScheduleResponse {
     pub wake_override: ScheduleWakeOverride,
     /// Hostnames targeted by this schedule.
     pub target_hostnames: Vec<String>,
+    /// How many of this schedule's targets have a run waiting to be caught up
+    /// once their host reconnects. At most one per target - misses overwrite
+    /// each other rather than accumulating.
+    #[ts(type = "number")]
+    pub catch_up_pending_count: i64,
     /// How many consecutive attempts have failed to reach the schedule's target
     /// agent(s) since the last success or reconnect.
     pub consecutive_failures: i32,
@@ -781,6 +800,9 @@ pub struct ScheduleTargetResponse {
     pub agent_id: i64,
     /// Order in which agents execute the schedule.
     pub execution_order: i32,
+    /// The occurrence this target missed while its host was unreachable, waiting
+    /// to be caught up when that host reconnects. `None` when nothing is pending.
+    pub catch_up_pending_for: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2287,6 +2309,14 @@ pub struct ScheduleExportResponse {
     #[ts(type = "string")]
     #[serde(default)]
     pub wake_override: ScheduleWakeOverride,
+    /// Whether a run missed while a target host was unreachable is caught up on
+    /// reconnect.
+    #[serde(default)]
+    pub catch_up_missed_runs: bool,
+    /// How much time must be left before the next scheduled run for a catch-up
+    /// to still start.
+    #[serde(default = "default_catch_up_min_lead_minutes")]
+    pub catch_up_min_lead_minutes: i32,
     /// Backup source paths.
     pub backup_sources: Vec<String>,
     /// Per-target overrides.

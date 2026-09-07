@@ -685,6 +685,9 @@ pub enum SystemEventType {
     /// A schedule the scheduler had auto-disabled was automatically re-enabled once
     /// the causing agent reconnected.
     ScheduleReenabled,
+    /// A run missed while a target host was unreachable was caught up once that
+    /// host reconnected.
+    ScheduleCatchUp,
 }
 
 impl std::fmt::Display for SystemEventType {
@@ -701,6 +704,7 @@ impl std::fmt::Display for SystemEventType {
             Self::AccountLocked => write!(f, "account_locked"),
             Self::ScheduleAutoDisabled => write!(f, "schedule_auto_disabled"),
             Self::ScheduleReenabled => write!(f, "schedule_reenabled"),
+            Self::ScheduleCatchUp => write!(f, "schedule_catch_up"),
         }
     }
 }
@@ -721,6 +725,7 @@ impl FromStr for SystemEventType {
             "account_locked" => Ok(Self::AccountLocked),
             "schedule_auto_disabled" => Ok(Self::ScheduleAutoDisabled),
             "schedule_reenabled" => Ok(Self::ScheduleReenabled),
+            "schedule_catch_up" => Ok(Self::ScheduleCatchUp),
             other => Err(format!("unknown system event type: {other}")),
         }
     }
@@ -776,7 +781,7 @@ pub enum SystemEventSeverity {
 impl SystemEventType {
     /// Every variant, so callers can enumerate the closed set the
     /// `system_events_event_type_check` constraint locks the column to.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::AuthFailed,
         Self::RepoSync,
         Self::RepoSyncCancelled,
@@ -788,6 +793,7 @@ impl SystemEventType {
         Self::AccountLocked,
         Self::ScheduleAutoDisabled,
         Self::ScheduleReenabled,
+        Self::ScheduleCatchUp,
     ];
 
     /// How this event reads in the activity feed. Drives both the badge the
@@ -796,7 +802,9 @@ impl SystemEventType {
     #[must_use]
     pub const fn severity(self) -> SystemEventSeverity {
         match self {
-            Self::RepoSync | Self::ScheduleReenabled => SystemEventSeverity::Success,
+            Self::RepoSync | Self::ScheduleReenabled | Self::ScheduleCatchUp => {
+                SystemEventSeverity::Success
+            }
             Self::RepoSyncCancelled => SystemEventSeverity::Info,
             Self::RepoSyncSlow | Self::ScheduleAutoDisabled | Self::AccountLocked => {
                 SystemEventSeverity::Warning
@@ -1564,6 +1572,7 @@ mod tests {
             ),
             (SystemEventType::SecurityViolation, "security_violation"),
             (SystemEventType::AccountLocked, "account_locked"),
+            (SystemEventType::ScheduleCatchUp, "schedule_catch_up"),
         ];
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
@@ -1588,6 +1597,7 @@ mod tests {
             "security_violation",
             "account_locked",
             "schedule_auto_disabled",
+            "schedule_catch_up",
             "schedule_reenabled",
         ];
         assert_eq!(SystemEventType::ALL.len(), persisted.len());
@@ -1620,6 +1630,10 @@ mod tests {
             (SystemEventType::RepoSync, SystemEventSeverity::Success),
             (
                 SystemEventType::ScheduleReenabled,
+                SystemEventSeverity::Success,
+            ),
+            (
+                SystemEventType::ScheduleCatchUp,
                 SystemEventSeverity::Success,
             ),
             (

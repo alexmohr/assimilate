@@ -78,7 +78,11 @@ test.describe('Power management', () => {
     // The wake details stay on screen even though this host does not wake by
     // default - a schedule still wakes it with them.
     await expect(pane).toContainText('A4:BB:6D:1F:22:8E')
-    await expect(pane).toContainText('schedule wakes this host')
+    // Count-independent: the demo seeds one schedule that overrides this host,
+    // but the specs share one demo instance and others create schedules of
+    // their own, so the note's singular/plural wording is not ours to pin.
+    await expect(pane).toContainText('whatever the setting above says')
+    await expect(pane.locator('.override-link').first()).toBeVisible()
 
     await pane.locator('.override-link').first().click()
     await page.waitForLoadState('networkidle')

@@ -100,7 +100,9 @@ async function openScheduleAdvanced(page: Page): Promise<void> {
 
 /** Adds an empty pre-backup command row, returning its field and its script box. */
 async function addPreBackupCommand(page: Page): Promise<{ field: Locator; script: Locator }> {
-  const field = page.locator('.field', { hasText: 'Pre-backup commands' })
+  // The Advanced pane renders its settings as `.pane-row`s; the General
+  // section still uses `.field` blocks.
+  const field = page.locator('.pane-row', { hasText: 'Pre-backup commands' })
   await field.getByRole('button', { name: '+ Add command' }).click()
   return { field, script: field.locator('textarea').last() }
 }
@@ -123,7 +125,7 @@ async function saveNumericScheduleField(
   jsonKey: string,
   newValue: number,
 ): Promise<Locator> {
-  const field = page.locator('.field', { hasText: fieldLabel })
+  const field = page.locator('.field, .pane-row', { hasText: fieldLabel })
   const input = field.locator('input[type="number"]')
   await expect(input).toBeVisible()
 

@@ -84,6 +84,9 @@ const OWNED = [
   'field-label-row',
   'field-body',
   'field-title',
+  'pane-rows',
+  'pane-row',
+  'pane-row-control',
   // Promote a class here once a second file needs it, and delete both scoped
   // copies; the two checks below then keep it that way.
   'detail-breadcrumb',

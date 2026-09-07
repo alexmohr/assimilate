@@ -2705,6 +2705,14 @@ async fn test_delete_archive_does_not_broadcast_a_drained_op_before_it_ever_begi
          op - a client that just marked this archive as deleting client-side would see that state \
          wiped out by a stale 'nothing happening' signal"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the broadcasts asserted
+    // above. Wait for the task itself, so it can't run on into the next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2801,6 +2809,14 @@ async fn test_delete_archive_broadcasts_archive_deleted_before_data_changed() {
         archive_deleted_at < data_changed_at,
         "ArchiveDeleted should broadcast before DataChanged"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the broadcasts asserted
+    // above. Wait for the task itself, so it can't run on into the next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]

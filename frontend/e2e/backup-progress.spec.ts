@@ -57,6 +57,13 @@ async function mockScheduleDetailApis(page: Page): Promise<void> {
       body: JSON.stringify([{ agent_id: 1, execution_order: 0 }]),
     }),
   )
+  await page.route(`**/api/schedules/${SCHEDULE_ID}/repos*`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{ repo_id: REPO_ID, execution_order: 0, required: true }]),
+    }),
+  )
   await page.route(`**/api/schedules/${SCHEDULE_ID}/sources*`, (route) =>
     route.fulfill({
       status: 200,

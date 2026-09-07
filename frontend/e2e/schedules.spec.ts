@@ -885,12 +885,17 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules/new')
     await page.waitForLoadState('networkidle')
 
-    const nextButton = page.getByRole('button', { name: 'Continue' })
+    // Scoped to the footer: the rail's Review step is a button too, captioned
+    // "Create schedule", and getByRole matches an accessible name by substring
+    // by default - so an unscoped locator finds the step, not the action.
+    const foot = page.locator('.wizard-foot')
+    const nextButton = foot.getByRole('button', { name: 'Continue' })
+    const createButton = foot.getByRole('button', { name: 'Create schedule', exact: true })
 
     // Step 1 - the create action does not exist yet, and the step will not
     // advance while a mandatory field is empty. Pressing "Create schedule"
     // with half a form filled in is what the wizard exists to prevent.
-    await expect(page.getByRole('button', { name: 'Create schedule' })).toHaveCount(0)
+    await expect(createButton).toHaveCount(0)
     await expect(nextButton).toBeDisabled()
     await page.locator('#schedule-name').fill('Wizard integrity check')
     // Integrity check, so the run does not depend on backup source paths.
@@ -919,7 +924,7 @@ test.describe('Schedules management', () => {
       page.waitForResponse(
         (resp) => resp.url().endsWith('/api/schedules') && resp.request().method() === 'POST',
       ),
-      page.getByRole('button', { name: 'Create schedule' }).click(),
+      createButton.click(),
     ])
     expect(createResponse.ok()).toBe(true)
     const created = createResponse.request().postDataJSON()

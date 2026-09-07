@@ -228,7 +228,14 @@ test.describe('backup progress card', () => {
     })
     await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
 
-    sendWsMsg(ws!, 'BackupCompleted', { hostname: 'web-server-01', target_name: REPO_NAME })
+    // The ids live inside the report, which is where the schedule page reads
+    // them from - matching on target_name alone cannot tell one target of a
+    // multi-target schedule from another.
+    sendWsMsg(ws!, 'BackupCompleted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      report: { schedule_id: SCHEDULE_ID, repo_id: REPO_ID },
+    })
 
     await expect(page.locator('.live-log-card')).not.toBeVisible({ timeout: 5_000 })
   })

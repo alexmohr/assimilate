@@ -589,7 +589,11 @@ onMessage('BackupCompleted', (payload) => {
   // primary target missed every completion on a secondary one - the progress
   // card then sat on "running" until the next full reload. Targets run one
   // after another, so the next one's BackupStarted puts the card back.
-  const { schedule_id, repo_id } = payload.report
+  // Optional-chained rather than destructured: this is websocket input, and a
+  // message without a report should be ignored, not throw out of the handler.
+  const schedule_id = payload.report?.schedule_id
+  const repo_id = payload.report?.repo_id
+  if (repo_id == null) return
   if (schedule_id != null) {
     if (schedule_id !== Number(props.id)) return
   } else if (!repoTargets.value.some((t) => t.repo_id === repo_id)) {

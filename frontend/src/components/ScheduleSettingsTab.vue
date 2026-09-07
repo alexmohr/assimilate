@@ -240,7 +240,7 @@ const leadValue = computed<number>({
           <option value="continue">Continue</option>
         </select>
         <span class="field-hint">
-          Whether to stop or continue to the next agent when one fails.
+          What a failing host, or a failing required target, does to the rest of the run.
         </span>
       </div>
 

@@ -164,6 +164,17 @@ const cronSummary = computed(
 
 const requiredTargetCount = computed(() => repoTargets.value.filter((t) => t.required).length)
 
+/**
+ * `on_failure` governs a failing *host* on a multi-host schedule and a failing
+ * *required target* on a multi-target one, so a single host writing to two
+ * repositories - the case this feature exists for - needs it just as much.
+ * It lives on the Targets step because that is the first point where both
+ * counts are known; on Sources the second target has not been added yet.
+ */
+const showOnFailure = computed(
+  () => selectedAgentIds.value.length > 1 || repoTargets.value.length > 1,
+)
+
 const SCHEDULE_TYPE_LABELS: Record<ScheduleType, string> = {
   backup: 'Backup',
   check: 'Integrity check',
@@ -360,24 +371,6 @@ async function submit(): Promise<void> {
             </span>
           </div>
           <div
-            v-if="selectedAgentIds.length > 1"
-            class="field"
-          >
-            <label
-              class="field-label"
-              for="on-failure"
-              >If a host fails</label
-            >
-            <select
-              id="on-failure"
-              v-model="onFailure"
-              class="input"
-            >
-              <option value="stop">Stop the run</option>
-              <option value="continue">Carry on with the next host</option>
-            </select>
-          </div>
-          <div
             v-if="isBackup"
             class="field"
           >
@@ -409,6 +402,28 @@ async function submit(): Promise<void> {
             v-model="repoTargets"
             :repos="repos"
           />
+          <div
+            v-if="showOnFailure"
+            class="field"
+          >
+            <label
+              class="field-label"
+              for="on-failure"
+              >On failure</label
+            >
+            <select
+              id="on-failure"
+              v-model="onFailure"
+              class="input"
+            >
+              <option value="stop">Stop the run</option>
+              <option value="continue">Carry on</option>
+            </select>
+            <span class="field-hint">
+              What a failing host, or a failing required target, does to the rest of the run.
+            </span>
+          </div>
+
           <p
             v-if="repoTargets.length > 1"
             class="wizard-note"
@@ -630,10 +645,6 @@ async function submit(): Promise<void> {
               <dl class="info-grid">
                 <dt>Hosts</dt>
                 <dd>{{ selectedAgentIds.map(agentLabel).join(', ') || '-' }}</dd>
-                <dt v-if="selectedAgentIds.length > 1">On host failure</dt>
-                <dd v-if="selectedAgentIds.length > 1">
-                  {{ onFailure === 'stop' ? 'Stop the run' : 'Carry on' }}
-                </dd>
                 <dt v-if="isBackup">Paths</dt>
                 <dd
                   v-if="isBackup"
@@ -660,6 +671,10 @@ async function submit(): Promise<void> {
                 <dd>{{ repoTargets.map((t) => repoName(t.repo_id)).join(' then ') || '-' }}</dd>
                 <dt>Required</dt>
                 <dd>{{ requiredTargetCount }} of {{ repoTargets.length }}</dd>
+                <dt v-if="showOnFailure">On failure</dt>
+                <dd v-if="showOnFailure">
+                  {{ onFailure === 'stop' ? 'Stop the run' : 'Carry on' }}
+                </dd>
               </dl>
             </div>
 

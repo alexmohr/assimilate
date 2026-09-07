@@ -308,16 +308,16 @@ describe('ScheduleCreateView', () => {
     await wrapper.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', false)
     await button(wrapper, 'Continue')!.trigger('click')
 
-    // Sources: two hosts, the on-failure select the second host reveals, paths.
+    // Sources: two hosts, paths.
     await wrapper.find('.multi-select-trigger').trigger('click')
     const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
     await boxes[0].trigger('change')
     await boxes[1].trigger('change')
-    await wrapper.find('#on-failure').setValue('continue')
     await wrapper.find('#backup-paths').setValue('/etc\n/srv')
     await button(wrapper, 'Continue')!.trigger('click')
 
-    // Targets, then Timing.
+    // Targets: the on-failure select the second host revealed, then Timing.
+    await wrapper.find('#on-failure').setValue('continue')
     await button(wrapper, 'Continue')!.trigger('click')
     await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 4 * * *')
     await wrapper.find('#missed-threshold').setValue('5')
@@ -429,6 +429,30 @@ describe('ScheduleCreateView', () => {
     // Untouched overrides stay off rather than sending empty per-agent lists.
     const payload = mockApiClient.post.mock.calls[0][1] as Record<string, unknown>
     expect(payload.file_change_patterns_per_agent).toBeUndefined()
+  })
+
+  /**
+   * The bug this guards: the on-failure control was shown only for more than
+   * one host, but `on_failure` also decides what a failing *required target*
+   * does - so one host writing to two repositories, the case this feature
+   * exists for, could never reach the setting during creation.
+   */
+  it('offers the on-failure choice to a single host with two targets', async () => {
+    const wrapper = await open()
+
+    await wrapper.find('#schedule-name').setValue('Dual target')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    await wrapper.findAll('.multi-select-item input[type="checkbox"]')[0].trigger('change')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    // One host, one target: nothing a failure could carry on to.
+    expect(wrapper.find('#on-failure').exists()).toBe(false)
+
+    await button(wrapper, 'Add repository')!.trigger('click')
+    expect(wrapper.findAll('.order-item')).toHaveLength(2)
+    expect(wrapper.find('#on-failure').exists()).toBe(true)
   })
 
   it('leaves for the schedules list on cancel', async () => {

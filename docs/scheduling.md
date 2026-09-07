@@ -16,8 +16,8 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 ![New schedule wizard](assets/screenshots/schedule-wizard.png)
 
 1. **Basics** — name the schedule and pick its type (Backup, Integrity check, or Verify). The type decides which later steps apply: a check or verify schedule creates no archives, so Retention and Advanced are skipped.
-2. **Sources** — the hosts this schedule runs on, what to do when one of them fails, and the paths to back up. Leave the paths empty to use each agent's own defaults.
-3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)).
+2. **Sources** — the hosts this schedule runs on and the paths to back up. Leave the paths empty to use each agent's own defaults.
+3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)), and, once there is more than one host or more than one target, what a failure does to the rest of the run.
 4. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
 5. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
 6. **Advanced** — exclude patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
@@ -29,7 +29,7 @@ A schedule writes into one or more repositories. Several targets means several i
 
 Each host runs its targets in the order shown, one after another. Every target is its own borg run over the source, so a second target roughly doubles how long the schedule takes; targets are never written in parallel. Per target you choose how a failure is treated:
 
-- **Required** — a failure on this repository is the schedule's failure. It counts towards the missed-backup threshold that auto-disables the schedule, and with **If a host fails: stop the run** it ends that host's run before the remaining targets.
+- **Required** — a failure on this repository is the schedule's failure. It counts towards the missed-backup threshold that auto-disables the schedule, and with **On failure: stop the run** it ends that host's run before the remaining targets.
 - **Best effort** — a failure is recorded as a warning. It never stops the remaining targets and never counts towards the auto-disable threshold.
 
 At least one target must be required: without one, a run could report success having written nothing.

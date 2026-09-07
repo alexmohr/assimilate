@@ -5,19 +5,41 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Scheduling & Retention
 
-Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, optional pre/post commands (each bounded by a configurable timeout), and optional Borg bandwidth cap.
+Assimilate runs backups on a schedule you define. Each schedule carries its own cron expression, one or more target repositories, retention policy, exclude patterns, optional pre/post commands (each bounded by a configurable timeout), and optional Borg bandwidth cap.
 
 When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 
 ## Creating a Schedule
 
-1. Navigate to **Agents** and select the agent you want to back up.
-2. Choose the repository to back up to (see [Repositories](repositories.md)).
-3. Click **Add Schedule**.
-4. Set the cron expression (see [Cron Expression Builder](#cron-expression-builder)).
-5. Configure the retention policy (see [Retention Policy](#retention-policy)).
-6. Optionally add exclude patterns, backup sources, pre/post commands, and a remote bandwidth limit.
-7. Click **Save**. The server validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to the repository before saving.
+**New** on the Schedules page opens a wizard. Each step states what it still needs, the next step unlocks only once that is answered, and **Create schedule** exists on the final Review step alone — so a half-filled form can no longer be submitted.
+
+![New schedule wizard](assets/screenshots/schedule-wizard.png)
+
+1. **Basics** — name the schedule and pick its type (Backup, Integrity check, or Verify). The type decides which later steps apply: a check or verify schedule creates no archives, so Retention and Advanced are skipped.
+2. **Sources** — the hosts this schedule runs on, what to do when one of them fails, and the paths to back up. Leave the paths empty to use each agent's own defaults.
+3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)).
+4. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
+5. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
+6. **Advanced** — exclude patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
+7. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
+
+## Backup targets
+
+A schedule writes into one or more repositories. Several targets means several independent copies from a single read of the source hosts — typically a local repository that restores fast and an offsite one that survives losing the building.
+
+Each host runs its targets in the order shown, one after another. Per target you choose how a failure is treated:
+
+- **Required** — a failure on this repository is the schedule's failure. It counts towards the missed-backup threshold that auto-disables the schedule, and with **If a host fails: stop the run** it ends that host's run before the remaining targets.
+- **Best effort** — a failure is recorded as a warning. It never stops the remaining targets and never counts towards the auto-disable threshold.
+
+At least one target must be required: without one, a run could report success having written nothing.
+
+!!! warning "Two targets on one storage host are one copy"
+    The target list flags two repositories that live on the same SSH host. They fail together, so they do not give you the independence multiple targets are for.
+
+Retention, exclude patterns, hooks and the bandwidth cap are schedule-wide: every target keeps the same history.
+
+The repositories a schedule writes into can be changed later under **Settings → Targets** on the schedule's detail page.
 
 ![Schedules](assets/screenshots/schedules.png)
 

@@ -25,10 +25,13 @@ vi.mock('../components/CronBuilder.vue', () => ({
 
 vi.mock('../components/ToggleSwitch.vue', () => ({
   default: {
-    props: ['modelValue'],
+    // `label` is carried through so a test can pick one toggle out of a
+    // section that has several - the Targets section has one per repository
+    // as well as the per-agent-paths switch.
+    props: ['modelValue', 'label'],
     emits: ['update:modelValue'],
     template:
-      '<input type="checkbox" class="toggle-switch-stub" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+      '<input type="checkbox" class="toggle-switch-stub" :data-label="label" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
   },
 }))
 
@@ -137,18 +140,14 @@ const mockRepos = [
 function setupEditMode(schedule = mockSchedule): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === `/schedules/${schedule.id}`) return Promise.resolve({ data: schedule })
+    if (url === `/schedules/${schedule.id}/repos`)
+      return Promise.resolve({
+        data: [{ repo_id: schedule.repo_id, execution_order: 0, required: true }],
+      })
     if (url === `/schedules/${schedule.id}/targets`)
       return Promise.resolve({ data: [{ agent_id: schedule.agent_id, execution_order: 0 }] })
     if (url === `/schedules/${schedule.id}/sources`)
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_agent: [] } })
-    if (url === '/agents') return Promise.resolve({ data: mockAgents })
-    if (url === '/repos') return Promise.resolve({ data: mockRepos })
-    return Promise.resolve({ data: [] })
-  })
-}
-
-function setupCreateMode(): void {
-  mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
@@ -165,6 +164,8 @@ async function createEditWrapper(): Promise<ReturnType<typeof renderWithPlugins>
 function setupEditModeWithReport(report: Record<string, unknown>): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+    if (url === '/schedules/1/repos')
+      return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
     if (url === '/schedules/1/targets')
       return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
     if (url === '/schedules/1/sources')
@@ -435,7 +436,7 @@ describe('ScheduleDetailView - edit mode', () => {
     await flushPromises()
 
     // The save() null-guard is defensive - the save bar is hidden when schedule
-    // is null (v-if="schedule || isCreate" wraps the form). Test the ref directly.
+    // is null (v-if="schedule" wraps the form). Test the ref directly.
     const vm = wrapper.vm as { save: () => Promise<void>; saveError: string | null }
     expect(vm.saveError).toBeNull()
 
@@ -484,6 +485,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('shows an Overdue badge and Retry button for an overdue target, with an offline note', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({
           data: [
@@ -713,6 +716,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('reorders targets from the real Settings tab and saves the new order', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({
           data: [
@@ -774,6 +779,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('propagates repo and on-failure select changes from the real Settings tab into the save payload', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
       if (url === '/schedules/1/sources')
@@ -809,6 +816,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('propagates the per-host-paths toggle and a per-host textarea into the save payload', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({
           data: [
@@ -830,7 +839,7 @@ describe('ScheduleDetailView - edit mode', () => {
     await goToSettings(wrapper)
     await goToSection(wrapper, 'Targets')
 
-    await wrapper.find('.toggle-switch-stub').setValue(true)
+    await wrapper.find('.toggle-switch-stub[data-label="Configure paths per agent"]').setValue(true)
     await nextTick()
     await wrapper.find('.area-input-sm').setValue('/custom/backup/path')
 
@@ -845,95 +854,6 @@ describe('ScheduleDetailView - edit mode', () => {
       expect.objectContaining({
         backup_sources_per_agent: [{ agent_id: 10, paths: ['/custom/backup/path'] }],
       }),
-    )
-  })
-})
-
-describe('ScheduleDetailView - create mode', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('renders New Schedule title', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    expect(wrapper.find('h1').text()).toContain('New Schedule')
-  })
-
-  it('shows breadcrumb with New', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('New')
-  })
-
-  it('shows only the Settings tab - there is no status yet to give Overview or Backups content', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    const tabs = wrapper.findAll('.tab')
-    expect(tabs).toHaveLength(1)
-    expect(tabs[0].text()).toBe('Settings')
-  })
-
-  it('shows agent and repo pickers under the Targets section', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-    await goToSection(wrapper, 'Targets')
-
-    expect(wrapper.text()).toContain('Select agents...')
-    expect(wrapper.text()).toContain('server-daily')
-  })
-
-  it('shows schedule type selector', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Schedule type')
-    expect(wrapper.text()).toContain('Integrity check')
-    expect(wrapper.text()).toContain('Verify (extract dry-run)')
-  })
-
-  it('shows Create schedule button', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === 'Create schedule')
-    expect(createBtn).toBeTruthy()
-  })
-
-  it('propagates the Schedule type select into the create payload', async () => {
-    setupCreateMode()
-    mockApiClient.post.mockResolvedValue({ data: { id: 5 } })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    await wrapper.find('select').setValue('check')
-
-    await goToSection(wrapper, 'Targets')
-    await wrapper.find('.multi-select-trigger').trigger('click')
-    await wrapper.findAll('.multi-select-item input[type="checkbox"]')[0].trigger('change')
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Create schedule')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.post).toHaveBeenCalledWith(
-      '/schedules',
-      expect.objectContaining({ schedule_type: 'check' }),
     )
   })
 })
@@ -1170,6 +1090,8 @@ describe('ScheduleDetailView - Backups tab', () => {
   function setupBackupWithReports(mockReports: unknown[]): void {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
       if (url === '/schedules/1/sources')
@@ -1210,6 +1132,8 @@ describe('ScheduleDetailView - Backups tab', () => {
   it('does NOT show Backups tab button for check-type schedule', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/2') return Promise.resolve({ data: mockCheckSchedule })
+      if (url === '/schedules/2/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/2/targets')
         return Promise.resolve({
           data: [{ agent_id: mockCheckSchedule.agent_id, execution_order: 0 }],
@@ -1221,15 +1145,6 @@ describe('ScheduleDetailView - Backups tab', () => {
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
-    await flushPromises()
-
-    const tabs = wrapper.findAll('.tab')
-    expect(tabs.some((t) => t.text() === 'Backups')).toBe(false)
-  })
-
-  it('does NOT show Backups tab button in create mode', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
     const tabs = wrapper.findAll('.tab')
@@ -1762,6 +1677,8 @@ describe('ScheduleDetailView - per-agent overrides', () => {
   function setupWithSources(sources: Record<string, unknown>): void {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets') return Promise.resolve({ data: TWO_TARGETS })
       if (url === '/schedules/1/sources') return Promise.resolve({ data: sources })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })

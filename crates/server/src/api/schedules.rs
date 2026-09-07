@@ -13,7 +13,8 @@ use shared::{
     responses::{
         DeleteFailedReportsResponse, FailedReportCountResponse, PerAgentBackupSourcesResponse,
         PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
-        PerAgentFileChangePatternsResponse, ScheduleBackupSourcesResponse, ScheduleTargetResponse,
+        PerAgentFileChangePatternsResponse, ScheduleBackupSourcesResponse, ScheduleRepoResponse,
+        ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
@@ -26,6 +27,16 @@ impl From<db::ScheduleTargetRow> for ScheduleTargetResponse {
             agent_id: t.agent_id,
             execution_order: t.execution_order,
             catch_up_pending_for: t.catch_up_pending_for,
+        }
+    }
+}
+
+impl From<db::ScheduleRepoRow> for ScheduleRepoResponse {
+    fn from(t: db::ScheduleRepoRow) -> Self {
+        Self {
+            repo_id: t.repo_id,
+            execution_order: t.execution_order,
+            required: t.required,
         }
     }
 }
@@ -118,13 +129,27 @@ pub struct AgentFileChangePatterns {
     pub raw_text: String,
 }
 
+/// One repository a schedule writes into.
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
+pub struct ScheduleRepoInput {
+    /// Repository ID.
+    pub repo_id: i64,
+    /// Whether a failure on this repository fails the whole run. Defaults to
+    /// true; a best-effort target only warns and never stops the run.
+    pub required: Option<bool>,
+}
+
 /// Request payload for creating a new backup schedule.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
     /// IDs of agents to assign as targets.
     pub agent_ids: Vec<i64>,
-    /// Repository ID to back up to.
+    /// Repository ID to back up to. When `repo_targets` is given, this is
+    /// ignored in favour of its first entry.
     pub repo_id: i64,
+    /// Every repository this schedule writes into, in write order. Omit for a
+    /// single-target schedule writing to `repo_id`.
+    pub repo_targets: Option<Vec<ScheduleRepoInput>>,
     /// Optional display name for the schedule.
     pub name: Option<String>,
     /// Schedule type (backup, check, verify).
@@ -200,8 +225,12 @@ pub struct UpdateScheduleRequest {
     pub name: Option<String>,
     /// Updated cron expression.
     pub cron_expression: String,
-    /// New repository ID to assign.
+    /// New repository ID to assign. Replaces the whole target list; send
+    /// `repo_targets` instead to keep more than one.
     pub repo_id: Option<i64>,
+    /// Replacement list of repositories this schedule writes into, in write
+    /// order. Takes precedence over `repo_id`.
+    pub repo_targets: Option<Vec<ScheduleRepoInput>>,
     /// Whether the schedule is enabled.
     pub enabled: Option<bool>,
     /// Whether canary backups are enabled.
@@ -346,6 +375,43 @@ async fn ensure_backup_sources_available(
     Ok(())
 }
 
+/// Normalises the repositories a create/update request asks for into
+/// `(repo_id, required)` pairs in write order.
+///
+/// `repo_targets` wins when present; otherwise the request is a single-target
+/// one and `fallback_repo_id` is that target. Rejects a list that is empty,
+/// names the same repository twice, or leaves no required target - the last
+/// would let a run report success without a single copy having been written.
+fn resolve_repo_targets(
+    repo_targets: Option<&[ScheduleRepoInput]>,
+    fallback_repo_id: Option<i64>,
+) -> Result<Vec<(i64, bool)>, ApiError> {
+    let Some(targets) = repo_targets else {
+        return Ok(fallback_repo_id.map_or_else(Vec::new, |repo_id| vec![(repo_id, true)]));
+    };
+    if targets.is_empty() {
+        return Err(ApiError::BadRequest(
+            "repo_targets must contain at least one entry".into(),
+        ));
+    }
+    let resolved: Vec<(i64, bool)> = targets
+        .iter()
+        .map(|t| (t.repo_id, t.required.unwrap_or(true)))
+        .collect();
+    let unique: std::collections::HashSet<i64> = resolved.iter().map(|(id, _)| *id).collect();
+    if unique.len() != resolved.len() {
+        return Err(ApiError::BadRequest(
+            "repo_targets must not name the same repository twice".into(),
+        ));
+    }
+    if !resolved.iter().any(|(_, required)| *required) {
+        return Err(ApiError::BadRequest(
+            "at least one target repository must be required".into(),
+        ));
+    }
+    Ok(resolved)
+}
+
 #[utoipa::path(
     post,
     path = "/api/schedules",
@@ -375,7 +441,13 @@ pub async fn create_schedule(
             "agent_ids must contain at least one entry".into(),
         ));
     }
-    check_repo_permission(&state.pool, &auth, req.repo_id, |p| p.can_modify_schedules).await?;
+    let repo_targets = resolve_repo_targets(req.repo_targets.as_deref(), Some(req.repo_id))?;
+    for (repo_id, _) in &repo_targets {
+        check_repo_permission(&state.pool, &auth, *repo_id, |p| p.can_modify_schedules).await?;
+    }
+    let primary_repo_id = repo_targets
+        .first()
+        .map_or(req.repo_id, |(repo_id, _)| *repo_id);
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let schedule_type_enum = req.schedule_type.unwrap_or_default();
@@ -387,7 +459,9 @@ pub async fn create_schedule(
     let exclude_patterns_raw = req.exclude_patterns_raw.unwrap_or_default();
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        check_ssh_reachability(&state.pool, req.repo_id).await?;
+        for (repo_id, _) in &repo_targets {
+            check_ssh_reachability(&state.pool, *repo_id).await?;
+        }
     }
 
     let on_failure = req.on_failure.unwrap_or_default();
@@ -431,7 +505,13 @@ pub async fn create_schedule(
     };
 
     let schedule =
-        db::insert_schedule(&state.pool, req.repo_id, &params, Some(auth.user_id)).await?;
+        db::insert_schedule(&state.pool, primary_repo_id, &params, Some(auth.user_id)).await?;
+
+    // `insert_schedule` seeds the primary target; anything beyond a single
+    // required repository replaces that seed with the requested list.
+    if req.repo_targets.is_some() {
+        db::replace_schedule_repos(&state.pool, schedule.id, &repo_targets).await?;
+    }
 
     let targets: Vec<(i64, i32)> = req
         .agent_ids
@@ -499,6 +579,73 @@ pub async fn get_schedule(
     Ok(Json(schedule))
 }
 
+/// Every repository an enabled schedule is about to write to has to be
+/// reachable over SSH, not just the primary one - a second target that cannot
+/// be reached would only surface as a failed run hours later.
+async fn check_targets_reachable(
+    pool: &PgPool,
+    requested: Option<&[(i64, bool)]>,
+    effective_repo_id: Option<i64>,
+) -> Result<(), ApiError> {
+    let Some(effective_repo_id) = effective_repo_id else {
+        return Err(ApiError::BadRequest(
+            "cannot enable a schedule with no repository assigned".into(),
+        ));
+    };
+    match requested {
+        Some(targets) => {
+            for (repo_id, _) in targets {
+                check_ssh_reachability(pool, *repo_id).await?;
+            }
+        }
+        None => check_ssh_reachability(pool, effective_repo_id).await?,
+    }
+    Ok(())
+}
+
+/// Works out which repositories an update leaves the schedule writing to, and
+/// checks the caller may point it at each one it did not already own.
+///
+/// Returns the replacement target list (`None` when the request did not send
+/// one) and the repository `schedules.repo_id` will end up holding.
+async fn authorize_repo_targets(
+    state: &AppState,
+    auth: &AuthUser,
+    req: &UpdateScheduleRequest,
+    existing: &db::ScheduleRow,
+) -> Result<(Option<Vec<(i64, bool)>>, Option<i64>), ApiError> {
+    let requested = req
+        .repo_targets
+        .as_deref()
+        .map(|targets| resolve_repo_targets(Some(targets), None))
+        .transpose()?;
+    let effective_repo_id: Option<i64> = requested
+        .as_ref()
+        .and_then(|targets| targets.first().map(|(repo_id, _)| *repo_id))
+        .or(req.repo_id)
+        .or(existing.repo_id);
+    let newly_permissioned: Vec<i64> = requested.as_ref().map_or_else(
+        || {
+            (effective_repo_id != existing.repo_id)
+                .then_some(effective_repo_id)
+                .flatten()
+                .into_iter()
+                .collect()
+        },
+        |targets| {
+            targets
+                .iter()
+                .map(|(repo_id, _)| *repo_id)
+                .filter(|repo_id| Some(*repo_id) != existing.repo_id)
+                .collect()
+        },
+    );
+    for repo_id in &newly_permissioned {
+        check_repo_permission(&state.pool, auth, *repo_id, |p| p.can_modify_schedules).await?;
+    }
+    Ok((requested, effective_repo_id))
+}
+
 #[utoipa::path(
     put,
     path = "/api/schedules/{id}",
@@ -528,8 +675,16 @@ pub async fn update_schedule(
     ApiJson(req): ApiJson<UpdateScheduleRequest>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
-    let effective_repo_id: Option<i64> = req.repo_id.or(existing.repo_id);
-    check_schedule_edit_permission(&state, &auth, &existing, effective_repo_id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if let Some(rid) = existing.repo_id {
+        check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
+    } else if !effective.can_delete_repo {
+        return Err(ApiError::Forbidden(
+            "only admins can edit orphaned schedules".into(),
+        ));
+    }
+    let (requested_repo_targets, effective_repo_id) =
+        authorize_repo_targets(&state, &auth, &req, &existing).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let exclude_patterns_raw = req
@@ -538,12 +693,12 @@ pub async fn update_schedule(
         .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        let Some(eff_rid) = effective_repo_id else {
-            return Err(ApiError::BadRequest(
-                "cannot enable a schedule with no repository assigned".into(),
-            ));
-        };
-        check_ssh_reachability(&state.pool, eff_rid).await?;
+        check_targets_reachable(
+            &state.pool,
+            requested_repo_targets.as_deref(),
+            effective_repo_id,
+        )
+        .await?;
     }
 
     let pre_backup_commands = req
@@ -612,10 +767,15 @@ pub async fn update_schedule(
         on_failure: &on_failure,
     };
 
-    if effective_repo_id != existing.repo_id
-        && let Some(new_rid) = effective_repo_id
-    {
-        db::update_schedule_repo(&state.pool, id, new_rid).await?;
+    match &requested_repo_targets {
+        Some(targets) => db::replace_schedule_repos(&state.pool, id, targets).await?,
+        None => {
+            if effective_repo_id != existing.repo_id
+                && let Some(new_rid) = effective_repo_id
+            {
+                db::update_schedule_repo(&state.pool, id, new_rid).await?;
+            }
+        }
     }
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
 
@@ -1322,6 +1482,37 @@ pub async fn list_schedule_targets(
 
 #[utoipa::path(
     get,
+    path = "/api/schedules/{id}/repos",
+    tag = "Schedules",
+    operation_id = "listScheduleRepos",
+    params(("id" = i64, Path, description = "Schedule ID")),
+    responses(
+        (status = 200, description = "Target repositories", body = Vec<ScheduleRepoResponse>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// List the repositories a schedule writes into, in write order.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn list_schedule_repos(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<ScheduleRepoResponse>>, ApiError> {
+    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let repos: Vec<ScheduleRepoResponse> = db::list_schedule_repos(&state.pool, id)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Ok(Json(repos))
+}
+
+#[utoipa::path(
+    get,
     path = "/api/schedules/{id}/sources",
     tag = "Schedules",
     operation_id = "listScheduleBackupSources",
@@ -1429,5 +1620,362 @@ mod tests {
             },
         ];
         assert!(validate_hook_commands(&commands).is_err());
+    }
+
+    /// Builds an `AppState` around `pool` for tests that only need
+    /// `release_manual_target_power`'s dependencies (pool, registry,
+    /// `ui_broadcast`, `power_sessions`) -- the rest are populated with inert
+    /// defaults, matching `scheduler.rs`'s own test `AppState` boilerplate.
+    fn test_app_state(pool: sqlx::PgPool) -> AppState {
+        let ui_broadcast = UiBroadcast::new();
+        AppState {
+            pool: pool.clone(),
+            encryption_key: shared::crypto::derive_key(b"schedules-power-test-key").unwrap(),
+            registry: AgentRegistry::new(),
+            ui_broadcast: ui_broadcast.clone(),
+            tunnel_manager: TunnelManager::new(
+                pool.clone(),
+                ui_broadcast,
+                "127.0.0.1:0".parse().unwrap(),
+            ),
+            log_buffer: crate::log_buffer::LogBuffer::default(),
+            notification_service: crate::notifications::NotificationService::new(pool),
+            completion_bus: CompletionBus::new(),
+            repo_op_tracker: RepoOpTracker::default(),
+            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
+            repo_lock: crate::RepoLock::default(),
+            import_tasks: crate::ImportTaskRegistry::default(),
+            pending_dryruns: crate::new_pending_map(),
+            pending_restores: crate::new_pending_map(),
+            pending_vm_scans: crate::new_pending_map(),
+            pending_vm_builds: crate::new_pending_map(),
+            pending_migrations: crate::new_pending_map(),
+            pending_deletes: crate::new_pending_map(),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
+            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
+            task_registry: shared::task_registry::TaskRegistry::default(),
+            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
+                60,
+                std::time::Duration::from_mins(1),
+            ),
+            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+                480,
+            )),
+            power_sessions: power::PowerSessionTracker::default(),
+        }
+    }
+
+    async fn insert_power_enabled_agent_and_repo(
+        pool: &sqlx::PgPool,
+    ) -> (db::AgentRow, db::RepoRow) {
+        let agent = db::insert_agent(pool, "manual-power-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let agent = db::update_agent_power(
+            pool,
+            agent.id,
+            db::AgentPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+                start_agent_enabled: false,
+                stop_agent_after_backup: false,
+                // Nothing listens here -- the SSH attempt is expected to
+                // fail, only the run-event trail is under test.
+                ssh_host: Some("127.0.0.1"),
+                ssh_port: 1,
+                agent_service_name: "assimilate-agent",
+            },
+        )
+        .await
+        .unwrap();
+
+        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
+            "test-pass",
+            &shared::crypto::derive_key(b"test-secret-key-for-schedules").unwrap(),
+        )
+        .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name: "manual-power-repo",
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let repo = db::update_repo_power(
+            pool,
+            repo.id,
+            db::RepoPowerPatch {
+                wake_enabled: true,
+                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
+                wake_broadcast_address: None,
+                wake_timeout_seconds: 180,
+                shutdown_after_backup: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        (agent, repo)
+    }
+
+    /// Regression test for the "manual Run Now doesn't participate in
+    /// `PowerSessionTracker`" bug: a sole reservation on both hosts must be
+    /// torn down once the manual run releases it, exactly like the
+    /// scheduler's own targets are.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn release_manual_target_power_tears_down_sole_participant(pool: sqlx::PgPool) {
+        let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
+        let state = test_app_state(pool.clone());
+
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
+            .await;
+
+        release_manual_target_power(
+            &state,
+            agent.id,
+            repo.id,
+            "run-manual-1",
+            "manual-power-host",
+        )
+        .await;
+
+        let events = db::run_events::list_run_events(&pool, "run-manual-1", agent.id, repo.id)
+            .await
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert_eq!(
+            event_types,
+            vec!["shutdown_sent", "shutdown_sent"],
+            "release as the sole participant must attempt shutdown for both the agent and repo \
+             hosts"
+        );
+    }
+
+    /// Regression test for the same bug's other half: releasing while a
+    /// sibling schedule's reservation is still held on both hosts must do
+    /// nothing, since a concurrent run is still relying on them staying up.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn release_manual_target_power_is_a_noop_with_a_sibling_reservation_held(
+        pool: sqlx::PgPool,
+    ) {
+        let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
+        let state = test_app_state(pool.clone());
+
+        // Two reservations on each host, simulating this manual run racing
+        // a concurrent scheduled run that targets the same agent/repo.
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent.id))
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo.id))
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo.id))
+            .await;
+        state
+            .power_sessions
+            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
+            .await;
+
+        release_manual_target_power(
+            &state,
+            agent.id,
+            repo.id,
+            "run-manual-2",
+            "manual-power-host",
+        )
+        .await;
+
+        let events = db::run_events::list_run_events(&pool, "run-manual-2", agent.id, repo.id)
+            .await
+            .unwrap();
+        assert!(
+            events.is_empty(),
+            "release while a sibling reservation is still held must not tear anything down: \
+             {events:?}"
+        );
+    }
+
+    /// Regression test: if the agent/repo row re-fetch inside
+    /// `release_manual_target_power` fails (transient DB error, or the row
+    /// was deleted mid-run), the `PowerSessionTracker` reservation must
+    /// still be released. Otherwise the session's count never returns to
+    /// zero, silently and permanently disabling `shutdown_after_backup`/
+    /// `stop_agent_after_backup` for that host until the server restarts.
+    /// Uses a lazily-connected pool to a nonexistent database (matching
+    /// `scheduler.rs`'s own `run_returns_promptly_when_shutdown_token_is_cancelled`
+    /// test) so both row fetches fail deterministically without needing
+    /// `DATABASE_URL`.
+    #[tokio::test]
+    async fn release_manual_target_power_releases_the_reservation_even_when_the_row_fetch_fails() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let state = test_app_state(pool);
+        let agent_id = 999_999;
+        let repo_id = 888_888;
+
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Agent(agent_id))
+            .await;
+        state
+            .power_sessions
+            .reserve(power::PowerHostKey::Repo(repo_id))
+            .await;
+
+        release_manual_target_power(&state, agent_id, repo_id, "run-manual-leak", "leak-host")
+            .await;
+
+        // If the reservation had leaked (the bug this regresses), this
+        // would be the *first* decrement and return Some(..) instead of
+        // None -- the tracker would still think a participant is present.
+        assert!(
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Agent(agent_id))
+                .await
+                .is_none(),
+            "the agent reservation must already be released by the failed fetch's fallback"
+        );
+        assert!(
+            state
+                .power_sessions
+                .end(power::PowerHostKey::Repo(repo_id))
+                .await
+                .is_none(),
+            "the repo reservation must already be released by the failed fetch's fallback"
+        );
+    }
+
+    /// Regression test: when `assemble_config` fails - a transient DB error,
+    /// or the agent row deleted mid-run - `push_config_and_trigger_target`
+    /// must report the target unreachable and send nothing, rather than
+    /// triggering a run against a config the agent never received.
+    ///
+    /// This arm was previously covered only by chance: no test drove it, and
+    /// it registered as covered only when some unrelated test happened to
+    /// fail a config assembly first. That made the line flap between covered
+    /// and uncovered from run to run and moved the repository's aggregate
+    /// coverage by a few hundredths of a percent either way, which is enough
+    /// to fail `analyze-coverage-diff.js`'s strict comparison on an unrelated
+    /// pull request.
+    ///
+    /// Uses a lazily-connected pool to a nonexistent database - the same
+    /// deterministic, no-`DATABASE_URL` pattern as
+    /// `release_manual_target_power_releases_the_reservation_even_when_the_row_fetch_fails`
+    /// above - so the fetch inside `assemble_config` fails on every run.
+    #[tokio::test]
+    async fn push_config_and_trigger_target_reports_unreachable_when_config_assembly_fails() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let state = test_app_state(pool);
+        let target = db::ScheduleRunTarget {
+            agent_id: 999_999,
+            hostname: "unreachable-host".to_owned(),
+        };
+
+        let reachable = push_config_and_trigger_target(
+            &state,
+            &target,
+            RepoId(888_888),
+            ScheduleType::Backup,
+            777_777,
+            "run-manual-config-assembly-failure",
+        )
+        .await;
+
+        assert!(
+            !reachable,
+            "a target whose config could not be assembled must be reported unreachable"
+        );
+    }
+
+    fn repo_input(repo_id: i64, required: Option<bool>) -> ScheduleRepoInput {
+        ScheduleRepoInput { repo_id, required }
+    }
+
+    #[test]
+    fn resolve_repo_targets_falls_back_to_the_single_repo_id() {
+        let resolved = resolve_repo_targets(None, Some(7)).unwrap();
+        assert_eq!(resolved, vec![(7, true)]);
+
+        assert_eq!(resolve_repo_targets(None, None).unwrap(), []);
+    }
+
+    #[test]
+    fn resolve_repo_targets_keeps_write_order_and_defaults_to_required() {
+        let resolved = resolve_repo_targets(
+            Some(&[repo_input(3, None), repo_input(9, Some(false))]),
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(resolved, vec![(3, true), (9, false)]);
+    }
+
+    #[test]
+    fn resolve_repo_targets_rejects_an_empty_list() {
+        assert!(matches!(
+            resolve_repo_targets(Some(&[]), Some(1)),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn resolve_repo_targets_rejects_the_same_repository_twice() {
+        assert!(matches!(
+            resolve_repo_targets(Some(&[repo_input(4, None), repo_input(4, None)]), None),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    /// Without a required target a run would report success having written
+    /// nothing, which is worse than no schedule at all.
+    #[test]
+    fn resolve_repo_targets_rejects_an_all_best_effort_list() {
+        assert!(matches!(
+            resolve_repo_targets(
+                Some(&[repo_input(4, Some(false)), repo_input(5, Some(false))]),
+                None
+            ),
+            Err(ApiError::BadRequest(_))
+        ));
     }
 }

@@ -40,6 +40,8 @@ const props = defineProps<{
   /** Targets of this schedule, for the catch-up markers they carry. */
   targets: readonly ScheduleTargetResponse[]
   repoName: string | null
+  /** Every repository this schedule writes into, in write order. */
+  repoTargetNames: readonly string[]
   cronSummary: string
   agentIds: readonly number[]
   agentLabel: (id: number) => string
@@ -199,11 +201,13 @@ function reportStripe(r: ReportRow): 'danger' | 'warning' | 'success' | 'muted' 
     <div class="panel">
       <h2 class="panel-title">Schedule info</h2>
       <dl class="info-grid">
-        <dt>Repository</dt>
+        <dt>{{ repoTargetNames.length > 1 ? 'Repositories' : 'Repository' }}</dt>
         <dd>
           {{
-            repoName ??
-            (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned')
+            repoTargetNames.length > 0
+              ? repoTargetNames.join(', ')
+              : (repoName ??
+                (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned'))
           }}
         </dd>
         <dt>On failure</dt>

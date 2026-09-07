@@ -4,16 +4,18 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowDown, ArrowUp, ChevronDown } from '@lucide/vue'
+import { computed } from 'vue'
+import { ArrowDown, ArrowUp } from '@lucide/vue'
+import AgentMultiSelect from './AgentMultiSelect.vue'
 import CronBuilder from './CronBuilder.vue'
+import ScheduleRepoTargets from './ScheduleRepoTargets.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
 import SchedulePowerTab from './SchedulePowerTab.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
+import type { ScheduleRepoTarget } from '../api/schedules'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
-import type { ScheduleType } from '../types/schedule'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
 import type { ScheduleSettingsSection } from '../utils/scheduleSettings'
@@ -33,7 +35,6 @@ import type { ScheduleSettingsSection } from '../utils/scheduleSettings'
  */
 const props = defineProps<{
   section: ScheduleSettingsSection
-  isCreate: boolean
   isBackup: boolean
   agents: readonly AgentRow[]
   repos: readonly Repo[]
@@ -47,8 +48,7 @@ const emit = defineEmits<{ 'update:section': [value: ScheduleSettingsSection] }>
 const form = defineModel<ScheduleFormState>('form', { required: true })
 const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
 const selectedAgentIds = defineModel<number[]>('selectedAgentIds', { required: true })
-const selectedRepoId = defineModel<number | null>('selectedRepoId', { required: true })
-const selectedType = defineModel<ScheduleType>('selectedType', { required: true })
+const repoTargets = defineModel<ScheduleRepoTarget[]>('repoTargets', { required: true })
 const onFailure = defineModel<'stop' | 'continue'>('onFailure', { required: true })
 const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true })
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
@@ -69,21 +69,6 @@ const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
       ]
     : []),
 ])
-
-function multiSelectLabel(): string {
-  const ids = selectedAgentIds.value
-  if (ids.length === 0) return 'Select agents...'
-  if (ids.length === 1) return props.agentLabel(ids[0])
-  return `${ids.length} agents selected`
-}
-
-function toggleAgentSelection(id: number): void {
-  if (selectedAgentIds.value.includes(id)) {
-    selectedAgentIds.value = selectedAgentIds.value.filter((x) => x !== id)
-  } else {
-    selectedAgentIds.value = [...selectedAgentIds.value, id]
-  }
-}
 
 function moveAgentUp(index: number): void {
   if (index === 0) return
@@ -131,27 +116,6 @@ const leadValue = computed<number>({
     const minutes = leadUnit.value === 'hours' ? value * MINUTES_PER_HOUR : value
     form.value.catch_up_min_lead_minutes = Math.max(1, Math.round(minutes))
   },
-})
-
-const showAgentDropdown = ref(false)
-const agentDropdownRef = ref<HTMLElement | null>(null)
-
-function handleClickOutside(event: MouseEvent): void {
-  if (
-    showAgentDropdown.value &&
-    agentDropdownRef.value &&
-    !agentDropdownRef.value.contains(event.target as Node)
-  ) {
-    showAgentDropdown.value = false
-  }
-}
-
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleClickOutside)
 })
 </script>
 
@@ -245,111 +209,26 @@ onBeforeUnmount(() => {
           for that run instead.
         </span>
       </div>
-      <div
-        v-if="isCreate"
-        class="field"
-      >
-        <label class="field-label">Schedule type</label>
-        <select
-          v-model="selectedType"
-          class="input"
-        >
-          <option value="backup">Backup</option>
-          <option value="check">Integrity check</option>
-          <option value="verify">Verify (extract dry-run)</option>
-        </select>
-        <span class="field-hint">
-          Backup creates archives; Check validates repo integrity; Verify tests extractability.
-        </span>
-      </div>
     </template>
 
     <template v-else-if="currentSection === 'targets'">
       <p class="pane-lede">
-        Which hosts this schedule runs on, which repository they write to, and what happens when one
-        of them fails.
+        Which hosts this schedule runs on, which repositories they write to, and what happens when
+        one of them fails.
       </p>
       <div class="field">
-        <label class="field-label"
-          >Hosts
-          <span
-            v-if="isCreate"
-            class="required"
-            >*</span
-          ></label
-        >
-        <div
-          ref="agentDropdownRef"
-          class="multi-select-wrapper"
-        >
-          <button
-            type="button"
-            class="multi-select-trigger"
-            :class="{ open: showAgentDropdown }"
-            @click.stop="showAgentDropdown = !showAgentDropdown"
-          >
-            <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-            <ChevronDown
-              :size="14"
-              class="disclosure-chevron"
-              :class="{ 'disclosure-chevron--open': showAgentDropdown }"
-            />
-          </button>
-          <div
-            v-if="showAgentDropdown"
-            class="multi-select-dropdown"
-          >
-            <label
-              v-for="a in agents"
-              :key="a.id"
-              class="multi-select-item"
-            >
-              <input
-                type="checkbox"
-                :checked="selectedAgentIds.includes(a.id)"
-                @change="toggleAgentSelection(a.id)"
-              />
-              <span class="multi-select-name">{{ a.display_name ?? a.hostname }}</span>
-            </label>
-          </div>
-        </div>
+        <label class="field-label">Hosts</label>
+        <AgentMultiSelect
+          v-model="selectedAgentIds"
+          :agents="agents"
+        />
         <span class="field-hint">The agents that will execute this schedule</span>
       </div>
 
-      <div class="field">
-        <label class="field-label"
-          >Repository
-          <span
-            v-if="isCreate"
-            class="required"
-            >*</span
-          ></label
-        >
-        <select
-          v-model.number="selectedRepoId"
-          class="input"
-        >
-          <option
-            v-if="isCreate"
-            :value="null"
-            disabled
-          >
-            Select a repository...
-          </option>
-          <option
-            v-for="r in repos"
-            :key="r.id"
-            :value="r.id"
-          >
-            {{ r.name }}
-          </option>
-        </select>
-        <span
-          v-if="isCreate"
-          class="field-hint"
-          >The borg repository to back up to</span
-        >
-      </div>
+      <ScheduleRepoTargets
+        v-model="repoTargets"
+        :repos="repos"
+      />
 
       <div class="field">
         <label class="field-label">On failure</label>
@@ -410,7 +289,10 @@ onBeforeUnmount(() => {
           class="field field-inline"
         >
           <label class="field-label">Configure paths per agent</label>
-          <ToggleSwitch v-model="usePerHostPaths" />
+          <ToggleSwitch
+            v-model="usePerHostPaths"
+            label="Configure paths per agent"
+          />
         </div>
 
         <div
@@ -531,10 +413,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* The settings sub-nav shape (.settings-tab/-nav/-nav-item/-pane), .required
-   and the textarea sizes (.area-input/-sm) all live in style.css. What is
-   left here is this page's own: the retention grid, the host multi-select,
-   the execution-order list, and the mobile collapse that keeps the sub-nav
+/* The settings sub-nav shape (.settings-tab/-nav/-nav-item/-pane), .required,
+   the execution-order list (.order-*) and the textarea sizes
+   (.area-input/-sm) all live in style.css; the host picker and the repository
+   target list are their own components. What is left here is this page's own:
+   the catch-up floor's indent, and the mobile collapse that keeps the sub-nav
    on one row. */
 
 /* The catch-up floor only means anything under the toggle that switches
@@ -544,160 +427,6 @@ onBeforeUnmount(() => {
   border-left: 2px solid var(--border);
   padding-left: var(--space-6);
   margin-left: var(--space-2);
-}
-
-.retention-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(90px, 100%), 1fr));
-  gap: var(--space-5);
-}
-
-/* Multi-select */
-.multi-select-wrapper {
-  position: relative;
-}
-
-.multi-select-trigger {
-  width: 100%;
-  padding: var(--space-4) var(--space-5);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--fs-base);
-  outline: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  transition: border-color var(--duration-base);
-  box-sizing: border-box;
-  text-align: left;
-}
-
-.multi-select-trigger:hover,
-.multi-select-trigger.open {
-  border-color: var(--accent);
-}
-
-.multi-select-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.multi-select-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-3);
-  z-index: 100;
-  max-height: 220px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.multi-select-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-  transition: background var(--duration-fast);
-}
-
-.multi-select-item:hover {
-  background: var(--bg-hover);
-}
-
-.multi-select-item input[type='checkbox'] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.multi-select-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Ordering list */
-.order-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.order-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.order-index {
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  color: var(--text-muted);
-  min-width: 1.2rem;
-  text-align: center;
-}
-
-.order-name {
-  flex: 1;
-  font-size: var(--fs-base);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.order-actions {
-  display: flex;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.order-btn {
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--fs-lg);
-  cursor: pointer;
-  transition:
-    background var(--duration-fast),
-    color var(--duration-fast);
-  line-height: 1;
-}
-
-.order-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.order-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
 }
 
 /* At most four sections, and they fit one row at any width - so this rail

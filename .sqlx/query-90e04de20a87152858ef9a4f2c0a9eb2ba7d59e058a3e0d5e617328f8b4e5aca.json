@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT repo_id, execution_order, required FROM schedule_repos WHERE schedule_id = $1 ORDER BY execution_order, repo_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "execution_order",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "required",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "90e04de20a87152858ef9a4f2c0a9eb2ba7d59e058a3e0d5e617328f8b4e5aca"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules s SET repo_id = first_target.repo_id FROM (SELECT DISTINCT ON (schedule_id) schedule_id, repo_id FROM schedule_repos ORDER BY schedule_id, execution_order, repo_id) AS first_target WHERE s.id = first_target.schedule_id AND s.repo_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "ccddaaa47c03a9975dbe7206807145b569adc63e354a398783da79313ef5a2c8"
+}

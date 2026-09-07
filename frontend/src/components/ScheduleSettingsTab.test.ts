@@ -64,7 +64,6 @@ function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(ScheduleSettingsTab, {
     props: {
       section: 'general',
-      isCreate: false,
       isBackup: true,
       agents: AGENTS,
       repos: REPOS,
@@ -72,8 +71,7 @@ function mount(props: Record<string, unknown> = {}) {
       form: baseForm(),
       overrides: baseOverrides(),
       selectedAgentIds: [10, 11],
-      selectedRepoId: 20,
-      selectedType: 'backup',
+      repoTargets: [{ repo_id: 20, required: true }],
       onFailure: 'stop',
       usePerHostPaths: false,
       perHostSources: {},
@@ -152,16 +150,13 @@ describe('ScheduleSettingsTab', () => {
     expect((nameInput.element as HTMLInputElement).value).toBe('Nightly production backup')
   })
 
-  it('shows the Schedule type selector only in create mode', () => {
-    expect(mount({ isCreate: true }).text()).toContain('Schedule type')
-    expect(mount({ isCreate: false }).text()).not.toContain('Schedule type')
+  /** Type is fixed once a schedule exists; only the creation wizard offers it. */
+  it('does not offer the schedule type', () => {
+    expect(mount().text()).not.toContain('Schedule type')
   })
 
-  it('shows required markers on Hosts and Repository only in create mode', () => {
-    const created = mount({ isCreate: true, section: 'targets' })
-    expect(created.findAll('.required')).toHaveLength(2)
-    const edited = mount({ isCreate: false, section: 'targets' })
-    expect(edited.findAll('.required')).toHaveLength(0)
+  it('marks the repository list as required', () => {
+    expect(mount({ section: 'targets' }).findAll('.required')).toHaveLength(1)
   })
 
   it('shows the multi-select summary and opens the dropdown', async () => {
@@ -226,7 +221,10 @@ describe('ScheduleSettingsTab', () => {
     const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11] })
     expect(wrapper.findAll('textarea')).toHaveLength(1)
 
-    await wrapper.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', true)
+    const perAgentToggle = wrapper
+      .findAllComponents({ name: 'ToggleSwitch' })
+      .find((c) => c.props('label') === 'Configure paths per agent')!
+    await perAgentToggle.vm.$emit('update:modelValue', true)
     expect(wrapper.emitted('update:usePerHostPaths')?.at(-1)?.[0]).toBe(true)
 
     await wrapper.setProps({ usePerHostPaths: true })
@@ -338,17 +336,26 @@ describe('ScheduleSettingsTab', () => {
     expect(form.catch_up_min_lead_minutes).toBe(1)
   })
 
-  it('changes the Schedule type select in create mode', async () => {
-    const wrapper = mount({ isCreate: true })
-    await wrapper.find('select').setValue('check')
-    expect(wrapper.emitted('update:selectedType')?.at(-1)?.[0]).toBe('check')
+  it('changes the target repository from the Targets section', async () => {
+    const repos = [...REPOS, { id: 21, name: 'archive-weekly' }] as unknown as Repo[]
+    const wrapper = mount({ section: 'targets', repos })
+    await wrapper.findAll('select')[0].setValue('21')
+    expect(wrapper.emitted('update:repoTargets')?.at(-1)?.[0]).toEqual([
+      { repo_id: 21, required: true },
+    ])
   })
 
-  it('changes the Repository select in the Targets section', async () => {
+  it('adds a second target repository', async () => {
     const repos = [...REPOS, { id: 21, name: 'archive-weekly' }] as unknown as Repo[]
-    const wrapper = mount({ section: 'targets', repos, selectedRepoId: 20 })
-    await wrapper.findAll('select')[0].setValue('21')
-    expect(wrapper.emitted('update:selectedRepoId')?.at(-1)?.[0]).toBe(21)
+    const wrapper = mount({ section: 'targets', repos })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Add repository')!
+      .trigger('click')
+    expect(wrapper.emitted('update:repoTargets')?.at(-1)?.[0]).toEqual([
+      { repo_id: 20, required: true },
+      { repo_id: 21, required: false },
+    ])
   })
 
   it('changes the On Failure select in the Targets section', async () => {

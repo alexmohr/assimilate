@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedule_repos SET required = true WHERE id IN (SELECT DISTINCT ON (schedule_id) id FROM schedule_repos WHERE schedule_id IN (SELECT schedule_id FROM schedule_repos GROUP BY schedule_id HAVING bool_and(NOT required)) ORDER BY schedule_id, execution_order, repo_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "16180cd99f5a68216c9218d16dffbc485349460a860ef7022f08c86ad6ba19a1"
+}

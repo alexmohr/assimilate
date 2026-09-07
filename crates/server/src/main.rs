@@ -693,6 +693,10 @@ fn schedule_and_config_routes() -> Router<AppState> {
             get(api::schedules::list_schedule_targets),
         )
         .route(
+            "/api/schedules/{id}/repos",
+            get(api::schedules::list_schedule_repos),
+        )
+        .route(
             "/api/schedules/{id}/sources",
             get(api::schedules::list_schedule_backup_sources),
         )

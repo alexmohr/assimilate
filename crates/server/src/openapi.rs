@@ -133,6 +133,7 @@ use crate::{
         crate::api::schedules::delete_failed_schedule_reports,
         crate::api::schedules::count_failed_schedule_reports,
         crate::api::schedules::list_schedule_targets,
+        crate::api::schedules::list_schedule_repos,
         crate::api::schedules::list_schedule_backup_sources,
         crate::api::excludes::get_excludes,
         crate::api::excludes::set_excludes,

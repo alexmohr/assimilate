@@ -7425,6 +7425,169 @@ async fn schedule_targets_list_and_delete(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn schedule_repos_seeded_from_the_creating_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert_eq!(target.repo_id, repo.id);
+    assert_eq!(target.execution_order, 0);
+    assert!(target.required);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn replace_schedule_repos_stores_order_and_repoints_primary(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+
+    db::replace_schedule_repos(&pool, schedule.id, &[(offsite.id, true), (repo.id, false)])
+        .await
+        .unwrap();
+
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|t| (t.repo_id, t.execution_order, t.required))
+            .collect::<Vec<_>>(),
+        vec![(offsite.id, 0, true), (repo.id, 1, false)],
+    );
+
+    // The denormalised primary target follows the first entry, so everything
+    // still reading `schedules.repo_id` agrees with the list.
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(fetched.repo_id, Some(offsite.id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_schedule_repo_replaces_the_whole_target_list(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
+        .await
+        .unwrap();
+
+    db::update_schedule_repo(&pool, schedule.id, offsite.id)
+        .await
+        .unwrap();
+
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets.iter().map(|t| t.repo_id).collect::<Vec<_>>(),
+        vec![offsite.id],
+    );
+
+    assert!(
+        db::update_schedule_repo(&pool, 999_999_999, offsite.id)
+            .await
+            .is_err()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn due_schedules_yield_one_row_per_target_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, false)])
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+
+    let due = db::list_due_schedules(&pool, now).await.unwrap();
+    assert_eq!(
+        due.iter()
+            .map(|row| (row.repo_id, row.required))
+            .collect::<Vec<_>>(),
+        vec![(repo.id, true), (offsite.id, false)],
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn due_schedules_skip_a_disabled_target_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
+        .await
+        .unwrap();
+    db::update_repo(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: offsite.id,
+            name: &offsite.name,
+            repo_path: &offsite.repo_path,
+            ssh_user: &offsite.ssh_user,
+            ssh_host: &offsite.ssh_host,
+            ssh_port: offsite.ssh_port,
+            compression: &offsite.compression,
+            encryption: &offsite.encryption,
+            enabled: false,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now();
+    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+
+    let due = db::list_due_schedules(&pool, now).await.unwrap();
+    assert_eq!(
+        due.iter().map(|row| row.repo_id).collect::<Vec<_>>(),
+        vec![repo.id],
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_one_of_several_target_repositories_keeps_the_schedule_running(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, false)])
+        .await
+        .unwrap();
+
+    db::delete_repo(&pool, repo.id).await.unwrap();
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert!(
+        fetched.enabled,
+        "a schedule that still has somewhere to write must keep running"
+    );
+    // The primary target follows the survivor, and it is promoted to required
+    // so the schedule cannot report success without writing a copy.
+    assert_eq!(fetched.repo_id, Some(offsite.id));
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|t| (t.repo_id, t.required))
+            .collect::<Vec<_>>(),
+        vec![(offsite.id, true)],
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_the_last_target_repository_disables_the_schedule(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+
+    db::delete_repo(&pool, repo.id).await.unwrap();
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert!(!fetched.enabled);
+    assert_eq!(fetched.repo_id, None);
+    assert!(
+        db::list_schedule_repos(&pool, schedule.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn schedule_target_hostnames_for_repo_test(pool: PgPool) {
     let (_, repo, _) = create_test_schedule(&pool).await;
 

@@ -990,8 +990,21 @@ async fn fail_target(
     recorded_failure: &mut bool,
     triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
 ) -> TargetControl {
+    // Marked before the best-effort return below: the host missed this run
+    // whichever target it was writing when it went unreachable.
     if agent_unreachable {
         mark_catch_up_pending(ctx, target).await;
+    }
+    if !target.required {
+        tracing::warn!(
+            schedule_id = ctx.schedule_id,
+            hostname = %target.hostname,
+            repo_id = target.repo_id,
+            agent_unreachable,
+            "sequential: best-effort target failed, continuing"
+        );
+        signal_first_target_attempted(triggered_tx);
+        return TargetControl::Continue;
     }
     record_schedule_failure_once(
         ctx,
@@ -1003,7 +1016,14 @@ async fn fail_target(
     )
     .await;
     signal_first_target_attempted(triggered_tx);
-    match ctx.on_failure {
+    control_after_required_failure(ctx.on_failure)
+}
+
+/// What a failed *required* target does to the rest of the run. A best-effort
+/// target never reaches here: its failure is reported and the run carries on
+/// regardless of the schedule's `on_failure` setting.
+fn control_after_required_failure(on_failure: OnFailure) -> TargetControl {
+    match on_failure {
         OnFailure::Stop => TargetControl::Stop,
         OnFailure::Continue => TargetControl::Continue,
     }
@@ -1053,10 +1073,10 @@ async fn run_sequential_target(
             schedule_type = %target.schedule_type,
             "sequential: invalid schedule type in database, skipping target"
         );
-        return match ctx.on_failure {
-            OnFailure::Stop => TargetControl::Stop,
-            OnFailure::Continue => TargetControl::Continue,
-        };
+        if !target.required {
+            return TargetControl::Continue;
+        }
+        return control_after_required_failure(ctx.on_failure);
     };
 
     // Subscribe before sending so we don't miss the completion event.
@@ -1684,8 +1704,17 @@ async fn await_target_completion(
     };
 
     if !success {
-        match ctx.on_failure {
-            OnFailure::Stop => {
+        if !target.required {
+            tracing::warn!(
+                schedule_id,
+                hostname = %target.hostname,
+                repo_id = repo_id_val,
+                "sequential: best-effort target reported failure, continuing"
+            );
+            return TargetControl::Continue;
+        }
+        match control_after_required_failure(ctx.on_failure) {
+            TargetControl::Stop => {
                 tracing::warn!(
                     schedule_id,
                     hostname = %target.hostname,
@@ -1693,7 +1722,7 @@ async fn await_target_completion(
                 );
                 return TargetControl::Stop;
             }
-            OnFailure::Continue => {}
+            TargetControl::Continue => {}
         }
     }
 
@@ -2614,6 +2643,121 @@ esac
             None,
             "catch-up is opt-in; a schedule with it off must not remember misses"
         );
+    }
+
+    /// A repository a schedule only writes to on a best-effort basis is not
+    /// allowed to move the schedule's own failure bookkeeping: an offsite copy
+    /// nobody promised must not push `next_run_at` back or count towards the
+    /// auto-disable threshold.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_does_not_record_a_failure_for_a_best_effort_target(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id, repo_id) = setup_due_schedule(&pool, &key).await;
+        db::replace_schedule_repos(&pool, schedule_id, &[(repo_id, false)])
+            .await
+            .unwrap();
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+        assert!(
+            background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(5))
+                .await,
+            "the tick's background task must finish before asserting on its writes"
+        );
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 0,
+            "a best-effort target's failure is not the schedule's failure"
+        );
+        assert!(enabled);
+        assert!(!auto_disabled);
+    }
+
+    /// The other half of the same rule: a required target failing in the same
+    /// run still counts, and an earlier best-effort failure doesn't hide it.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_records_a_failure_for_a_required_target_after_a_best_effort_one(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id, repo_id) = setup_due_schedule(&pool, &key).await;
+        let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", &key).unwrap();
+        let offsite = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "tick-repo-offsite",
+                repo_path: "/backup/offsite",
+                ssh_user: "borg",
+                ssh_host: "offsite.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_enc,
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::replace_schedule_repos(&pool, schedule_id, &[(offsite.id, false), (repo_id, true)])
+            .await
+            .unwrap();
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &background_task_tracker,
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &crate::notifications::NotificationService::new(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+        // tick() returns as soon as the *first* target has been attempted, and
+        // that one is best-effort here, so the required target's failure is
+        // still being written when it does.
+        assert!(
+            background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(5))
+                .await,
+            "the tick's background task must finish before asserting on its writes"
+        );
+
+        let (consecutive_failures, _, _) = schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(consecutive_failures, 1);
     }
 
     /// A cron expression that can't be evaluated (here: syntactically invalid, but the

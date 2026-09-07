@@ -8042,11 +8042,6 @@ async fn bulk_and_per_entry_acknowledge_agree_on_who_may_touch_what() {
     );
 }
 
-/// The realistic middle case between the two extremes the other bulk tests
-/// cover: a non-admin holding `can_modify_schedules` on one repository but not
-/// on another that also has outstanding reports. This is the
-/// `granted.contains(repo_id)` filter itself - the bulk endpoint must
-/// acknowledge exactly the granted repository and leave the other alone, and
 /// A multi-target schedule is editable by whoever runs it, not only by
 /// whoever can reach every repository it writes to.
 ///
@@ -8150,6 +8145,11 @@ async fn a_secondary_target_the_caller_cannot_reach_does_not_block_editing_a_sch
     );
 }
 
+/// The realistic middle case between the two extremes the other bulk tests
+/// cover: a non-admin holding `can_modify_schedules` on one repository but not
+/// on another that also has outstanding reports. This is the
+/// `granted.contains(repo_id)` filter itself - the bulk endpoint must
+/// acknowledge exactly the granted repository and leave the other alone, and
 /// the outstanding count must agree with what it did.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]

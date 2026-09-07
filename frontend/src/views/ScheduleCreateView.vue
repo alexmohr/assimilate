@@ -394,7 +394,7 @@ async function submit(): Promise<void> {
             />
             <span class="field-hint">
               One per line. Leave empty to use each agent's own default paths. The same paths are
-              read once and written to every target.
+              written to every target.
             </span>
           </div>
         </template>
@@ -402,7 +402,7 @@ async function submit(): Promise<void> {
         <template v-else-if="currentStep.id === 'targets'">
           <p class="pane-lede">
             The repositories this schedule writes into. Add more than one to keep independent copies
-            from a single read of the source.
+            on one schedule, written one after another.
           </p>
           <ScheduleRepoTargets
             v-model="repoTargets"

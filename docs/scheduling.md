@@ -25,9 +25,9 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 
 ## Backup targets
 
-A schedule writes into one or more repositories. Several targets means several independent copies from a single read of the source hosts — typically a local repository that restores fast and an offsite one that survives losing the building.
+A schedule writes into one or more repositories. Several targets means several independent copies from one schedule — one cron expression, one retention policy, one set of exclude patterns and hooks — typically a local repository that restores fast and an offsite one that survives losing the building.
 
-Each host runs its targets in the order shown, one after another. Per target you choose how a failure is treated:
+Each host runs its targets in the order shown, one after another. Every target is its own borg run over the source, so a second target roughly doubles how long the schedule takes; targets are never written in parallel. Per target you choose how a failure is treated:
 
 - **Required** — a failure on this repository is the schedule's failure. It counts towards the missed-backup threshold that auto-disables the schedule, and with **If a host fails: stop the run** it ends that host's run before the remaining targets.
 - **Best effort** — a failure is recorded as a warning. It never stops the remaining targets and never counts towards the auto-disable threshold.

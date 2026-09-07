@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: Apache-2.0
 -- SPDX-FileCopyrightText: 2026 Alexander Mohr
 
--- A schedule can now write to more than one repository, so that a single read
--- of the source hosts produces several independent copies.
+-- A schedule can now write to more than one repository, so that one schedule
+-- definition produces several independent copies of the same sources.
 --
 -- `schedules.repo_id` stays, denormalised, as the schedule's primary target -
 -- the lowest `execution_order` row below. Health summaries, quota accounting,

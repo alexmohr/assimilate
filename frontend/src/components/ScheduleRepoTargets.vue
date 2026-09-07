@@ -15,10 +15,10 @@ import type { Repo } from '../types/repo'
  *
  * A schedule used to own exactly one repository, so this used to be a
  * single dropdown.
- * Several targets from one read of the source is the point of the feature -
- * a local copy that restores fast and an offsite one that survives the
- * building - so the list carries write order and, per target, whether its
- * failure is the run's failure.
+ * Several copies from one schedule is the point of the feature - a local copy
+ * that restores fast and an offsite one that survives the building - so the
+ * list carries write order and, per target, whether its failure is the run's
+ * failure. Each target is still its own borg run over the source.
  */
 const props = defineProps<{
   repos: readonly Repo[]
@@ -199,7 +199,7 @@ const canAdd = computed(() => !props.disabled && unusedRepos.value.length > 0)
     </button>
 
     <span class="field-hint">
-      Written in this order, one after another, from a single read of the source.
+      Written in this order, one after another, each as its own run over the source.
       {{ requiredCount }} of {{ model.length }} required.
     </span>
   </div>

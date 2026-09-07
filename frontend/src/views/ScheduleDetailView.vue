@@ -34,6 +34,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
 import {
   agentOverridePayload,
+  repoTargetsProblem,
   scheduleFormPayload,
   type ScheduleFormPayload,
 } from '../utils/schedulePayload'
@@ -443,7 +444,7 @@ async function save(): Promise<void> {
         saveError.value = 'Schedule not found'
         return
       }
-      if (repoTargets.value.length === 0 || !repoTargets.value.some((t) => t.required)) {
+      if (repoTargetsProblem(repoTargets.value)) {
         saveError.value = 'Select at least one repository, and mark at least one of them required.'
         return
       }
@@ -583,11 +584,20 @@ onMessage('BackupStarted', (payload) => {
 })
 
 onMessage('BackupCompleted', (payload) => {
-  if (repo.value != null && payload.target_name === repo.value.name) {
-    backupRunning.value = false
-    backupHostname.value = null
-    backupArchiveName.value = null
+  // Matched the way BackupLog is, and for the same reason: `target_name` is
+  // one repository's display name, so comparing it against this page's
+  // primary target missed every completion on a secondary one - the progress
+  // card then sat on "running" until the next full reload. Targets run one
+  // after another, so the next one's BackupStarted puts the card back.
+  const { schedule_id, repo_id } = payload.report
+  if (schedule_id != null) {
+    if (schedule_id !== Number(props.id)) return
+  } else if (!repoTargets.value.some((t) => t.repo_id === repo_id)) {
+    return
   }
+  backupRunning.value = false
+  backupHostname.value = null
+  backupArchiveName.value = null
 })
 
 onMessage('BackupLog', (payload) => {

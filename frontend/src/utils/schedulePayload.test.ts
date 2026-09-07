@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { agentOverridePayload, scheduleFormPayload } from './schedulePayload'
+import { agentOverridePayload, repoTargetsProblem, scheduleFormPayload } from './schedulePayload'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
@@ -129,5 +129,28 @@ describe('agentOverridePayload', () => {
         post_backup_commands: [{ command: 'systemctl start nginx', timeout_seconds: 30 }],
       },
     ])
+  })
+})
+
+describe('repoTargetsProblem', () => {
+  it('accepts a list with a required target', () => {
+    expect(repoTargetsProblem([{ repo_id: 1, required: true }])).toBeNull()
+    expect(
+      repoTargetsProblem([
+        { repo_id: 1, required: false },
+        { repo_id: 2, required: true },
+      ]),
+    ).toBeNull()
+  })
+
+  it('names an empty list', () => {
+    expect(repoTargetsProblem([])).toBe('at least one repository')
+  })
+
+  /** Without a required target a run could report success having written nothing. */
+  it('names a list with nothing required', () => {
+    expect(repoTargetsProblem([{ repo_id: 1, required: false }])).toBe(
+      'at least one required repository',
+    )
   })
 })

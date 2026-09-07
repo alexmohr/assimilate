@@ -965,15 +965,46 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   it('BackupCompleted with matching schedule_id hides the live progress card', async () => {
     const wrapper = await createActiveBackupWrapper()
 
+    // The server carries the ids inside the report, not beside it.
     wsHandlers['BackupCompleted']?.({
       hostname: 'web-server-01',
       target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
+      report: { schedule_id: 1, repo_id: mockSchedule.repo_id },
     })
     await nextTick()
 
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  /**
+   * The bug this guards: the handler compared `target_name` against this
+   * page's primary repository, so a completion on a secondary target never
+   * matched and the card sat on "running" until a full reload.
+   */
+  it('BackupCompleted on a secondary target still hides the live progress card', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'offsite-weekly',
+      report: { schedule_id: 1, repo_id: 999 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupCompleted for another schedule leaves the card alone', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      report: { schedule_id: 2, repo_id: mockSchedule.repo_id },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
   it('BackupLog with matching schedule_id and archive_progress JSON updates progress data', async () => {

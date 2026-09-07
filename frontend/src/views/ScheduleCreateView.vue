@@ -12,7 +12,11 @@ import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
-import { agentOverridePayload, scheduleFormPayload } from '../utils/schedulePayload'
+import {
+  agentOverridePayload,
+  repoTargetsProblem,
+  scheduleFormPayload,
+} from '../utils/schedulePayload'
 import { parseLines } from '../utils/validation'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import AgentMultiSelect from '../components/AgentMultiSelect.vue'
@@ -115,10 +119,8 @@ function blockers(step: StepId): string[] {
     missing.push('at least one host')
   }
   if (step === 'targets') {
-    if (repoTargets.value.length === 0) missing.push('at least one repository')
-    else if (!repoTargets.value.some((t) => t.required)) {
-      missing.push('at least one required repository')
-    }
+    const problem = repoTargetsProblem(repoTargets.value)
+    if (problem) missing.push(problem)
   }
   if (step === 'timing' && cronFieldCount.value !== 5) {
     missing.push('a five-field cron expression')

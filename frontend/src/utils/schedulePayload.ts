@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { dropBlankCommands, parseLines } from './validation'
-import type { CreateScheduleRequest } from '../api/schedules'
+import type { CreateScheduleRequest, ScheduleRepoTarget } from '../api/schedules'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
 /**
@@ -90,4 +90,18 @@ export function agentOverridePayload(
   }
 
   return payload
+}
+
+/**
+ * What is missing from a schedule's target list, or `null` when it is usable.
+ *
+ * The rule mirrors the server's `resolve_repo_targets`: at least one target,
+ * at least one of them required, or a run could report success having written
+ * nothing. Shared so the wizard's step blocker and the detail page's save
+ * guard cannot drift apart from each other or from the server.
+ */
+export function repoTargetsProblem(targets: readonly ScheduleRepoTarget[]): string | null {
+  if (targets.length === 0) return 'at least one repository'
+  if (!targets.some((target) => target.required)) return 'at least one required repository'
+  return null
 }

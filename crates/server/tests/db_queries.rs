@@ -1692,6 +1692,63 @@ async fn per_agent_excludes_upsert_replaces_existing(pool: PgPool) {
     assert_eq!(all.first().unwrap().raw_text, "second\n\n# comment");
 }
 
+/// The bug this guards: `list_repos_for_agent` decided which repositories an
+/// agent's config may mention by joining the denormalised `schedules.repo_id`,
+/// so a repository that is only ever a *secondary* target never entered the
+/// map `assemble_config` fills - and the loop that adds a schedule to each of
+/// its targets silently skipped it. The agent then never received a
+/// `RepoConfig` for the second target and never wrote a copy there, with no
+/// error anywhere. Exactly the shape of the demo's dual-target schedule.
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_includes_a_secondary_target_repository(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-targets").unwrap();
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, false)])
+        .await
+        .unwrap();
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    for id in [repo.id, offsite.id] {
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        sqlx::query(
+            "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE \
+             id = $3",
+        )
+        .bind(passphrase_encrypted.as_slice())
+        .bind("ssh-ed25519 AAAATEST")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let config = server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
+        .await
+        .unwrap();
+
+    let mut assembled: Vec<i64> = config.repos.iter().map(|r| r.repo_id.0).collect();
+    assembled.sort_unstable();
+    let mut expected = vec![repo.id, offsite.id];
+    expected.sort_unstable();
+    assert_eq!(
+        assembled, expected,
+        "both target repositories must reach the agent's config"
+    );
+
+    for r in &config.repos {
+        assert_eq!(
+            r.schedules.len(),
+            1,
+            "each target carries its own copy of the schedule"
+        );
+    }
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPool) {
     let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-excludes").unwrap();

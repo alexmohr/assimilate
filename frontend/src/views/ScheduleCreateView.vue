@@ -434,7 +434,7 @@ async function submit(): Promise<void> {
               {{ requiredTargetCount === 1 ? 'is' : 'are' }} required. A failing required target
               {{
                 onFailure === 'stop'
-                  ? 'ends the run for that host'
+                  ? 'ends the run, skipping the targets and hosts after it'
                   : 'is recorded and the run carries on'
               }}; a best-effort one is reported as a warning either way.
             </span>

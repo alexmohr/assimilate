@@ -2901,8 +2901,9 @@ pub async fn list_repos_for_agent(
         RepoWithPassphraseRow,
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.ssh_host_key, r.passphrase_encrypted, r.compression, r.encryption, r.enabled, \
-         r.relocation_pending, r.sync_schedule FROM repos r JOIN schedules s ON s.repo_id = r.id \
-         JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.relocation_pending, r.sync_schedule FROM repos r JOIN schedule_repos sr ON sr.repo_id \
+         = r.id JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = \
+         $1 ORDER BY r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -2922,8 +2923,9 @@ pub async fn list_repos_for_agent_public(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
          r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
-         r.shutdown_after_backup FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN \
-         schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.shutdown_after_backup FROM repos r JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
+         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER BY \
+         r.id",
         agent_id,
     )
     .fetch_all(pool)

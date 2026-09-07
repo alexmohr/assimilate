@@ -29,7 +29,7 @@ A schedule writes into one or more repositories. Several targets means several i
 
 Each host runs its targets in the order shown, one after another. Every target is its own borg run over the source, so a second target roughly doubles how long the schedule takes; targets are never written in parallel. Per target you choose how a failure is treated:
 
-- **Required** — a failure on this repository is the schedule's failure. It counts towards the missed-backup threshold that auto-disables the schedule, and with **On failure: stop the run** it ends that host's run before the remaining targets.
+- **Required** — a failure on this repository is the schedule's failure. It counts towards the missed-backup threshold that auto-disables the schedule, and with **On failure: stop the run** it ends the whole run there — the targets after it on that host, and any host the run had not reached yet, are skipped until the next scheduled time.
 - **Best effort** — a failure is recorded as a warning. It never stops the remaining targets and never counts towards the auto-disable threshold.
 
 At least one target must be required: without one, a run could report success having written nothing.

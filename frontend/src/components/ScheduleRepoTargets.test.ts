@@ -93,6 +93,32 @@ describe('ScheduleRepoTargets', () => {
     ])
   })
 
+  it('moves a target back up the list', async () => {
+    const wrapper = mount([
+      { repo_id: 20, required: true },
+      { repo_id: 21, required: false },
+    ])
+    await wrapper.findAll('.order-btn[title="Move repository up"]')[1].trigger('click')
+
+    expect(lastModel(wrapper)).toEqual([
+      { repo_id: 21, required: false },
+      { repo_id: 20, required: true },
+    ])
+  })
+
+  it('leaves the list alone at either end', async () => {
+    const wrapper = mount([
+      { repo_id: 20, required: true },
+      { repo_id: 21, required: false },
+    ])
+    expect(
+      wrapper.find('.order-btn[title="Move repository up"]').attributes('disabled'),
+    ).toBeDefined()
+    expect(
+      wrapper.findAll('.order-btn[title="Move repository down"]')[1].attributes('disabled'),
+    ).toBeDefined()
+  })
+
   it('removes a target but never the last one', async () => {
     const wrapper = mount([
       { repo_id: 20, required: true },

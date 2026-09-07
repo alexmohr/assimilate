@@ -4,8 +4,38 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { apiClient } from '../api/client'
+import type * as VueRouter from 'vue-router'
 import { renderWithPlugins } from '../test-utils'
 import ScheduleCreateView from './ScheduleCreateView.vue'
+
+// `renderWithPlugins` pushes its route after mounting, so the view's own
+// onMounted read of `route.query` lands before the navigation settles. Stubbing
+// useRoute is the only way to exercise the ?agent_id= preselect.
+const routeQuery: Record<string, string> = {}
+const push = vi.fn()
+vi.mock('vue-router', async () => {
+  const actual = await vi.importActual<typeof VueRouter>('vue-router')
+  return {
+    ...actual,
+    useRoute: () => ({ query: routeQuery }),
+    // Stubbed as well, so the tests can assert where the view sends people
+    // rather than what the harness's own memory router happens to render.
+    useRouter: () => ({ push }),
+  }
+})
+
+// The real cron builder is a heavy mount, and the wizard only needs its
+// v-model here - the builder has its own tests. Stubbed for the same reason
+// ScheduleDetailView.test.ts stubs it: without this, reaching the Timing step
+// under coverage instrumentation runs past the default test timeout.
+vi.mock('../components/CronBuilder.vue', () => ({
+  default: {
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+    template:
+      '<input class="cron-builder-stub" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+  },
+}))
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -67,6 +97,8 @@ async function selectFirstAgent(wrapper: ReturnType<typeof renderWithPlugins>): 
 describe('ScheduleCreateView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key]
+    push.mockReset()
   })
 
   it('opens on the first step with the remaining steps listed', async () => {
@@ -156,6 +188,7 @@ describe('ScheduleCreateView', () => {
         ],
       }),
     )
+    expect(push).toHaveBeenCalledWith('/schedules/7')
   })
 
   it('keeps the create action out of reach while any step is unanswered', async () => {
@@ -192,5 +225,156 @@ describe('ScheduleCreateView', () => {
 
     expect(wrapper.text()).toContain('No repositories yet')
     expect(wrapper.find('.wizard').exists()).toBe(false)
+  })
+
+  it('preselects the agent named in the query string', async () => {
+    routeQuery.agent_id = '11'
+    const wrapper = await open()
+    await fillBasicsAndContinue(wrapper)
+
+    expect(wrapper.find('.multi-select-label').text()).toBe('1 agent selected')
+  })
+
+  it('ignores an agent_id that names no agent', async () => {
+    routeQuery.agent_id = '999'
+    const wrapper = await open()
+    await fillBasicsAndContinue(wrapper)
+
+    expect(wrapper.find('.multi-select-label').text()).toBe('Select agents...')
+  })
+
+  it('will not leave the Targets step with nothing required', async () => {
+    const wrapper = await open()
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    await wrapper
+      .findAllComponents({ name: 'ToggleSwitch' })[0]
+      .vm.$emit('update:modelValue', false)
+    expect(wrapper.find('.wizard-status--blocked').text()).toContain(
+      'at least one required repository',
+    )
+    expect(button(wrapper, 'Continue')!.attributes('disabled')).toBeDefined()
+  })
+
+  it('will not leave the Timing step with an unusable cron expression', async () => {
+    const wrapper = await open()
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    await button(wrapper, 'Continue')!.trigger('click')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 2 *')
+    expect(wrapper.find('.wizard-status--blocked').text()).toContain('a five-field cron expression')
+
+    await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 5 * * 1')
+    expect(button(wrapper, 'Continue')!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('steps back the way it came', async () => {
+    const wrapper = await open()
+    expect(button(wrapper, 'Back')!.attributes('disabled')).toBeDefined()
+
+    await fillBasicsAndContinue(wrapper)
+    expect(wrapper.find('.wizard-step--current').text()).toContain('Sources')
+
+    await button(wrapper, 'Back')!.trigger('click')
+    expect(wrapper.find('.wizard-step--current').text()).toContain('Basics')
+  })
+
+  it('sends each Review block back to the step that owns it', async () => {
+    const wrapper = await open()
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+
+    const edits = wrapper.findAll('.review-block .btn')
+    expect(edits).toHaveLength(5)
+
+    const expected = ['Basics', 'Timing', 'Sources', 'Targets', 'Retention']
+    for (const [index, step] of expected.entries()) {
+      await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+      await wrapper.findAll('.review-block .btn')[index].trigger('click')
+      expect(wrapper.find('.wizard-step--current').text()).toContain(step)
+    }
+  })
+
+  it('writes every field on the way through into the create payload', async () => {
+    const wrapper = await open()
+    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+
+    // Basics: name, and the enabled toggle off so the schedule is created paused.
+    await wrapper.find('#schedule-name').setValue('Nightly production backup')
+    await wrapper.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', false)
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    // Sources: two hosts, the on-failure select the second host reveals, paths.
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
+    await boxes[0].trigger('change')
+    await boxes[1].trigger('change')
+    await wrapper.find('#on-failure').setValue('continue')
+    await wrapper.find('#backup-paths').setValue('/etc\n/srv')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    // Targets, then Timing.
+    await button(wrapper, 'Continue')!.trigger('click')
+    await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 4 * * *')
+    await wrapper.find('#missed-threshold').setValue('5')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    // Retention.
+    const keeps = wrapper.findAll('.retention-grid input')
+    expect(keeps).toHaveLength(5)
+    await keeps[0].setValue('12')
+    await keeps[1].setValue('14')
+    await keeps[2].setValue('8')
+    await keeps[3].setValue('24')
+    await keeps[4].setValue('3')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    // Advanced hands its edits back through the same form model.
+    const advanced = wrapper.findComponent({ name: 'ScheduleAdvancedTab' })
+    expect(advanced.exists()).toBe(true)
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    await button(wrapper, 'Create schedule')!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      '/schedules',
+      expect.objectContaining({
+        name: 'Nightly production backup',
+        enabled: false,
+        agent_ids: [10, 11],
+        on_failure: 'continue',
+        backup_sources: ['/etc', '/srv'],
+        cron_expression: '0 4 * * *',
+        missed_backup_threshold: 5,
+        keep_hourly: 12,
+        keep_daily: 14,
+        keep_weekly: 8,
+        keep_monthly: 24,
+        keep_yearly: 3,
+      }),
+    )
+  })
+
+  it('leaves for the schedules list on cancel', async () => {
+    const wrapper = await open()
+    await button(wrapper, 'Cancel')!.trigger('click')
+    await flushPromises()
+
+    expect(push).toHaveBeenCalledWith('/schedules')
+  })
+
+  it('offers a way to create the missing repository', async () => {
+    setup([])
+    const wrapper = renderWithPlugins(ScheduleCreateView)
+    await flushPromises()
+
+    await button(wrapper, 'New repository')!.trigger('click')
+    await flushPromises()
+
+    expect(push).toHaveBeenCalledWith('/repos')
   })
 })

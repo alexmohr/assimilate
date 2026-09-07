@@ -430,6 +430,31 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.text()).toContain('Saved')
   })
 
+  /** The API refuses a target list with nothing required; saying so here beats
+      a round trip that comes back 400. */
+  it('refuses to save a schedule left with no required repository', async () => {
+    const wrapper = await createEditWrapper()
+    const vm = wrapper.vm as unknown as {
+      save: () => Promise<void>
+      saveError: string | null
+      repoTargets: { repo_id: number; required: boolean }[]
+    }
+
+    vm.repoTargets = [{ repo_id: 20, required: false }]
+    await vm.save()
+    await flushPromises()
+
+    expect(vm.saveError).toContain('mark at least one of them required')
+    expect(mockApiClient.put).not.toHaveBeenCalled()
+
+    vm.repoTargets = []
+    await vm.save()
+    await flushPromises()
+
+    expect(vm.saveError).toContain('Select at least one repository')
+    expect(mockApiClient.put).not.toHaveBeenCalled()
+  })
+
   it('shows save error when schedule is null (edit mode)', async () => {
     mockApiClient.get.mockRejectedValue(new Error('Load failed'))
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '999' } })

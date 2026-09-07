@@ -74,12 +74,13 @@ const SELECTION_LABELS: Record<VmSelectionMode, string> = {
 }
 
 /**
- * What the Include column decides, which is the opposite thing in each mode.
+ * What the Backed up column decides, which is the opposite thing in each mode.
  * Under `all` turning a domain off is what takes it out of the backup; under
  * `selected` turning one on is what puts it in, and a domain nobody has
- * touched stays out.
+ * touched stays out. It sits above the domain table rather than beside the
+ * mode control, so it is there whether or not the settings are being edited.
  */
-const includeHint = computed<string>(() =>
+const backedUpHint = computed<string>(() =>
   selection.value === 'all'
     ? 'Turn a domain off to leave it out of the backup. A machine created after the last scan is included automatically.'
     : 'Turn a domain on to back it up. A machine created after the last scan is left alone until you select it.',
@@ -426,7 +427,6 @@ onMounted(load)
               :options="SELECTION_OPTIONS"
               label="Which domains to stage"
             />
-            <span class="field-hint">{{ includeHint }}</span>
           </div>
 
           <div class="field">
@@ -521,7 +521,7 @@ onMounted(load)
         </button>
       </div>
 
-      <p class="field-hint">{{ includeHint }}</p>
+      <p class="field-hint">{{ backedUpHint }}</p>
 
       <p
         v-if="scanError"
@@ -555,7 +555,7 @@ onMounted(load)
               <th>Mode</th>
               <th>Staged size</th>
               <th>Limit (GiB)</th>
-              <th>Include</th>
+              <th>Backed up</th>
               <th></th>
             </tr>
           </thead>
@@ -629,7 +629,7 @@ onMounted(load)
                 <ToggleSwitch
                   :model-value="vm.included"
                   :disabled="!canEdit || rowSaving === vm.name"
-                  :label="`Include ${vm.name}`"
+                  :label="`Back up ${vm.name}`"
                   @update:model-value="onIncludedChange(vm, $event)"
                 />
               </td>

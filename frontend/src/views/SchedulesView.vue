@@ -333,7 +333,11 @@ const agentGroups = computed<ScheduleGroup[]>(() => {
       untargeted.push(s)
       continue
     }
-    for (const hostname of s.target_hostnames) {
+    // Deduplicated because a hostname is unique only per domain
+    // (`agents_hostname_domain_idx`): a schedule targeting two agents that
+    // report the same hostname from different domains lists it twice, which
+    // would render its card twice in the one section they share.
+    for (const hostname of new Set(s.target_hostnames)) {
       const list = byHostname.get(hostname) ?? []
       list.push(s)
       byHostname.set(hostname, list)

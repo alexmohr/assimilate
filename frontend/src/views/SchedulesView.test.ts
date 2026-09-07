@@ -900,6 +900,32 @@ describe('SchedulesView', () => {
     expect(groupFor(wrapper, 'Media Store (media-store-01)')!.text()).toContain('media-weekly')
   })
 
+  it('lists a schedule once per agent section even when a hostname repeats', async () => {
+    // Two agents can report the same hostname from different domains
+    // (`agents_hostname_domain_idx` makes only (hostname, domain) unique), so
+    // a schedule targeting both carries that hostname twice. They share one
+    // section here, and the card belongs in it once.
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [{ ...mockSchedules[1], target_hostnames: ['db-server-01', 'db-server-01'] }],
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Agent')
+
+    expect(groupTitles(wrapper)).toEqual(['db-server-01'])
+    const group = groupFor(wrapper, 'db-server-01')!
+    expect(group.findAll('.entity-card')).toHaveLength(1)
+    expect(group.find('.list-group-count').text()).toBe('1')
+  })
+
   it('groups schedules by repository', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)

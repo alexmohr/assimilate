@@ -47,7 +47,7 @@ case "$AGENT_HOST" in
             echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
             dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
-                "ssh://borg@$REPO_HOST/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST:22/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
@@ -60,7 +60,7 @@ case "$AGENT_HOST" in
             echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
             dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
-                "ssh://borg@$REPO_HOST/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST:22/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
@@ -79,7 +79,7 @@ case "$AGENT_HOST" in
             echo "shared_buffers = 256MB" > "$ARCHIVE_DIR/etc/postgresql/postgresql.conf"
             dd if=/dev/urandom of="$ARCHIVE_DIR/etc/postgresql/pg_hba.bin" bs=1024 count=$((40 + i * 10)) 2>/dev/null
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
-                "ssh://borg@$REPO_HOST/backup/repos/server-daily::db-server-01-backup-$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST:22/backup/repos/server-daily::db-server-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
@@ -92,7 +92,7 @@ case "$AGENT_HOST" in
             dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
             dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
-                "ssh://borg@$REPO_HOST/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST:22/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done
@@ -105,7 +105,7 @@ case "$AGENT_HOST" in
             echo "[global] workgroup = DEMO" > "$ARCHIVE_DIR/etc/samba/smb.conf"
             dd if=/dev/urandom of="$ARCHIVE_DIR/etc/samba/shares.bin" bs=1024 count=$((60 + i * 10)) 2>/dev/null
             borg create --lock-wait 60 --timestamp "$ARCHIVE_DATE" \
-                "ssh://borg@$REPO_HOST/backup/repos/server-daily::media-store-01-backup-$ARCHIVE_DATE" \
+                "ssh://borg@$REPO_HOST:22/backup/repos/server-daily::media-store-01-backup-$ARCHIVE_DATE" \
                 "$ARCHIVE_DIR"
             rm -rf "$ARCHIVE_DIR"
         done

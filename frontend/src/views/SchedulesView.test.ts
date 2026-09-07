@@ -808,20 +808,20 @@ describe('SchedulesView', () => {
     // The two enabled schedules' next_run_at is in the past relative to any
     // real test-run clock, so both land in "Due now"; the disabled one is
     // always "Paused" regardless of its next_run_at.
-    const titles = wrapper.findAll('.schedule-group-title').map((t) => t.text())
+    const titles = wrapper.findAll('.list-group-title').map((t) => t.text())
     expect(titles).toContain('Due now')
     expect(titles).toContain('Paused')
 
     const dueNowGroup = wrapper
-      .findAll('.schedule-group')
-      .find((g) => g.find('.schedule-group-title').text() === 'Due now')
-    expect(dueNowGroup!.find('.schedule-group-count').text()).toBe('2')
+      .findAll('.list-group')
+      .find((g) => g.find('.list-group-title').text() === 'Due now')
+    expect(dueNowGroup!.find('.list-group-count').text()).toBe('2')
     expect(dueNowGroup!.text()).toContain('server-daily')
     expect(dueNowGroup!.text()).toContain('database-hourly')
 
     const pausedGroup = wrapper
-      .findAll('.schedule-group')
-      .find((g) => g.find('.schedule-group-title').text() === 'Paused')
+      .findAll('.list-group')
+      .find((g) => g.find('.list-group-title').text() === 'Paused')
     expect(pausedGroup!.text()).toContain('media-weekly')
   })
 
@@ -846,9 +846,7 @@ describe('SchedulesView', () => {
     await flushPromises()
 
     const groupFor = (title: string) =>
-      wrapper
-        .findAll('.schedule-group')
-        .find((g) => g.find('.schedule-group-title').text() === title)
+      wrapper.findAll('.list-group').find((g) => g.find('.list-group-title').text() === title)
 
     expect(groupFor('Next 24 hours')!.text()).toContain('server-daily')
     expect(groupFor('This week')!.text()).toContain('database-hourly')

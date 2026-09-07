@@ -1510,6 +1510,22 @@
     color: var(--text-muted);
   }
 
+  /* A figure that carries its own state: a backup fresh enough to be fine, one
+     the schedule is already late for, a host that has never managed one. The
+     tone is the *value's*, not the label's - `.stat-label` stays muted, so the
+     colour reads as a fact about the number rather than a coloured row. */
+  .stat-value--success {
+    color: var(--success);
+  }
+
+  .stat-value--warning {
+    color: var(--warning);
+  }
+
+  .stat-value--danger {
+    color: var(--danger);
+  }
+
   /* --- Overview tab ----------------------------------------------------
      The landing-tab shape shared by AgentOverviewTab and ScheduleOverviewTab:
      a warning-toned attention banner for what needs looking at, a tile grid
@@ -2316,6 +2332,42 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
     gap: var(--space-6);
+  }
+
+  /* --- List group ---------------------------------------------------------
+     The header over one bucket of a grouped card list: what the bucket is,
+     how many are in it, and a rule running out to the edge. Schedules bucket
+     by when they next run, agents by which agent version they report; both
+     want the same header, so it lives here rather than once per view. A
+     caller adds its own badge between the title and the count when the bucket
+     itself has a state worth naming. */
+  .list-group + .list-group {
+    margin-top: var(--space-8);
+  }
+
+  .list-group-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+  }
+
+  .list-group-title {
+    margin: 0;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .list-group-count {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+
+  .list-group-rule {
+    flex-grow: 1;
+    height: 1px;
+    background: var(--border);
   }
 
   /* A count or classification alongside a card's name. Lowercase because the

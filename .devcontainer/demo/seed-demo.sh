@@ -553,6 +553,12 @@ api POST "/api/schedules" "{
 # archives into server-daily (see start-agent.sh), so this schedule's Backups
 # tab has archives from more than one host - which is what makes the archive
 # selector's host grouping, and its per-host totals, visible there.
+#
+# It is also what the Schedules page's "Group: Agent" mode is seeded for (see
+# docs/scheduling.md): targeting all three demo agents, this one schedule is
+# listed under each of their sections, while the single-agent schedules above
+# spread across those same sections and across the three repositories the
+# "Group: Repo" mode buckets by.
 api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
     \"repo_id\": $REPO_DAILY_ID,

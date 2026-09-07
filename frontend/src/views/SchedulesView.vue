@@ -34,6 +34,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
 import ScheduleTimelineRail, { type TimelineEntry } from '../components/ScheduleTimelineRail.vue'
@@ -79,6 +80,21 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
 type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
 type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
+
+/**
+ * How the cards are bucketed into sections. Time answers "what runs next",
+ * agent "what does this machine back up", repo "what writes into this
+ * repository" - the last two cut across the time buckets, so they are a mode
+ * rather than another sort field.
+ */
+type GroupMode = 'time' | 'agent' | 'repo'
+
+const GROUP_OPTIONS: readonly SegmentedOption<GroupMode>[] = [
+  { value: 'time', label: 'Time' },
+  { value: 'agent', label: 'Agent' },
+  { value: 'repo', label: 'Repo' },
+]
+const groupMode = ref<GroupMode>('time')
 
 const {
   field: sortField,
@@ -281,7 +297,14 @@ function timeBucketOf(s: EnrichedSchedule): TimeBucketKey {
   return 'later'
 }
 
-const groupedSchedules = computed(() => {
+interface ScheduleGroup {
+  /** Unique across the group modes, so switching mode always re-keys the list. */
+  key: string
+  title: string
+  schedules: EnrichedSchedule[]
+}
+
+const timeGroups = computed<ScheduleGroup[]>(() => {
   const buckets = new Map<TimeBucketKey, EnrichedSchedule[]>()
   for (const s of filteredSchedules.value) {
     const key = timeBucketOf(s)
@@ -290,10 +313,78 @@ const groupedSchedules = computed(() => {
     buckets.set(key, list)
   }
   return TIME_BUCKETS.map(({ key, title }) => ({
-    key,
+    key: `time:${key}`,
     title,
     schedules: buckets.get(key) ?? [],
   })).filter((group) => group.schedules.length > 0)
+})
+
+/**
+ * One section per targeted agent, ordered by the label shown in the header.
+ * A schedule targeting several agents is listed under each of them - the whole
+ * point of the view is to answer "what backs up this machine", which a card
+ * shown only under its first target would not.
+ */
+const agentGroups = computed<ScheduleGroup[]>(() => {
+  const byHostname = new Map<string, EnrichedSchedule[]>()
+  const untargeted: EnrichedSchedule[] = []
+  for (const s of filteredSchedules.value) {
+    if (s.target_hostnames.length === 0) {
+      untargeted.push(s)
+      continue
+    }
+    for (const hostname of s.target_hostnames) {
+      const list = byHostname.get(hostname) ?? []
+      list.push(s)
+      byHostname.set(hostname, list)
+    }
+  }
+  const groups: ScheduleGroup[] = [...byHostname.entries()]
+    .map(([hostname, schedules]) => ({
+      key: `agent:${hostname}`,
+      title: hostLabel(hostname),
+      schedules,
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title))
+  if (untargeted.length > 0) {
+    groups.push({ key: 'agent:none', title: 'No agents', schedules: untargeted })
+  }
+  return groups
+})
+
+/** One section per repository the schedules write into, unassigned ones last. */
+const repoGroups = computed<ScheduleGroup[]>(() => {
+  const byRepo = new Map<number, EnrichedSchedule[]>()
+  const unassigned: EnrichedSchedule[] = []
+  for (const s of filteredSchedules.value) {
+    if (s.repo_id === null) {
+      unassigned.push(s)
+      continue
+    }
+    const list = byRepo.get(s.repo_id) ?? []
+    list.push(s)
+    byRepo.set(s.repo_id, list)
+  }
+  const groups: ScheduleGroup[] = [...byRepo.entries()]
+    .map(([repoId, schedules]) => ({
+      key: `repo:${repoId}`,
+      title: repoMap.value.get(repoId)?.name ?? `repo #${repoId}`,
+      schedules,
+    }))
+    .sort((a, b) => a.title.localeCompare(b.title))
+  if (unassigned.length > 0) {
+    groups.push({ key: 'repo:none', title: 'No repository', schedules: unassigned })
+  }
+  return groups
+})
+
+// Time last rather than in a `switch`: `vue/return-in-computed-property` does
+// not follow a union's exhaustiveness, and only the selected mode's groups are
+// computed either way.
+const groupedSchedules = computed<ScheduleGroup[]>(() => {
+  if (groupMode.value === 'agent') return agentGroups.value
+  if (groupMode.value === 'repo') return repoGroups.value
+  return timeGroups.value
 })
 
 const railEntries = computed<TimelineEntry[]>(() =>
@@ -494,6 +585,14 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           <option value="failed">Failed only</option>
           <option value="overdue">Overdue only</option>
         </select>
+        <div class="group-controls">
+          <span class="sort-label">Group:</span>
+          <BaseSegmented
+            v-model="groupMode"
+            :options="GROUP_OPTIONS"
+            label="Group schedules by"
+          />
+        </div>
         <SortControls
           :field="sortField"
           :direction="sortDir"
@@ -625,6 +724,15 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   max-width: 1100px;
   overflow-x: hidden;
   min-width: 0;
+}
+
+/* The "Group: [Time|Agent|Repo]" pair in the toolbar. `.sort-controls` beside
+   it already claims the row's trailing space, so this only has to keep its
+   caption glued to the control and out of the toolbar's shrink. */
+.group-controls {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .schedule-toggle {

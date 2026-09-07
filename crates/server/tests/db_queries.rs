@@ -1011,6 +1011,45 @@ async fn catch_up_covers_every_enabled_target_repository(pool: PgPool) {
     );
 }
 
+/// The candidacy half of the same change: the gate used to require the
+/// schedule's *primary* repository to be enabled, so a multi-target schedule
+/// whose primary was disabled dropped out of catch-up entirely even though a
+/// live secondary target still had a copy to write.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_still_applies_when_only_the_primary_repository_is_disabled(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
+        .await
+        .unwrap();
+    sqlx::query("UPDATE repos SET enabled = false WHERE id = $1")
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+        .await
+        .unwrap();
+
+    let candidates = db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        candidates.len(),
+        1,
+        "a live secondary target still has a copy to catch up"
+    );
+
+    assert_eq!(
+        db::catch_up::list_enabled_catch_up_repos(&pool, schedule.id)
+            .await
+            .unwrap(),
+        vec![offsite.id],
+        "and the run writes only the target whose repository is enabled"
+    );
+}
+
 /// Clearing is unconditional and per agent: whether the miss ran or was skipped,
 /// it must not be reconsidered on the next reconnect.
 #[sqlx::test(migrations = "./migrations")]

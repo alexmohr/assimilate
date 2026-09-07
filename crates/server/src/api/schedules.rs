@@ -1339,6 +1339,13 @@ pub async fn run_schedule_now(
         .into_iter()
         .map(RepoId)
         .collect();
+    // Permission on every repository this writes into, not just the primary.
+    // Editing a schedule's metadata deliberately does not re-check its
+    // unchanged targets, but this is not metadata: it starts a real borg run
+    // against each of them, at a time of the caller's choosing.
+    for repo_id in &repo_ids {
+        check_repo_permission(&state.pool, &auth, repo_id.0, |p| p.can_modify_schedules).await?;
+    }
     let schedule_type = schedule
         .schedule_type
         .parse::<ScheduleType>()
@@ -1421,6 +1428,13 @@ pub async fn cancel_running_backup(
     // A run in flight can be on any of the schedule's targets, and each
     // (agent, repository) pair has its own report to cancel, so cancelling
     // only the primary would leave a secondary target running.
+    //
+    // Deliberately *not* gated on permission for every target, unlike starting
+    // a run: cancelling only stops work, and the run being cancelled may have
+    // been started by the schedule's own cron. Refusing to let the operator
+    // who administers this schedule stop a job - including the copy into the
+    // repository they do administer, since a cancel covers the whole run - is
+    // its own harm, and a worse one than the reach it would prevent.
     let repo_ids = schedule_run_repo_ids(&state.pool, &schedule).await?;
 
     for target in &targets {

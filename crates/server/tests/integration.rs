@@ -7060,6 +7060,75 @@ async fn test_run_schedule_now_covers_every_target_repository() {
     );
 }
 
+/// The bug this guards: a manual run was authorised against the schedule's
+/// primary alone while dispatching to every target, so an operator holding
+/// nothing on the offsite copy could start a real borg run into it on demand.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn running_a_schedule_needs_permission_on_every_target_repository() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "run-perm-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "run-perm-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-perm-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, granted_repo).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(schedule_id)
+    .bind(ungranted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}/run"))
+        .method("POST")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "starting a run that writes into a repository the caller cannot modify must be refused"
+    );
+
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending, 0, "the refused run must not queue anything");
+}
+
 /// Regression test for: duplicate `agent_ids` entries used to be compared
 /// against the (deduplicated) filtered-targets count, so a request like
 /// `{"agent_ids": [a, a]}` for a genuinely valid target `a` was wrongly

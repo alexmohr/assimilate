@@ -918,6 +918,45 @@ describe('SchedulesView', () => {
     expect(group.find('.list-group-count').text()).toBe('1')
   })
 
+  it('labels an agent section shared by two same-hostname agents without picking one', async () => {
+    // `edge-proxy` is two machines told apart only by domain. A schedule names
+    // the hostname alone, so the view cannot tell which of them a schedule
+    // targets: both land in one section, which must not be titled with either
+    // agent's display name and must say that it covers more than one agent.
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], target_hostnames: ['edge-proxy'] },
+            { ...mockSchedules[1], target_hostnames: ['edge-proxy'] },
+          ],
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            { id: 20, hostname: 'edge-proxy', display_name: 'DC1 edge', domain: 'dc1.example.com' },
+            { id: 21, hostname: 'edge-proxy', display_name: 'DC2 edge', domain: 'dc2.example.com' },
+          ],
+        })
+      }
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Agent')
+
+    expect(groupTitles(wrapper)).toEqual(['edge-proxy'])
+    const group = groupFor(wrapper, 'edge-proxy')!
+    expect(group.text()).not.toContain('DC1 edge')
+    expect(group.text()).not.toContain('DC2 edge')
+    const badge = group.find('.list-group-header .badge')
+    expect(badge.text()).toBe('2 agents')
+    expect(badge.attributes('title')).toContain('different domains')
+  })
+
   it('groups schedules by repository', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)

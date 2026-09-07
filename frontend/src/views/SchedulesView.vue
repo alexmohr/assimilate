@@ -154,6 +154,18 @@ const agentMap = computed(() => {
   return map
 })
 
+/**
+ * How many agents report each hostname. Only `(hostname, domain)` is unique
+ * (`agents_hostname_domain_idx`), so a hostname can name more than one machine
+ * - and a schedule's `target_hostnames` carries the hostname alone, with no
+ * way to tell which of them it targets.
+ */
+const agentsPerHostname = computed(() => {
+  const counts = new Map<string, number>()
+  agents.value.forEach((agent) => counts.set(agent.hostname, (counts.get(agent.hostname) ?? 0) + 1))
+  return counts
+})
+
 function hostLabel(hostname: string): string {
   const displayName = agentMap.value.get(hostname)?.display_name
   return displayName ? `${displayName} (${hostname})` : hostname
@@ -301,6 +313,8 @@ interface ScheduleGroup {
   /** Unique across the group modes, so switching mode always re-keys the list. */
   key: string
   title: string
+  /** Names a state of the section itself, beside its title. */
+  badge: { label: string; title: string } | null
   schedules: EnrichedSchedule[]
 }
 
@@ -315,6 +329,7 @@ const timeGroups = computed<ScheduleGroup[]>(() => {
   return TIME_BUCKETS.map(({ key, title }) => ({
     key: `time:${key}`,
     title,
+    badge: null,
     schedules: buckets.get(key) ?? [],
   })).filter((group) => group.schedules.length > 0)
 })
@@ -330,6 +345,8 @@ interface GroupSpec<K extends string | number> {
   /** Empty puts the schedule in the fallback section; several fan it out. */
   keysOf: (s: EnrichedSchedule) => K[]
   titleOf: (key: K) => string
+  /** A state of the section worth naming beside its title, if any. */
+  badgeOf?: (key: K) => ScheduleGroup['badge']
   fallbackTitle: string
 }
 
@@ -341,7 +358,7 @@ interface GroupSpec<K extends string | number> {
  */
 function buildGroups<K extends string | number>(
   schedules: EnrichedSchedule[],
-  { prefix, keysOf, titleOf, fallbackTitle }: GroupSpec<K>,
+  { prefix, keysOf, titleOf, badgeOf, fallbackTitle }: GroupSpec<K>,
 ): ScheduleGroup[] {
   const byKey = new Map<K, EnrichedSchedule[]>()
   const keyless: EnrichedSchedule[] = []
@@ -361,11 +378,12 @@ function buildGroups<K extends string | number>(
     .map(([key, grouped]) => ({
       key: `${prefix}:${key}`,
       title: titleOf(key),
+      badge: badgeOf?.(key) ?? null,
       schedules: grouped,
     }))
     .sort((a, b) => a.title.localeCompare(b.title))
   if (keyless.length > 0) {
-    groups.push({ key: `${prefix}:none`, title: fallbackTitle, schedules: keyless })
+    groups.push({ key: `${prefix}:none`, title: fallbackTitle, badge: null, schedules: keyless })
   }
   return groups
 }
@@ -384,7 +402,21 @@ const agentGroups = computed<ScheduleGroup[]>(() =>
     // report the same hostname from different domains lists it twice, which
     // would render its card twice in the one section they share.
     keysOf: (s) => [...new Set(s.target_hostnames)],
-    titleOf: hostLabel,
+    // A display name would name one of the agents sharing the hostname and
+    // silently mislabel the others' schedules, so an ambiguous section keeps
+    // the bare hostname and carries a badge saying how many agents it covers.
+    titleOf: (hostname) =>
+      (agentsPerHostname.value.get(hostname) ?? 0) > 1 ? hostname : hostLabel(hostname),
+    badgeOf: (hostname) => {
+      const count = agentsPerHostname.value.get(hostname) ?? 0
+      if (count <= 1) return null
+      return {
+        label: `${count} agents`,
+        title:
+          `${count} agents report the hostname ${hostname} from different domains. ` +
+          'A schedule names only the hostname it targets, so their schedules share this section.',
+      }
+    },
     fallbackTitle: 'No agents',
   }),
 )
@@ -650,6 +682,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       >
         <div class="list-group-header">
           <h2 class="list-group-title">{{ group.title }}</h2>
+          <span
+            v-if="group.badge"
+            class="badge badge--warning"
+            :title="group.badge.title"
+            >{{ group.badge.label }}</span
+          >
           <span class="list-group-count">{{ group.schedules.length }}</span>
           <span class="list-group-rule"></span>
         </div>

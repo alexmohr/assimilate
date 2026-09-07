@@ -328,4 +328,15 @@ describe('AgentPowerCard', () => {
 
     expect(wrapper.findAll('.override-link')).toHaveLength(0)
   })
+
+  // The note is a courtesy, not the point of the pane: a schedules request
+  // that fails must leave it out rather than take the power settings with it.
+  it('still renders the settings when the schedules request fails', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('boom'))
+    const wrapper = mount()
+    await flushPromises()
+
+    expect(wrapper.findAll('.override-link')).toHaveLength(0)
+    expect(wrapper.text()).toContain('3C:97:0E:2B:9A:44')
+  })
 })

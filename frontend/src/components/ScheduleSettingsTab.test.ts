@@ -10,12 +10,38 @@ import type { ScheduleFormState, ScheduleAgentOverrides } from '../types/schedul
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
 
+/** `power` is present on every real `AgentRow`; the Power section reads it. */
+function agentPower(wakeEnabled: boolean) {
+  return {
+    wake: {
+      wake_enabled: wakeEnabled,
+      wake_mac_address: wakeEnabled ? '3C:97:0E:2B:9A:44' : null,
+      wake_broadcast_address: null,
+      wake_timeout_seconds: 180,
+      shutdown_after_backup: false,
+    },
+  }
+}
+
 const AGENTS = [
-  { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
-  { id: 11, hostname: 'db-server-01', display_name: null },
+  { id: 10, hostname: 'web-server-01', display_name: 'Web Server', power: agentPower(true) },
+  { id: 11, hostname: 'db-server-01', display_name: null, power: agentPower(false) },
 ] as unknown as AgentRow[]
 
-const REPOS = [{ id: 20, name: 'server-daily' }] as unknown as Repo[]
+const REPOS = [
+  {
+    id: 20,
+    name: 'server-daily',
+    ssh_host: 'backup-nas.lan',
+    power: {
+      wake_enabled: false,
+      wake_mac_address: null,
+      wake_broadcast_address: null,
+      wake_timeout_seconds: 180,
+      shutdown_after_backup: false,
+    },
+  },
+] as unknown as Repo[]
 
 /** A fresh copy, never the shared constant itself - components under test mutate it in place. */
 function baseForm(): ScheduleFormState {
@@ -76,6 +102,28 @@ describe('ScheduleSettingsTab', () => {
   // every schedule type.
   it('omits Retention and Advanced for a non-backup schedule', () => {
     expect(navLabels(mount({ isBackup: false }))).toEqual(['General', 'Targets', 'Power'])
+  })
+
+  it('renders the Power section, with the wake override and its read-out', () => {
+    const wrapper = mount({ section: 'power' })
+
+    expect(wrapper.findAll('.segmented-option').map((o) => o.text())).toEqual([
+      'Host default',
+      'Enabled',
+      'Disabled',
+    ])
+    expect(wrapper.text()).toContain("Effect on this job's hosts")
+  })
+
+  // Drives the choice through the binding the schedule form saves from -
+  // rendering the section is not enough on its own to prove it lands there.
+  it('writes the wake override back to the form', async () => {
+    const form = baseForm()
+    const wrapper = mount({ section: 'power', form })
+
+    await wrapper.findAll('.segmented-option')[2]!.trigger('click')
+
+    expect(form.wake_override).toBe('disabled')
   })
 
   it('emits update:section when a nav item is clicked', async () => {

@@ -190,4 +190,15 @@ describe('RepoPowerCard', () => {
 
     expect(wrapper.findAll('.override-link')).toHaveLength(0)
   })
+
+  // See AgentPowerCard.test.ts: a failed schedules request drops the note,
+  // not the settings.
+  it('still renders the settings when the schedules request fails', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('boom'))
+    const wrapper = mount()
+    await flushPromises()
+
+    expect(wrapper.findAll('.override-link')).toHaveLength(0)
+    expect(wrapper.text()).toContain('9C:B6:D0:1A:44:7F')
+  })
 })

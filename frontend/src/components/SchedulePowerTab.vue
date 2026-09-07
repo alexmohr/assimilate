@@ -7,7 +7,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import { badgeClass, type BadgeTone } from '../utils/badge'
-import type { ScheduleFormState } from '../types/scheduleForm'
 import type { ScheduleWakeOverride } from '../types/generated'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
@@ -37,7 +36,12 @@ const props = defineProps<{
   canSeeWakeDetails: boolean
 }>()
 
-const form = defineModel<ScheduleFormState>('form', { required: true })
+/**
+ * Just the one field, rather than the whole schedule form: this section
+ * neither reads nor writes anything else on it, and a scalar model is what
+ * lets the choice travel back to the form as an event.
+ */
+const wakeOverride = defineModel<ScheduleWakeOverride>('wakeOverride', { required: true })
 
 const OPTIONS: SegmentedOption<ScheduleWakeOverride>[] = [
   { value: 'host_default', label: 'Host default' },
@@ -65,7 +69,7 @@ interface HostEffect {
 }
 
 function resolve(hostWakeEnabled: boolean): boolean {
-  switch (form.value.wake_override) {
+  switch (wakeOverride.value) {
     case 'host_default':
       return hostWakeEnabled
     case 'enabled':
@@ -96,7 +100,7 @@ function effectFor(
       label: 'Not woken',
       tone: 'neutral',
       reason:
-        form.value.wake_override === 'disabled' && wakeEnabled
+        wakeOverride.value === 'disabled' && wakeEnabled
           ? 'This job overrides the host, which would otherwise be woken. It has to be up already.'
           : 'The host does not wake by default, and this job does not ask it to.',
     }
@@ -167,11 +171,11 @@ const effects = computed<HostEffect[]>(() => {
   <div class="field">
     <label class="field-label">Wake hosts</label>
     <BaseSegmented
-      v-model="form.wake_override"
+      v-model="wakeOverride"
       :options="OPTIONS"
       label="Wake hosts"
     />
-    <p class="field-hint">{{ HINTS[form.wake_override] }}</p>
+    <p class="field-hint">{{ HINTS[wakeOverride] }}</p>
   </div>
 
   <section class="pane-section">

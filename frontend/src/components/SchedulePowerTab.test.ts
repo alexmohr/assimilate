@@ -4,8 +4,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import SchedulePowerTab from './SchedulePowerTab.vue'
-import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
-import type { ScheduleFormState } from '../types/scheduleForm'
 import type { ScheduleWakeOverride } from '../types/generated'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
@@ -49,10 +47,9 @@ const WAKING = agent(10, 'web-server-01', {
 const NO_MAC = agent(11, 'media-store-01', {})
 
 function mount(wakeOverride: ScheduleWakeOverride, props: Record<string, unknown> = {}) {
-  const form: ScheduleFormState = { ...DEFAULT_SCHEDULE_FORM_STATE, wake_override: wakeOverride }
   return renderWithPlugins(SchedulePowerTab, {
     props: {
-      form,
+      wakeOverride,
       agents: [WAKING, NO_MAC],
       repos: [REPO],
       selectedAgentIds: [10, 11],
@@ -77,11 +74,11 @@ describe('SchedulePowerTab', () => {
     expect(options[0]!.attributes('aria-checked')).toBe('true')
   })
 
-  it('writes the chosen state back to the form', async () => {
+  it('emits the chosen state back to its model', async () => {
     const wrapper = mount('host_default')
     await wrapper.findAll('.segmented-option')[2]!.trigger('click')
 
-    expect(wrapper.props('form')).toMatchObject({ wake_override: 'disabled' })
+    expect(wrapper.emitted('update:wakeOverride')).toEqual([['disabled']])
   })
 
   // Each row of the host-setting x job-setting matrix, over one host that

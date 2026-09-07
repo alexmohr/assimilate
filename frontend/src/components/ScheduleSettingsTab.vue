@@ -512,7 +512,7 @@ onBeforeUnmount(() => {
 
     <SchedulePowerTab
       v-else-if="currentSection === 'power'"
-      v-model:form="form"
+      v-model:wake-override="form.wake_override"
       :agents="agents"
       :repos="repos"
       :selected-agent-ids="selectedAgentIds"

@@ -7503,8 +7503,8 @@ async fn a_schedule_is_not_due_until_its_next_run_is_set(pool: PgPool) {
     let now = Utc::now();
     assert!(
         db::list_due_schedules(&pool, now).await.unwrap().is_empty(),
-        "a schedule with agent targets and a seeded repository target is still \
-         not dispatchable before next_run_at is set"
+        "a schedule with agent targets and a seeded repository target is still not dispatchable \
+         before next_run_at is set"
     );
 
     let past = now.checked_sub_signed(Duration::hours(1)).unwrap();

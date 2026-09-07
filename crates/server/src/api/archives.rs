@@ -594,8 +594,11 @@ pub async fn delete_archive(
     // tokio runtime was dropped was a race, and it showed up as
     // finalize_archive_deletion's post-delete refresh error path being
     // covered in one run and not the next.
+    // Captured in a wrapping block rather than passed as a further argument:
+    // run_archive_deletion already takes clippy's limit of seven, so an eighth
+    // trips `too_many_arguments`. This is archive_index's spawn idiom.
     let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(run_archive_deletion(
+    let deletion = run_archive_deletion(
         state,
         repo_id,
         archive_name.clone(),
@@ -603,8 +606,11 @@ pub async fn delete_archive(
         env,
         auth.user_id,
         auth.username,
-        task_guard,
-    ));
+    );
+    tokio::spawn(async move {
+        let _task_guard = task_guard;
+        deletion.await;
+    });
 
     Ok((
         StatusCode::ACCEPTED,
@@ -623,9 +629,6 @@ async fn run_archive_deletion(
     env: HashMap<String, String>,
     user_id: i64,
     username: String,
-    // Held for the whole deletion and dropped when this returns, marking the
-    // tracked task finished so a test can wait for it rather than race it.
-    _task_guard: crate::background_tasks::BackgroundTaskGuard,
 ) {
     // Serialise with every other borg operation on this repository. While we
     // wait here the deletion stays counted as queued in the op tracker.

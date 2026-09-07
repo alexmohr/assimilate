@@ -383,7 +383,16 @@ function buildGroups<K extends string | number>(
     }))
     .sort((a, b) => a.title.localeCompare(b.title))
   if (keyless.length > 0) {
-    groups.push({ key: `${prefix}:none`, title: fallbackTitle, badge: null, schedules: keyless })
+    // A repository can be named "No repository", which would put two sections
+    // under one title even though their keys differ. The keyless one gives way,
+    // since the other is titled with a name its owner chose.
+    const collides = groups.some((group) => group.title === fallbackTitle)
+    groups.push({
+      key: `${prefix}:none`,
+      title: collides ? `${fallbackTitle} (none assigned)` : fallbackTitle,
+      badge: null,
+      schedules: keyless,
+    })
   }
   return groups
 }

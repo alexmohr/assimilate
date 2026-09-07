@@ -995,6 +995,32 @@ describe('SchedulesView', () => {
     expect(groupTitles(wrapper)).toEqual(['database-hourly', 'No repository'])
   })
 
+  it('renames the fallback section when a repository is named after it', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: [
+            { ...mockSchedules[0], repo_id: 20 },
+            { ...mockSchedules[1], repo_id: null },
+          ],
+        })
+      }
+      if (url === '/repos') {
+        return Promise.resolve({ data: [{ ...mockRepos[0], name: 'No repository' }] })
+      }
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    await selectGroupMode(wrapper, 'Repo')
+
+    // The repository keeps the name its owner gave it; the keyless section is
+    // the one that gives way, so the two headings stay distinguishable.
+    expect(groupTitles(wrapper)).toEqual(['No repository', 'No repository (none assigned)'])
+  })
+
   it('returns to the time buckets when the group mode is switched back', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)

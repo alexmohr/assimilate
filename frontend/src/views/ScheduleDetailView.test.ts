@@ -994,6 +994,51 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
   })
 
+  /**
+   * The fallback for a completion that carries no schedule: the repository has
+   * to be one this schedule writes to.
+   */
+  it('BackupCompleted without a schedule matches on the target repository', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      report: { schedule_id: null, repo_id: mockSchedule.repo_id },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupCompleted without a schedule ignores a repository this one does not write to', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'someone-elses-repo',
+      report: { schedule_id: null, repo_id: 4242 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+  })
+
+  /** Websocket input: a malformed message must be ignored, not thrown on. */
+  it('BackupCompleted without a report is ignored', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    expect(() =>
+      wsHandlers['BackupCompleted']?.({
+        hostname: 'web-server-01',
+        target_name: 'server-daily',
+      }),
+    ).not.toThrow()
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+  })
+
   it('BackupCompleted for another schedule leaves the card alone', async () => {
     const wrapper = await createActiveBackupWrapper()
 

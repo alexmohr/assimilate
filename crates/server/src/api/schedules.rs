@@ -662,53 +662,55 @@ async fn authorize_repo_targets(
         .into_iter()
         .map(|target| target.repo_id)
         .collect();
-    for repo_id in newly_targeted_repos(
-        requested.as_deref(),
-        effective_repo_id,
-        &existing_targets,
-        existing.repo_id,
-    ) {
-        check_repo_permission(&state.pool, auth, repo_id, |p| p.can_modify_schedules).await?;
-    }
-    Ok(RepoTargetPlan {
+    let plan = RepoTargetPlan {
         requested,
         effective_repo_id,
         existing_targets,
-    })
+    };
+    for repo_id in repos_needing_permission(&plan, existing.repo_id) {
+        check_repo_permission(&state.pool, auth, repo_id, |p| p.can_modify_schedules).await?;
+    }
+    Ok(plan)
 }
 
-/// The repositories an update points the schedule at that it was not already
-/// writing to - the only ones the caller needs fresh permission for.
+/// The repositories an update changes the schedule's relationship with - the
+/// ones it starts writing to, and the ones it stops writing to. Those are what
+/// the caller needs `can_modify_schedules` for.
 ///
-/// Measured against the schedule's whole target list, not just its primary.
-/// `ScheduleDetailView` sends the full list on every save, so measuring
-/// against the primary alone re-checks every secondary target on every edit:
-/// an operator with `can_modify_schedules` on the local repository but not on
-/// the offsite one it also writes to could never rename, pause or re-time
-/// that schedule again.
-fn newly_targeted_repos(
-    requested: Option<&[(i64, bool)]>,
-    effective_repo_id: Option<i64>,
-    existing_targets: &[i64],
-    existing_primary: Option<i64>,
-) -> Vec<i64> {
-    let already_targeted =
-        |repo_id: &i64| existing_targets.contains(repo_id) || existing_primary == Some(*repo_id);
-    requested.map_or_else(
-        || {
-            effective_repo_id
-                .filter(|repo_id| !already_targeted(repo_id))
-                .into_iter()
-                .collect()
-        },
-        |targets| {
-            targets
+/// Additions are measured against the schedule's whole target list, not just
+/// its primary. `ScheduleDetailView` sends the full list on every save, so
+/// measuring against the primary alone re-checks every secondary target on
+/// every edit: an operator with `can_modify_schedules` on the local repository
+/// but not on the offsite one it also writes to could never rename, pause or
+/// re-time that schedule again.
+///
+/// Removals count too. Dropping a target stops backups being written to it,
+/// which is not something an operator should be able to do to a repository
+/// they hold nothing on - two operators sharing a schedule could otherwise
+/// each delete the other's copy just by co-existing on it.
+fn repos_needing_permission(plan: &RepoTargetPlan, existing_primary: Option<i64>) -> Vec<i64> {
+    let existing: Vec<i64> = plan
+        .existing_targets
+        .iter()
+        .copied()
+        .chain(existing_primary)
+        .collect();
+    let resulting = resulting_repo_targets(plan, existing_primary);
+
+    let mut changed: Vec<i64> = resulting
+        .iter()
+        .copied()
+        .filter(|repo_id| !existing.contains(repo_id))
+        .chain(
+            existing
                 .iter()
-                .map(|(repo_id, _)| *repo_id)
-                .filter(|repo_id| !already_targeted(repo_id))
-                .collect()
-        },
-    )
+                .copied()
+                .filter(|repo_id| !resulting.contains(repo_id)),
+        )
+        .collect();
+    changed.sort_unstable();
+    changed.dedup();
+    changed
 }
 
 #[utoipa::path(
@@ -2079,38 +2081,6 @@ mod tests {
         ));
     }
 
-    /// The bug this guards: `ScheduleDetailView` sends the whole target list
-    /// on every save, so measuring "new" against the primary alone made every
-    /// secondary target need permission on every edit.
-    #[test]
-    fn a_target_the_schedule_already_writes_to_needs_no_fresh_permission() {
-        let requested = [(1, true), (2, false)];
-        assert_eq!(
-            newly_targeted_repos(Some(&requested), Some(1), &[1, 2], Some(1)),
-            Vec::<i64>::new(),
-        );
-    }
-
-    #[test]
-    fn only_a_repository_the_schedule_did_not_have_needs_permission() {
-        let requested = [(1, true), (2, false), (3, false)];
-        assert_eq!(
-            newly_targeted_repos(Some(&requested), Some(1), &[1, 2], Some(1)),
-            vec![3],
-        );
-    }
-
-    /// Falls back to the primary when the target list has not been backfilled
-    /// for this schedule, so an unknown repository is still checked.
-    #[test]
-    fn an_empty_target_list_still_recognises_the_primary() {
-        let requested = [(1, true), (4, true)];
-        assert_eq!(
-            newly_targeted_repos(Some(&requested), Some(1), &[], Some(1)),
-            vec![4],
-        );
-    }
-
     fn plan(
         requested: Option<&[(i64, bool)]>,
         effective_repo_id: Option<i64>,
@@ -2166,18 +2136,76 @@ mod tests {
         );
     }
 
+    /// The bug this guards: `ScheduleDetailView` sends the whole target list
+    /// on every save, so measuring "new" against the primary alone made every
+    /// secondary target need permission on every edit.
     #[test]
-    fn a_bare_repo_id_update_is_checked_only_when_it_moves_the_schedule() {
+    fn a_target_the_schedule_already_writes_to_needs_no_fresh_permission() {
+        let requested = [(1, true), (2, false)];
         assert_eq!(
-            newly_targeted_repos(None, Some(2), &[1, 2], Some(1)),
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
             Vec::<i64>::new(),
         );
+    }
+
+    #[test]
+    fn only_a_repository_the_schedule_did_not_have_needs_permission() {
+        let requested = [(1, true), (2, false), (3, false)];
         assert_eq!(
-            newly_targeted_repos(None, Some(9), &[1, 2], Some(1)),
-            vec![9]
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
+            vec![3],
+        );
+    }
+
+    /// The bug this guards: only *additions* were checked, so an operator
+    /// holding nothing on the offsite copy could drop it off a shared
+    /// schedule - stopping its backups - with a 200 and no check at all.
+    #[test]
+    fn dropping_a_target_needs_permission_on_the_repository_being_dropped() {
+        let requested = [(1, true)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
+            vec![2],
+        );
+    }
+
+    #[test]
+    fn swapping_one_target_for_another_needs_permission_on_both() {
+        let requested = [(1, true), (3, false)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
+            vec![2, 3],
+        );
+    }
+
+    /// Falls back to the primary when the target list has not been backfilled
+    /// for this schedule, so an unknown repository is still checked.
+    #[test]
+    fn an_empty_target_list_still_recognises_the_primary() {
+        let requested = [(1, true), (4, true)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[]), Some(1)),
+            vec![4],
+        );
+    }
+
+    /// A bare `repo_id` collapses the schedule onto that one repository, so
+    /// the targets it drops are checked alongside the one it moves to.
+    #[test]
+    fn a_bare_repo_id_update_is_checked_for_what_it_drops_and_adds() {
+        assert_eq!(
+            repos_needing_permission(&plan(None, Some(2), &[1, 2]), Some(1)),
+            vec![1],
         );
         assert_eq!(
-            newly_targeted_repos(None, None, &[1], Some(1)),
+            repos_needing_permission(&plan(None, Some(9), &[1, 2]), Some(1)),
+            vec![1, 2, 9],
+        );
+        // An orphaned schedule: no primary, no targets, nothing to check -
+        // `effective_repo_id` can only be `None` when the schedule had no
+        // repository to begin with and the request names none either.
+        assert_eq!(
+            repos_needing_permission(&plan(None, None, &[]), None),
             Vec::<i64>::new(),
         );
     }

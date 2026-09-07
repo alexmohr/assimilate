@@ -8197,6 +8197,84 @@ async fn a_secondary_target_the_caller_cannot_reach_does_not_block_editing_a_sch
     );
 }
 
+/// The bug this guards: only the targets an update *added* were permission
+/// checked, so an operator holding nothing on the offsite copy could drop it
+/// off a shared schedule - permanently stopping backups to a repository they
+/// have no rights over - and get a 200 with no check ever touching it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn dropping_a_target_the_caller_has_no_permission_on_is_refused() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "drop-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "drop-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('drop-target-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, granted_repo).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(schedule_id)
+    .bind(ungranted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({
+        "cron_expression": "0 3 * * *",
+        "enabled": false,
+        "repo_targets": [{ "repo_id": granted_repo, "required": true }],
+    });
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}"))
+        .method("PUT")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "dropping a target the caller cannot modify must be refused"
+    );
+
+    let remaining: Vec<i64> =
+        sqlx::query_scalar("SELECT repo_id FROM schedule_repos WHERE schedule_id = $1 ORDER BY id")
+            .bind(schedule_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        remaining.contains(&ungranted_repo),
+        "the refused update must leave the target it tried to drop in place"
+    );
+}
+
 /// The realistic middle case between the two extremes the other bulk tests
 /// cover: a non-admin holding `can_modify_schedules` on one repository but not
 /// on another that also has outstanding reports. This is the

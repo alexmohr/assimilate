@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, s.schedule_type, st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st JOIN schedules s ON s.id = st.schedule_id JOIN repos r ON r.id = s.repo_id JOIN agents a ON a.id = st.agent_id WHERE st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = true AND s.enabled = true AND r.enabled = true AND a.is_hidden = false ORDER BY s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "schedule_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "pending_for!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "min_lead_minutes",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "56c18d15795bbdde92d61ffd16eb294fd9195c2598f4e357703eb1871151289c"
+}

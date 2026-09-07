@@ -108,6 +108,18 @@ export type ScheduleResponse = {
    */
   missed_backup_threshold: number;
   /**
+   * Whether a run missed because a target host was unreachable is caught up
+   * once that host reconnects. Misses never stack: however many occurrences
+   * pass while the host is away, at most one catch-up run follows.
+   */
+  catch_up_missed_runs: boolean;
+  /**
+   * How much time must be left before the next scheduled run for a catch-up
+   * to still start. A reconnect closer than this to the next run drops the
+   * pending miss instead, so the catch-up never collides with the regular run.
+   */
+  catch_up_min_lead_minutes: number;
+  /**
    * Execution mode for the schedule.
    */
   execution_mode: string;
@@ -127,6 +139,12 @@ export type ScheduleResponse = {
    * Hostnames targeted by this schedule.
    */
   target_hostnames: Array<string>;
+  /**
+   * How many of this schedule's targets have a run waiting to be caught up
+   * once their host reconnects. At most one per target - misses overwrite
+   * each other rather than accumulating.
+   */
+  catch_up_pending_count: number;
   /**
    * How many consecutive attempts have failed to reach the schedule's target
    * agent(s) since the last success or reconnect.

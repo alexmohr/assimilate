@@ -200,6 +200,8 @@ mod tests {
                 post_backup_commands: &[],
                 hook_timeout_seconds: 60,
                 missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
                 on_failure: "stop",
             },
             None,

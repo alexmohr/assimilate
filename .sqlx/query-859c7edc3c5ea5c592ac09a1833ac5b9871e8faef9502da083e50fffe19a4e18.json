@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, s.missed_backup_threshold FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, s.missed_backup_threshold, s.catch_up_missed_runs, s.next_run_at AS \"due_at!\" FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
   "describe": {
     "columns": [
       {
@@ -52,6 +52,16 @@
         "ordinal": 9,
         "name": "missed_backup_threshold",
         "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "catch_up_missed_runs",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "due_at!",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -69,8 +79,10 @@
       false,
       false,
       false,
-      false
+      false,
+      false,
+      true
     ]
   },
-  "hash": "a48dba69a68c7060a2903f04db0d30bbc44ec5e2270594fea4a9590a83aa8c56"
+  "hash": "859c7edc3c5ea5c592ac09a1833ac5b9871e8faef9502da083e50fffe19a4e18"
 }

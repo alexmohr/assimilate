@@ -49,6 +49,8 @@ export interface CreateScheduleRequest {
   post_backup_commands: HookCommand[]
   hook_timeout_seconds: number
   missed_backup_threshold: number
+  catch_up_missed_runs: boolean
+  catch_up_min_lead_minutes: number
   backup_sources: string[]
   backup_sources_per_agent?: ScheduleAgentBackupSourcesOverride[]
   exclude_patterns_per_agent?: ScheduleAgentTextOverride[]

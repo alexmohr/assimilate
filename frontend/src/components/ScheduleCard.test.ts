@@ -37,6 +37,23 @@ describe('ScheduleCard', () => {
     expect(wrapper.text()).toContain('2026-01-31T02:00:00Z')
   })
 
+  it('flags a schedule with a run waiting on a host to come back', () => {
+    const wrapper = mount({ schedule: { ...SCHEDULE, catch_up_pending_count: 1 } })
+    expect(wrapper.text()).toContain('Catch-up pending')
+    expect(wrapper.find('.badge--info').attributes('title')).toContain('One host missed a run')
+  })
+
+  it('counts the hosts a catch-up is waiting on', () => {
+    const wrapper = mount({ schedule: { ...SCHEDULE, catch_up_pending_count: 3 } })
+    expect(wrapper.find('.badge--info').attributes('title')).toContain('3 hosts missed a run')
+  })
+
+  it('shows no catch-up badge when nothing is pending', () => {
+    expect(mount({ schedule: { ...SCHEDULE, catch_up_pending_count: 0 } }).text()).not.toContain(
+      'Catch-up pending',
+    )
+  })
+
   it('labels the schedule type through the shared badge', () => {
     expect(mount().find('.badge--neutral').text()).toBe('Backup')
     expect(

@@ -56,6 +56,11 @@ function mount(props: Record<string, unknown> = {}) {
   })
 }
 
+/** The lead-time field only exists once catch-up is switched on. */
+function leadInput(wrapper: ReturnType<typeof mount>) {
+  return wrapper.find('#catch-up-lead')
+}
+
 function navLabels(wrapper: ReturnType<typeof mount>): string[] {
   return wrapper.findAll('.settings-nav-item').map((b) => b.text())
 }
@@ -224,6 +229,61 @@ describe('ScheduleSettingsTab', () => {
     const wrapper = mount({ form })
     await wrapper.find('input[type="number"]').setValue('5')
     expect(form.missed_backup_threshold).toBe(5)
+  })
+
+  it('hides the catch-up floor until catch-up is switched on', () => {
+    expect(leadInput(mount({ form: baseForm() })).exists()).toBe(false)
+    expect(leadInput(mount({ form: { ...baseForm(), catch_up_missed_runs: true } })).exists()).toBe(
+      true,
+    )
+  })
+
+  it('toggles Catch up missed runs from the General section', async () => {
+    const form = baseForm()
+    const wrapper = mount({ form })
+    const switches = wrapper.findAll('button[role="switch"]')
+    await switches[switches.length - 1].trigger('click')
+    expect(form.catch_up_missed_runs).toBe(true)
+  })
+
+  /** The default 120 minutes reads as 2 hours, not as 120. */
+  it('shows a whole-hour floor in hours', async () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true }
+    const wrapper = mount({ form })
+    expect((leadInput(wrapper).element as HTMLInputElement).value).toBe('2')
+  })
+
+  it('stores an hour-based floor as minutes', async () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true }
+    const wrapper = mount({ form })
+    await leadInput(wrapper).setValue('3')
+    expect(form.catch_up_min_lead_minutes).toBe(180)
+  })
+
+  /** A floor that is not a whole number of hours must not be shown as one. */
+  it('shows a sub-hour floor in minutes', async () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true, catch_up_min_lead_minutes: 45 }
+    const wrapper = mount({ form })
+    expect((leadInput(wrapper).element as HTMLInputElement).value).toBe('45')
+    await leadInput(wrapper).setValue('90')
+    expect(form.catch_up_min_lead_minutes).toBe(90)
+  })
+
+  it('switches the floor between minutes and hours without changing what is stored', async () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true }
+    const wrapper = mount({ form })
+    const unit = wrapper.find('select[aria-label="Catch-up lead time unit"]')
+    await unit.setValue('minutes')
+    expect((leadInput(wrapper).element as HTMLInputElement).value).toBe('120')
+    expect(form.catch_up_min_lead_minutes).toBe(120)
+  })
+
+  /** Zero would let a catch-up double up with the run it is meant to replace. */
+  it('never stores a floor below a minute', async () => {
+    const form = { ...baseForm(), catch_up_missed_runs: true, catch_up_min_lead_minutes: 30 }
+    const wrapper = mount({ form })
+    await leadInput(wrapper).setValue('0')
+    expect(form.catch_up_min_lead_minutes).toBe(1)
   })
 
   it('changes the Schedule type select in create mode', async () => {

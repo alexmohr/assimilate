@@ -91,6 +91,40 @@ function moveAgentDown(index: number): void {
   selectedAgentIds.value = ids
 }
 
+/**
+ * The catch-up floor is stored in minutes, but nobody thinks in "120 minutes"
+ * for a nightly schedule. The field shows whichever unit the stored value reads
+ * naturally in, until the user picks one - then their choice wins for the rest
+ * of the edit.
+ */
+type LeadUnit = 'minutes' | 'hours'
+const MINUTES_PER_HOUR = 60
+
+const leadUnitChoice = ref<LeadUnit | null>(null)
+
+const leadUnit = computed<LeadUnit>({
+  get: () => {
+    if (leadUnitChoice.value) return leadUnitChoice.value
+    const minutes = form.value.catch_up_min_lead_minutes
+    return minutes >= MINUTES_PER_HOUR && minutes % MINUTES_PER_HOUR === 0 ? 'hours' : 'minutes'
+  },
+  set: (unit: LeadUnit) => {
+    leadUnitChoice.value = unit
+  },
+})
+
+const leadValue = computed<number>({
+  get: () =>
+    leadUnit.value === 'hours'
+      ? form.value.catch_up_min_lead_minutes / MINUTES_PER_HOUR
+      : form.value.catch_up_min_lead_minutes,
+  set: (value: number) => {
+    if (!Number.isFinite(value)) return
+    const minutes = leadUnit.value === 'hours' ? value * MINUTES_PER_HOUR : value
+    form.value.catch_up_min_lead_minutes = Math.max(1, Math.round(minutes))
+  },
+})
+
 const showAgentDropdown = ref(false)
 const agentDropdownRef = ref<HTMLElement | null>(null)
 
@@ -154,6 +188,53 @@ onBeforeUnmount(() => {
           Consecutive missed backups (agent or target unreachable at trigger time) tolerated before
           this schedule is marked failed and disabled. Below this count, a miss only shows as a
           warning.
+        </span>
+      </div>
+      <div class="field field-inline">
+        <div class="field-body">
+          <p class="field-title">Catch up missed runs</p>
+          <span class="field-hint">
+            If a host was offline when this schedule was due, run it once as soon as the host
+            reconnects. Missed runs never stack: 35 missed occurrences still produce a single
+            catch-up run.
+          </span>
+        </div>
+        <ToggleSwitch
+          v-model="form.catch_up_missed_runs"
+          label="Catch up missed runs"
+        />
+      </div>
+      <div
+        v-if="form.catch_up_missed_runs"
+        class="field catch-up-lead"
+      >
+        <label
+          class="field-label"
+          for="catch-up-lead"
+          >Only if the next run is at least</label
+        >
+        <div class="field-row">
+          <input
+            id="catch-up-lead"
+            v-model.number="leadValue"
+            type="number"
+            min="1"
+            class="input field-narrow"
+          />
+          <select
+            v-model="leadUnit"
+            class="input select-input select-input--sm"
+            aria-label="Catch-up lead time unit"
+          >
+            <option value="minutes">minutes</option>
+            <option value="hours">hours</option>
+          </select>
+          <span class="muted">away</span>
+        </div>
+        <span class="field-hint">
+          A catch-up is skipped when the next scheduled run is closer than this, so it never
+          collides with the regular one. A host reconnecting 30 minutes before a 02:00 backup waits
+          for that run instead.
         </span>
       </div>
       <div
@@ -437,6 +518,15 @@ onBeforeUnmount(() => {
    left here is this page's own: the retention grid, the host multi-select,
    the execution-order list, and the mobile collapse that keeps the sub-nav
    on one row. */
+
+/* The catch-up floor only means anything under the toggle that switches
+   catch-up on, so it is indented against it rather than reading as a sibling
+   setting of its own. */
+.catch-up-lead {
+  border-left: 2px solid var(--border);
+  padding-left: var(--space-6);
+  margin-left: var(--space-2);
+}
 
 .retention-grid {
   display: grid;

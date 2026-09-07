@@ -913,6 +913,8 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -923,6 +925,139 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
         .await
         .unwrap();
     (agent, repo, schedule)
+}
+
+/// Turns the fixture schedule into one that catches up missed runs, since
+/// `create_test_schedule` builds the default (opt-out) shape.
+#[cfg(test)]
+async fn enable_catch_up(pool: &PgPool, schedule_id: i64) {
+    sqlx::query!(
+        "UPDATE schedules SET catch_up_missed_runs = true WHERE id = $1",
+        schedule_id,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The no-stacking rule at its source: marking a second, third, ... miss
+/// overwrites the marker, so a host that missed many occurrences still comes
+/// back to exactly one candidate run.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_marks_do_not_stack(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+
+    let mut last = None;
+    for days_ago in (0..35).rev() {
+        let missed = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(days_ago))
+            .unwrap();
+        db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
+            .await
+            .unwrap();
+        last = Some(missed);
+    }
+
+    let candidates = db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        candidates.len(),
+        1,
+        "35 misses must leave one run to catch up"
+    );
+    let candidate = candidates.first().unwrap();
+    // Postgres stores microseconds, so the round-trip drops the nanosecond tail.
+    assert_eq!(candidate.pending_for, last.unwrap().round_subsecs(6));
+    assert_eq!(candidate.schedule_id, schedule.id);
+    assert_eq!(candidate.min_lead_minutes, 120);
+}
+
+/// Clearing is unconditional and per agent: whether the miss ran or was skipped,
+/// it must not be reconsidered on the next reconnect.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_pending_clears_for_the_agent(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+        .await
+        .unwrap();
+
+    let cleared = db::catch_up::clear_catch_up_pending(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(cleared, 1);
+    assert!(
+        db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// A schedule that is disabled, whose repository is disabled, or that no longer
+/// wants catch-up at all has no run to resume - the same gates a regular tick
+/// applies before it dispatches anything.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_candidates_respect_the_gates_a_tick_applies(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    db::set_schedule_enabled(&pool, schedule.id, false)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a disabled schedule has nothing to catch up"
+    );
+
+    db::set_schedule_enabled(&pool, schedule.id, true)
+        .await
+        .unwrap();
+    sqlx::query!("UPDATE repos SET enabled = false WHERE id = $1", repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a disabled repository has nothing to catch up to"
+    );
+}
+
+/// Switching the setting off drops what was already pending for that schedule,
+/// so it cannot run days later if somebody switches it back on.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_pending_clears_for_a_schedule(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+        .await
+        .unwrap();
+
+    db::catch_up::clear_catch_up_pending_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let targets = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets.first().unwrap().catch_up_pending_for, None);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -971,6 +1106,8 @@ async fn schedule_update(pool: PgPool) {
             }],
             hook_timeout_seconds: 120,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "continue",
         },
     )
@@ -1109,6 +1246,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -1144,6 +1283,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -1495,6 +1636,8 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
     )
@@ -1576,6 +1719,8 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
     )
@@ -1669,6 +1814,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
     )
@@ -2844,6 +2991,8 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -3026,6 +3175,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -3063,6 +3214,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -5872,6 +6025,8 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -7150,6 +7305,8 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -7369,6 +7526,8 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -7626,6 +7785,8 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -8647,6 +8808,8 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,
@@ -10926,6 +11089,8 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             post_backup_commands: &[],
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
             on_failure: "stop",
         },
         None,

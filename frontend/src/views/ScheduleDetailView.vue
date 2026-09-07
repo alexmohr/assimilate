@@ -48,7 +48,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
-import type { HookCommand } from '../types/generated'
+import type { HookCommand, ScheduleTargetResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -60,11 +60,6 @@ import { isScheduleSettingsSection, type ScheduleSettingsSection } from '../util
  * agent detail page. Create mode has no status to show yet, so it skips
  * straight to Settings.
  */
-interface ScheduleTarget {
-  agent_id: number
-  execution_order: number
-}
-
 const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
@@ -81,7 +76,7 @@ const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
 const repos = ref<Repo[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
-const scheduleTargets = ref<ScheduleTarget[]>([])
+const scheduleTargets = ref<ScheduleTargetResponse[]>([])
 const health = ref<HealthSummaryResponse[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedule')
 const saving = ref(false)
@@ -314,6 +309,8 @@ function populateForm(s: ScheduleRow): void {
     post_backup_commands: s.post_backup_commands,
     hook_timeout_seconds: s.hook_timeout_seconds,
     missed_backup_threshold: s.missed_backup_threshold,
+    catch_up_missed_runs: s.catch_up_missed_runs,
+    catch_up_min_lead_minutes: s.catch_up_min_lead_minutes,
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
@@ -452,6 +449,8 @@ async function save(): Promise<void> {
       post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
       hook_timeout_seconds: form.value.hook_timeout_seconds,
       missed_backup_threshold: form.value.missed_backup_threshold,
+      catch_up_missed_runs: form.value.catch_up_missed_runs,
+      catch_up_min_lead_minutes: form.value.catch_up_min_lead_minutes,
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
     }
 
@@ -775,6 +774,7 @@ watch(activeTab, (tab) => {
         <ScheduleOverviewTab
           v-if="activeTab === 'overview' && schedule"
           :schedule="schedule"
+          :targets="scheduleTargets"
           :repo-name="repoName"
           :cron-summary="headerCronSummary"
           :agent-ids="selectedAgentIds"

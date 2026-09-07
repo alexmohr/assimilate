@@ -404,6 +404,64 @@ test.describe('Schedules management', () => {
     await expect(card.locator('.entity-issue-chip', { hasText: 'missed' })).toHaveCount(0)
   })
 
+  test('a schedule waiting on a host to come back shows a catch-up pending badge', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.entity-card', { hasText: 'Catch-up on reconnect demo' })
+    await expect(card.getByText('Catch-up pending')).toBeVisible()
+  })
+
+  test('the schedule Overview names the host a catch-up is waiting on', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    await page.locator('.entity-card', { hasText: 'Catch-up on reconnect demo' }).click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.getByText(/On, if the next run is at least 2 hours away/)).toBeVisible()
+    await expect(page.getByText(/Pending for/).first()).toBeVisible()
+  })
+
+  test('schedule detail General section turns catch-up on and saves its lead time', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/schedules/1')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'General' }).click()
+
+    const toggle = page.getByRole('switch', { name: 'Catch up missed runs' })
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+    // The floor only means anything once catch-up is on, so it isn't there yet.
+    await expect(page.locator('#catch-up-lead')).toHaveCount(0)
+
+    await toggle.click()
+    const lead = page.locator('#catch-up-lead')
+    await expect(lead).toBeVisible()
+    // The default 120 minutes reads as 2 hours, so 3 here means 180 minutes.
+    await expect(lead).toHaveValue('2')
+    await lead.fill('3')
+
+    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+      ...responseBody,
+      catch_up_missed_runs: requestBody.catch_up_missed_runs,
+      catch_up_min_lead_minutes: requestBody.catch_up_min_lead_minutes,
+    }))
+
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    const saved = await waitForSave()
+    expect(saved.catch_up_missed_runs).toBe(true)
+    expect(saved.catch_up_min_lead_minutes).toBe(180)
+  })
+
   test('clicking a schedule navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')

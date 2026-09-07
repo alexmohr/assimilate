@@ -911,7 +911,7 @@ test.describe('Schedules management', () => {
     await nextButton.click()
 
     // Step 3 - targets. One repository is preselected; add a second so the
-    // schedule writes two copies from one read.
+    // schedule writes two independent copies.
     await expect(page.locator('.order-item')).toHaveCount(1)
     await page.getByRole('button', { name: 'Add repository' }).click()
     await expect(page.locator('.order-item')).toHaveCount(2)

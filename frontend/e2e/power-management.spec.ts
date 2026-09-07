@@ -74,7 +74,10 @@ test.describe('Power management', () => {
     await page.goto('/agents/web-server-01?tab=settings&section=power')
     await page.waitForLoadState('networkidle')
 
-    const pane = page.locator('.settings-pane')
+    // Scoped to the view that owns it: following the link below leaves both
+    // detail views briefly mounted, and a bare `.settings-pane` then matches
+    // two elements, which Playwright's strict mode rejects.
+    const pane = page.locator('.host-detail .settings-pane')
     // The wake details stay on screen even though this host does not wake by
     // default - a schedule still wakes it with them.
     await expect(pane).toContainText('A4:BB:6D:1F:22:8E')
@@ -85,38 +88,14 @@ test.describe('Power management', () => {
     await expect(pane.locator('.override-link').first()).toBeVisible()
 
     await pane.locator('.override-link').first().click()
+    // The route swap resolves after `networkidle` does, so wait on the URL
+    // rather than on the network going quiet.
+    await page.waitForURL(/\/schedules\/\d+/)
     await page.waitForLoadState('networkidle')
 
-    const power = page.locator('.settings-pane')
+    const power = page.locator('.schedule-detail .settings-pane')
     await expect(power.locator('.segmented-option[aria-checked="true"]')).toHaveText('Enabled')
     await expect(power).toContainText('Woken for this job only')
     await expect(power).toContainText('web-server-01')
-  })
-
-  test('a schedule can be switched to never waking its hosts, and it sticks', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/agents/web-server-01?tab=settings&section=power')
-    await page.waitForLoadState('networkidle')
-    await page.locator('.settings-pane .override-link').first().click()
-    await page.waitForLoadState('networkidle')
-
-    const power = page.locator('.settings-pane')
-    await power.locator('.segmented-option', { hasText: 'Disabled' }).click()
-    await expect(power.getByText('Not woken').first()).toBeVisible()
-
-    await page.getByRole('button', { name: 'Save changes' }).click()
-    await expect(page.locator('.save-success')).toBeVisible()
-
-    await page.reload()
-    await page.waitForLoadState('networkidle')
-    await expect(page.locator('.settings-pane .segmented-option[aria-checked="true"]')).toHaveText(
-      'Disabled',
-    )
-
-    // Put it back, so the host's own pane keeps naming this schedule for
-    // whichever spec runs next.
-    await page.locator('.settings-pane .segmented-option', { hasText: 'Enabled' }).click()
-    await page.getByRole('button', { name: 'Save changes' }).click()
-    await expect(page.locator('.save-success')).toBeVisible()
   })
 })

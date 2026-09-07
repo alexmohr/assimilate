@@ -998,6 +998,40 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
    * The fallback for a completion that carries no schedule: the repository has
    * to be one this schedule writes to.
    */
+  /**
+   * The bug this guards: the page derived the primary from `repoTargets[0]`,
+   * the first target *written*, while the server keeps `schedules.repo_id` on
+   * the first target *required*. A list that writes a best-effort copy first
+   * made the page name the wrong repository.
+   */
+  it('names the repository the server calls primary, not the first written', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: { ...mockSchedule, repo_id: 21 } })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({
+          data: [
+            { repo_id: 20, execution_order: 0, required: false },
+            { repo_id: 21, execution_order: 1, required: true },
+          ],
+        })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({ data: { backup_sources: [], backup_sources_per_agent: [] } })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const overview = wrapper.findComponent({ name: 'ScheduleOverviewTab' })
+    expect(overview.exists()).toBe(true)
+    // repo 21 is required and second in write order; repo 20 is best effort
+    // and written first. The server's primary is 21.
+    expect(overview.props('repoName')).toBe('database-hourly')
+  })
+
   it('BackupCompleted without a schedule matches on the target repository', async () => {
     const wrapper = await createActiveBackupWrapper()
 

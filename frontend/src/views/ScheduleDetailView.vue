@@ -95,7 +95,14 @@ const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
 const selectedAgentIds = ref<number[]>([])
 const repoTargets = ref<ScheduleRepoTarget[]>([])
-const primaryRepoId = computed(() => repoTargets.value[0]?.repo_id ?? null)
+/**
+ * The schedule's primary target, as the server decides it: the first
+ * *required* target, not the first one written. Taking `repoTargets[0]` here
+ * would disagree with `schedules.repo_id` for a list that writes a best-effort
+ * copy first - a shape the API accepts on purpose - and this drives the
+ * repository name the page shows.
+ */
+const primaryRepoId = computed(() => schedule.value?.repo_id ?? null)
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
@@ -743,7 +750,7 @@ watch(activeTab, (tab) => {
           :loading="reportsLoading"
           :error="reportsError"
           :agents="agentMap"
-          :repo-id="schedule?.repo_id ?? null"
+          :repo-id="primaryRepoId"
           :repo-name="repoName ?? ''"
           :is-admin="isAdmin"
           :reload="loadReports"

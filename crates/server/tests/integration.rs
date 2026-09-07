@@ -8047,6 +8047,109 @@ async fn bulk_and_per_entry_acknowledge_agree_on_who_may_touch_what() {
 /// on another that also has outstanding reports. This is the
 /// `granted.contains(repo_id)` filter itself - the bulk endpoint must
 /// acknowledge exactly the granted repository and leave the other alone, and
+/// A multi-target schedule is editable by whoever runs it, not only by
+/// whoever can reach every repository it writes to.
+///
+/// `ScheduleDetailView` sends the whole target list on every save, so
+/// permission for "new" targets was originally measured against the schedule's
+/// denormalised primary alone - which made every *secondary* target look new
+/// on every edit. An operator granted `can_modify_schedules` on the local
+/// repository but not on the offsite copy could then never rename, pause or
+/// re-time that schedule again.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_secondary_target_the_caller_cannot_reach_does_not_block_editing_a_schedule() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "targets-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "targets-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('targets-perm-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, granted_repo).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(schedule_id)
+    .bind(ungranted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Renaming it, resending the target list exactly as it already is.
+    // Left disabled so the save stops at the permission check rather than the
+    // SSH reachability probe an enabled schedule also runs.
+    let body = serde_json::json!({
+        "name": "renamed by the operator",
+        "cron_expression": "0 3 * * *",
+        "enabled": false,
+        "repo_targets": [
+            { "repo_id": granted_repo, "required": true },
+            { "repo_id": ungranted_repo, "required": false },
+        ],
+    });
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}"))
+        .method("PUT")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "re-sending a schedule's existing targets must not need permission on each of them"
+    );
+
+    // Adding a repository the caller cannot reach is still refused.
+    let third_repo = insert_test_repo(&pool, "targets-third-repo").await;
+    let body = serde_json::json!({
+        "cron_expression": "0 3 * * *",
+        "enabled": false,
+        "repo_targets": [
+            { "repo_id": granted_repo, "required": true },
+            { "repo_id": third_repo, "required": false },
+        ],
+    });
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}"))
+        .method("PUT")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "pointing a schedule at a repository the caller cannot modify must still be refused"
+    );
+}
+
 /// the outstanding count must agree with what it did.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]

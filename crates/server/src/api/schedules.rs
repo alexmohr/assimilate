@@ -624,11 +624,43 @@ async fn authorize_repo_targets(
         .and_then(|targets| targets.first().map(|(repo_id, _)| *repo_id))
         .or(req.repo_id)
         .or(existing.repo_id);
-    let newly_permissioned: Vec<i64> = requested.as_ref().map_or_else(
+    let existing_targets: Vec<i64> = db::list_schedule_repos(&state.pool, existing.id)
+        .await?
+        .into_iter()
+        .map(|target| target.repo_id)
+        .collect();
+    for repo_id in newly_targeted_repos(
+        requested.as_deref(),
+        effective_repo_id,
+        &existing_targets,
+        existing.repo_id,
+    ) {
+        check_repo_permission(&state.pool, auth, repo_id, |p| p.can_modify_schedules).await?;
+    }
+    Ok((requested, effective_repo_id))
+}
+
+/// The repositories an update points the schedule at that it was not already
+/// writing to - the only ones the caller needs fresh permission for.
+///
+/// Measured against the schedule's whole target list, not just its primary.
+/// `ScheduleDetailView` sends the full list on every save, so measuring
+/// against the primary alone re-checks every secondary target on every edit:
+/// an operator with `can_modify_schedules` on the local repository but not on
+/// the offsite one it also writes to could never rename, pause or re-time
+/// that schedule again.
+fn newly_targeted_repos(
+    requested: Option<&[(i64, bool)]>,
+    effective_repo_id: Option<i64>,
+    existing_targets: &[i64],
+    existing_primary: Option<i64>,
+) -> Vec<i64> {
+    let already_targeted =
+        |repo_id: &i64| existing_targets.contains(repo_id) || existing_primary == Some(*repo_id);
+    requested.map_or_else(
         || {
-            (effective_repo_id != existing.repo_id)
-                .then_some(effective_repo_id)
-                .flatten()
+            effective_repo_id
+                .filter(|repo_id| !already_targeted(repo_id))
                 .into_iter()
                 .collect()
         },
@@ -636,14 +668,10 @@ async fn authorize_repo_targets(
             targets
                 .iter()
                 .map(|(repo_id, _)| *repo_id)
-                .filter(|repo_id| Some(*repo_id) != existing.repo_id)
+                .filter(|repo_id| !already_targeted(repo_id))
                 .collect()
         },
-    );
-    for repo_id in &newly_permissioned {
-        check_repo_permission(&state.pool, auth, *repo_id, |p| p.can_modify_schedules).await?;
-    }
-    Ok((requested, effective_repo_id))
+    )
 }
 
 #[utoipa::path(
@@ -1977,5 +2005,53 @@ mod tests {
             ),
             Err(ApiError::BadRequest(_))
         ));
+    }
+
+    /// The bug this guards: `ScheduleDetailView` sends the whole target list
+    /// on every save, so measuring "new" against the primary alone made every
+    /// secondary target need permission on every edit.
+    #[test]
+    fn a_target_the_schedule_already_writes_to_needs_no_fresh_permission() {
+        let requested = [(1, true), (2, false)];
+        assert_eq!(
+            newly_targeted_repos(Some(&requested), Some(1), &[1, 2], Some(1)),
+            Vec::<i64>::new(),
+        );
+    }
+
+    #[test]
+    fn only_a_repository_the_schedule_did_not_have_needs_permission() {
+        let requested = [(1, true), (2, false), (3, false)];
+        assert_eq!(
+            newly_targeted_repos(Some(&requested), Some(1), &[1, 2], Some(1)),
+            vec![3],
+        );
+    }
+
+    /// Falls back to the primary when the target list has not been backfilled
+    /// for this schedule, so an unknown repository is still checked.
+    #[test]
+    fn an_empty_target_list_still_recognises_the_primary() {
+        let requested = [(1, true), (4, true)];
+        assert_eq!(
+            newly_targeted_repos(Some(&requested), Some(1), &[], Some(1)),
+            vec![4],
+        );
+    }
+
+    #[test]
+    fn a_bare_repo_id_update_is_checked_only_when_it_moves_the_schedule() {
+        assert_eq!(
+            newly_targeted_repos(None, Some(2), &[1, 2], Some(1)),
+            Vec::<i64>::new(),
+        );
+        assert_eq!(
+            newly_targeted_repos(None, Some(9), &[1, 2], Some(1)),
+            vec![9]
+        );
+        assert_eq!(
+            newly_targeted_repos(None, None, &[1], Some(1)),
+            Vec::<i64>::new(),
+        );
     }
 }

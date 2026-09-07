@@ -7,6 +7,7 @@ import { apiClient } from '../api/client'
 import type * as VueRouter from 'vue-router'
 import { renderWithPlugins } from '../test-utils'
 import ScheduleCreateView from './ScheduleCreateView.vue'
+import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
 // `renderWithPlugins` pushes its route after mounting, so the view's own
 // onMounted read of `route.query` lands before the navigation settles. Stubbing
@@ -332,9 +333,19 @@ describe('ScheduleCreateView', () => {
     await keeps[4].setValue('3')
     await button(wrapper, 'Continue')!.trigger('click')
 
-    // Advanced hands its edits back through the same form model.
+    // Advanced hands its edits back through the same form model, so an edit
+    // made there has to reach the payload like any other field.
     const advanced = wrapper.findComponent({ name: 'ScheduleAdvancedTab' })
     expect(advanced.exists()).toBe(true)
+    await advanced.vm.$emit('update:form', {
+      ...(advanced.props('form') as ScheduleFormState),
+      rate_limit_kbps: 2048,
+      exclude_patterns: '*.tmp',
+    })
+    await advanced.vm.$emit('update:overrides', {
+      ...(advanced.props('overrides') as ScheduleAgentOverrides),
+      usePerHostExcludes: true,
+    })
     await button(wrapper, 'Continue')!.trigger('click')
 
     await button(wrapper, 'Create schedule')!.trigger('click')
@@ -355,6 +366,8 @@ describe('ScheduleCreateView', () => {
         keep_weekly: 8,
         keep_monthly: 24,
         keep_yearly: 3,
+        rate_limit_kbps: 2048,
+        exclude_patterns_raw: '*.tmp',
       }),
     )
   })

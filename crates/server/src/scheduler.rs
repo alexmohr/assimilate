@@ -1254,17 +1254,7 @@ async fn ensure_target_power(
     // Read off the target row rather than carried on the context: every
     // target of a schedule shares the schedule's own override, and this is
     // the only place it is needed.
-    let wake_override = target
-        .wake_override
-        .parse::<ScheduleWakeOverride>()
-        .unwrap_or_else(|_| {
-            tracing::warn!(
-                schedule_id = ctx.schedule_id,
-                value = %target.wake_override,
-                "invalid wake_override value in database; defaulting to host default"
-            );
-            ScheduleWakeOverride::default()
-        });
+    let wake_override = ScheduleWakeOverride::from_db_value(ctx.schedule_id, &target.wake_override);
     let agent_row = match db::get_agent_by_id(ctx.pool, target.agent_id).await {
         Ok(row) => Some(row),
         Err(e) => {

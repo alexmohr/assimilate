@@ -269,17 +269,7 @@ pub struct UpdateScheduleRequest {
 /// somehow holds outside the enum's set falls back to the default rather
 /// than failing the request, matching how the scheduler treats `on_failure`.
 fn stored_wake_override(schedule: &db::ScheduleRow) -> ScheduleWakeOverride {
-    schedule
-        .wake_override
-        .parse::<ScheduleWakeOverride>()
-        .unwrap_or_else(|_| {
-            tracing::warn!(
-                schedule_id = schedule.id,
-                value = %schedule.wake_override,
-                "invalid wake_override value in database; defaulting to host default"
-            );
-            ScheduleWakeOverride::default()
-        })
+    ScheduleWakeOverride::from_db_value(schedule.id, &schedule.wake_override)
 }
 
 #[utoipa::path(

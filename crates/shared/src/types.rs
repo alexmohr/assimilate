@@ -437,6 +437,25 @@ impl ScheduleWakeOverride {
             Self::Disabled => false,
         }
     }
+
+    /// Reads the value as stored on a schedule row, falling back to the
+    /// default for anything the CHECK constraint should have kept out.
+    ///
+    /// A schedule's stored override is read both when serving the row to the
+    /// API and when a due run resolves its hosts; sharing one function keeps
+    /// the fallback and the warning identical rather than leaving two copies
+    /// to drift.
+    #[must_use]
+    pub fn from_db_value(schedule_id: i64, raw: &str) -> Self {
+        raw.parse().unwrap_or_else(|_| {
+            tracing::warn!(
+                schedule_id,
+                value = %raw,
+                "invalid wake_override value in database; defaulting to host default"
+            );
+            Self::default()
+        })
+    }
 }
 
 /// Which host a [`RunEventType`] happened to, for a run that may involve both
@@ -1781,5 +1800,28 @@ mod tests {
         assert!(ScheduleWakeOverride::Enabled.resolve(false));
         assert!(!ScheduleWakeOverride::Disabled.resolve(true));
         assert!(!ScheduleWakeOverride::Disabled.resolve(false));
+    }
+
+    /// Both readers of a stored override go through this, so the fallback a
+    /// row outside the CHECK constraint gets is the same whether the API is
+    /// serving the schedule or a due run is resolving its hosts.
+    #[test]
+    fn schedule_wake_override_from_db_value_falls_back_on_junk() {
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, "enabled"),
+            ScheduleWakeOverride::Enabled
+        );
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, "disabled"),
+            ScheduleWakeOverride::Disabled
+        );
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, "bogus"),
+            ScheduleWakeOverride::HostDefault
+        );
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, ""),
+            ScheduleWakeOverride::HostDefault
+        );
     }
 }

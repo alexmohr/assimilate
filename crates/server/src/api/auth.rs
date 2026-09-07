@@ -487,6 +487,7 @@ pub async fn me(
         session_expires_at,
         remember_me,
         can_upgrade_agent: effective.can_upgrade_agent || effective.can_delete_repo,
+        can_view_wake_secrets: effective.can_view_wake_secrets(),
         totp_enabled,
     }))
 }
@@ -743,6 +744,7 @@ mod tests {
             session_expires_at: None,
             remember_me: false,
             can_upgrade_agent: true,
+            can_view_wake_secrets: true,
             totp_enabled: false,
         };
         assert!(response.can_upgrade_agent);

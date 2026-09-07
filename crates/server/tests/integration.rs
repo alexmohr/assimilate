@@ -1465,6 +1465,15 @@ async fn test_update_repo_power_persists_and_returns_settings() {
 /// agent/repo but isn't an operator/admin.
 #[cfg(test)]
 async fn insert_viewer_only_session(pool: &PgPool, label: &str) -> String {
+    insert_session_with_role(pool, label, false).await
+}
+
+/// Inserts a user holding one custom role and an active session for them,
+/// returning the session cookie value. `can_view_all_repos` is the operator
+/// tier's distinguishing permission: it grants sight of the wake
+/// MAC/broadcast address without granting the admin's `can_delete_repo`.
+#[cfg(test)]
+async fn insert_session_with_role(pool: &PgPool, label: &str, can_view_all_repos: bool) -> String {
     let user = server::db::insert_user(pool, &format!("{label}-user"), "hash")
         .await
         .unwrap();
@@ -1479,10 +1488,11 @@ async fn insert_viewer_only_session(pool: &PgPool, label: &str) -> String {
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
          can_manage_tunnels, can_upgrade_agent) VALUES ($1, false, false, false, false, false, \
-         false, false, false, false, false, false, false, false) ON CONFLICT (name) DO UPDATE SET \
-         name = EXCLUDED.name RETURNING id",
+         false, false, false, false, false, $2, false, false) ON CONFLICT (name) DO UPDATE SET \
+         can_view_all_repos = EXCLUDED.can_view_all_repos RETURNING id",
     )
     .bind(format!("{label}-role"))
+    .bind(can_view_all_repos)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -1678,6 +1688,45 @@ async fn test_repo_responses_redact_wake_secrets_for_non_privileged_viewer() {
             .unwrap()
             .is_null(),
         "list_repos_with_stats must also redact the MAC address for a non-privileged viewer"
+    );
+}
+
+/// The schedule's Power read-out tells "this host has no MAC address" apart
+/// from "the address was redacted for you" using `/auth/me`'s
+/// `can_view_wake_secrets`. It must follow the same rule the redaction
+/// itself does - `can_delete_repo` OR `can_view_all_repos` - and not the
+/// admin role, or an operator would be told a host cannot be woken purely
+/// because the UI assumed it had been redacted.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_auth_me_reports_wake_secret_visibility_per_permission() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let viewer = insert_session_with_role(&pool, "me-wake-viewer", false).await;
+    let resp = oneshot(&mut app, get_request_as("/api/auth/me", &viewer)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("can_view_wake_secrets").unwrap(),
+        false,
+        "a viewer whose wake addresses are redacted must be told so: {body}"
+    );
+
+    let operator = insert_session_with_role(&pool, "me-wake-operator", true).await;
+    let resp = oneshot(&mut app, get_request_as("/api/auth/me", &operator)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("can_view_wake_secrets").unwrap(),
+        true,
+        "can_view_all_repos alone grants sight of the wake addresses: {body}"
+    );
+    assert_eq!(
+        body.get("role").unwrap(),
+        "me-wake-operator-role",
+        "this must be an operator, not an admin: {body}"
     );
 }
 

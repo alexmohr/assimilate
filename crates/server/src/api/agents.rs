@@ -305,11 +305,7 @@ pub async fn list_agents(
 ) -> Result<Json<Vec<AgentResponse>>, ApiError> {
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
-    // Wake-on-LAN's MAC/broadcast address let anyone who has them power the
-    // host on remotely, so - like `RepoWithStatsResponse.quota` - they're
-    // gated to operators/admins rather than embedded for any viewer who can
-    // merely see the agent.
-    let can_view_wake_secrets = effective.can_delete_repo || effective.can_view_all_repos;
+    let can_view_wake_secrets = effective.can_view_wake_secrets();
     let include_hidden = query.include_hidden && is_admin;
     let agents = db::list_agents(&state.pool, include_hidden).await?;
     let mut responses = Vec::with_capacity(agents.len());

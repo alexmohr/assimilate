@@ -90,6 +90,11 @@ pub struct MeResponse {
     pub remember_me: bool,
     /// Whether the user has permission to upgrade agents.
     pub can_upgrade_agent: bool,
+    /// Whether the user may see a host's Wake-on-LAN MAC and broadcast
+    /// address, which the agent and repo endpoints redact below
+    /// operator. The UI needs the answer to tell "no MAC configured" apart
+    /// from "not shown to you".
+    pub can_view_wake_secrets: bool,
     /// Whether TOTP is enabled for the user.
     pub totp_enabled: bool,
 }

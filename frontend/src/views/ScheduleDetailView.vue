@@ -70,7 +70,7 @@ const NEW_SCHEDULE_ROUTE_ID = 'new'
 
 const isCreate = computed(() => props.id === NEW_SCHEDULE_ROUTE_ID)
 
-const { isAdmin } = storeToRefs(useAuthStore())
+const { isAdmin, canViewWakeSecrets } = storeToRefs(useAuthStore())
 
 const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
@@ -828,7 +828,7 @@ watch(activeTab, (tab) => {
           :agents="agents"
           :repos="repos"
           :agent-label="agentLabel"
-          :can-see-wake-details="isAdmin"
+          :can-see-wake-details="canViewWakeSecrets"
         />
       </div>
 

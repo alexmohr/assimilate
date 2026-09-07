@@ -7708,6 +7708,78 @@ pub struct RoleRow {
     pub created_at: DateTime<Utc>,
 }
 
+#[cfg(test)]
+mod wake_secret_permission_tests {
+    use chrono::Utc;
+
+    use super::RoleRow;
+
+    /// A role holding no permissions at all.
+    fn none() -> RoleRow {
+        RoleRow {
+            id: 0,
+            name: String::from("effective"),
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+            can_upgrade_agent: false,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn a_plain_viewer_may_not_see_wake_secrets() {
+        assert!(!none().can_view_wake_secrets());
+    }
+
+    #[test]
+    fn an_admin_may_see_wake_secrets() {
+        let role = RoleRow {
+            can_delete_repo: true,
+            ..none()
+        };
+        assert!(role.can_view_wake_secrets());
+    }
+
+    /// The operator tier: no repo deletion, but sight of every repo. It sees
+    /// the addresses too, which is why the frontend must not gate the wake
+    /// read-out on the admin role alone.
+    #[test]
+    fn an_operator_may_see_wake_secrets() {
+        let role = RoleRow {
+            can_view_all_repos: true,
+            ..none()
+        };
+        assert!(role.can_view_wake_secrets());
+    }
+}
+
+impl RoleRow {
+    /// Whether these permissions may see a host's Wake-on-LAN MAC and
+    /// broadcast address.
+    ///
+    /// The addresses let anyone holding them power the host on remotely, so
+    /// they are gated to operators and admins rather than embedded for every
+    /// viewer who can merely see the host. Encoded here once because three
+    /// endpoints ask the same question: the agent and repo listings redact
+    /// the fields, and `/auth/me` reports the answer so the frontend knows
+    /// whether an absent address means "none configured" or "not shown to
+    /// you".
+    #[must_use]
+    pub const fn can_view_wake_secrets(&self) -> bool {
+        self.can_delete_repo || self.can_view_all_repos
+    }
+}
+
 /// A row from the `user_groups` join table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct UserGroupRow {

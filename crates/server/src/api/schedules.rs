@@ -1098,7 +1098,16 @@ pub async fn run_schedule_now(
         }
     }
 
-    tokio::spawn(run_dispatch::run_targets_sequential(
+    // Tracked, like every other fire-and-forget spawn in the codebase (see
+    // BackgroundTaskTracker and archive_index's indexing spawn), so a test
+    // can wait for this run instead of racing it. Untracked, whether this
+    // task got scheduled at all before the test's tokio runtime was dropped
+    // was a coin flip, which showed up as ~49 lines of this module being
+    // covered in one CI run and not the next -- a 0.14pp swing in aggregate
+    // coverage between runs of byte-identical code, with nothing in the
+    // diff to explain it.
+    let task_guard = state.background_task_tracker.begin();
+    let dispatch = run_dispatch::run_targets_sequential(
         state,
         targets,
         run_dispatch::RunRequest {
@@ -1108,7 +1117,11 @@ pub async fn run_schedule_now(
             run_id,
             origin: run_dispatch::RunOrigin::Manual,
         },
-    ));
+    );
+    tokio::spawn(async move {
+        let _task_guard = task_guard;
+        let _dispatched = dispatch.await;
+    });
 
     Ok(StatusCode::ACCEPTED)
 }

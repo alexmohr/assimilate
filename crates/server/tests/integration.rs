@@ -6876,7 +6876,7 @@ async fn test_run_schedule_now_restricted_to_agent_ids() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-repo").await;
     let agent_a: i64 = sqlx::query_scalar(
@@ -6955,6 +6955,14 @@ async fn test_run_schedule_now_restricted_to_agent_ids() {
     let mut expected = vec![agent_a, agent_b];
     expected.sort_unstable();
     assert_eq!(pending_agents, expected);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: `run_schedule_now` used to require a JSON body
@@ -6968,7 +6976,7 @@ async fn test_run_schedule_now_without_a_body_runs_every_target() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-no-body-repo").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -6992,6 +7000,14 @@ async fn test_run_schedule_now_without_a_body_runs_every_target() {
     .await
     .unwrap();
     assert_eq!(pending_agents, vec![agent_id]);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: duplicate `agent_ids` entries used to be compared
@@ -7004,7 +7020,7 @@ async fn test_run_schedule_now_allows_duplicate_agent_ids() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-dup-repo").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -7023,6 +7039,14 @@ async fn test_run_schedule_now_allows_duplicate_agent_ids() {
     );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: `cancel_running_backup`'s offline-agent fallback (the

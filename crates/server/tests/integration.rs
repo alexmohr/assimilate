@@ -2226,7 +2226,7 @@ async fn test_delete_archive_runs_in_background() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
     )
@@ -2267,8 +2267,11 @@ async fn test_delete_archive_runs_in_background() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
-    // The audit entry is written last in the background task, so waiting for it
-    // guarantees the borg delete and DB cleanup have already completed.
+    // Waiting for the audit entry confirms the borg delete and DB cleanup ran.
+    // It is not the end of the task, though: finalize_archive_deletion goes on
+    // to refresh the archive list and clear the import-progress state after
+    // writing it, which is why the tracker wait at the end of this test is what
+    // actually bounds the task.
     timeout(Duration::from_secs(10), async {
         loop {
             let audit_rows: i64 = sqlx::query_scalar(
@@ -2310,6 +2313,15 @@ async fn test_delete_archive_runs_in_background() {
         index_rows, 0,
         "index job rows should be removed with the archive"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2335,7 +2347,7 @@ async fn test_delete_archive_runs_compact_afterwards() {
     let (borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-host', 'hash') \
          RETURNING id",
@@ -2368,6 +2380,15 @@ async fn test_delete_archive_runs_compact_afterwards() {
         settled, 1,
         "exactly one compact should run after a single archive delete"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2402,7 +2423,7 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
     unsafe { std::env::set_var("FAKE_BORG_COMPACT_EXIT", "2") };
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-fail-host', 'hash') \
          RETURNING id",
@@ -2469,6 +2490,15 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     // cleared here, before dropping the borg binary lock, same as other
     // tests that mutate process-global borg-related env vars.
     unsafe { std::env::remove_var("FAKE_BORG_COMPACT_EXIT") };
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2572,6 +2602,15 @@ async fn test_delete_archive_transitions_straight_to_compact_without_a_stale_dra
         "no RepoOpChanged with a cleared op should be broadcast between the delete and compact \
          phases of the same archive deletion, got {kinds:?}"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// The exact race a follow-up review flagged: when a repo has no operation

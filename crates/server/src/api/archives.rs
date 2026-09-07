@@ -589,6 +589,12 @@ pub async fn delete_archive(
             });
     }
 
+    // Tracked for the same reason the manual schedule run is (see
+    // api/schedules.rs): untracked, whether this task ran before a test's
+    // tokio runtime was dropped was a race, and it showed up as
+    // finalize_archive_deletion's post-delete refresh error path being
+    // covered in one run and not the next.
+    let task_guard = state.background_task_tracker.begin();
     tokio::spawn(run_archive_deletion(
         state,
         repo_id,
@@ -597,6 +603,7 @@ pub async fn delete_archive(
         env,
         auth.user_id,
         auth.username,
+        task_guard,
     ));
 
     Ok((
@@ -616,6 +623,9 @@ async fn run_archive_deletion(
     env: HashMap<String, String>,
     user_id: i64,
     username: String,
+    // Held for the whole deletion and dropped when this returns, marking the
+    // tracked task finished so a test can wait for it rather than race it.
+    _task_guard: crate::background_tasks::BackgroundTaskGuard,
 ) {
     // Serialise with every other borg operation on this repository. While we
     // wait here the deletion stays counted as queued in the op tracker.

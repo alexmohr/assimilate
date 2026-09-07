@@ -2844,7 +2844,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
     let (borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING id",
     )
@@ -2913,6 +2913,15 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
         names.len(),
         "each successful delete in the batch should trigger its own compact"
     );
+
+    // Three deletions are dispatched here, each a tracked background task
+    // whose tail (the post-delete archive-list refresh) outlives the compact
+    // log entry asserted above. Wait for all three, so none runs on into the
+    // next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]

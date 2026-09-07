@@ -1398,6 +1398,42 @@ async fn test_update_repo_power_rejects_malformed_mac_even_with_wake_disabled() 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// The repository-host counterpart to
+/// `test_update_agent_power_allows_shutdown_with_a_mac_but_wake_off`: a
+/// shutdown keys off having a MAC address rather than off the host's own
+/// wake toggle, since a schedule's override can wake a host the toggle
+/// leaves alone. `update_repo_power` shares `validate_host_wake` with the
+/// agent endpoint, and this pins that the shared relaxation is actually
+/// reached through the repo route rather than only at the DB layer.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_repo_power_allows_shutdown_with_a_mac_but_wake_off() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "power-repo-shutdown-no-wake").await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": false,
+            "wake_mac_address": "9C:B6:D0:1A:44:7F",
+            "wake_broadcast_address": null,
+            "shutdown_after_backup": true
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    let status = resp.status();
+    let body = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let power = body.get("power").unwrap();
+    assert_eq!(power.get("wake_enabled").unwrap(), false);
+    assert_eq!(power.get("shutdown_after_backup").unwrap(), true);
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_update_repo_power_rejects_malformed_broadcast_address() {

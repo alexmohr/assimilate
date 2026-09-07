@@ -21,7 +21,6 @@ import {
   deleteFailedScheduleReports,
   countFailedScheduleReports,
   getScheduleHealth,
-  type CreateScheduleRequest,
   type ScheduleRepoTarget,
 } from '../api/schedules'
 import { listAgents } from '../api/agents'
@@ -33,6 +32,7 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
+import { scheduleFormPayload, type ScheduleFormPayload } from '../utils/schedulePayload'
 import { dropBlankCommands, parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
@@ -413,33 +413,10 @@ async function save(): Promise<void> {
   saveError.value = null
   saveSuccess.value = false
   try {
-    const payload: Omit<
-      CreateScheduleRequest,
-      'agent_ids' | 'repo_id' | 'repo_targets' | 'schedule_type' | 'on_failure'
-    > = {
-      name: form.value.name,
-      cron_expression: form.value.cron_expression,
-      enabled: form.value.enabled,
-      canary_enabled: form.value.canary_enabled,
-      vm_snapshot_enabled: form.value.vm_snapshot_enabled,
-      exclude_patterns_raw: form.value.exclude_patterns,
-      file_change_patterns_raw: form.value.file_change_patterns,
-      ignore_global_excludes: form.value.ignore_global_excludes,
-      keep_hourly: form.value.keep_hourly,
-      keep_daily: form.value.keep_daily,
-      keep_weekly: form.value.keep_weekly,
-      keep_monthly: form.value.keep_monthly,
-      keep_yearly: form.value.keep_yearly,
-      compact_enabled: form.value.compact_enabled,
-      rate_limit_kbps: form.value.rate_limit_kbps,
-      pre_backup_commands: dropBlankCommands(form.value.pre_backup_commands),
-      post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
-      hook_timeout_seconds: form.value.hook_timeout_seconds,
-      missed_backup_threshold: form.value.missed_backup_threshold,
-      wake_override: form.value.wake_override,
-      catch_up_missed_runs: form.value.catch_up_missed_runs,
-      catch_up_min_lead_minutes: form.value.catch_up_min_lead_minutes,
-      backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
+    const payload: ScheduleFormPayload = {
+      ...scheduleFormPayload(form.value),
+      // Per-agent paths replace the shared list rather than adding to it.
+      ...(usePerHostPaths.value ? { backup_sources: [] } : {}),
     }
 
     if (usePerHostPaths.value) {

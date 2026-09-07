@@ -12,7 +12,8 @@ import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
-import { dropBlankCommands, parseLines } from '../utils/validation'
+import { scheduleFormPayload } from '../utils/schedulePayload'
+import { parseLines } from '../utils/validation'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import AgentMultiSelect from '../components/AgentMultiSelect.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -198,26 +199,7 @@ async function submit(): Promise<void> {
   submitError.value = null
   try {
     const created = await createSchedule({
-      name: form.value.name,
-      cron_expression: form.value.cron_expression,
-      enabled: form.value.enabled,
-      canary_enabled: form.value.canary_enabled,
-      vm_snapshot_enabled: form.value.vm_snapshot_enabled,
-      exclude_patterns_raw: form.value.exclude_patterns,
-      file_change_patterns_raw: form.value.file_change_patterns,
-      ignore_global_excludes: form.value.ignore_global_excludes,
-      keep_hourly: form.value.keep_hourly,
-      keep_daily: form.value.keep_daily,
-      keep_weekly: form.value.keep_weekly,
-      keep_monthly: form.value.keep_monthly,
-      keep_yearly: form.value.keep_yearly,
-      compact_enabled: form.value.compact_enabled,
-      rate_limit_kbps: form.value.rate_limit_kbps,
-      pre_backup_commands: dropBlankCommands(form.value.pre_backup_commands),
-      post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
-      hook_timeout_seconds: form.value.hook_timeout_seconds,
-      missed_backup_threshold: form.value.missed_backup_threshold,
-      backup_sources: parseLines(form.value.backup_sources),
+      ...scheduleFormPayload(form.value),
       agent_ids: selectedAgentIds.value,
       repo_id: repoTargets.value[0].repo_id,
       repo_targets: repoTargets.value,

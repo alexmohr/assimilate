@@ -1230,6 +1230,28 @@ pub struct RunScheduleRequest {
     pub agent_ids: Option<Vec<i64>>,
 }
 
+/// Every repository a run of this schedule writes to, in write order.
+///
+/// Manual runs and cancels have to cover the same repositories the scheduler
+/// does - `list_due_schedules` expands a schedule into one dispatch per (agent,
+/// repository), so a manual run reading only the denormalised primary would
+/// silently skip every secondary target. Falls back to the primary for a
+/// schedule whose target rows have not been backfilled.
+async fn schedule_run_repo_ids(
+    pool: &PgPool,
+    schedule: &db::ScheduleRow,
+) -> Result<Vec<i64>, ApiError> {
+    let targets: Vec<i64> = db::list_schedule_repos(pool, schedule.id)
+        .await?
+        .into_iter()
+        .map(|target| target.repo_id)
+        .collect();
+    if targets.is_empty() {
+        return Ok(schedule.repo_id.into_iter().collect());
+    }
+    Ok(targets)
+}
+
 #[utoipa::path(
     post,
     path = "/api/schedules/{id}/run",
@@ -1290,7 +1312,14 @@ pub async fn run_schedule_now(
         }
         _ => targets,
     };
-    let repo_id = RepoId(schedule_repo_id);
+    // Every target the scheduler would write, not just the primary: a manual
+    // run of a two-target schedule has to produce the same copies its cron
+    // does, in the same order.
+    let repo_ids: Vec<RepoId> = schedule_run_repo_ids(&state.pool, &schedule)
+        .await?
+        .into_iter()
+        .map(RepoId)
+        .collect();
     let schedule_type = schedule
         .schedule_type
         .parse::<ScheduleType>()
@@ -1299,21 +1328,24 @@ pub async fn run_schedule_now(
     let now = chrono::Utc::now();
 
     for target in &targets {
-        if let Err(e) = db::insert_backup_pending(
-            &state.pool,
-            target.agent_id,
-            schedule_repo_id,
-            Some(id),
-            &run_id,
-            now,
-        )
-        .await
-        {
-            tracing::warn!(
-                hostname = %target.hostname,
-                error = %e,
-                "manual run: failed to insert pending record"
-            );
+        for repo_id in &repo_ids {
+            if let Err(e) = db::insert_backup_pending(
+                &state.pool,
+                target.agent_id,
+                repo_id.0,
+                Some(id),
+                &run_id,
+                now,
+            )
+            .await
+            {
+                tracing::warn!(
+                    hostname = %target.hostname,
+                    repo_id = repo_id.0,
+                    error = %e,
+                    "manual run: failed to insert pending record"
+                );
+            }
         }
     }
 
@@ -1321,7 +1353,7 @@ pub async fn run_schedule_now(
         state,
         targets,
         run_dispatch::RunRequest {
-            repo_id,
+            repo_ids,
             schedule_type,
             schedule_id: id,
             run_id,
@@ -1367,35 +1399,44 @@ pub async fn cancel_running_backup(
     .await?;
 
     let targets = db::get_schedule_targets_for_run(&state.pool, id).await?;
-    let repo_id = RepoId(schedule_repo_id);
+    // A run in flight can be on any of the schedule's targets, and each
+    // (agent, repository) pair has its own report to cancel, so cancelling
+    // only the primary would leave a secondary target running.
+    let repo_ids = schedule_run_repo_ids(&state.pool, &schedule).await?;
 
     for target in &targets {
-        let msg = ServerToAgent::CancelBackup { repo_id };
-        if let Err(e) = state.registry.send_to(target.agent_id, msg).await {
-            tracing::warn!(
-                hostname = %target.hostname,
-                error = %e,
-                "agent not connected for cancel_running_backup"
-            );
-            // Agent is offline - cancel the backup directly in the DB
-            if let Err(e) =
-                db::cancel_backup_report(&state.pool, target.agent_id, schedule_repo_id).await
-            {
-                tracing::error!(
+        for repo_id in &repo_ids {
+            let msg = ServerToAgent::CancelBackup {
+                repo_id: RepoId(*repo_id),
+            };
+            if let Err(e) = state.registry.send_to(target.agent_id, msg).await {
+                tracing::warn!(
                     hostname = %target.hostname,
+                    repo_id = *repo_id,
                     error = %e,
-                    "failed to cancel backup in DB after agent not connected"
+                    "agent not connected for cancel_running_backup"
                 );
+                // Agent is offline - cancel the backup directly in the DB
+                if let Err(e) =
+                    db::cancel_backup_report(&state.pool, target.agent_id, *repo_id).await
+                {
+                    tracing::error!(
+                        hostname = %target.hostname,
+                        repo_id = *repo_id,
+                        error = %e,
+                        "failed to cancel backup in DB after agent not connected"
+                    );
+                }
+                state
+                    .completion_bus
+                    .publish(crate::ws::completion_bus::OperationOutcome {
+                        agent_id: target.agent_id,
+                        repo_id: *repo_id,
+                        success: false,
+                    });
+                state.ui_broadcast.clear_active_backup(*repo_id);
+                state.ui_broadcast.send(ServerToUi::DataChanged);
             }
-            state
-                .completion_bus
-                .publish(crate::ws::completion_bus::OperationOutcome {
-                    agent_id: target.agent_id,
-                    repo_id: schedule_repo_id,
-                    success: false,
-                });
-            state.ui_broadcast.clear_active_backup(schedule_repo_id);
-            state.ui_broadcast.send(ServerToUi::DataChanged);
         }
     }
 

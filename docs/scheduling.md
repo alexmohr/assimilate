@@ -233,7 +233,7 @@ A pending miss is also dropped, without running, when the schedule or its reposi
 
 To run a backup immediately without waiting for the next scheduled time, click **Run now** on the schedule row. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
 
-Manual runs follow the same retention policy and exclude patterns as scheduled runs.
+Manual runs follow the same retention policy and exclude patterns as scheduled runs, and write every [backup target](#backup-targets) in the same order, so **Run now** produces the same copies the cron would. **Cancel** stops the run on all of them.
 
 ## Backup Notifications
 

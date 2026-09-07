@@ -7008,6 +7008,58 @@ async fn test_run_schedule_now_without_a_body_runs_every_target() {
     assert_eq!(pending_agents, vec![agent_id]);
 }
 
+/// The bug this guards: manual "Run now" dispatched from the denormalised
+/// `schedules.repo_id` alone, so a two-target schedule quietly wrote only its
+/// primary copy - while the scheduler, rewired onto `schedule_repos`, wrote
+/// both. Same schedule, two different outcomes depending on who started it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_run_schedule_now_covers_every_target_repository() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let primary = insert_test_repo(&pool, "run-now-primary-repo").await;
+    let offsite = insert_test_repo(&pool, "run-now-offsite-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-now-two-targets', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, primary).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, false)",
+    )
+    .bind(schedule_id)
+    .bind(offsite)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/schedules/{schedule_id}/run"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let mut pending_repos: Vec<i64> = sqlx::query_scalar(
+        "SELECT repo_id FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    pending_repos.sort_unstable();
+    let mut expected = vec![primary, offsite];
+    expected.sort_unstable();
+    assert_eq!(
+        pending_repos, expected,
+        "a manual run must queue every target the scheduler would write"
+    );
+}
+
 /// Regression test for: duplicate `agent_ids` entries used to be compared
 /// against the (deduplicated) filtered-targets count, so a request like
 /// `{"agent_ids": [a, a]}` for a genuinely valid target `a` was wrongly

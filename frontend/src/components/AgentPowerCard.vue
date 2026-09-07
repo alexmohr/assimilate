@@ -37,8 +37,16 @@ const error = ref<string | null>(null)
 /**
  * Schedules that wake this host whatever the toggle below says. Without
  * naming them, switching waking off here would reasonably read as "this host
- * is never woken" - and be wrong. Best-effort: a failed load leaves the note
- * out rather than failing the pane, which is about the settings themselves.
+ * is never woken" - and be wrong.
+ *
+ * Scoped to what the viewer may see: `GET /schedules` runs every row through
+ * `is_visible_to_user`, so someone else's private schedule is left out even
+ * though it does wake the host. Naming it would leak its existence and its
+ * name, and the note links to each one - so the note under-reports rather
+ * than reporting past the visibility rule. Nothing about a run depends on
+ * this: waking resolves server-side over every schedule. Best-effort in the
+ * same spirit: a failed load leaves the note out rather than failing the
+ * pane, which is about the settings themselves.
  */
 const overridingSchedules = ref<ScheduleRow[]>([])
 

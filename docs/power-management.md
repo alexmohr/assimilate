@@ -66,7 +66,7 @@ Only *waking* is overridden. Two things follow the host's own settings in every 
 Because a schedule can now wake a host whose own setting is off, two things changed on the host panes:
 
 - The wake details stay on screen when **Wake host before backup** is off, and **Shut down host after backup** stays configurable, as long as a MAC address is set. A host woken only by one job still has to be able to power off afterwards.
-- The pane names the schedules that override it, so switching a host's own setting off never quietly leaves it being woken anyway.
+- The pane names the schedules that override it, so switching a host's own setting off does not quietly leave it being woken anyway. It lists the schedules *you* can see: a private schedule belonging to someone else is left out, the same way it is everywhere else in the UI, so treat the list as complete only if you are an admin. What a run actually does is never affected by who is looking.
 
 !!! warning
     A job set to **Enabled** cannot wake a host that has no MAC address on file. The schedule's Power pane says so per host before you save, and a run that hits it records a **Cannot wake** step on the run timeline rather than failing silently.

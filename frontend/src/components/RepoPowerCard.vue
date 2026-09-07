@@ -48,7 +48,9 @@ watch(wakeMac, (mac) => {
 
 /**
  * Schedules that wake this host whatever the toggle below says - see
- * `AgentPowerCard`. Best-effort: a failed load leaves the note out.
+ * `AgentPowerCard`, including why this is scoped to what the viewer may see
+ * and so under-reports rather than reporting past the visibility rule.
+ * Best-effort: a failed load leaves the note out.
  */
 const overridingSchedules = ref<ScheduleRow[]>([])
 

@@ -32,8 +32,12 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
-import { scheduleFormPayload, type ScheduleFormPayload } from '../utils/schedulePayload'
-import { dropBlankCommands, parseLines } from '../utils/validation'
+import {
+  agentOverridePayload,
+  scheduleFormPayload,
+  type ScheduleFormPayload,
+} from '../utils/schedulePayload'
+import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
 import { parseArchiveProgress } from '../utils/archiveProgress'
@@ -431,43 +435,7 @@ async function save(): Promise<void> {
       payload.backup_sources_per_agent = perHost
     }
 
-    if (agentOverrides.value.usePerHostExcludes) {
-      payload.exclude_patterns_raw = ''
-      const perHost: { agent_id: number; raw_text: string }[] = []
-      for (const id of selectedAgentIds.value) {
-        const raw_text = agentOverrides.value.perHostExcludes[id] ?? ''
-        perHost.push({ agent_id: id, raw_text })
-      }
-      payload.exclude_patterns_per_agent = perHost
-    }
-
-    if (agentOverrides.value.usePerHostFileChangePatterns) {
-      payload.file_change_patterns_raw = ''
-      const perHost: { agent_id: number; raw_text: string }[] = []
-      for (const id of selectedAgentIds.value) {
-        const raw_text = agentOverrides.value.perHostFileChangePatterns[id] ?? ''
-        perHost.push({ agent_id: id, raw_text })
-      }
-      payload.file_change_patterns_per_agent = perHost
-    }
-
-    if (agentOverrides.value.usePerAgentCmds) {
-      payload.pre_backup_commands = []
-      payload.post_backup_commands = []
-      const perAgent: {
-        agent_id: number
-        pre_backup_commands: HookCommand[]
-        post_backup_commands: HookCommand[]
-      }[] = []
-      for (const id of selectedAgentIds.value) {
-        perAgent.push({
-          agent_id: id,
-          pre_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPreCmds[id] ?? []),
-          post_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPostCmds[id] ?? []),
-        })
-      }
-      payload.commands_per_agent = perAgent
-    }
+    Object.assign(payload, agentOverridePayload(agentOverrides.value, selectedAgentIds.value))
 
     {
       const scheduleId = schedule.value?.id

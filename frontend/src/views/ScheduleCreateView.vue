@@ -12,7 +12,7 @@ import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
-import { scheduleFormPayload } from '../utils/schedulePayload'
+import { agentOverridePayload, scheduleFormPayload } from '../utils/schedulePayload'
 import { parseLines } from '../utils/validation'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import AgentMultiSelect from '../components/AgentMultiSelect.vue'
@@ -200,6 +200,7 @@ async function submit(): Promise<void> {
   try {
     const created = await createSchedule({
       ...scheduleFormPayload(form.value),
+      ...agentOverridePayload(agentOverrides.value, selectedAgentIds.value),
       agent_ids: selectedAgentIds.value,
       repo_id: repoTargets.value[0].repo_id,
       repo_targets: repoTargets.value,

@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { scheduleFormPayload } from './schedulePayload'
+import { agentOverridePayload, scheduleFormPayload } from './schedulePayload'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
-import type { ScheduleFormState } from '../types/scheduleForm'
+import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
 function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
   return { ...DEFAULT_SCHEDULE_FORM_STATE, ...overrides }
@@ -52,5 +52,82 @@ describe('scheduleFormPayload', () => {
     expect(payload.keep_yearly).toBe(3)
     expect(payload.missed_backup_threshold).toBe(5)
     expect(payload.rate_limit_kbps).toBe(2048)
+  })
+})
+
+function overrides(patch: Partial<ScheduleAgentOverrides> = {}): ScheduleAgentOverrides {
+  return {
+    usePerHostExcludes: false,
+    perHostExcludes: {},
+    usePerHostFileChangePatterns: false,
+    perHostFileChangePatterns: {},
+    usePerAgentCmds: false,
+    perAgentPreCmds: {},
+    perAgentPostCmds: {},
+    ...patch,
+  }
+}
+
+describe('agentOverridePayload', () => {
+  it('sends nothing while every override is off', () => {
+    expect(agentOverridePayload(overrides(), [1, 2])).toEqual({})
+  })
+
+  it('clears the shared excludes and sends one entry per selected host', () => {
+    const payload = agentOverridePayload(
+      overrides({ usePerHostExcludes: true, perHostExcludes: { 1: '/var/cache' } }),
+      [1, 2],
+    )
+
+    expect(payload.exclude_patterns_raw).toBe('')
+    expect(payload.exclude_patterns_per_agent).toEqual([
+      { agent_id: 1, raw_text: '/var/cache' },
+      // A host the operator left blank still has to be sent, or it keeps
+      // whatever it had before.
+      { agent_id: 2, raw_text: '' },
+    ])
+    expect(payload.file_change_patterns_per_agent).toBeUndefined()
+    expect(payload.commands_per_agent).toBeUndefined()
+  })
+
+  it('clears the shared file-change patterns the same way', () => {
+    const payload = agentOverridePayload(
+      overrides({
+        usePerHostFileChangePatterns: true,
+        perHostFileChangePatterns: { 3: '/etc/** warn' },
+      }),
+      [3],
+    )
+
+    expect(payload.file_change_patterns_raw).toBe('')
+    expect(payload.file_change_patterns_per_agent).toEqual([
+      { agent_id: 3, raw_text: '/etc/** warn' },
+    ])
+  })
+
+  it('drops blank per-agent commands and clears the shared hooks', () => {
+    const payload = agentOverridePayload(
+      overrides({
+        usePerAgentCmds: true,
+        perAgentPreCmds: {
+          1: [
+            { command: 'systemctl stop nginx', timeout_seconds: null },
+            { command: '  ', timeout_seconds: null },
+          ],
+        },
+        perAgentPostCmds: { 1: [{ command: 'systemctl start nginx', timeout_seconds: 30 }] },
+      }),
+      [1],
+    )
+
+    expect(payload.pre_backup_commands).toEqual([])
+    expect(payload.post_backup_commands).toEqual([])
+    expect(payload.commands_per_agent).toEqual([
+      {
+        agent_id: 1,
+        pre_backup_commands: [{ command: 'systemctl stop nginx', timeout_seconds: null }],
+        post_backup_commands: [{ command: 'systemctl start nginx', timeout_seconds: 30 }],
+      },
+    ])
   })
 })

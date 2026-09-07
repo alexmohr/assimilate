@@ -342,10 +342,6 @@ describe('ScheduleCreateView', () => {
       rate_limit_kbps: 2048,
       exclude_patterns: '*.tmp',
     })
-    await advanced.vm.$emit('update:overrides', {
-      ...(advanced.props('overrides') as ScheduleAgentOverrides),
-      usePerHostExcludes: true,
-    })
     await button(wrapper, 'Continue')!.trigger('click')
 
     await button(wrapper, 'Create schedule')!.trigger('click')
@@ -370,6 +366,69 @@ describe('ScheduleCreateView', () => {
         exclude_patterns_raw: '*.tmp',
       }),
     )
+  })
+
+  /**
+   * The bug this guards: the Advanced step offers per-host excludes,
+   * file-change patterns and commands, but `submit()` built the payload from
+   * the form alone, so a schedule created with them came out without them -
+   * silently, since the request still succeeded.
+   */
+  it('sends the Advanced step per-host overrides with the new schedule', async () => {
+    const wrapper = await open()
+    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+
+    await wrapper.find('#schedule-name').setValue('Per-host backup')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
+    await boxes[0].trigger('change')
+    await boxes[1].trigger('change')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    await button(wrapper, 'Continue')!.trigger('click')
+    await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 4 * * *')
+    await button(wrapper, 'Continue')!.trigger('click')
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    const advanced = wrapper.findComponent({ name: 'ScheduleAdvancedTab' })
+    await advanced.vm.$emit('update:overrides', {
+      ...(advanced.props('overrides') as ScheduleAgentOverrides),
+      usePerHostExcludes: true,
+      perHostExcludes: { 10: '/var/cache', 11: '/tmp' },
+      usePerAgentCmds: true,
+      perAgentPreCmds: { 10: [{ command: 'systemctl stop nginx', timeout_seconds: null }] },
+    })
+    await button(wrapper, 'Continue')!.trigger('click')
+
+    await button(wrapper, 'Create schedule')!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      '/schedules',
+      expect.objectContaining({
+        // Each override replaces its schedule-wide counterpart.
+        exclude_patterns_raw: '',
+        exclude_patterns_per_agent: [
+          { agent_id: 10, raw_text: '/var/cache' },
+          { agent_id: 11, raw_text: '/tmp' },
+        ],
+        pre_backup_commands: [],
+        post_backup_commands: [],
+        commands_per_agent: [
+          {
+            agent_id: 10,
+            pre_backup_commands: [{ command: 'systemctl stop nginx', timeout_seconds: null }],
+            post_backup_commands: [],
+          },
+          { agent_id: 11, pre_backup_commands: [], post_backup_commands: [] },
+        ],
+      }),
+    )
+    // Untouched overrides stay off rather than sending empty per-agent lists.
+    const payload = mockApiClient.post.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.file_change_patterns_per_agent).toBeUndefined()
   })
 
   it('leaves for the schedules list on cancel', async () => {

@@ -3,15 +3,14 @@
 
 import { dropBlankCommands, parseLines } from './validation'
 import type { CreateScheduleRequest } from '../api/schedules'
-import type { ScheduleFormState } from '../types/scheduleForm'
+import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
 /**
  * The part of a create/update request that comes from the schedule form
  * alone. What the two callers add on top differs - the wizard supplies the
- * hosts, targets and type a new schedule needs, the detail page's Save
- * supplies per-agent overrides - but every field below is derived from the
- * same form state, and having it written out twice is how the two screens
- * drift apart.
+ * hosts, targets and type a new schedule needs - but every field below is
+ * derived from the same form state, and having it written out twice is how
+ * the two screens drift apart.
  */
 export type ScheduleFormPayload = Omit<
   CreateScheduleRequest,
@@ -44,4 +43,51 @@ export function scheduleFormPayload(form: ScheduleFormState): ScheduleFormPayloa
     catch_up_min_lead_minutes: form.catch_up_min_lead_minutes,
     backup_sources: parseLines(form.backup_sources),
   }
+}
+
+/**
+ * The per-agent half of a create/update request, from the Advanced step's
+ * override state.
+ *
+ * Each override *replaces* its schedule-wide counterpart rather than adding
+ * to it, which is why turning one on also clears the shared field.
+ *
+ * Shared by the wizard and the detail page's Save for the reason the form
+ * payload is: the wizard offers the same Advanced step, and building this
+ * on only one of the two screens is how a schedule created with per-host
+ * excludes silently came out without them.
+ */
+export function agentOverridePayload(
+  overrides: ScheduleAgentOverrides,
+  agentIds: readonly number[],
+): Partial<ScheduleFormPayload> {
+  const payload: Partial<ScheduleFormPayload> = {}
+
+  if (overrides.usePerHostExcludes) {
+    payload.exclude_patterns_raw = ''
+    payload.exclude_patterns_per_agent = agentIds.map((agent_id) => ({
+      agent_id,
+      raw_text: overrides.perHostExcludes[agent_id] ?? '',
+    }))
+  }
+
+  if (overrides.usePerHostFileChangePatterns) {
+    payload.file_change_patterns_raw = ''
+    payload.file_change_patterns_per_agent = agentIds.map((agent_id) => ({
+      agent_id,
+      raw_text: overrides.perHostFileChangePatterns[agent_id] ?? '',
+    }))
+  }
+
+  if (overrides.usePerAgentCmds) {
+    payload.pre_backup_commands = []
+    payload.post_backup_commands = []
+    payload.commands_per_agent = agentIds.map((agent_id) => ({
+      agent_id,
+      pre_backup_commands: dropBlankCommands(overrides.perAgentPreCmds[agent_id] ?? []),
+      post_backup_commands: dropBlankCommands(overrides.perAgentPostCmds[agent_id] ?? []),
+    }))
+  }
+
+  return payload
 }

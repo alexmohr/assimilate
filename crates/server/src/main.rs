@@ -59,7 +59,8 @@ enum StartupError {
 const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
 
 /// How long shutdown waits for `AppState::background_task_tracker` (the outer
-/// scheduled-sync/post-backup-sync/post-backup-indexing/initial-import tasks, each of
+/// scheduled-sync/post-backup-sync/post-backup-indexing/initial-import tasks, plus the
+/// manual "Run Now" schedule dispatch and the archive-deletion task, each of
 /// which claims a guard synchronously before being spawned) to go idle before giving up
 /// and draining `task_registry` anyway. These tasks aren't themselves registered with
 /// `task_registry` - only the `GracefulChild` reapers a *cancelled* borg call inside them

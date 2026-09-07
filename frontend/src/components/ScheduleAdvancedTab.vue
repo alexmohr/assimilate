@@ -141,7 +141,7 @@ const refOpen = ref(false)
           <div class="pane-row-control">
             <ToggleSwitch
               v-model="overrides.usePerHostExcludes"
-              label="Configure exclude patterns per agent"
+              label="Configure per agent (exclude patterns)"
             />
           </div>
         </div>
@@ -219,7 +219,7 @@ const refOpen = ref(false)
           <div class="pane-row-control">
             <ToggleSwitch
               v-model="overrides.usePerHostFileChangePatterns"
-              label="Configure file change patterns per agent"
+              label="Configure per agent (file change patterns)"
             />
           </div>
         </div>
@@ -276,7 +276,7 @@ const refOpen = ref(false)
           <div class="pane-row-control">
             <ToggleSwitch
               v-model="overrides.usePerAgentCmds"
-              label="Configure commands per agent"
+              label="Configure per agent (commands)"
             />
           </div>
         </div>

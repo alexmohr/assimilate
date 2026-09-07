@@ -373,17 +373,17 @@ protection themselves.
 
 ### Auto-merge (deterministic, not agent-driven)
 
-**Currently disabled by default**, gated behind the `AUTO_MERGE_ENABLED`
-repository (or environment) Actions variable — set it to the literal
-string `true` (Settings → Secrets and variables → Actions → Variables) to
-turn it on. It defaults off because merging code with no human clicking a
-button deserves the pipeline having actually earned that trust first, not
-because the mechanism itself is provisional — every gate described below
+**On by default.** A PR that reaches `ready to merge` has already cleared
+every deterministic gate the pipeline computes *and* carries a genuine,
+provenance-checked approval, so it is squash-merged without waiting for a
+human to click the button. The kill switch is the `AUTO_MERGE_ENABLED`
+repository (or environment) Actions variable: set it to the literal string
+`false` (Settings → Secrets and variables → Actions → Variables) to stop
+merging; any other value, including the variable being unset, leaves it on.
+The switch only decides whether the merge call happens — every gate below
 (ready to merge, a genuine approval, the label-provenance check) runs and
-logs its decision regardless of the flag; turning it on later is purely a
-config change; no code change needed. See
-[#390](https://github.com/alexmohr/assimilate/issues/390) for what should
-be true before flipping it.
+logs its decision either way, so flipping it is purely a config change; no
+code change needed.
 
 The same `sync-pr-labels.js` run that computes `ready to merge` also
 squash-merges the PR itself (`--delete-branch` for same-repo branches) the

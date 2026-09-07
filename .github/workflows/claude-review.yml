@@ -792,8 +792,9 @@ jobs:
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
               selfCheckNames: ["Check if a review is actually needed", "Review PR"],
               // Same repo/environment variable pr-status-labels.yml's own
-              // sync call reads - one on/off switch for the whole
-              // auto-merge feature regardless of which trigger re-syncs
-              // first. See skills/review/SKILL.md's "Auto-merge" section.
-              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" === "true",
+              // sync call reads, with the same polarity - one off switch for
+              // the whole auto-merge feature regardless of which trigger
+              // re-syncs first, on unless the variable is the literal string
+              // "false". See skills/review/SKILL.md's "Auto-merge" section.
+              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" !== "false",
             });

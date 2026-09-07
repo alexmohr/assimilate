@@ -415,13 +415,16 @@ module.exports = async ({
   prNumber,
   eventAction,
   selfCheckNames = [],
-  // Off by default - flip the AUTO_MERGE_ENABLED repo/environment variable
-  // to `true` once the pipeline has earned enough trust to merge PRs with
-  // no human clicking the button. Every gate below (ready to merge, a
-  // genuine approval, the label-provenance check) still runs and gets
-  // logged either way, so turning this on later is a config change, not a
-  // code change - see the "Auto-merge" section in skills/review/SKILL.md.
-  autoMergeEnabled = false,
+  // On by default - a PR that reaches `ready to merge` has already cleared
+  // every deterministic gate this script computes *and* carries a genuine,
+  // provenance-checked approval (see hasGenuineApproval below), so there's
+  // nothing left for a human to add by clicking the button. Set the
+  // AUTO_MERGE_ENABLED repo/environment variable to the literal string
+  // `false` to turn the merge itself back off; every gate still runs and
+  // gets logged either way, so the switch only decides whether the merge
+  // call happens, never how the verdict is computed. See the "Auto-merge"
+  // section in skills/review/SKILL.md.
+  autoMergeEnabled = true,
   // Off by default - only pr-status-labels.yml's own call site turns this
   // on. See the "notify claude-review.yml" comment below for why this can't
   // just always be on: claude-review.yml calls this same function on itself
@@ -799,7 +802,7 @@ module.exports = async ({
   if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
     if (!autoMergeEnabled) {
       core.info(
-        `PR #${prNumber}: ready to merge with a genuine approval, but AUTO_MERGE_ENABLED is off - leaving it for a human to merge.`,
+        `PR #${prNumber}: ready to merge with a genuine approval, but AUTO_MERGE_ENABLED is set to "false" - leaving it for a human to merge.`,
       );
     } else {
       await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);

@@ -32,6 +32,18 @@ const editing = ref(false)
 const saving = ref(false)
 const error = ref<string | null>(null)
 
+/**
+ * See `AgentPowerCard`: an address missing while waking or shutting down is
+ * on has been redacted for this viewer, not left unconfigured -
+ * `repos_wake_requires_mac` and `repos_shutdown_requires_mac` guarantee one
+ * exists.
+ */
+const wakeSecretsHidden = computed(
+  () =>
+    props.repo.power.wake_mac_address === null &&
+    (props.repo.power.wake_enabled || props.repo.power.shutdown_after_backup),
+)
+
 const wakeEnabled = ref(false)
 const wakeMac = ref('')
 const wakeBroadcast = ref('')
@@ -121,9 +133,13 @@ async function save(): Promise<void> {
         <dd>{{ repo.power.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
         <template v-if="showWakeDetails">
           <dt>MAC address</dt>
-          <dd class="mono">{{ repo.power.wake_mac_address ?? 'Not set' }}</dd>
+          <dd class="mono">
+            {{ repo.power.wake_mac_address ?? (wakeSecretsHidden ? 'Hidden' : 'Not set') }}
+          </dd>
           <dt>Broadcast address</dt>
-          <dd class="mono">{{ repo.power.wake_broadcast_address ?? 'Default' }}</dd>
+          <dd class="mono">
+            {{ repo.power.wake_broadcast_address ?? (wakeSecretsHidden ? 'Hidden' : 'Default') }}
+          </dd>
           <dt>Wait for host</dt>
           <dd>{{ repo.power.wake_timeout_seconds }} seconds</dd>
           <dt>Shut down host after backup</dt>

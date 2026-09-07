@@ -66,6 +66,27 @@ describe('RepoPowerCard', () => {
     expect(wrapper.text()).not.toContain('MAC address')
   })
 
+  // See AgentPowerCard.test.ts: an address missing while a shutdown is on has
+  // been redacted for this viewer, not left unconfigured -
+  // `repos_shutdown_requires_mac` guarantees one exists.
+  it('says a redacted address is hidden rather than absent', () => {
+    const text = mount({
+      repo: {
+        ...REPO,
+        power: {
+          ...REPO.power,
+          wake_enabled: false,
+          wake_mac_address: null,
+          wake_broadcast_address: null,
+          shutdown_after_backup: true,
+        },
+      },
+    }).text()
+
+    expect(text).toContain('Hidden')
+    expect(text).not.toContain('Not set')
+  })
+
   it('hides the Edit button for a non-admin', () => {
     expect(mount({ isAdmin: false }).findAll('button')).toHaveLength(0)
   })

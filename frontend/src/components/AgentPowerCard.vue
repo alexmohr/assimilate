@@ -74,6 +74,23 @@ const showWakeDetails = computed(
     props.agent.power.wake.shutdown_after_backup,
 )
 
+/**
+ * How to render a MAC or broadcast address that is not there.
+ *
+ * `redact_wake_secrets` nulls both for a viewer below operator, which is
+ * indistinguishable from "none configured" by value alone - but not by
+ * context: `agents_wake_requires_mac` and `agents_shutdown_requires_mac`
+ * both guarantee a MAC exists whenever waking or shutting down is on. So a
+ * host that wakes or shuts down while showing no address is showing a
+ * redacted one, and saying "Not set" there would be a lie that reads as a
+ * broken host.
+ */
+const wakeSecretsHidden = computed(
+  () =>
+    props.agent.power.wake.wake_mac_address === null &&
+    (props.agent.power.wake.wake_enabled || props.agent.power.wake.shutdown_after_backup),
+)
+
 const wakeEnabled = ref(false)
 const wakeMac = ref('')
 const wakeBroadcast = ref('')
@@ -186,9 +203,16 @@ async function save(): Promise<void> {
           <dd>{{ agent.power.wake.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
           <template v-if="showWakeDetails">
             <dt>MAC address</dt>
-            <dd class="mono">{{ agent.power.wake.wake_mac_address ?? 'Not set' }}</dd>
+            <dd class="mono">
+              {{ agent.power.wake.wake_mac_address ?? (wakeSecretsHidden ? 'Hidden' : 'Not set') }}
+            </dd>
             <dt>Broadcast address</dt>
-            <dd class="mono">{{ agent.power.wake.wake_broadcast_address ?? 'Default' }}</dd>
+            <dd class="mono">
+              {{
+                agent.power.wake.wake_broadcast_address ??
+                (wakeSecretsHidden ? 'Hidden' : 'Default')
+              }}
+            </dd>
             <dt>Wait for host</dt>
             <dd>{{ agent.power.wake.wake_timeout_seconds }} seconds</dd>
             <dt>Shut down host after backup</dt>

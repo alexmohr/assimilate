@@ -168,6 +168,53 @@ describe('AgentPowerCard', () => {
     expect(wrapper.find('#power-ssh-host').exists()).toBe(true)
   })
 
+  // `redact_wake_secrets` nulls the MAC and broadcast address below
+  // operator, which by value alone is indistinguishable from "none
+  // configured". `agents_shutdown_requires_mac` says otherwise: a host that
+  // shuts down has a MAC, so "Not set" there would be a lie that reads as a
+  // broken host.
+  it('says a redacted address is hidden rather than absent', () => {
+    const text = mount({
+      agent: {
+        ...AGENT,
+        power: {
+          ...AGENT.power,
+          wake: {
+            ...AGENT.power.wake,
+            wake_enabled: false,
+            wake_mac_address: null,
+            wake_broadcast_address: null,
+            shutdown_after_backup: true,
+          },
+        },
+      },
+    }).text()
+
+    expect(text).toContain('Hidden')
+    expect(text).not.toContain('Not set')
+  })
+
+  // The same absent address on a host that neither wakes nor shuts down
+  // really is unconfigured, and must not claim to be hidden.
+  it('says an address really is unset when nothing needs one', () => {
+    const wrapper = mount({
+      agent: {
+        ...AGENT,
+        power: {
+          ...AGENT.power,
+          wake: {
+            ...AGENT.power.wake,
+            wake_enabled: false,
+            wake_mac_address: null,
+            shutdown_after_backup: false,
+          },
+        },
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('Hidden')
+  })
+
   it('hides the SSH host field when neither shutdown nor start-agent needs it', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)

@@ -4,13 +4,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { cronToHuman } from '../utils/cron'
-import { scheduleDisabledLabel } from '../utils/scheduleStatus'
+import { catchUpPendingTitle, scheduleDisabledLabel } from '../utils/scheduleStatus'
 import EntityStatusBadges, { type EntityIssue } from './EntityStatusBadges.vue'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     schedule: ScheduleRow
     issues: EntityIssue[]
@@ -30,13 +29,6 @@ const props = withDefaults(
 )
 
 defineEmits<{ select: [] }>()
-
-const catchUpPendingTitle = computed(() => {
-  const count = props.schedule.catch_up_pending_count
-  return count === 1
-    ? 'One host missed a run while it was offline; it runs when that host reconnects'
-    : `${count} hosts missed a run while they were offline; each runs when that host reconnects`
-})
 
 function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
@@ -85,7 +77,7 @@ function scheduleTypeLabel(t: ScheduleType): string {
       <span
         v-if="schedule.catch_up_pending_count > 0"
         class="badge badge--info"
-        :title="catchUpPendingTitle"
+        :title="catchUpPendingTitle(schedule.catch_up_pending_count)"
       >
         <span class="badge-dot" />
         Catch-up pending

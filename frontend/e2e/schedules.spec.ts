@@ -404,6 +404,15 @@ test.describe('Schedules management', () => {
     await expect(card.locator('.entity-issue-chip', { hasText: 'missed' })).toHaveCount(0)
   })
 
+  // The seed's config export/import round-trip leaves a second copy of every
+  // schedule, so the demo's name matches two cards. Only the original carries a
+  // pending marker - markers are per-target state, not configuration, so the
+  // imported copy has none - which makes the badge itself the unambiguous handle
+  // on the card these two tests mean.
+  function catchUpPendingCard(page: Page): Locator {
+    return page.locator('.entity-card', { hasText: 'Catch-up pending' })
+  }
+
   test('a schedule waiting on a host to come back shows a catch-up pending badge', async ({
     page,
   }) => {
@@ -411,8 +420,9 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card', { hasText: 'Catch-up on reconnect demo' })
-    await expect(card.getByText('Catch-up pending')).toBeVisible()
+    const card = catchUpPendingCard(page)
+    await expect(card).toHaveCount(1)
+    await expect(card.getByText('Catch-up on reconnect demo')).toBeVisible()
   })
 
   test('the schedule Overview names the host a catch-up is waiting on', async ({ page }) => {
@@ -420,7 +430,7 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    await page.locator('.entity-card', { hasText: 'Catch-up on reconnect demo' }).click()
+    await catchUpPendingCard(page).click()
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByText(/On, if the next run is at least 2 hours away/)).toBeVisible()

@@ -249,6 +249,41 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).toContain('media-weekly')
   })
 
+  /// The schedules list renders its own card markup rather than ScheduleCard,
+  /// so the badge has to be asserted here too - it was missing from this view
+  /// while the repository tab's card already had it.
+  it('flags a schedule with a run waiting on a host to come back', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') {
+        return Promise.resolve({
+          data: mockSchedules.map((s) => ({
+            ...s,
+            catch_up_pending_count: s.id === 1 ? 1 : 0,
+          })),
+        })
+      }
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const badges = wrapper.findAll('.badge--info')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].text()).toContain('Catch-up pending')
+    expect(badges[0].attributes('title')).toContain('One host missed a run')
+  })
+
+  it('shows no catch-up badge when nothing is pending', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Catch-up pending')
+  })
+
   it('shows the agent count on the schedule card without the raw agent list', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)

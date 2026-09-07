@@ -29,3 +29,14 @@ export function scheduleDisabledLabel(
   }
   return 'Disabled'
 }
+
+/**
+ * Tooltip for the "Catch-up pending" badge: how many of a schedule's hosts
+ * missed a run that will follow when they reconnect. Shared by the schedules
+ * list and the repository tab's card so the two never word it differently.
+ */
+export function catchUpPendingTitle(count: number): string {
+  return count === 1
+    ? 'One host missed a run while it was offline; it runs when that host reconnects'
+    : `${count} hosts missed a run while they were offline; each runs when that host reconnects`
+}

@@ -686,6 +686,10 @@ async fn import_schedule(
     // A newer one carries the full list; a repository it names that this
     // server does not have is warned about and skipped rather than failing
     // the whole import.
+    //
+    // Safe to do in a second transaction: import never sets `next_run_at`, and
+    // `list_due_schedules` skips a schedule without one, so nothing dispatches
+    // an imported schedule while its target list is still the seeded primary.
     let (resolved_targets, mut target_warnings) =
         resolve_imported_repo_targets(sched, repo_name_to_id);
     result.warnings.append(&mut target_warnings);

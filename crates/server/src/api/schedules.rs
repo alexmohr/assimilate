@@ -509,6 +509,13 @@ pub async fn create_schedule(
 
     // `insert_schedule` seeds the primary target; anything beyond a single
     // required repository replaces that seed with the requested list.
+    //
+    // Two transactions rather than one, which is safe only because a schedule
+    // is not dispatchable until `refresh_next_run` below sets `next_run_at` -
+    // `list_due_schedules` requires it to be non-null, and it is written last,
+    // after both the target list and the agent targets. Keep it last: moving
+    // it earlier would open a window where a tick dispatches a run that
+    // silently skips every secondary target.
     if req.repo_targets.is_some() {
         db::replace_schedule_repos(&state.pool, schedule.id, &repo_targets).await?;
     }

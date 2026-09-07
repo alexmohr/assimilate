@@ -7485,6 +7485,33 @@ async fn update_schedule_repo_replaces_the_whole_target_list(pool: PgPool) {
     );
 }
 
+/// Why `create_schedule` may seed the primary target and replace the list in
+/// two transactions: a schedule is not dispatchable until something sets
+/// `next_run_at`, which the create handler does last, after the target list and
+/// the agent targets are both in place. Without this guard the window between
+/// the seed and the replacement would dispatch a run that silently skipped
+/// every secondary target.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_schedule_is_not_due_until_its_next_run_is_set(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    assert!(schedule.enabled, "the fixture must be an enabled schedule");
+    assert!(
+        schedule.next_run_at.is_none(),
+        "insert_schedule must not schedule a run by itself"
+    );
+
+    let now = Utc::now();
+    assert!(
+        db::list_due_schedules(&pool, now).await.unwrap().is_empty(),
+        "a schedule with agent targets and a seeded repository target is still \
+         not dispatchable before next_run_at is set"
+    );
+
+    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+    assert_eq!(db::list_due_schedules(&pool, now).await.unwrap().len(), 1);
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn due_schedules_yield_one_row_per_target_repository(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;

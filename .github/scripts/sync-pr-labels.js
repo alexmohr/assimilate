@@ -337,6 +337,43 @@ async function claudeApprovedIsGenuine(github, owner, repo, prNumber) {
   return Boolean(latest.actor) && latest.actor.login === TRUSTED_AUTOMATION_LOGIN;
 }
 
+// The two sets parseAutoMergeEnabled below recognises. Both are needed: the
+// kill switch is documented as `false`, but the variable's previous meaning
+// was "set me to `true` to turn auto-merge on", so a repo that already set
+// `true` under the old polarity must keep meaning "on" rather than silently
+// flipping to off the moment this lands.
+const AUTO_MERGE_ON_VALUES = new Set(["true", "1", "yes", "on", "enabled"]);
+const AUTO_MERGE_OFF_VALUES = new Set(["false", "0", "no", "off", "disabled"]);
+
+// Parses the AUTO_MERGE_ENABLED repo/environment variable into the boolean
+// `autoMergeEnabled` below - the one place any of this is decided, so the
+// two workflow call sites can't drift apart on it.
+//
+// Unset is the normal case and means on: a workflow expression renders a
+// variable that was never set as the empty string, and auto-merge is the
+// documented default (see skills/review/SKILL.md).
+//
+// Anything set but unrecognised fails *closed*, with a warning. A bare
+// `!== "false"` would instead fail open: an operator reaching for the
+// documented kill switch and typing `False`, `FALSE`, ` false` or `no`
+// would leave auto-merge running with nothing said anywhere - the one
+// direction where guessing wrong merges code unattended. Trimming and
+// lower-casing means the near-misses above are simply understood; the
+// warning is for whatever is left.
+function parseAutoMergeEnabled(rawValue, core) {
+  const value = String(rawValue ?? "")
+    .trim()
+    .toLowerCase();
+  if (value === "") return true;
+  if (AUTO_MERGE_ON_VALUES.has(value)) return true;
+  if (AUTO_MERGE_OFF_VALUES.has(value)) return false;
+  core.warning(
+    `AUTO_MERGE_ENABLED is set to an unrecognised value ("${value}") - treating it as off. ` +
+      `Set it to "false" to disable auto-merge, or unset it to use the default (enabled).`,
+  );
+  return false;
+}
+
 // Squash-merges `pr` and deletes its branch (same-repo PRs only - a fork's
 // branch can't be deleted by this token, mirroring `gh pr merge
 // --delete-branch`'s own behavior). Called only once every deterministic
@@ -418,12 +455,14 @@ module.exports = async ({
   // On by default - a PR that reaches `ready to merge` has already cleared
   // every deterministic gate this script computes *and* carries a genuine,
   // provenance-checked approval (see hasGenuineApproval below), so there's
-  // nothing left for a human to add by clicking the button. Set the
-  // AUTO_MERGE_ENABLED repo/environment variable to the literal string
-  // `false` to turn the merge itself back off; every gate still runs and
-  // gets logged either way, so the switch only decides whether the merge
-  // call happens, never how the verdict is computed. See the "Auto-merge"
-  // section in skills/review/SKILL.md.
+  // nothing left for a human to add by clicking the button. Every gate still
+  // runs and gets logged whichever way this lands, so it only decides
+  // whether the merge call happens, never how the verdict is computed.
+  //
+  // A boolean, never the raw variable: both workflow call sites pass
+  // parseAutoMergeEnabled(process.env.AUTO_MERGE_ENABLED, core), which is
+  // where the repo/environment variable is turned into this. See the
+  // "Auto-merge" section in skills/review/SKILL.md.
   autoMergeEnabled = true,
   // Off by default - only pr-status-labels.yml's own call site turns this
   // on. See the "notify claude-review.yml" comment below for why this can't
@@ -802,7 +841,7 @@ module.exports = async ({
   if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
     if (!autoMergeEnabled) {
       core.info(
-        `PR #${prNumber}: ready to merge with a genuine approval, but AUTO_MERGE_ENABLED is set to "false" - leaving it for a human to merge.`,
+        `PR #${prNumber}: ready to merge with a genuine approval, but auto-merge is switched off - leaving it for a human to merge.`,
       );
     } else {
       await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);
@@ -822,6 +861,10 @@ module.exports.DUPLICATE_CODE_LABEL = DUPLICATE_CODE_LABEL;
 module.exports.COVERAGE_LABEL = COVERAGE_LABEL;
 module.exports.CLAUDE_REVIEW_FAILED_LABEL = CLAUDE_REVIEW_FAILED_LABEL;
 module.exports.ensureLabelExists = ensureLabelExists;
+// Exported so both workflow call sites turn the AUTO_MERGE_ENABLED variable
+// into the `autoMergeEnabled` boolean the same way - the parsing lives here,
+// not duplicated in two `script:` blocks that could drift apart.
+module.exports.parseAutoMergeEnabled = parseAutoMergeEnabled;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,
 // circular check run (its conclusion depends on the review having already
 // happened) from the "wait for every other check on this commit" gate.

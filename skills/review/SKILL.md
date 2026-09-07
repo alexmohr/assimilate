@@ -379,11 +379,21 @@ provenance-checked approval, so it is squash-merged without waiting for a
 human to click the button. The kill switch is the `AUTO_MERGE_ENABLED`
 repository (or environment) Actions variable: set it to the literal string
 `false` (Settings → Secrets and variables → Actions → Variables) to stop
-merging; any other value, including the variable being unset, leaves it on.
-The switch only decides whether the merge call happens — every gate below
-(ready to merge, a genuine approval, the label-provenance check) runs and
-logs its decision either way, so flipping it is purely a config change; no
-code change needed.
+merging. The value is trimmed and compared case-insensitively, so `False`,
+`FALSE`, `no`, `off` and `0` all disable it too; an unset variable means on,
+and anything set that isn't recognised is treated as **off** with a warning
+in the job log — a kill switch that fails open on a typo is the one direction
+worth not guessing in. The switch only decides whether the merge call
+happens — every gate below (ready to merge, a genuine approval, the
+label-provenance check) runs and logs its decision either way, so flipping it
+is purely a config change; no code change needed.
+
+`sync-pr-labels.js` exports `parseAutoMergeEnabled`, and both workflow call
+sites (`pr-status-labels.yml`'s sync and `claude-review.yml`'s post-review
+re-sync) read the variable through it, out of the step environment rather
+than interpolated into the `script:` body. `pre-review-checks.js`'s own sync
+call pins auto-merge off explicitly: it runs *before* the review it gates, so
+it must never be the thing that merges.
 
 The same `sync-pr-labels.js` run that computes `ready to merge` also
 squash-merges the PR itself (`--delete-branch` for same-repo branches) the

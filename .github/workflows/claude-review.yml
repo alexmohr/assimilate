@@ -775,6 +775,10 @@ jobs:
       - name: Re-sync labels after Claude review
         if: steps.precheck.outputs.run_claude == 'true'
         uses: actions/github-script@v7
+        env:
+          # Through the environment, not interpolated into the script body -
+          # same reasoning as pr-status-labels.yml's own sync step.
+          AUTO_MERGE_ENABLED: ${{ vars.AUTO_MERGE_ENABLED }}
         with:
           script: |
             const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
@@ -791,10 +795,9 @@ jobs:
               core,
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
               selfCheckNames: ["Check if a review is actually needed", "Review PR"],
-              // Same repo/environment variable pr-status-labels.yml's own
-              // sync call reads, with the same polarity - one off switch for
-              // the whole auto-merge feature regardless of which trigger
-              // re-syncs first, on unless the variable is the literal string
-              // "false". See skills/review/SKILL.md's "Auto-merge" section.
-              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" !== "false",
+              // Same variable and the same parser pr-status-labels.yml's own
+              // sync call uses - one off switch for the whole auto-merge
+              // feature, read identically regardless of which trigger
+              // re-syncs first. See skills/review/SKILL.md's "Auto-merge".
+              autoMergeEnabled: sync.parseAutoMergeEnabled(process.env.AUTO_MERGE_ENABLED, core),
             });

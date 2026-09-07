@@ -84,6 +84,13 @@ jobs:
       - name: Sync labels
         if: steps.pr.outputs.number != ''
         uses: actions/github-script@v7
+        env:
+          # Read through the environment rather than interpolated into the
+          # script body: `"${{ vars.X }}"` would splice the variable's text
+          # straight into JS source, so a value containing a quote could
+          # break (or rewrite) this step. parseAutoMergeEnabled turns it
+          # into the boolean - see skills/review/SKILL.md's "Auto-merge".
+          AUTO_MERGE_ENABLED: ${{ vars.AUTO_MERGE_ENABLED }}
         with:
           script: |
             const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
@@ -98,12 +105,11 @@ jobs:
               prNumber: Number("${{ steps.pr.outputs.number }}"),
               eventAction: context.payload.action,
               selfCheckNames: ["Sync PR status labels"],
-              // On unless explicitly turned off (Settings -> Secrets and
-              // variables -> Actions -> Variables -> AUTO_MERGE_ENABLED =
-              // "false"). An unset variable renders as the empty string, so
-              // the default is "merge" - see skills/review/SKILL.md's
-              // "Auto-merge" section.
-              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" !== "false",
+              // On unless the variable is explicitly set to an off value
+              // (Settings -> Secrets and variables -> Actions -> Variables
+              // -> AUTO_MERGE_ENABLED = "false"); anything set but
+              // unrecognised is treated as off, with a warning.
+              autoMergeEnabled: sync.parseAutoMergeEnabled(process.env.AUTO_MERGE_ENABLED, core),
               // This is the one call site allowed to notify claude-review.yml
               // (see the comment on sync-pr-labels.js's dispatchOnNeedsReview
               // param) - this workflow only ever runs in response to a real,

@@ -91,14 +91,19 @@ watch(startAgentEnabled, (enabled) => {
 })
 
 // Shutting down needs an SSH destination just as much as starting the agent
-// does - a wake-only host (wake + shutdown enabled, agent already running as
-// a persistent service) never sets startAgentEnabled, but still needs
+// does - a wake-only host (shutdown enabled, agent already running as a
+// persistent service) never sets startAgentEnabled, but still needs
 // somewhere to send `shutdown -h now`. The field lives in the "Agent
 // process" section for layout reasons, but its visibility follows both
 // toggles that can need it, not just start-agent.
-const needsSshHost = computed(
-  () => startAgentEnabled.value || (wakeEnabled.value && shutdownAfterBackup.value),
-)
+//
+// This mirrors `update_agent_power`'s own rule exactly - start-agent OR
+// shutdown, independent of this host's wake toggle. Since a shutdown now
+// only requires a MAC address, a host whose own toggle is off can enable one
+// (a schedule's override wakes it), and gating the field on wakeEnabled too
+// would leave the server rejecting the save with the field that fixes it
+// unrendered.
+const needsSshHost = computed(() => startAgentEnabled.value || shutdownAfterBackup.value)
 
 function startEdit(): void {
   const power = props.agent.power

@@ -151,6 +151,23 @@ describe('AgentPowerCard', () => {
     expect(wrapper.find('#power-service-name').exists()).toBe(false)
   })
 
+  // Regression: a shutdown only needs a MAC address now, not this host's own
+  // wake toggle, so a host whose toggle is off (woken by one schedule's
+  // override) can legitimately enable one. `update_agent_power` then demands
+  // an SSH host - if the field stayed gated on wakeEnabled too, the save
+  // would be rejected with the field that fixes it never rendered.
+  it('shows the SSH host field for a shutdown on a host whose own wake is off', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
+    await toggles[0]!.vm.$emit('update:modelValue', false) // wakeEnabled
+    await toggles[2]!.vm.$emit('update:modelValue', false) // startAgentEnabled
+    await flushPromises()
+
+    expect(wrapper.find('#power-ssh-host').exists()).toBe(true)
+  })
+
   it('hides the SSH host field when neither shutdown nor start-agent needs it', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)

@@ -280,9 +280,9 @@ test.describe('Schedules management', () => {
     await expect(cards.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
     await expect(cards.filter({ hasText: 'database-hourly' }).first()).toBeVisible()
 
-    // Every demo repository lives on localhost, so a host: term keeps the list
-    // whole - and an agent hostname scoped to host: matches nothing, which is
-    // what makes the two fields distinct.
+    // database-hourly and media-weekly live on localhost, so a host: term
+    // keeps most of the list - and an agent hostname scoped to host: matches
+    // nothing, which is what makes the two fields distinct.
     await search.fill('host:localhost')
     await expect(cards.first()).toBeVisible()
 

@@ -124,11 +124,19 @@ api PUT "/api/agents/media-store-01" '{
 }' > /dev/null
 
 echo "==> Registering repositories..."
+# ssh_host is "demo" (this container's own Compose service name), not
+# "localhost" like the repos below: server-daily is the one repo a real
+# schedule dispatch (not just seed-time archive creation) runs against - see
+# the "Run now"/cancel-backup e2e specs. Every agent container already
+# reaches this host at "demo" for its own seed-time archives (start-agent.sh
+# hardcodes REPO_HOST=demo), but "localhost" from an agent's own network
+# namespace is itself, not this server - so a live dispatch against a repo
+# seeded with ssh_host=localhost fails instantly with connection refused.
 REPO_DAILY_ID=$(api POST "/api/repos" "{
     \"name\": \"server-daily\",
     \"repo_path\": \"/backup/repos/server-daily\",
     \"ssh_user\": \"borg\",
-    \"ssh_host\": \"localhost\",
+    \"ssh_host\": \"demo\",
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"

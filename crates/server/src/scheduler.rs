@@ -2649,6 +2649,7 @@ esac
     /// allowed to move the schedule's own failure bookkeeping: an offsite copy
     /// nobody promised must not push `next_run_at` back or count towards the
     /// auto-disable threshold.
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_does_not_record_a_failure_for_a_best_effort_target(pool: sqlx::PgPool) {
         let key = tick_test_key();
@@ -2697,6 +2698,7 @@ esac
 
     /// The other half of the same rule: a required target failing in the same
     /// run still counts, and an earlier best-effort failure doesn't hide it.
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn tick_records_a_failure_for_a_required_target_after_a_best_effort_one(
         pool: sqlx::PgPool,

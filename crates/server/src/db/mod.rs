@@ -2172,6 +2172,14 @@ pub async fn update_repo_and_set_relocation_pending(
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    // One transaction, for the same reason `replace_schedule_repos` uses one:
+    // between the delete and the two repair statements below, `schedules` and
+    // `schedule_repos` disagree - schedules point at a repository that is gone,
+    // and a schedule can be left with only best-effort targets. A tick or a
+    // config push observing that window would dispatch from a half-repaired
+    // state, and a failure part-way through would leave it that way for good.
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
     // Clears the auto-disable bookkeeping the same way set_schedule_enabled does for
     // any other direct `enabled` write - otherwise a schedule auto-disabled for an
     // unreachable agent keeps auto_disabled_by_agent_id pointing at that agent even
@@ -2188,12 +2196,12 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
          schedule_repos GROUP BY schedule_id HAVING bool_and(repo_id = $1))",
         repo_id
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
 
     let result = sqlx::query!("DELETE FROM repos WHERE id = $1", repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
     if result.rows_affected() == 0 {
@@ -2210,7 +2218,7 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
          execution_order, repo_id) AS first_target WHERE s.id = first_target.schedule_id AND \
          s.repo_id IS NULL",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
 
@@ -2223,11 +2231,11 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
          GROUP BY schedule_id HAVING bool_and(NOT required)) ORDER BY schedule_id, \
          execution_order, repo_id)",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
 
-    Ok(())
+    tx.commit().await.map_err(ApiError::Database)
 }
 
 /// # Errors
@@ -2611,6 +2619,12 @@ pub async fn insert_schedule(
     params: &ScheduleParams<'_>,
     owner_id: Option<i64>,
 ) -> Result<ScheduleRow, ApiError> {
+    // One transaction: `list_due_schedules` and `config_assembler` dispatch
+    // strictly off `schedule_repos`, so a schedules row that lost its target
+    // row to a failed or cancelled second statement would silently never run
+    // and never reach an agent's config, with no error surfaced to anyone.
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
     let schedule = sqlx::query_as!(
         ScheduleRow,
         "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, \
@@ -2658,7 +2672,7 @@ pub async fn insert_schedule(
         params.catch_up_min_lead_minutes,
         params.wake_override.to_string(),
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
 
@@ -2672,9 +2686,11 @@ pub async fn insert_schedule(
         schedule.id,
         repo_id,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)?;
 
     Ok(schedule)
 }

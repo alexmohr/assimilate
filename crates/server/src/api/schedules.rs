@@ -579,41 +579,67 @@ pub async fn get_schedule(
     Ok(Json(schedule))
 }
 
+/// What an update leaves a schedule pointed at, worked out once so the
+/// permission check, the reachability check and the write all agree.
+struct RepoTargetPlan {
+    /// The replacement target list, or `None` when the request did not send one.
+    requested: Option<Vec<(i64, bool)>>,
+    /// The repository `schedules.repo_id` ends up holding.
+    effective_repo_id: Option<i64>,
+    /// The repositories the schedule was already writing to.
+    existing_targets: Vec<i64>,
+}
+
 /// Every repository an enabled schedule is about to write to has to be
 /// reachable over SSH, not just the primary one - a second target that cannot
 /// be reached would only surface as a failed run hours later.
 async fn check_targets_reachable(
     pool: &PgPool,
-    requested: Option<&[(i64, bool)]>,
-    effective_repo_id: Option<i64>,
+    plan: &RepoTargetPlan,
+    existing_primary: Option<i64>,
 ) -> Result<(), ApiError> {
-    let Some(effective_repo_id) = effective_repo_id else {
+    if plan.effective_repo_id.is_none() {
         return Err(ApiError::BadRequest(
             "cannot enable a schedule with no repository assigned".into(),
         ));
-    };
-    match requested {
-        Some(targets) => {
-            for (repo_id, _) in targets {
-                check_ssh_reachability(pool, *repo_id).await?;
-            }
-        }
-        None => check_ssh_reachability(pool, effective_repo_id).await?,
+    }
+    for repo_id in resulting_repo_targets(plan, existing_primary) {
+        check_ssh_reachability(pool, repo_id).await?;
     }
     Ok(())
+}
+
+/// The repositories the schedule writes to once the update lands.
+///
+/// A request carrying `repo_targets` replaces the list outright, and a legacy
+/// bare-`repo_id` update that moves the primary collapses the schedule onto
+/// that one repository (`db::update_schedule_repo`). Anything else - a rename,
+/// a re-time, a plain re-enable - keeps the list the schedule already has, so
+/// re-enabling a multi-target schedule has to reach its secondary targets too,
+/// not just the primary.
+fn resulting_repo_targets(plan: &RepoTargetPlan, existing_primary: Option<i64>) -> Vec<i64> {
+    if let Some(targets) = plan.requested.as_deref() {
+        return targets.iter().map(|(repo_id, _)| *repo_id).collect();
+    }
+    let Some(repo_id) = plan.effective_repo_id else {
+        return Vec::new();
+    };
+    if plan.effective_repo_id != existing_primary || plan.existing_targets.is_empty() {
+        return vec![repo_id];
+    }
+    plan.existing_targets.clone()
 }
 
 /// Works out which repositories an update leaves the schedule writing to, and
 /// checks the caller may point it at each one it did not already own.
 ///
-/// Returns the replacement target list (`None` when the request did not send
-/// one) and the repository `schedules.repo_id` will end up holding.
+/// Returns the plan the rest of the update works from.
 async fn authorize_repo_targets(
     state: &AppState,
     auth: &AuthUser,
     req: &UpdateScheduleRequest,
     existing: &db::ScheduleRow,
-) -> Result<(Option<Vec<(i64, bool)>>, Option<i64>), ApiError> {
+) -> Result<RepoTargetPlan, ApiError> {
     let requested = req
         .repo_targets
         .as_deref()
@@ -637,7 +663,11 @@ async fn authorize_repo_targets(
     ) {
         check_repo_permission(&state.pool, auth, repo_id, |p| p.can_modify_schedules).await?;
     }
-    Ok((requested, effective_repo_id))
+    Ok(RepoTargetPlan {
+        requested,
+        effective_repo_id,
+        existing_targets,
+    })
 }
 
 /// The repositories an update points the schedule at that it was not already
@@ -711,8 +741,7 @@ pub async fn update_schedule(
             "only admins can edit orphaned schedules".into(),
         ));
     }
-    let (requested_repo_targets, effective_repo_id) =
-        authorize_repo_targets(&state, &auth, &req, &existing).await?;
+    let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let exclude_patterns_raw = req
@@ -721,12 +750,7 @@ pub async fn update_schedule(
         .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        check_targets_reachable(
-            &state.pool,
-            requested_repo_targets.as_deref(),
-            effective_repo_id,
-        )
-        .await?;
+        check_targets_reachable(&state.pool, &target_plan, existing.repo_id).await?;
     }
 
     let pre_backup_commands = req
@@ -795,11 +819,11 @@ pub async fn update_schedule(
         on_failure: &on_failure,
     };
 
-    match &requested_repo_targets {
+    match &target_plan.requested {
         Some(targets) => db::replace_schedule_repos(&state.pool, id, targets).await?,
         None => {
-            if effective_repo_id != existing.repo_id
-                && let Some(new_rid) = effective_repo_id
+            if target_plan.effective_repo_id != existing.repo_id
+                && let Some(new_rid) = target_plan.effective_repo_id
             {
                 db::update_schedule_repo(&state.pool, id, new_rid).await?;
             }
@@ -2036,6 +2060,61 @@ mod tests {
         assert_eq!(
             newly_targeted_repos(Some(&requested), Some(1), &[], Some(1)),
             vec![4],
+        );
+    }
+
+    fn plan(
+        requested: Option<&[(i64, bool)]>,
+        effective_repo_id: Option<i64>,
+        existing_targets: &[i64],
+    ) -> RepoTargetPlan {
+        RepoTargetPlan {
+            requested: requested.map(<[(i64, bool)]>::to_vec),
+            effective_repo_id,
+            existing_targets: existing_targets.to_vec(),
+        }
+    }
+
+    /// The bug this guards: re-enabling a multi-target schedule through the
+    /// legacy bare-`repo_id` contract only pinged the primary, so a schedule
+    /// paused while its offsite target was down came back enabled with that
+    /// target still unreachable.
+    #[test]
+    fn an_update_that_keeps_the_target_list_has_to_reach_every_target() {
+        assert_eq!(
+            resulting_repo_targets(&plan(None, Some(1), &[1, 2]), Some(1)),
+            vec![1, 2],
+        );
+    }
+
+    #[test]
+    fn a_request_sending_targets_is_checked_against_exactly_those() {
+        let requested = [(2, true), (3, false)];
+        assert_eq!(
+            resulting_repo_targets(&plan(Some(&requested), Some(2), &[1, 2]), Some(1)),
+            vec![2, 3],
+        );
+    }
+
+    /// Moving the primary collapses the schedule onto that one repository, so
+    /// the targets it is about to drop are not worth reaching.
+    #[test]
+    fn moving_the_primary_only_has_to_reach_the_new_repository() {
+        assert_eq!(
+            resulting_repo_targets(&plan(None, Some(9), &[1, 2]), Some(1)),
+            vec![9],
+        );
+    }
+
+    #[test]
+    fn a_schedule_with_no_targets_falls_back_to_its_primary() {
+        assert_eq!(
+            resulting_repo_targets(&plan(None, Some(1), &[]), Some(1)),
+            vec![1],
+        );
+        assert_eq!(
+            resulting_repo_targets(&plan(None, None, &[1]), Some(1)),
+            Vec::<i64>::new(),
         );
     }
 

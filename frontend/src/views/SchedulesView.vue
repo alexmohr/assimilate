@@ -726,6 +726,15 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   min-width: 0;
 }
 
+/* Four filter controls plus a group control and the sort strip no longer fit
+   the 1100px content column on one line, and `.schedules-view` hides its
+   overflow - so without this the sort strip is simply cut off. Wrapping keeps
+   `.sort-controls`' trailing `margin-left: auto`, so it lands right-aligned on
+   the second row. */
+.toolbar {
+  flex-wrap: wrap;
+}
+
 /* The "Group: [Time|Agent|Repo]" pair in the toolbar. `.sort-controls` beside
    it already claims the row's trailing space, so this only has to keep its
    caption glued to the control and out of the toolbar's shrink. */

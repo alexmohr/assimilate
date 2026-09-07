@@ -950,9 +950,13 @@ async fn catch_up_marks_do_not_stack(pool: PgPool) {
 
     let mut last = None;
     for days_ago in (0..35).rev() {
+        // Truncated to what Postgres itself stores, so the round-trip below is
+        // exact whichever way the server version handles the sub-microsecond
+        // tail: PG 16 rounds it, PG 18 truncates it.
         let missed = Utc::now()
             .checked_sub_signed(chrono::Duration::days(days_ago))
-            .unwrap();
+            .unwrap()
+            .trunc_subsecs(6);
         db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
             .await
             .unwrap();
@@ -968,8 +972,7 @@ async fn catch_up_marks_do_not_stack(pool: PgPool) {
         "35 misses must leave one run to catch up"
     );
     let candidate = candidates.first().unwrap();
-    // Postgres stores microseconds, so the round-trip drops the nanosecond tail.
-    assert_eq!(candidate.pending_for, last.unwrap().round_subsecs(6));
+    assert_eq!(candidate.pending_for, last.unwrap());
     assert_eq!(candidate.schedule_id, schedule.id);
     assert_eq!(candidate.min_lead_minutes, 120);
 }

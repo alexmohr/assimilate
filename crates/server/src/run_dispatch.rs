@@ -324,11 +324,6 @@ mod tests {
     use db::InsertRepoParams;
 
     use super::*;
-    use crate::{
-        repo_op_tracker::RepoOpTracker,
-        tunnel::TunnelManager,
-        ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
-    };
 
     #[test]
     fn run_origin_reads_as_the_kind_of_run_it_names() {
@@ -336,47 +331,44 @@ mod tests {
         assert_eq!(RunOrigin::CatchUp.to_string(), "catch-up run");
     }
 
-    /// Builds an `AppState` around `pool` for tests that only need
-    /// `release_target_power`'s dependencies (pool, registry,
-    /// `ui_broadcast`, `power_sessions`) -- the rest are populated with inert
-    /// defaults, matching `scheduler.rs`'s own test `AppState` boilerplate.
+    /// The key material this module's tests derive their encryption key from.
+    const TEST_KEY_MATERIAL: &[u8] = b"run-dispatch-power-test-key";
+
     fn test_app_state(pool: sqlx::PgPool) -> AppState {
-        let ui_broadcast = UiBroadcast::new();
-        AppState {
-            pool: pool.clone(),
-            encryption_key: shared::crypto::derive_key(b"schedules-power-test-key").unwrap(),
-            registry: AgentRegistry::new(),
-            ui_broadcast: ui_broadcast.clone(),
-            tunnel_manager: TunnelManager::new(
-                pool.clone(),
-                ui_broadcast,
-                "127.0.0.1:0".parse().unwrap(),
-            ),
-            log_buffer: crate::log_buffer::LogBuffer::default(),
-            notification_service: crate::notifications::NotificationService::new(pool),
-            completion_bus: CompletionBus::new(),
-            repo_op_tracker: RepoOpTracker::default(),
-            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
-            repo_lock: crate::RepoLock::default(),
-            import_tasks: crate::ImportTaskRegistry::default(),
-            pending_dryruns: crate::new_pending_map(),
-            pending_restores: crate::new_pending_map(),
-            pending_vm_scans: crate::new_pending_map(),
-            pending_vm_builds: crate::new_pending_map(),
-            pending_migrations: crate::new_pending_map(),
-            pending_deletes: crate::new_pending_map(),
-            shutdown_token: tokio_util::sync::CancellationToken::new(),
-            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
-            task_registry: shared::task_registry::TaskRegistry::default(),
-            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
-                60,
-                std::time::Duration::from_mins(1),
-            ),
-            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
-                480,
-            )),
-            power_sessions: power::PowerSessionTracker::default(),
+        crate::test_support::build_test_state(pool, TEST_KEY_MATERIAL)
+    }
+
+    /// Puts both of a target's hosts in the state a finished run leaves behind:
+    /// reserved and recorded as woken. `siblings` is how many *other* runs are
+    /// holding the same two hosts at the same time.
+    async fn reserve_woken_hosts(state: &AppState, agent_id: i64, repo_id: i64, siblings: usize) {
+        for key in [
+            power::PowerHostKey::Agent(agent_id),
+            power::PowerHostKey::Repo(repo_id),
+        ] {
+            for _ in 0..=siblings {
+                state.power_sessions.reserve(key).await;
+            }
+            state.power_sessions.record_outcome(key, true, false).await;
         }
+    }
+
+    /// Releases the pair the way a finished run does.
+    async fn release_after_run(state: &AppState, agent_id: i64, repo_id: i64, run_id: &str) {
+        release_target_power(
+            state,
+            agent_id,
+            repo_id,
+            &RunRequest {
+                repo_id: RepoId(repo_id),
+                schedule_type: ScheduleType::Backup,
+                schedule_id: 1,
+                run_id: run_id.to_owned(),
+                origin: RunOrigin::Manual,
+            },
+            "manual-power-host",
+        )
+        .await;
     }
 
     async fn insert_power_enabled_agent_and_repo(
@@ -454,38 +446,9 @@ mod tests {
     async fn release_target_power_tears_down_sole_participant(pool: sqlx::PgPool) {
         let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
         let state = test_app_state(pool.clone());
+        reserve_woken_hosts(&state, agent.id, repo.id, 0).await;
 
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
-            .await;
-
-        release_target_power(
-            &state,
-            agent.id,
-            repo.id,
-            &RunRequest {
-                repo_id: RepoId(repo.id),
-                schedule_type: ScheduleType::Backup,
-                schedule_id: 1,
-                run_id: "run-manual-1".to_owned(),
-                origin: RunOrigin::Manual,
-            },
-            "manual-power-host",
-        )
-        .await;
+        release_after_run(&state, agent.id, repo.id, "run-manual-1").await;
 
         let events = db::run_events::list_run_events(&pool, "run-manual-1", agent.id, repo.id)
             .await
@@ -507,48 +470,11 @@ mod tests {
     async fn release_target_power_is_a_noop_with_a_sibling_reservation_held(pool: sqlx::PgPool) {
         let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
         let state = test_app_state(pool.clone());
+        // One sibling reservation on each host, simulating this run racing a
+        // concurrent scheduled run that targets the same agent and repo.
+        reserve_woken_hosts(&state, agent.id, repo.id, 1).await;
 
-        // Two reservations on each host, simulating this manual run racing
-        // a concurrent scheduled run that targets the same agent/repo.
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent.id))
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo.id))
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
-            .await;
-
-        release_target_power(
-            &state,
-            agent.id,
-            repo.id,
-            &RunRequest {
-                repo_id: RepoId(repo.id),
-                schedule_type: ScheduleType::Backup,
-                schedule_id: 1,
-                run_id: "run-manual-2".to_owned(),
-                origin: RunOrigin::Manual,
-            },
-            "manual-power-host",
-        )
-        .await;
+        release_after_run(&state, agent.id, repo.id, "run-manual-2").await;
 
         let events = db::run_events::list_run_events(&pool, "run-manual-2", agent.id, repo.id)
             .await

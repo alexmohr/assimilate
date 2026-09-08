@@ -194,9 +194,12 @@ describe('AgentPowerCard', () => {
     expect(text).not.toContain('Not set')
   })
 
-  // The same absent address on a host that neither wakes nor shuts down
-  // really is unconfigured, and must not claim to be hidden.
-  it('says an address really is unset when nothing needs one', () => {
+  // The counterpart to the case above, and why the MAC row needs no "Not
+  // set" branch: a host that neither wakes nor shuts down and has no address
+  // does not render the wake details at all, so a genuinely absent MAC never
+  // reaches that row. Asserting the block is gone pins the reason - asserting
+  // it merely does not say "Hidden" would pass whether or not it rendered.
+  it('omits the wake details entirely when nothing needs an address', () => {
     const wrapper = mount({
       agent: {
         ...AGENT,
@@ -212,6 +215,7 @@ describe('AgentPowerCard', () => {
       },
     })
 
+    expect(wrapper.text()).not.toContain('MAC address')
     expect(wrapper.text()).not.toContain('Hidden')
   })
 

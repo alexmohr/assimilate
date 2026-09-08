@@ -203,9 +203,15 @@ async function save(): Promise<void> {
           <dd>{{ agent.power.wake.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
           <template v-if="showWakeDetails">
             <dt>MAC address</dt>
-            <dd class="mono">
-              {{ agent.power.wake.wake_mac_address ?? (wakeSecretsHidden ? 'Hidden' : 'Not set') }}
-            </dd>
+            <!--
+              No "Not set" branch here: this block only renders when the host
+              wakes, shuts down, or has an address on file, so a null MAC
+              inside it is always a redacted one. A host with none configured
+              never gets this far - see showWakeDetails. The broadcast address
+              below is different: it is not part of that condition, so it can
+              genuinely be absent.
+            -->
+            <dd class="mono">{{ agent.power.wake.wake_mac_address ?? 'Hidden' }}</dd>
             <dt>Broadcast address</dt>
             <dd class="mono">
               {{

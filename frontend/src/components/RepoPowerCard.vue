@@ -133,9 +133,8 @@ async function save(): Promise<void> {
         <dd>{{ repo.power.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
         <template v-if="showWakeDetails">
           <dt>MAC address</dt>
-          <dd class="mono">
-            {{ repo.power.wake_mac_address ?? (wakeSecretsHidden ? 'Hidden' : 'Not set') }}
-          </dd>
+          <!-- See AgentPowerCard: a null MAC inside this block is redacted. -->
+          <dd class="mono">{{ repo.power.wake_mac_address ?? 'Hidden' }}</dd>
           <dt>Broadcast address</dt>
           <dd class="mono">
             {{ repo.power.wake_broadcast_address ?? (wakeSecretsHidden ? 'Hidden' : 'Default') }}

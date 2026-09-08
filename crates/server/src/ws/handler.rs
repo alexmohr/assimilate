@@ -662,9 +662,7 @@ fn dispatch_quota_breach_notification(
 fn spawn_notification_dispatch(state: &AppState, event: NotificationEvent) {
     let service = state.notification_service.clone();
     let task_registry = state.task_registry.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
+    state.background_task_tracker.spawn_tracked(async move {
         if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
@@ -1203,9 +1201,7 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
     let repo_lock = state.repo_lock.clone();
     let background_task_tracker = state.background_task_tracker.clone();
     let task_registry = state.task_registry.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
+    state.background_task_tracker.spawn_tracked(async move {
         match archive_index::ensure_indexed(
             pool,
             encryption_key,

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use std::{
+    future::Future,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -40,6 +41,29 @@ impl BackgroundTaskTracker {
     pub fn begin(&self) -> BackgroundTaskGuard {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         BackgroundTaskGuard(Arc::clone(&self.in_flight))
+    }
+
+    /// Claims a guard and spawns `future` holding it, so the task counts as
+    /// in-flight for its entire life - including error and panic paths, since
+    /// the guard is only dropped when the spawned task ends.
+    ///
+    /// The guard is claimed here, synchronously, rather than inside the spawned
+    /// task: [`Self::any_active`] must read `true` the instant this returns, not
+    /// merely once the runtime gets around to polling the new task for the first
+    /// time (which depends on incidental yield points in the caller, not on any
+    /// synchronization guarantee).
+    ///
+    /// `future`'s output is dropped - this is for fire-and-forget work, where
+    /// nothing is waiting on a result.
+    pub fn spawn_tracked<F>(&self, future: F)
+    where
+        F: Future + Send + 'static,
+    {
+        let guard = self.begin();
+        tokio::spawn(async move {
+            let _guard = guard;
+            let _output = future.await;
+        });
     }
 
     /// Whether any tracked background task is still running.
@@ -118,5 +142,44 @@ mod tests {
 
         assert!(!tracker.wait_until_idle(Duration::from_millis(20)).await);
         assert!(tracker.any_active(), "guard was never dropped");
+    }
+
+    #[tokio::test]
+    async fn spawn_tracked_counts_the_task_before_it_is_ever_polled() {
+        let tracker = BackgroundTaskTracker::default();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        tracker.spawn_tracked(async move {
+            let _ = rx.await;
+        });
+
+        // No yield between the spawn and this assertion: the point of claiming
+        // the guard synchronously is that the task is visible immediately, not
+        // only once the runtime first polls it.
+        assert!(tracker.any_active());
+
+        let _ = tx.send(());
+        assert!(tracker.wait_until_idle(Duration::from_secs(5)).await);
+    }
+
+    #[tokio::test]
+    async fn spawn_tracked_releases_the_guard_when_the_task_panics() {
+        let tracker = BackgroundTaskTracker::default();
+        tracker.spawn_tracked(async {
+            panic!("task blew up");
+        });
+
+        assert!(tracker.wait_until_idle(Duration::from_secs(5)).await);
+    }
+
+    #[tokio::test]
+    async fn spawn_tracked_accepts_a_future_whose_output_is_not_unit() {
+        let tracker = BackgroundTaskTracker::default();
+        // Callers pass dispatch futures that return a value nobody waits on;
+        // the output is dropped rather than forcing every call site to bind it.
+        tracker.spawn_tracked(async { 42u32 });
+
+        assert!(tracker.wait_until_idle(Duration::from_secs(5)).await);
+        assert!(!tracker.any_active());
     }
 }

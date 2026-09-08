@@ -142,9 +142,7 @@ pub async fn ensure_indexed(
         // We claimed the job - spawn background indexing.
         let pool_bg = pool.clone();
         let archive_name_bg = archive_name.clone();
-        let task_guard = background_task_tracker.begin();
-        tokio::spawn(async move {
-            let _task_guard = task_guard;
+        background_task_tracker.spawn_tracked(async move {
             if let Err(e) = run_indexing(
                 &pool_bg,
                 &encryption_key,

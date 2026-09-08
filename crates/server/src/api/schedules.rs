@@ -1098,15 +1098,18 @@ pub async fn run_schedule_now(
         }
     }
 
-    // Tracked, like every other fire-and-forget spawn in the codebase (see
-    // BackgroundTaskTracker and archive_index's indexing spawn), so a test
-    // can wait for this run instead of racing it. Untracked, whether this
-    // task got scheduled at all before the test's tokio runtime was dropped
-    // was a coin flip, which showed up as ~49 lines of this module being
-    // covered in one CI run and not the next -- a 0.14pp swing in aggregate
-    // coverage between runs of byte-identical code, with nothing in the
-    // diff to explain it.
-    let task_guard = state.background_task_tracker.begin();
+    // Tracked, like the archive-deletion spawn and archive_index's indexing
+    // spawn, so a test can wait for this dispatch instead of racing it.
+    // Untracked, whether this task got scheduled at all before the test's
+    // tokio runtime was dropped was a coin flip, which showed up as ~49 lines
+    // of the manual-run path being covered in one CI run and not the next --
+    // a 0.14pp swing between runs of byte-identical code.
+    //
+    // The dispatch future is wrapped here rather than tracked inside
+    // run_targets_sequential because that function is shared with the
+    // scheduler, which dispatches on its own schedule and has no test waiting
+    // on it.
+    let background_task_tracker = state.background_task_tracker.clone();
     let dispatch = run_dispatch::run_targets_sequential(
         state,
         targets,
@@ -1118,10 +1121,7 @@ pub async fn run_schedule_now(
             origin: run_dispatch::RunOrigin::Manual,
         },
     );
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
-        let _dispatched = dispatch.await;
-    });
+    background_task_tracker.spawn_tracked(dispatch);
 
     Ok(StatusCode::ACCEPTED)
 }

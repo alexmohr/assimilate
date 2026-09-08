@@ -666,6 +666,128 @@ describe('ScheduleDetailView - edit mode', () => {
     ).toBe('Logs 1')
   })
 
+  // The Logs tab's own toggle/open/load-more, as opposed to the Overview
+  // preview's openArchive path covered above - RunLogTab is the real
+  // component here, not a stub, so these exercise ScheduleDetailView's own
+  // wiring end to end.
+  it('wires the Logs tab toggle, open, sort and filter through to RunLogTab', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/schedules/1/reports') {
+        return Promise.resolve({
+          data: {
+            reports: [
+              {
+                id: 3,
+                agent_id: 10,
+                repo_id: 20,
+                repo_name: 'server-daily',
+                schedule_id: 1,
+                schedule_name: null,
+                status: 'success',
+                started_at: '2026-06-01T01:50:00Z',
+                finished_at: '2026-06-01T02:00:00Z',
+                duration_secs: 10,
+                original_size: 100,
+                compressed_size: 50,
+                deduplicated_size: 50,
+                files_processed: 5,
+                error_message: null,
+                warnings: [],
+                borg_version: null,
+                archive_name: 'web-server-01-2026-06-01',
+                borg_command: null,
+                run_id: 'run-3',
+              },
+            ],
+            total: 2,
+          },
+        })
+      }
+      if (url === '/schedules/1/reports/failed/count')
+        return Promise.resolve({ data: { count: 0 } })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.find('.section-link').trigger('click')
+    await flushPromises()
+
+    // toggle: the row's own "Show detail" is only offered when there's a
+    // run_id/warnings/error to expand into - this report has a run_id.
+    const row = wrapper.find('.agent-row')
+    const toggleBtn = row.findAll('button').find((b) => b.text() === 'Show detail')
+    await toggleBtn!.trigger('click')
+    await flushPromises()
+    expect(row.find('button[aria-expanded="true"]').exists()).toBe(true)
+
+    // sort: v-model:sort-ascending, driven by RunLogTab's own toggle button.
+    const sortBtn = wrapper.findAll('button').find((b) => b.text() === 'Newest first')
+    await sortBtn!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Oldest first')).toBe(true)
+
+    // filter: v-model:filter, driven by the status segmented control.
+    const successFilter = wrapper.findAll('button').find((b) => b.text().startsWith('Success'))
+    await successFilter!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-row').exists()).toBe(true)
+
+    // open: jumps to the archive on its own repository, not this schedule's
+    // Backups tab (that's openArchive, covered elsewhere) - navigates away,
+    // so this runs last.
+    await wrapper.find('.agent-row').find('button.agent-row-name').trigger('click')
+    await flushPromises()
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe(
+      '/repos/20?tab=archives&archive=web-server-01-2026-06-01',
+    )
+  })
+
+  it('loads the next page of the Logs tab on Load more', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      original_size: 100,
+      duration_secs: 10,
+    })
+    // Override just the reports fetch to report more rows than were loaded.
+    const baseImpl = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/reports') {
+        return baseImpl(url).then((res: { data: { reports: unknown[]; total: number } }) => ({
+          data: { ...res.data, total: 5 },
+        }))
+      }
+      return baseImpl(url)
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.find('.section-link').trigger('click')
+    await flushPromises()
+    mockApiClient.get.mockClear()
+
+    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
+    await loadMoreBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.get).toHaveBeenCalledWith(
+      '/schedules/1/reports',
+      expect.objectContaining({ params: expect.objectContaining({ offset: 1 }) }),
+    )
+  })
+
   // A run in the preview is a way in, not just a status line: its archive is
   // on this schedule's own Backups tab, one click away.
   it('selects the archive of a preview run on the Backups tab', async () => {

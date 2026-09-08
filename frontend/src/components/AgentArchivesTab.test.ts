@@ -18,7 +18,8 @@ vi.mock('../composables/useWebSocket', () => mockWebSocket())
 vi.mock('./ArchiveExplorer.vue', () => ({
   default: {
     name: 'ArchiveExplorer',
-    props: ['repoId', 'repoName', 'archives', 'loading', 'error', 'isAdmin', 'reload'],
+    props: ['repoId', 'repoName', 'archives', 'loading', 'error', 'isAdmin', 'reload', 'selected'],
+    emits: ['update:selected'],
     template:
       '<div class="stub-explorer" :data-repo="repoName"><span class="stub-count">{{ archives.length }}</span></div>',
     methods: {
@@ -106,5 +107,65 @@ describe('AgentArchivesTab', () => {
     await flushPromises()
 
     expect(mockListRepoArchives).toHaveBeenCalledWith(1)
+  })
+
+  it('surfaces a load failure as the section error', async () => {
+    mockListRepoArchives.mockRejectedValue(new Error('repo unreachable'))
+    const wrapper = mount()
+    await flushPromises()
+
+    const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
+    expect(explorer.props('error')).toBe('repo unreachable')
+    expect(explorer.props('loading')).toBe(false)
+  })
+
+  it('forwards ArchiveDeleted to the matching repo explorer only', async () => {
+    mockListRepoArchives.mockResolvedValue([])
+    const wrapper = mount({
+      repos: [repo({ id: 1, name: 'Inhouse Global' }), repo({ id: 2, name: 'Photos Offsite' })],
+    })
+    await flushPromises()
+
+    const explorers = wrapper.findAllComponents({ name: 'ArchiveExplorer' })
+    const onDeleted1 = vi.spyOn(explorers[0]!.vm, 'onArchiveDeleted')
+    const onDeleted2 = vi.spyOn(explorers[1]!.vm, 'onArchiveDeleted')
+
+    wsHandlers.ArchiveDeleted({ repo_id: 2, archive_name: 'bell-1' })
+
+    expect(onDeleted1).not.toHaveBeenCalled()
+    expect(onDeleted2).toHaveBeenCalledWith('bell-1')
+  })
+
+  it('forwards RepoOpChanged to the matching explorer, except for archive/compact ops', async () => {
+    mockListRepoArchives.mockResolvedValue([])
+    const wrapper = mount()
+    await flushPromises()
+
+    const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
+    const onIdle = vi.spyOn(explorer.vm, 'onRepoIdle')
+
+    wsHandlers.RepoOpChanged({ repo_id: 1, op: { kind: 'delete_archive' } })
+    expect(onIdle).not.toHaveBeenCalled()
+
+    wsHandlers.RepoOpChanged({ repo_id: 1, op: { kind: 'compact_repo' } })
+    expect(onIdle).not.toHaveBeenCalled()
+
+    wsHandlers.RepoOpChanged({ repo_id: 1, op: null })
+    expect(onIdle).toHaveBeenCalledTimes(1)
+  })
+
+  it('the reload prop and selected v-model reach their own repo section', async () => {
+    mockListRepoArchives.mockResolvedValue([])
+    const wrapper = mount()
+    await flushPromises()
+    mockListRepoArchives.mockClear()
+
+    const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
+    await explorer.props('reload')(true)
+    expect(mockListRepoArchives).toHaveBeenCalledWith(1)
+
+    const picked = archive({ name: 'bell-2' })
+    await explorer.vm.$emit('update:selected', picked)
+    expect(explorer.props('selected')).toEqual(picked)
   })
 })

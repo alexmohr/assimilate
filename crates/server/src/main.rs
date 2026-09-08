@@ -58,15 +58,17 @@ enum StartupError {
 /// process exit anyway.
 const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
 
-/// How long shutdown waits for `AppState::background_task_tracker` (the outer
-/// scheduled-sync/post-backup-sync/post-backup-indexing/initial-import tasks, plus the
-/// manual "Run Now" schedule dispatch and the archive-deletion task, each of
-/// which claims a guard synchronously before being spawned) to go idle before giving up
-/// and draining `task_registry` anyway. These tasks aren't themselves registered with
-/// `task_registry` - only the `GracefulChild` reapers a *cancelled* borg call inside them
-/// would spawn are - so without this wait, a task still normally running a borg call when
-/// shutdown lands would have that call force-dropped when the runtime tears down, with
-/// nothing having ever tried to let it finish first.
+/// How long shutdown waits for `AppState::background_task_tracker` to go idle before giving up
+/// and draining `task_registry` anyway. The tracked tasks are the outer
+/// scheduled-sync/post-backup-sync/post-backup-indexing ones and the server-startup
+/// `resume_single_import` resume, plus the request-scoped ones: the manual "Run Now" schedule
+/// dispatch, the archive-deletion task, `create_repo`'s initial import
+/// (`run_initial_import_task`), and the `run_repo_sync_task` spawned by `sync_repo` and
+/// `reset_and_sync_repo`. Each claims a guard synchronously before being spawned. These tasks
+/// aren't themselves registered with `task_registry` - only the `GracefulChild` reapers a
+/// *cancelled* borg call inside them would spawn are - so without this wait, a task still
+/// normally running a borg call when shutdown lands would have that call force-dropped when
+/// the runtime tears down, with nothing having ever tried to let it finish first.
 const BACKGROUND_TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 
 #[tokio::main]

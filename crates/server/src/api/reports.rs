@@ -51,29 +51,42 @@ mod tests {
     fn row_to_report_response_passes_a_finished_status_through() {
         let row = make_row("success");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, "success");
+        assert_eq!(resp.status, shared::types::ReportStatus::Success);
 
         let row = make_row("failed");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, "failed");
+        assert_eq!(resp.status, shared::types::ReportStatus::Failed);
     }
 
     // `BackupStatus` (a finished run's outcome) has no variant for these -
     // a report row still in flight must reach the client as such, not get
-    // silently reported as a success it hasn't had yet.
+    // silently reported as a success it hasn't had yet. `ReportStatus` does.
     #[test]
     fn row_to_report_response_passes_an_in_flight_status_through() {
         let row = make_row("pending");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, "pending");
+        assert_eq!(resp.status, shared::types::ReportStatus::Pending);
 
         let row = make_row("started");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, "started");
+        assert_eq!(resp.status, shared::types::ReportStatus::Started);
 
         let row = make_row("cancelled");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, "cancelled");
+        assert_eq!(resp.status, shared::types::ReportStatus::Cancelled);
+    }
+
+    // The one path that can't come from a real DB row: a status string that
+    // matches none of ReportStatus's variants (a future typo, a manual DB
+    // edit, or a migration that adds a status column value this enum hasn't
+    // caught up with). Before ReportResponse.status was widened from a raw
+    // String to ReportStatus, this exact case regressed silently - restoring
+    // the parse means it needs its own coverage, not just a passthrough.
+    #[test]
+    fn row_to_report_response_defaults_an_unparseable_status_to_pending() {
+        let row = make_row("not-a-real-status");
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, shared::types::ReportStatus::Pending);
     }
 
     #[test]
@@ -88,6 +101,10 @@ pub(crate) fn row_to_report_response(
     row: db::ReportRow,
     hostname: Option<String>,
 ) -> ReportResponse {
+    let status = row.status.parse().unwrap_or_else(|_| {
+        warn!(raw_status = %row.status, "failed to parse report status, defaulting to Pending");
+        shared::types::ReportStatus::default()
+    });
     ReportResponse {
         id: row.id,
         agent_id: row.agent_id,
@@ -95,7 +112,7 @@ pub(crate) fn row_to_report_response(
         schedule_id: row.schedule_id,
         started_at: row.started_at,
         finished_at: row.finished_at,
-        status: row.status,
+        status,
         original_size: row.original_size,
         compressed_size: row.compressed_size,
         deduplicated_size: row.deduplicated_size,

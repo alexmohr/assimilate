@@ -41,6 +41,8 @@ const props = defineProps<{
   agentLabel: (id: number) => string
   /** Whether the viewer may see wake details - see `SchedulePowerTab`. */
   canSeeWakeDetails: boolean
+  /** True while the page's save is in flight, so the target editor locks. */
+  saving?: boolean
 }>()
 
 const emit = defineEmits<{ 'update:section': [value: ScheduleSettingsSection] }>()
@@ -228,6 +230,7 @@ const leadValue = computed<number>({
       <ScheduleRepoTargets
         v-model="repoTargets"
         :repos="repos"
+        :disabled="saving"
       />
 
       <div class="field">

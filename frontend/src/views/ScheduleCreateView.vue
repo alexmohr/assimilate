@@ -403,6 +403,7 @@ async function submit(): Promise<void> {
           <ScheduleRepoTargets
             v-model="repoTargets"
             :repos="repos"
+            :disabled="submitting"
           />
           <div
             v-if="showOnFailure"

@@ -448,6 +448,30 @@ describe('ScheduleDetailView - edit mode', () => {
     }
   })
 
+  /** The editor is bound to the same state the save is reading, so leaving it
+      live during the request invites edits that quietly never reach the server. */
+  it('locks the target editor while the save is in flight', async () => {
+    setupEditMode()
+    // A save that never settles, so the page stays mid-request.
+    mockApiClient.put.mockReturnValue(new Promise(() => {}))
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Targets')
+
+    const repoSelect = (): ReturnType<typeof wrapper.find> =>
+      wrapper.find('select[aria-label="Repository for target 1"]')
+    expect(repoSelect().attributes('disabled')).toBeUndefined()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save changes')!
+      .trigger('click')
+    await nextTick()
+
+    expect(repoSelect().attributes('disabled')).toBeDefined()
+  })
+
   /** The API refuses a target list with nothing required; saying so here beats
       a round trip that comes back 400. */
   it('refuses to save a schedule left with no required repository', async () => {

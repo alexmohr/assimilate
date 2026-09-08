@@ -771,6 +771,7 @@ watch(activeTab, (tab) => {
           :repos="repos"
           :agent-label="agentLabel"
           :can-see-wake-details="canViewWakeSecrets"
+          :saving="saving"
         />
       </div>
 

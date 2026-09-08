@@ -192,6 +192,35 @@ describe('ScheduleCreateView', () => {
     expect(push).toHaveBeenCalledWith('/schedules/7')
   })
 
+  /** The step rail stays clickable during the create request, so the Targets
+      step is reachable while it is in flight - and must not be editable there. */
+  it('locks the target editor while the create request is in flight', async () => {
+    const wrapper = await open()
+    // A create that never settles, so the wizard stays mid-submit.
+    mockApiClient.post.mockReturnValue(new Promise(() => {}))
+
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    await button(wrapper, 'Continue')!.trigger('click')
+    await button(wrapper, 'Add repository')!.trigger('click')
+    await button(wrapper, 'Continue')!.trigger('click')
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    await button(wrapper, 'Create schedule')!.trigger('click')
+
+    // Back to Targets through the rail, mid-request.
+    await wrapper.findAll('.wizard-step')[2].trigger('click')
+
+    expect(
+      wrapper.find('select[aria-label="Repository for target 1"]').attributes('disabled'),
+    ).toBeDefined()
+    // Both repositories are targets by now, so the add button is matched by
+    // class rather than label - it reads "Every repository is already a target".
+    expect(wrapper.find('.repo-target-add').attributes('disabled')).toBeDefined()
+    expect(
+      wrapper.find('button[aria-label="Remove repository"]').attributes('disabled'),
+    ).toBeDefined()
+  })
+
   it('keeps the create action out of reach while any step is unanswered', async () => {
     const wrapper = await open()
     await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')

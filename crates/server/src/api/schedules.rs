@@ -73,6 +73,7 @@ use uuid::Uuid;
 
 use super::{
     auth::AuthUser,
+    helpers,
     permissions::{check_repo_permission, is_visible_to_user},
 };
 use crate::{
@@ -1225,6 +1226,7 @@ pub async fn list_schedule_reports(
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let limit = query.limit.unwrap_or(20);
     let offset = query.offset.unwrap_or(0);
+    helpers::validate_pagination(limit, offset)?;
     let (rows, total) = tokio::try_join!(
         db::list_reports_for_schedule(&state.pool, id, limit, offset),
         db::count_reports_for_schedule(&state.pool, id),

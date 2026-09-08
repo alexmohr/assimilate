@@ -14,7 +14,7 @@ use tracing::warn;
 
 use super::{
     auth::{AuthUser, RequireAdmin},
-    helpers::DomainQuery,
+    helpers::{self, DomainQuery},
 };
 use crate::{AppState, db, error::ApiError};
 
@@ -176,6 +176,7 @@ pub async fn list_reports(
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
+    helpers::validate_pagination(limit, offset)?;
     let (rows, total) = tokio::try_join!(
         db::list_reports_for_agent(
             &state.pool,

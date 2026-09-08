@@ -247,7 +247,7 @@ The landing tab answers the questions an agent page is usually opened for — is
 - Four tiles: **Last backup** with its outcome, **Next run** across every enabled schedule, **Repositories**, and **Recent runs**.
 - Previews of this agent's schedules and its most recent backups, each linking through to the full tab.
 
-Every row in the **Recent backups** preview leads somewhere. A run that produced an archive links to it from the repository name — browsing straight to that archive's contents. A run that finished with warnings or failed carries **View warnings** / **View error** instead, which opens the run on the **Backups** tab with its output already expanded, so a failure noticed on the landing tab does not have to be hunted for afterwards.
+Every row in the **Recent backups** preview leads somewhere. A run that produced an archive links to it from the repository name — browsing straight to that archive's contents. A run that finished with warnings or failed carries **View warnings** / **View error** instead, which opens the run on the **Logs** tab with its output already expanded, so a failure noticed on the landing tab does not have to be hunted for afterwards.
 
 ### Recent runs
 

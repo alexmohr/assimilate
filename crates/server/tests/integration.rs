@@ -3275,7 +3275,10 @@ async fn test_reset_import_clears_state() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let (mut app, state) = build_test_app_with_state(pool.clone());
+    // Plain `build_test_app`: `reset_import` cancels the in-flight import task and
+    // clears the DB flags synchronously, spawning no tracked background work, so a
+    // tracker wait here would return instantly and prove nothing.
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "reset-import-repo").await;
 
@@ -3299,14 +3302,6 @@ async fn test_reset_import_clears_state() {
         stats.import_error.is_none(),
         "import_error should be cleared after reset"
     );
-
-    // The sync/import runs as a tracked background task that acquires the repo
-    // lock and runs borg. Wait for it rather than letting it run on into the
-    // next test, where it would race that test's own borg calls.
-    state
-        .background_task_tracker
-        .assert_idle(std::time::Duration::from_secs(60))
-        .await;
 }
 
 #[tokio::test]

@@ -2123,7 +2123,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "sync-accepted-repo").await;
 
@@ -2149,6 +2149,14 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
         stats.import_error.is_some(),
         "import_error should be set after sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 #[tokio::test]
@@ -3267,7 +3275,7 @@ async fn test_reset_import_clears_state() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "reset-import-repo").await;
 
@@ -3291,6 +3299,14 @@ async fn test_reset_import_clears_state() {
         stats.import_error.is_none(),
         "import_error should be cleared after reset"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 #[tokio::test]
@@ -8538,7 +8554,7 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "spurious-empty-list-repo").await;
     seed_synced_archive(&pool, repo_id, "spurious-host", "keep-me").await;
@@ -8595,6 +8611,14 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
         stats_archive_count, 1,
         "repo_stats.archive_count must not be zeroed out by the aborted sync"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test for: the scheduled-sync loop blocking on each repo sequentially.
@@ -8805,7 +8829,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg("this is not valid json", "{}", info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "malformed-json-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -8826,6 +8850,14 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
         stats.import_error.is_some(),
         "import_error should be set after malformed JSON sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test: borg list exits 0 with valid JSON but no `archives` key.
@@ -8853,7 +8885,7 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     )
     .await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "missing-archives-key-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -8874,6 +8906,14 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
         stats.import_error.is_some(),
         "import_error should be set after no-archives-key sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test for the stale-echo bug: `PUT /api/system/settings` used to

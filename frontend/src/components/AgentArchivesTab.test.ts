@@ -154,6 +154,47 @@ describe('AgentArchivesTab', () => {
     expect(onIdle).toHaveBeenCalledTimes(1)
   })
 
+  // Regression test: `AgentDetailView`'s background refresh (DataChanged,
+  // reconnect, AgentDisconnected) reassigns `repos` to a brand new array on
+  // every run even when this agent's actual repositories are unchanged. The
+  // repo-list watcher used to fire on that reference change alone, wiping
+  // every section's selection and flashing its loading state back on - on
+  // top of the DataChanged handler right below it already doing a silent,
+  // selection-preserving refresh. It must stay quiet unless the repo *set*
+  // actually changed.
+  it('does not reset sections when the repos prop is reassigned with the same ids', async () => {
+    mockListRepoArchives.mockResolvedValue([archive({ name: 'bell-1' })])
+    const wrapper = mount()
+    await flushPromises()
+    mockListRepoArchives.mockClear()
+
+    const explorer = wrapper.findComponent({ name: 'ArchiveExplorer' })
+    await explorer.vm.$emit('update:selected', archive({ name: 'bell-1' }))
+    expect(explorer.props('selected')).not.toBeNull()
+
+    // A new array, same repo id - the shape of a background refetch.
+    await wrapper.setProps({ repos: [repo({ id: 1, name: 'Inhouse Global' })] })
+    await flushPromises()
+
+    expect(mockListRepoArchives).not.toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'ArchiveExplorer' }).props('selected')).not.toBeNull()
+  })
+
+  it('reloads all sections when the set of repos actually changes', async () => {
+    mockListRepoArchives.mockResolvedValue([])
+    const wrapper = mount({ repos: [repo({ id: 1, name: 'Inhouse Global' })] })
+    await flushPromises()
+    mockListRepoArchives.mockClear()
+
+    await wrapper.setProps({
+      repos: [repo({ id: 1, name: 'Inhouse Global' }), repo({ id: 2, name: 'Photos Offsite' })],
+    })
+    await flushPromises()
+
+    expect(mockListRepoArchives).toHaveBeenCalledWith(1)
+    expect(mockListRepoArchives).toHaveBeenCalledWith(2)
+  })
+
   it('the reload prop and selected v-model reach their own repo section', async () => {
     mockListRepoArchives.mockResolvedValue([])
     const wrapper = mount()

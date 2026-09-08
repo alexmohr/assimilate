@@ -4868,7 +4868,7 @@ pub async fn list_reports_for_agent(
              br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
              br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
              schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = $2 ORDER by \
-             br.started_at DESC LIMIT $3 OFFSET $4",
+             br.started_at DESC, br.id DESC LIMIT $3 OFFSET $4",
             agent_id,
             target_name,
             limit,
@@ -4887,7 +4887,7 @@ pub async fn list_reports_for_agent(
              br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command, \
              br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN \
              schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at \
-             DESC LIMIT $2 OFFSET $3",
+             DESC, br.id DESC LIMIT $2 OFFSET $3",
             agent_id,
             limit,
             offset,
@@ -4952,7 +4952,8 @@ pub async fn list_reports_for_schedule(
          br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
          br.warnings, br.borg_version, br.archive_name, br.borg_command, br.run_id FROM \
          backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2 OFFSET $3",
+         br.schedule_id WHERE br.schedule_id = $1 ORDER BY br.started_at DESC, br.id DESC LIMIT \
+         $2 OFFSET $3",
         schedule_id,
         limit,
         offset,

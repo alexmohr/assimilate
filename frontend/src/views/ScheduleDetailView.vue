@@ -819,13 +819,16 @@ watch(activeTab, (tab) => {
           ref="backupsTab"
           v-model:selected="selectedBackupReport"
           :reports="reports"
+          :total="reportsPager.total.value"
           :loading="reportsLoading"
+          :loading-more="reportsPager.loadingMore.value"
           :error="reportsError"
           :agents="agentMap"
           :repo-id="schedule?.repo_id ?? null"
           :repo-name="repoName ?? ''"
           :is-admin="isAdmin"
           :reload="loadReports"
+          @load-more="loadMoreReports"
         />
 
         <RunLogTab

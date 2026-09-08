@@ -75,7 +75,17 @@ async function loadAll(): Promise<void> {
   await Promise.all(sections.value.map((section) => loadSection(section)))
 }
 
-watch(() => props.repos, loadAll, { immediate: true })
+// Keyed by id, not the `repos` array itself: `AgentDetailView`'s background
+// refresh (WS DataChanged, reconnect, AgentDisconnected) reassigns `repos` to
+// a fresh array on every run even when this agent's actual repositories
+// haven't changed, and watching the array by reference would rebuild
+// `sections` from scratch - resetting every loading spinner and clearing
+// whatever archive is selected - on every one of those refreshes. The
+// `DataChanged` handler below already does the silent, selection-preserving
+// refresh for "the same repos, maybe new archives"; this watcher is only for
+// "the set of repos actually changed".
+const repoIdsKey = (): string => props.repos.map((r) => r.id).join(',')
+watch(repoIdsKey, loadAll, { immediate: true })
 
 // Every screen that browses and deletes archives needs these three events -
 // see useArchiveDeletionEvents, whose single-repo contract doesn't fit a tab

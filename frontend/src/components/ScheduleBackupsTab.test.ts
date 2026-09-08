@@ -26,10 +26,13 @@ function report(overrides: Partial<ReportRow>): ReportRow {
 }
 
 function mount(props: Record<string, unknown> = {}) {
+  const reports = (props.reports as unknown[] | undefined) ?? [report({})]
   return renderWithPlugins(ScheduleBackupsTab, {
     props: {
-      reports: [report({})],
+      reports,
+      total: reports.length,
       loading: false,
+      loadingMore: false,
       error: null,
       agents: AGENTS,
       repoId: 3,
@@ -122,5 +125,34 @@ describe('ScheduleBackupsTab', () => {
 
   it('leaves every row unmarked when nothing is selected', () => {
     expect(mount().find('.archive-row').classes()).not.toContain('selected')
+  })
+
+  // Regression test: unlike `AgentArchivesTab`, this tab derives its archive
+  // list from a capped, paged report fetch shared with the Logs tab (there is
+  // no per-schedule uncapped archive endpoint to read from instead) - so
+  // without this, a schedule with more history than has been loaded would
+  // silently show fewer archives than exist, with nothing on screen to say so.
+  it('offers to load older runs when the loaded page is not the whole history', () => {
+    const wrapper = mount({ reports: [report({})], total: 75 })
+    expect(wrapper.text()).toContain('Load 50 more runs')
+    expect(wrapper.text()).toContain("Only this schedule's 1 most recent runs (of 75)")
+  })
+
+  it('hides the load-more affordance once every report is loaded', () => {
+    const wrapper = mount({ reports: [report({})], total: 1 })
+    expect(wrapper.text()).not.toContain('more runs')
+  })
+
+  it('emits loadMore when the load-more button is clicked', async () => {
+    const wrapper = mount({ reports: [report({})], total: 75 })
+    await wrapper.find('.backups-more-row button').trigger('click')
+    expect(wrapper.emitted('loadMore')).toHaveLength(1)
+  })
+
+  it('disables the load-more button while a page is already loading', () => {
+    const wrapper = mount({ reports: [report({})], total: 75, loadingMore: true })
+    const button = wrapper.find('.backups-more-row button')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.text()).toBe('Loading...')
   })
 })

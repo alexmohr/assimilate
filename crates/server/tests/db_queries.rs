@@ -2078,6 +2078,66 @@ async fn backup_report_list_for_agent_respects_offset_and_total(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn backup_report_list_for_agent_breaks_ties_on_started_at(pool: PgPool) {
+    // Two reports sharing the exact same started_at - plausible (e.g. reports
+    // inserted together in a batch). Without a secondary sort key, Postgres
+    // doesn't guarantee stable ordering across two separately-executed
+    // OFFSET queries when the sort key ties, so a tied row could land on
+    // both pages (a duplicate in the caller's paged list) or on neither (a
+    // silent gap), even though the total stays correct either way.
+    let agent = db::insert_agent(&pool, "tie-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    // Distinct archive_name on each: `backup_reports` has a partial unique
+    // index on (repo_id, agent_id, started_at) WHERE archive_name IS NULL,
+    // used to upsert an in-progress report into its finished row - two NULL-
+    // archive reports with the same started_at would collide there and
+    // collapse into one row instead of the two tied rows this test needs.
+    let tied_params = |archive_name: &str| InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: now,
+        finished_at: now,
+        status: shared::types::BackupStatus::Success,
+        original_size: 1_000_000,
+        compressed_size: 500_000,
+        deduplicated_size: 250_000,
+        repo_unique_csize: 250_000,
+        files_processed: 1000,
+        duration_secs: 300,
+        error_message: None,
+        warnings: vec![],
+        borg_version: Some("1.4.0".to_string()),
+        matched: true,
+        archive_name: Some(archive_name.to_string()),
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &tied_params("tie-host-1"))
+        .await
+        .unwrap();
+    db::insert_backup_report(&pool, &tied_params("tie-host-2"))
+        .await
+        .unwrap();
+
+    let first_page = db::list_reports_for_agent(&pool, agent.id, None, 1, 0)
+        .await
+        .unwrap();
+    let second_page = db::list_reports_for_agent(&pool, agent.id, None, 1, 1)
+        .await
+        .unwrap();
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(second_page.len(), 1);
+    assert_ne!(
+        first_page.first().unwrap().id,
+        second_page.first().unwrap().id
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn count_reports_for_agent_filters_by_target(pool: PgPool) {
     let agent = db::insert_agent(&pool, "count-target-host", None, "hash", None, None)
         .await
@@ -7607,6 +7667,58 @@ async fn schedule_report_list_respects_offset_and_total(pool: PgPool) {
 
     let first_page_ids: Vec<i64> = first_page.iter().map(|r| r.id).collect();
     assert!(!first_page_ids.contains(&second_page.first().unwrap().id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_report_list_breaks_ties_on_started_at(pool: PgPool) {
+    // Same tied-timestamp scenario as
+    // backup_report_list_for_agent_breaks_ties_on_started_at, against the
+    // schedule-scoped query instead of the agent-scoped one.
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+    // Distinct archive_name on each - see the sibling agent-scoped test above
+    // for why two NULL-archive reports with the same started_at would
+    // collapse into one row instead of the two tied rows this test needs.
+    let tied_params = |archive_name: &str| InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: Some(schedule.id),
+        started_at: now,
+        finished_at: now,
+        status: shared::types::BackupStatus::Success,
+        original_size: 1_000_000,
+        compressed_size: 500_000,
+        deduplicated_size: 250_000,
+        repo_unique_csize: 250_000,
+        files_processed: 1000,
+        duration_secs: 300,
+        error_message: None,
+        warnings: vec![],
+        borg_version: Some("1.4.0".to_string()),
+        matched: true,
+        archive_name: Some(archive_name.to_string()),
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &tied_params("tie-sched-1"))
+        .await
+        .unwrap();
+    db::insert_backup_report(&pool, &tied_params("tie-sched-2"))
+        .await
+        .unwrap();
+
+    let first_page = db::list_reports_for_schedule(&pool, schedule.id, 1, 0)
+        .await
+        .unwrap();
+    let second_page = db::list_reports_for_schedule(&pool, schedule.id, 1, 1)
+        .await
+        .unwrap();
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(second_page.len(), 1);
+    assert_ne!(
+        first_page.first().unwrap().id,
+        second_page.first().unwrap().id
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

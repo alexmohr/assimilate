@@ -917,7 +917,14 @@ test.describe('Schedules management', () => {
     await expect(page.locator('.order-item')).toHaveCount(2)
     await nextButton.click()
 
-    // Step 4 - timing is prefilled, so straight on to Review.
+    // Step 4 - Power. Nothing is required here: it defaults to each host's own
+    // wake setting. Asserted by name so inserting another step fails here
+    // rather than further along, where the symptom is a missing Create button.
+    await expect(page.locator('.wizard-step--current')).toContainText('Power')
+    await nextButton.click()
+
+    // Step 5 - timing is prefilled, so straight on to Review.
+    await expect(page.locator('.wizard-step--current')).toContainText('Timing')
     await nextButton.click()
 
     const [createResponse] = await Promise.all([

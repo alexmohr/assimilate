@@ -20,8 +20,6 @@ use crate::{AppState, db, error::ApiError};
 
 #[cfg(test)]
 mod tests {
-    use shared::types::BackupStatus;
-
     use super::*;
 
     fn make_row(status: &str) -> db::ReportRow {
@@ -50,24 +48,32 @@ mod tests {
     }
 
     #[test]
-    fn row_to_report_response_parses_valid_status() {
+    fn row_to_report_response_passes_a_finished_status_through() {
         let row = make_row("success");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, BackupStatus::Success);
-    }
+        assert_eq!(resp.status, "success");
 
-    #[test]
-    fn row_to_report_response_parses_failed_status() {
         let row = make_row("failed");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, BackupStatus::Failed);
+        assert_eq!(resp.status, "failed");
     }
 
+    // `BackupStatus` (a finished run's outcome) has no variant for these -
+    // a report row still in flight must reach the client as such, not get
+    // silently reported as a success it hasn't had yet.
     #[test]
-    fn row_to_report_response_falls_back_to_success_on_invalid_status() {
-        let row = make_row("corrupted_status_value");
+    fn row_to_report_response_passes_an_in_flight_status_through() {
+        let row = make_row("pending");
         let resp = row_to_report_response(row, Some("myhost".to_owned()));
-        assert_eq!(resp.status, BackupStatus::Success);
+        assert_eq!(resp.status, "pending");
+
+        let row = make_row("started");
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, "started");
+
+        let row = make_row("cancelled");
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, "cancelled");
     }
 
     #[test]
@@ -89,14 +95,7 @@ pub(crate) fn row_to_report_response(
         schedule_id: row.schedule_id,
         started_at: row.started_at,
         finished_at: row.finished_at,
-        status: row.status.parse().unwrap_or_else(|e| {
-            warn!(
-                error = %e,
-                raw_status = %row.status,
-                "failed to parse backup status, defaulting to Success"
-            );
-            shared::types::BackupStatus::default()
-        }),
+        status: row.status,
         original_size: row.original_size,
         compressed_size: row.compressed_size,
         deduplicated_size: row.deduplicated_size,

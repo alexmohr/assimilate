@@ -892,9 +892,11 @@ pub struct ReportResponse {
     pub started_at: DateTime<Utc>,
     /// Timestamp of when the finished occurred.
     pub finished_at: DateTime<Utc>,
-    #[ts(type = "string")]
-    /// Current status.
-    pub status: BackupStatus,
+    /// Current status. A raw string, not `BackupStatus`: unlike an activity
+    /// entry or a schedule's health summary, a report row can still be
+    /// `pending`/`started`/`cancelled` - states `BackupStatus` doesn't have
+    /// variants for, since it exists to describe a *finished* run's outcome.
+    pub status: String,
     #[ts(type = "number")]
     /// Original size of the data before compression.
     pub original_size: i64,

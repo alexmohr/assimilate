@@ -29,7 +29,10 @@ export type ReportResponse = {
    */
   finished_at: string;
   /**
-   * Current status.
+   * Current status. A raw string, not `BackupStatus`: unlike an activity
+   * entry or a schedule's health summary, a report row can still be
+   * `pending`/`started`/`cancelled` - states `BackupStatus` doesn't have
+   * variants for, since it exists to describe a *finished* run's outcome.
    */
   status: string;
   /**

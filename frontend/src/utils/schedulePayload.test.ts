@@ -2,7 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { agentOverridePayload, repoTargetsProblem, scheduleFormPayload } from './schedulePayload'
+import {
+  agentOverridePayload,
+  primaryRepoId,
+  repoTargetsProblem,
+  scheduleFormPayload,
+} from './schedulePayload'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 
@@ -152,5 +157,32 @@ describe('repoTargetsProblem', () => {
     expect(repoTargetsProblem([{ repo_id: 1, required: false }])).toBe(
       'at least one required repository',
     )
+  })
+})
+
+describe('primaryRepoId', () => {
+  /** The server's `primary_target` picks the first *required* target, so a
+      list that starts with a best-effort one is where the two rules diverge -
+      and the case the old `targets[0]` version got wrong. */
+  it('takes the first required target, not the first written one', () => {
+    expect(
+      primaryRepoId([
+        { repo_id: 20, required: false },
+        { repo_id: 21, required: true },
+      ]),
+    ).toBe(21)
+  })
+
+  it('falls back to the first target when none is required', () => {
+    expect(
+      primaryRepoId([
+        { repo_id: 20, required: false },
+        { repo_id: 21, required: false },
+      ]),
+    ).toBe(20)
+  })
+
+  it('takes the only target of a single-target schedule', () => {
+    expect(primaryRepoId([{ repo_id: 20, required: true }])).toBe(20)
   })
 })

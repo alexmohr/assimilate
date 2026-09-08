@@ -105,3 +105,18 @@ export function repoTargetsProblem(targets: readonly ScheduleRepoTarget[]): stri
   if (!targets.some((target) => target.required)) return 'at least one required repository'
   return null
 }
+
+/**
+ * The repository a schedule counts as its primary target.
+ *
+ * Mirrors the server's `primary_target`: the first *required* target, falling
+ * back to the first written one only when nothing is required. The server
+ * recomputes this from `repo_targets` whenever that field is sent, so the
+ * `repo_id` the client sends alongside it is inert today - but sending the
+ * first *written* target instead meant the two disagreed for any list that
+ * starts with a best-effort target, and would have picked the wrong
+ * repository the moment any path trusted the client's value.
+ */
+export function primaryRepoId(targets: readonly ScheduleRepoTarget[]): number {
+  return (targets.find((target) => target.required) ?? targets[0]).repo_id
+}

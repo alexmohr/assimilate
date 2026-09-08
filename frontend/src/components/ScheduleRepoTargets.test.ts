@@ -48,6 +48,43 @@ describe('ScheduleRepoTargets', () => {
     expect(wrapper.text()).toContain('1 of 2 required')
   })
 
+  /** `GET /schedules/{id}/repos` is not permission-filtered but `GET /repos`
+      is, so an operator can legitimately be editing a schedule whose other
+      target they cannot see. That row must say so rather than render blank
+      and quietly pass the shared-host check. */
+  describe('a target whose repository the viewer cannot see', () => {
+    const HIDDEN = [
+      { repo_id: 20, required: true },
+      { repo_id: 99, required: false },
+    ]
+
+    it('names it instead of leaving the row blank', () => {
+      const wrapper = mount(HIDDEN)
+
+      expect(wrapper.text()).toContain('You do not have access to this repository')
+      // Without an option of its own the select would show another
+      // repository's name for it.
+      const options = wrapper.findAll('select')[1].findAll('option')
+      expect(options[0].text()).toBe('Repository #99 - no access')
+      expect(options[0].attributes('disabled')).toBeDefined()
+    })
+
+    it('says the shared-host check could not cover it', () => {
+      const wrapper = mount(HIDDEN)
+
+      expect(wrapper.text()).toContain(
+        'This target cannot be checked against the others for a shared storage host',
+      )
+    })
+
+    it('does not claim the address of a repository it cannot see', () => {
+      const wrapper = mount(HIDDEN)
+
+      expect(wrapper.text()).not.toContain('offsite.example')
+      expect(wrapper.text()).not.toContain('nas.lan:/srv/borg/archive')
+    })
+  })
+
   it('adds the first repository that is not already a target, as best effort', async () => {
     const wrapper = mount([{ repo_id: 20, required: true }])
     await wrapper

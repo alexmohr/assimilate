@@ -34,6 +34,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
 import {
   agentOverridePayload,
+  primaryRepoId as primaryTargetRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
   type ScheduleFormPayload,
@@ -458,7 +459,7 @@ async function save(): Promise<void> {
       const updated = await updateSchedule(scheduleId, {
         ...payload,
         agent_ids: selectedAgentIds.value,
-        repo_id: repoTargets.value[0].repo_id,
+        repo_id: primaryTargetRepoId(repoTargets.value),
         repo_targets: repoTargets.value,
         on_failure: onFailure.value,
       })

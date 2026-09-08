@@ -14,6 +14,7 @@ import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import {
   agentOverridePayload,
+  primaryRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
 } from '../utils/schedulePayload'
@@ -215,7 +216,7 @@ async function submit(): Promise<void> {
       ...scheduleFormPayload(form.value),
       ...agentOverridePayload(agentOverrides.value, selectedAgentIds.value),
       agent_ids: selectedAgentIds.value,
-      repo_id: repoTargets.value[0].repo_id,
+      repo_id: primaryRepoId(repoTargets.value),
       repo_targets: repoTargets.value,
       schedule_type: selectedType.value,
       on_failure: onFailure.value,

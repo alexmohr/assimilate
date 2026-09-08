@@ -59,6 +59,23 @@ function sharesHost(target: ScheduleRepoTarget): boolean {
   return host !== undefined && sharedHosts.value.has(host)
 }
 
+/**
+ * A schedule's target list is not permission-filtered, but the repository list
+ * this screen is given is: `GET /schedules/{id}/repos` returns every target,
+ * while `GET /repos` returns only what the viewer may see. So an operator with
+ * permission on one repository can legitimately be editing a schedule whose
+ * other target they cannot view - the backend supports exactly that, and
+ * `a_secondary_target_the_caller_cannot_reach_does_not_block_editing_a_schedule`
+ * pins it.
+ *
+ * Such a row is called out rather than left blank. Its storage host is
+ * deliberately not fetched: it is the address of a repository the viewer has
+ * no access to, and reporting it here would hand it to them anyway.
+ */
+function isHidden(repoId: number): boolean {
+  return !repoById.value.has(repoId)
+}
+
 function repoAddress(repoId: number): string {
   const repo = repoById.value.get(repoId)
   if (!repo) return ''
@@ -124,6 +141,15 @@ const canAdd = computed(() => !props.disabled && unusedRepos.value.length > 0)
               :value="target.repo_id"
               @change="setRepo(idx, Number(($event.target as HTMLSelectElement).value))"
             >
+              <!-- Without this the select would fall back to showing some other
+                   repository's name for a target the viewer cannot see. -->
+              <option
+                v-if="isHidden(target.repo_id)"
+                :value="target.repo_id"
+                disabled
+              >
+                Repository #{{ target.repo_id }} - no access
+              </option>
               <option
                 v-for="r in repos"
                 :key="r.id"
@@ -135,7 +161,16 @@ const canAdd = computed(() => !props.disabled && unusedRepos.value.length > 0)
             </select>
             <span class="badge">{{ target.required ? 'Required' : 'Best effort' }}</span>
           </div>
-          <span class="repo-target-address mono muted">{{ repoAddress(target.repo_id) }}</span>
+          <span
+            v-if="isHidden(target.repo_id)"
+            class="repo-target-address muted"
+            >You do not have access to this repository</span
+          >
+          <span
+            v-else
+            class="repo-target-address mono muted"
+            >{{ repoAddress(target.repo_id) }}</span
+          >
           <div class="toggle-row">
             <span class="toggle-row-label">A failure here fails the run</span>
             <ToggleSwitch
@@ -151,6 +186,13 @@ const canAdd = computed(() => !props.disabled && unusedRepos.value.length > 0)
           >
             <TriangleAlert :size="12" />
             Shares a storage host with another target - one host outage takes out both copies.
+          </p>
+          <p
+            v-else-if="isHidden(target.repo_id)"
+            class="repo-target-warning"
+          >
+            <TriangleAlert :size="12" />
+            This target cannot be checked against the others for a shared storage host.
           </p>
         </div>
         <div class="order-actions">

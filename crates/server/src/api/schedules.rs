@@ -14,7 +14,7 @@ use shared::{
         DeleteFailedReportsResponse, FailedReportCountResponse, PerAgentBackupSourcesResponse,
         PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
         PerAgentFileChangePatternsResponse, ReportListResponse, ScheduleBackupSourcesResponse,
-        ScheduleTargetResponse,
+        ScheduleRepoResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
@@ -29,6 +29,16 @@ impl From<db::ScheduleTargetRow> for ScheduleTargetResponse {
             agent_id: t.agent_id,
             execution_order: t.execution_order,
             catch_up_pending_for: t.catch_up_pending_for,
+        }
+    }
+}
+
+impl From<db::ScheduleRepoRow> for ScheduleRepoResponse {
+    fn from(t: db::ScheduleRepoRow) -> Self {
+        Self {
+            repo_id: t.repo_id,
+            execution_order: t.execution_order,
+            required: t.required,
         }
     }
 }
@@ -122,13 +132,28 @@ pub struct AgentFileChangePatterns {
     pub raw_text: String,
 }
 
+/// One repository a schedule writes into.
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
+pub struct ScheduleRepoInput {
+    /// Repository ID.
+    pub repo_id: i64,
+    /// Whether a failure on this repository fails the whole run. Defaults to
+    /// true; a best-effort target only warns and never stops the run.
+    pub required: Option<bool>,
+}
+
 /// Request payload for creating a new backup schedule.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
     /// IDs of agents to assign as targets.
     pub agent_ids: Vec<i64>,
-    /// Repository ID to back up to.
+    /// Repository ID to back up to. When `repo_targets` is given, this is
+    /// ignored in favour of that list's first *required* entry, which becomes
+    /// the schedule's denormalised primary.
     pub repo_id: i64,
+    /// Every repository this schedule writes into, in write order. Omit for a
+    /// single-target schedule writing to `repo_id`.
+    pub repo_targets: Option<Vec<ScheduleRepoInput>>,
     /// Optional display name for the schedule.
     pub name: Option<String>,
     /// Schedule type (backup, check, verify).
@@ -204,8 +229,12 @@ pub struct UpdateScheduleRequest {
     pub name: Option<String>,
     /// Updated cron expression.
     pub cron_expression: String,
-    /// New repository ID to assign.
+    /// New repository ID to assign. Replaces the whole target list; send
+    /// `repo_targets` instead to keep more than one.
     pub repo_id: Option<i64>,
+    /// Replacement list of repositories this schedule writes into, in write
+    /// order. Takes precedence over `repo_id`.
+    pub repo_targets: Option<Vec<ScheduleRepoInput>>,
     /// Whether the schedule is enabled.
     pub enabled: Option<bool>,
     /// Whether canary backups are enabled.
@@ -350,6 +379,61 @@ async fn ensure_backup_sources_available(
     Ok(())
 }
 
+/// Normalises the repositories a create/update request asks for into
+/// `(repo_id, required)` pairs in write order.
+///
+/// `repo_targets` wins when present; otherwise the request is a single-target
+/// one and `fallback_repo_id` is that target. Rejects a list that is empty,
+/// names the same repository twice, or leaves no required target - the last
+/// would let a run report success without a single copy having been written.
+fn resolve_repo_targets(
+    repo_targets: Option<&[ScheduleRepoInput]>,
+    fallback_repo_id: Option<i64>,
+) -> Result<Vec<(i64, bool)>, ApiError> {
+    let Some(targets) = repo_targets else {
+        return Ok(fallback_repo_id.map_or_else(Vec::new, |repo_id| vec![(repo_id, true)]));
+    };
+    if targets.is_empty() {
+        return Err(ApiError::BadRequest(
+            "repo_targets must contain at least one entry".into(),
+        ));
+    }
+    let resolved: Vec<(i64, bool)> = targets
+        .iter()
+        .map(|t| (t.repo_id, t.required.unwrap_or(true)))
+        .collect();
+    let unique: std::collections::HashSet<i64> = resolved.iter().map(|(id, _)| *id).collect();
+    if unique.len() != resolved.len() {
+        return Err(ApiError::BadRequest(
+            "repo_targets must not name the same repository twice".into(),
+        ));
+    }
+    if !resolved.iter().any(|(_, required)| *required) {
+        return Err(ApiError::BadRequest(
+            "at least one target repository must be required".into(),
+        ));
+    }
+    Ok(resolved)
+}
+
+/// The schedule's primary target: the first *required* repository in write
+/// order, not simply the first one.
+///
+/// `schedules.repo_id` is the denormalised primary, and health summaries,
+/// quota accounting and reports key off it - pointing it at a best-effort
+/// target would key them to the copy the schedule is explicitly allowed to
+/// lose. Write order stays free: a list may begin with a best-effort target
+/// and still be answered for by a required one. The fallback to the first
+/// entry never fires for a list `resolve_repo_targets` accepted, which always
+/// has a required target; it only covers an empty list.
+fn primary_target(targets: &[(i64, bool)]) -> Option<i64> {
+    targets
+        .iter()
+        .find(|(_, required)| *required)
+        .or_else(|| targets.first())
+        .map(|(repo_id, _)| *repo_id)
+}
+
 #[utoipa::path(
     post,
     path = "/api/schedules",
@@ -379,7 +463,11 @@ pub async fn create_schedule(
             "agent_ids must contain at least one entry".into(),
         ));
     }
-    check_repo_permission(&state.pool, &auth, req.repo_id, |p| p.can_modify_schedules).await?;
+    let repo_targets = resolve_repo_targets(req.repo_targets.as_deref(), Some(req.repo_id))?;
+    for (repo_id, _) in &repo_targets {
+        check_repo_permission(&state.pool, &auth, *repo_id, |p| p.can_modify_schedules).await?;
+    }
+    let primary_repo_id = primary_target(&repo_targets).unwrap_or(req.repo_id);
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let schedule_type_enum = req.schedule_type.unwrap_or_default();
@@ -391,7 +479,9 @@ pub async fn create_schedule(
     let exclude_patterns_raw = req.exclude_patterns_raw.unwrap_or_default();
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        check_ssh_reachability(&state.pool, req.repo_id).await?;
+        for (repo_id, _) in &repo_targets {
+            check_ssh_reachability(&state.pool, *repo_id).await?;
+        }
     }
 
     let on_failure = req.on_failure.unwrap_or_default();
@@ -435,7 +525,20 @@ pub async fn create_schedule(
     };
 
     let schedule =
-        db::insert_schedule(&state.pool, req.repo_id, &params, Some(auth.user_id)).await?;
+        db::insert_schedule(&state.pool, primary_repo_id, &params, Some(auth.user_id)).await?;
+
+    // `insert_schedule` seeds the primary target; anything beyond a single
+    // required repository replaces that seed with the requested list.
+    //
+    // Two transactions rather than one, which is safe only because a schedule
+    // is not dispatchable until `refresh_next_run` below sets `next_run_at` -
+    // `list_due_schedules` requires it to be non-null, and it is written last,
+    // after both the target list and the agent targets. Keep it last: moving
+    // it earlier would open a window where a tick dispatches a run that
+    // silently skips every secondary target.
+    if req.repo_targets.is_some() {
+        db::replace_schedule_repos(&state.pool, schedule.id, &repo_targets).await?;
+    }
 
     let targets: Vec<(i64, i32)> = req
         .agent_ids
@@ -503,6 +606,133 @@ pub async fn get_schedule(
     Ok(Json(schedule))
 }
 
+/// What an update leaves a schedule pointed at, worked out once so the
+/// permission check, the reachability check and the write all agree.
+struct RepoTargetPlan {
+    /// The replacement target list, or `None` when the request did not send one.
+    requested: Option<Vec<(i64, bool)>>,
+    /// The repository `schedules.repo_id` ends up holding.
+    effective_repo_id: Option<i64>,
+    /// The repositories the schedule was already writing to.
+    existing_targets: Vec<i64>,
+}
+
+/// Every repository an enabled schedule is about to write to has to be
+/// reachable over SSH, not just the primary one - a second target that cannot
+/// be reached would only surface as a failed run hours later.
+async fn check_targets_reachable(
+    pool: &PgPool,
+    plan: &RepoTargetPlan,
+    existing_primary: Option<i64>,
+) -> Result<(), ApiError> {
+    if plan.effective_repo_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "cannot enable a schedule with no repository assigned".into(),
+        ));
+    }
+    for repo_id in resulting_repo_targets(plan, existing_primary) {
+        check_ssh_reachability(pool, repo_id).await?;
+    }
+    Ok(())
+}
+
+/// The repositories the schedule writes to once the update lands.
+///
+/// A request carrying `repo_targets` replaces the list outright, and a legacy
+/// bare-`repo_id` update that moves the primary collapses the schedule onto
+/// that one repository (`db::update_schedule_repo`). Anything else - a rename,
+/// a re-time, a plain re-enable - keeps the list the schedule already has, so
+/// re-enabling a multi-target schedule has to reach its secondary targets too,
+/// not just the primary.
+fn resulting_repo_targets(plan: &RepoTargetPlan, existing_primary: Option<i64>) -> Vec<i64> {
+    if let Some(targets) = plan.requested.as_deref() {
+        return targets.iter().map(|(repo_id, _)| *repo_id).collect();
+    }
+    let Some(repo_id) = plan.effective_repo_id else {
+        return Vec::new();
+    };
+    if plan.effective_repo_id != existing_primary || plan.existing_targets.is_empty() {
+        return vec![repo_id];
+    }
+    plan.existing_targets.clone()
+}
+
+/// Works out which repositories an update leaves the schedule writing to, and
+/// checks the caller may point it at each one it did not already own.
+///
+/// Returns the plan the rest of the update works from.
+async fn authorize_repo_targets(
+    state: &AppState,
+    auth: &AuthUser,
+    req: &UpdateScheduleRequest,
+    existing: &db::ScheduleRow,
+) -> Result<RepoTargetPlan, ApiError> {
+    let requested = req
+        .repo_targets
+        .as_deref()
+        .map(|targets| resolve_repo_targets(Some(targets), None))
+        .transpose()?;
+    let effective_repo_id: Option<i64> = requested
+        .as_ref()
+        .and_then(|targets| primary_target(targets))
+        .or(req.repo_id)
+        .or(existing.repo_id);
+    let existing_targets: Vec<i64> = db::list_schedule_repos(&state.pool, existing.id)
+        .await?
+        .into_iter()
+        .map(|target| target.repo_id)
+        .collect();
+    let plan = RepoTargetPlan {
+        requested,
+        effective_repo_id,
+        existing_targets,
+    };
+    for repo_id in repos_needing_permission(&plan, existing.repo_id) {
+        check_repo_permission(&state.pool, auth, repo_id, |p| p.can_modify_schedules).await?;
+    }
+    Ok(plan)
+}
+
+/// The repositories an update changes the schedule's relationship with - the
+/// ones it starts writing to, and the ones it stops writing to. Those are what
+/// the caller needs `can_modify_schedules` for.
+///
+/// Additions are measured against the schedule's whole target list, not just
+/// its primary. `ScheduleDetailView` sends the full list on every save, so
+/// measuring against the primary alone re-checks every secondary target on
+/// every edit: an operator with `can_modify_schedules` on the local repository
+/// but not on the offsite one it also writes to could never rename, pause or
+/// re-time that schedule again.
+///
+/// Removals count too. Dropping a target stops backups being written to it,
+/// which is not something an operator should be able to do to a repository
+/// they hold nothing on - two operators sharing a schedule could otherwise
+/// each delete the other's copy just by co-existing on it.
+fn repos_needing_permission(plan: &RepoTargetPlan, existing_primary: Option<i64>) -> Vec<i64> {
+    let existing: Vec<i64> = plan
+        .existing_targets
+        .iter()
+        .copied()
+        .chain(existing_primary)
+        .collect();
+    let resulting = resulting_repo_targets(plan, existing_primary);
+
+    let mut changed: Vec<i64> = resulting
+        .iter()
+        .copied()
+        .filter(|repo_id| !existing.contains(repo_id))
+        .chain(
+            existing
+                .iter()
+                .copied()
+                .filter(|repo_id| !resulting.contains(repo_id)),
+        )
+        .collect();
+    changed.sort_unstable();
+    changed.dedup();
+    changed
+}
+
 #[utoipa::path(
     put,
     path = "/api/schedules/{id}",
@@ -532,8 +762,8 @@ pub async fn update_schedule(
     ApiJson(req): ApiJson<UpdateScheduleRequest>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
-    let effective_repo_id: Option<i64> = req.repo_id.or(existing.repo_id);
-    check_schedule_edit_permission(&state, &auth, &existing, effective_repo_id).await?;
+    check_schedule_edit_permission(&state, &auth, &existing).await?;
+    let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let exclude_patterns_raw = req
@@ -542,12 +772,7 @@ pub async fn update_schedule(
         .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        let Some(eff_rid) = effective_repo_id else {
-            return Err(ApiError::BadRequest(
-                "cannot enable a schedule with no repository assigned".into(),
-            ));
-        };
-        check_ssh_reachability(&state.pool, eff_rid).await?;
+        check_targets_reachable(&state.pool, &target_plan, existing.repo_id).await?;
     }
 
     let pre_backup_commands = req
@@ -616,10 +841,15 @@ pub async fn update_schedule(
         on_failure: &on_failure,
     };
 
-    if effective_repo_id != existing.repo_id
-        && let Some(new_rid) = effective_repo_id
-    {
-        db::update_schedule_repo(&state.pool, id, new_rid).await?;
+    match &target_plan.requested {
+        Some(targets) => db::replace_schedule_repos(&state.pool, id, targets).await?,
+        None => {
+            if target_plan.effective_repo_id != existing.repo_id
+                && let Some(new_rid) = target_plan.effective_repo_id
+            {
+                db::update_schedule_repo(&state.pool, id, new_rid).await?;
+            }
+        }
     }
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
 
@@ -642,14 +872,13 @@ pub async fn update_schedule(
     Ok(Json(schedule))
 }
 
-/// Whether this caller may edit `existing`, including moving it to a different
-/// repository. An orphaned schedule (no repository to check against) is admin-only;
-/// a move is checked against both the old and the new repository.
+/// May this caller edit the schedule at all - separate from what the edit does
+/// to its target list, which `authorize_repo_targets` decides. An orphaned
+/// schedule (no repository to check against) is admin-only.
 async fn check_schedule_edit_permission(
     state: &AppState,
     auth: &AuthUser,
     existing: &ScheduleRow,
-    effective_repo_id: Option<i64>,
 ) -> Result<(), ApiError> {
     if let Some(rid) = existing.repo_id {
         check_repo_permission(&state.pool, auth, rid, |p| p.can_modify_schedules).await?;
@@ -660,11 +889,6 @@ async fn check_schedule_edit_permission(
         return Err(ApiError::Forbidden(
             "only admins can edit orphaned schedules".into(),
         ));
-    }
-    if effective_repo_id != existing.repo_id
-        && let Some(new_rid) = effective_repo_id
-    {
-        check_repo_permission(&state.pool, auth, new_rid, |p| p.can_modify_schedules).await?;
     }
     Ok(())
 }
@@ -1015,6 +1239,28 @@ pub struct RunScheduleRequest {
     pub agent_ids: Option<Vec<i64>>,
 }
 
+/// Every repository a run of this schedule writes to, in write order.
+///
+/// Manual runs and cancels have to cover the same repositories the scheduler
+/// does - `list_due_schedules` expands a schedule into one dispatch per (agent,
+/// repository), so a manual run reading only the denormalised primary would
+/// silently skip every secondary target. Falls back to the primary for a
+/// schedule whose target rows have not been backfilled.
+async fn schedule_run_repo_ids(
+    pool: &PgPool,
+    schedule: &db::ScheduleRow,
+) -> Result<Vec<i64>, ApiError> {
+    let targets: Vec<i64> = db::list_schedule_repos(pool, schedule.id)
+        .await?
+        .into_iter()
+        .map(|target| target.repo_id)
+        .collect();
+    if targets.is_empty() {
+        return Ok(schedule.repo_id.into_iter().collect());
+    }
+    Ok(targets)
+}
+
 #[utoipa::path(
     post,
     path = "/api/schedules/{id}/run",
@@ -1075,7 +1321,21 @@ pub async fn run_schedule_now(
         }
         _ => targets,
     };
-    let repo_id = RepoId(schedule_repo_id);
+    // Every target the scheduler would write, not just the primary: a manual
+    // run of a two-target schedule has to produce the same copies its cron
+    // does, in the same order.
+    let repo_ids: Vec<RepoId> = schedule_run_repo_ids(&state.pool, &schedule)
+        .await?
+        .into_iter()
+        .map(RepoId)
+        .collect();
+    // Permission on every repository this writes into, not just the primary.
+    // Editing a schedule's metadata deliberately does not re-check its
+    // unchanged targets, but this is not metadata: it starts a real borg run
+    // against each of them, at a time of the caller's choosing.
+    for repo_id in &repo_ids {
+        check_repo_permission(&state.pool, &auth, repo_id.0, |p| p.can_modify_schedules).await?;
+    }
     let schedule_type = schedule
         .schedule_type
         .parse::<ScheduleType>()
@@ -1084,35 +1344,51 @@ pub async fn run_schedule_now(
     let now = chrono::Utc::now();
 
     for target in &targets {
-        if let Err(e) = db::insert_backup_pending(
-            &state.pool,
-            target.agent_id,
-            schedule_repo_id,
-            Some(id),
-            &run_id,
-            now,
-        )
-        .await
-        {
-            tracing::warn!(
-                hostname = %target.hostname,
-                error = %e,
-                "manual run: failed to insert pending record"
-            );
+        for repo_id in &repo_ids {
+            if let Err(e) = db::insert_backup_pending(
+                &state.pool,
+                target.agent_id,
+                repo_id.0,
+                Some(id),
+                &run_id,
+                now,
+            )
+            .await
+            {
+                tracing::warn!(
+                    hostname = %target.hostname,
+                    repo_id = repo_id.0,
+                    error = %e,
+                    "manual run: failed to insert pending record"
+                );
+            }
         }
     }
 
-    tokio::spawn(run_dispatch::run_targets_sequential(
+    // Tracked, like the archive-deletion spawn and archive_index's indexing
+    // spawn, so a test can wait for this dispatch instead of racing it.
+    // Untracked, whether this task got scheduled at all before the test's
+    // tokio runtime was dropped was a coin flip, which showed up as ~49 lines
+    // of the manual-run path being covered in one CI run and not the next --
+    // a 0.14pp swing between runs of byte-identical code.
+    //
+    // The dispatch future is wrapped here rather than tracked inside
+    // run_targets_sequential because that function is shared with the
+    // scheduler, which dispatches on its own schedule and has no test waiting
+    // on it.
+    let background_task_tracker = state.background_task_tracker.clone();
+    let dispatch = run_dispatch::run_targets_sequential(
         state,
         targets,
         run_dispatch::RunRequest {
-            repo_id,
+            repo_ids,
             schedule_type,
             schedule_id: id,
             run_id,
             origin: run_dispatch::RunOrigin::Manual,
         },
-    ));
+    );
+    background_task_tracker.spawn_tracked(dispatch);
 
     Ok(StatusCode::ACCEPTED)
 }
@@ -1152,35 +1428,51 @@ pub async fn cancel_running_backup(
     .await?;
 
     let targets = db::get_schedule_targets_for_run(&state.pool, id).await?;
-    let repo_id = RepoId(schedule_repo_id);
+    // A run in flight can be on any of the schedule's targets, and each
+    // (agent, repository) pair has its own report to cancel, so cancelling
+    // only the primary would leave a secondary target running.
+    //
+    // Deliberately *not* gated on permission for every target, unlike starting
+    // a run: cancelling only stops work, and the run being cancelled may have
+    // been started by the schedule's own cron. Refusing to let the operator
+    // who administers this schedule stop a job - including the copy into the
+    // repository they do administer, since a cancel covers the whole run - is
+    // its own harm, and a worse one than the reach it would prevent.
+    let repo_ids = schedule_run_repo_ids(&state.pool, &schedule).await?;
 
     for target in &targets {
-        let msg = ServerToAgent::CancelBackup { repo_id };
-        if let Err(e) = state.registry.send_to(target.agent_id, msg).await {
-            tracing::warn!(
-                hostname = %target.hostname,
-                error = %e,
-                "agent not connected for cancel_running_backup"
-            );
-            // Agent is offline - cancel the backup directly in the DB
-            if let Err(e) =
-                db::cancel_backup_report(&state.pool, target.agent_id, schedule_repo_id).await
-            {
-                tracing::error!(
+        for repo_id in &repo_ids {
+            let msg = ServerToAgent::CancelBackup {
+                repo_id: RepoId(*repo_id),
+            };
+            if let Err(e) = state.registry.send_to(target.agent_id, msg).await {
+                tracing::warn!(
                     hostname = %target.hostname,
+                    repo_id = *repo_id,
                     error = %e,
-                    "failed to cancel backup in DB after agent not connected"
+                    "agent not connected for cancel_running_backup"
                 );
+                // Agent is offline - cancel the backup directly in the DB
+                if let Err(e) =
+                    db::cancel_backup_report(&state.pool, target.agent_id, *repo_id).await
+                {
+                    tracing::error!(
+                        hostname = %target.hostname,
+                        repo_id = *repo_id,
+                        error = %e,
+                        "failed to cancel backup in DB after agent not connected"
+                    );
+                }
+                state
+                    .completion_bus
+                    .publish(crate::ws::completion_bus::OperationOutcome {
+                        agent_id: target.agent_id,
+                        repo_id: *repo_id,
+                        success: false,
+                    });
+                state.ui_broadcast.clear_active_backup(*repo_id);
+                state.ui_broadcast.send(ServerToUi::DataChanged);
             }
-            state
-                .completion_bus
-                .publish(crate::ws::completion_bus::OperationOutcome {
-                    agent_id: target.agent_id,
-                    repo_id: schedule_repo_id,
-                    success: false,
-                });
-            state.ui_broadcast.clear_active_backup(schedule_repo_id);
-            state.ui_broadcast.send(ServerToUi::DataChanged);
         }
     }
 
@@ -1338,6 +1630,37 @@ pub async fn list_schedule_targets(
 
 #[utoipa::path(
     get,
+    path = "/api/schedules/{id}/repos",
+    tag = "Schedules",
+    operation_id = "listScheduleRepos",
+    params(("id" = i64, Path, description = "Schedule ID")),
+    responses(
+        (status = 200, description = "Target repositories", body = Vec<ScheduleRepoResponse>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+/// List the repositories a schedule writes into, in write order.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
+pub async fn list_schedule_repos(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<ScheduleRepoResponse>>, ApiError> {
+    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let repos: Vec<ScheduleRepoResponse> = db::list_schedule_repos(&state.pool, id)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Ok(Json(repos))
+}
+
+#[utoipa::path(
+    get,
     path = "/api/schedules/{id}/sources",
     tag = "Schedules",
     operation_id = "listScheduleBackupSources",
@@ -1445,5 +1768,196 @@ mod tests {
             },
         ];
         assert!(validate_hook_commands(&commands).is_err());
+    }
+
+    fn repo_input(repo_id: i64, required: Option<bool>) -> ScheduleRepoInput {
+        ScheduleRepoInput { repo_id, required }
+    }
+
+    #[test]
+    fn resolve_repo_targets_falls_back_to_the_single_repo_id() {
+        let resolved = resolve_repo_targets(None, Some(7)).unwrap();
+        assert_eq!(resolved, vec![(7, true)]);
+
+        assert_eq!(resolve_repo_targets(None, None).unwrap(), []);
+    }
+
+    #[test]
+    fn resolve_repo_targets_keeps_write_order_and_defaults_to_required() {
+        let resolved = resolve_repo_targets(
+            Some(&[repo_input(3, None), repo_input(9, Some(false))]),
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(resolved, vec![(3, true), (9, false)]);
+    }
+
+    #[test]
+    fn resolve_repo_targets_rejects_an_empty_list() {
+        assert!(matches!(
+            resolve_repo_targets(Some(&[]), Some(1)),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn resolve_repo_targets_rejects_the_same_repository_twice() {
+        assert!(matches!(
+            resolve_repo_targets(Some(&[repo_input(4, None), repo_input(4, None)]), None),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    /// Without a required target a run would report success having written
+    /// nothing, which is worse than no schedule at all.
+    #[test]
+    fn resolve_repo_targets_rejects_an_all_best_effort_list() {
+        assert!(matches!(
+            resolve_repo_targets(
+                Some(&[repo_input(4, Some(false)), repo_input(5, Some(false))]),
+                None
+            ),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    /// The bug this guards: `schedules.repo_id` took the first entry in write
+    /// order, so a list that writes a best-effort copy first left health,
+    /// quota and reports keyed to the target the schedule may lose.
+    #[test]
+    fn the_primary_is_the_first_required_target_not_the_first_written() {
+        assert_eq!(primary_target(&[(5, false), (6, true)]), Some(6));
+        assert_eq!(primary_target(&[(6, true), (5, false)]), Some(6));
+        assert_eq!(primary_target(&[(6, true), (7, true)]), Some(6));
+        assert_eq!(primary_target(&[]), None);
+    }
+
+    fn plan(
+        requested: Option<&[(i64, bool)]>,
+        effective_repo_id: Option<i64>,
+        existing_targets: &[i64],
+    ) -> RepoTargetPlan {
+        RepoTargetPlan {
+            requested: requested.map(<[(i64, bool)]>::to_vec),
+            effective_repo_id,
+            existing_targets: existing_targets.to_vec(),
+        }
+    }
+
+    /// The bug this guards: re-enabling a multi-target schedule through the
+    /// legacy bare-`repo_id` contract only pinged the primary, so a schedule
+    /// paused while its offsite target was down came back enabled with that
+    /// target still unreachable.
+    #[test]
+    fn an_update_that_keeps_the_target_list_has_to_reach_every_target() {
+        assert_eq!(
+            resulting_repo_targets(&plan(None, Some(1), &[1, 2]), Some(1)),
+            vec![1, 2],
+        );
+    }
+
+    #[test]
+    fn a_request_sending_targets_is_checked_against_exactly_those() {
+        let requested = [(2, true), (3, false)];
+        assert_eq!(
+            resulting_repo_targets(&plan(Some(&requested), Some(2), &[1, 2]), Some(1)),
+            vec![2, 3],
+        );
+    }
+
+    /// Moving the primary collapses the schedule onto that one repository, so
+    /// the targets it is about to drop are not worth reaching.
+    #[test]
+    fn moving_the_primary_only_has_to_reach_the_new_repository() {
+        assert_eq!(
+            resulting_repo_targets(&plan(None, Some(9), &[1, 2]), Some(1)),
+            vec![9],
+        );
+    }
+
+    #[test]
+    fn a_schedule_with_no_targets_falls_back_to_its_primary() {
+        assert_eq!(
+            resulting_repo_targets(&plan(None, Some(1), &[]), Some(1)),
+            vec![1],
+        );
+        assert_eq!(
+            resulting_repo_targets(&plan(None, None, &[1]), Some(1)),
+            Vec::<i64>::new(),
+        );
+    }
+
+    /// The bug this guards: `ScheduleDetailView` sends the whole target list
+    /// on every save, so measuring "new" against the primary alone made every
+    /// secondary target need permission on every edit.
+    #[test]
+    fn a_target_the_schedule_already_writes_to_needs_no_fresh_permission() {
+        let requested = [(1, true), (2, false)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
+            Vec::<i64>::new(),
+        );
+    }
+
+    #[test]
+    fn only_a_repository_the_schedule_did_not_have_needs_permission() {
+        let requested = [(1, true), (2, false), (3, false)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
+            vec![3],
+        );
+    }
+
+    /// The bug this guards: only *additions* were checked, so an operator
+    /// holding nothing on the offsite copy could drop it off a shared
+    /// schedule - stopping its backups - with a 200 and no check at all.
+    #[test]
+    fn dropping_a_target_needs_permission_on_the_repository_being_dropped() {
+        let requested = [(1, true)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
+            vec![2],
+        );
+    }
+
+    #[test]
+    fn swapping_one_target_for_another_needs_permission_on_both() {
+        let requested = [(1, true), (3, false)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[1, 2]), Some(1)),
+            vec![2, 3],
+        );
+    }
+
+    /// Falls back to the primary when the target list has not been backfilled
+    /// for this schedule, so an unknown repository is still checked.
+    #[test]
+    fn an_empty_target_list_still_recognises_the_primary() {
+        let requested = [(1, true), (4, true)];
+        assert_eq!(
+            repos_needing_permission(&plan(Some(&requested), Some(1), &[]), Some(1)),
+            vec![4],
+        );
+    }
+
+    /// A bare `repo_id` collapses the schedule onto that one repository, so
+    /// the targets it drops are checked alongside the one it moves to.
+    #[test]
+    fn a_bare_repo_id_update_is_checked_for_what_it_drops_and_adds() {
+        assert_eq!(
+            repos_needing_permission(&plan(None, Some(2), &[1, 2]), Some(1)),
+            vec![1],
+        );
+        assert_eq!(
+            repos_needing_permission(&plan(None, Some(9), &[1, 2]), Some(1)),
+            vec![1, 2, 9],
+        );
+        // An orphaned schedule: no primary, no targets, nothing to check -
+        // `effective_repo_id` can only be `None` when the schedule had no
+        // repository to begin with and the request names none either.
+        assert_eq!(
+            repos_needing_permission(&plan(None, None, &[]), None),
+            Vec::<i64>::new(),
+        );
     }
 }

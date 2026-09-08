@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedule_repos sr ON sr.schedule_id = st.schedule_id WHERE sr.repo_id = $1 ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7f0ae903c923f3d01731131a76e157d9f7b706fcf08cd1dfd050adbd03aeb4bb"
+}

@@ -561,6 +561,97 @@ pub struct ScheduleTargetRow {
     pub catch_up_pending_for: Option<DateTime<Utc>>,
 }
 
+/// A row from the `schedule_repos` join table: one repository a schedule
+/// writes into.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct ScheduleRepoRow {
+    /// Repository ID.
+    pub repo_id: i64,
+    /// Write order among the schedule's repositories.
+    pub execution_order: i32,
+    /// Whether a failure on this repository fails the whole run.
+    pub required: bool,
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_schedule_repos(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<ScheduleRepoRow>, ApiError> {
+    sqlx::query_as!(
+        ScheduleRepoRow,
+        "SELECT repo_id, execution_order, required FROM schedule_repos WHERE schedule_id = $1 \
+         ORDER BY execution_order, repo_id",
+        schedule_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// Replaces a schedule's repository targets, in the order given, and
+/// re-points `schedules.repo_id` at the first of them.
+///
+/// One transaction: the denormalised primary target on `schedules` and the
+/// rows it summarises must never be observed disagreeing by a scheduler tick
+/// running concurrently.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if any of the queries fails.
+pub async fn replace_schedule_repos(
+    pool: &PgPool,
+    schedule_id: i64,
+    targets: &[(i64, bool)],
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    sqlx::query!(
+        "DELETE FROM schedule_repos WHERE schedule_id = $1",
+        schedule_id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    for (order, (repo_id, required)) in targets.iter().enumerate() {
+        let execution_order = i32::try_from(order).unwrap_or(i32::MAX);
+        sqlx::query!(
+            "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES \
+             ($1, $2, $3, $4)",
+            schedule_id,
+            *repo_id,
+            execution_order,
+            *required,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+    }
+
+    // The first *required* target, not simply the first: the denormalised
+    // primary is what health, quota and reports key off, so it must not point
+    // at a copy the schedule is allowed to lose. The fallback only covers an
+    // empty list - the API never accepts one with no required target.
+    let primary = targets
+        .iter()
+        .find(|(_, required)| *required)
+        .or_else(|| targets.first())
+        .map(|(repo_id, _)| *repo_id);
+    sqlx::query!(
+        "UPDATE schedules SET repo_id = $2 WHERE id = $1",
+        schedule_id,
+        primary,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)
+}
+
 /// Number of schedules targeting a specific agent.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ScheduleCountByAgent {
@@ -1346,7 +1437,8 @@ pub async fn get_schedule_target_agents_for_repo(
     sqlx::query_as!(
         ScheduleRunTarget,
         "SELECT DISTINCT a.id AS agent_id, a.hostname FROM agents a JOIN schedule_targets st ON \
-         st.agent_id = a.id JOIN schedules s ON s.id = st.schedule_id WHERE s.repo_id = $1",
+         st.agent_id = a.id JOIN schedule_repos sr ON sr.schedule_id = st.schedule_id WHERE \
+         sr.repo_id = $1",
         repo_id,
     )
     .fetch_all(pool)
@@ -1753,8 +1845,8 @@ pub async fn set_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), A
     .map_err(ApiError::Database)?;
     sqlx::query!(
         "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \
-         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedules s ON s.id = \
-         st.schedule_id WHERE s.repo_id = $1 ON CONFLICT DO NOTHING",
+         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedule_repos sr ON \
+         sr.schedule_id = st.schedule_id WHERE sr.repo_id = $1 ON CONFLICT DO NOTHING",
         repo_id,
     )
     .execute(&mut *tx)
@@ -2070,8 +2162,8 @@ pub async fn update_repo_and_set_relocation_pending(
 
     sqlx::query!(
         "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \
-         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedules s ON s.id = \
-         st.schedule_id WHERE s.repo_id = $1 ON CONFLICT DO NOTHING",
+         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedule_repos sr ON \
+         sr.schedule_id = st.schedule_id WHERE sr.repo_id = $1 ON CONFLICT DO NOTHING",
         params.repo_id,
     )
     .execute(&mut *tx)
@@ -2088,30 +2180,70 @@ pub async fn update_repo_and_set_relocation_pending(
 /// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    // One transaction, for the same reason `replace_schedule_repos` uses one:
+    // between the delete and the two repair statements below, `schedules` and
+    // `schedule_repos` disagree - schedules point at a repository that is gone,
+    // and a schedule can be left with only best-effort targets. A tick or a
+    // config push observing that window would dispatch from a half-repaired
+    // state, and a failure part-way through would leave it that way for good.
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
     // Clears the auto-disable bookkeeping the same way set_schedule_enabled does for
     // any other direct `enabled` write - otherwise a schedule auto-disabled for an
     // unreachable agent keeps auto_disabled_by_agent_id pointing at that agent even
     // after its repo (and thus this schedule's only reason to run) is gone, so a
     // later reconnect from that agent would silently flip enabled back to true on an
     // orphaned schedule that nobody decided to re-enable.
+    // Only the schedules this repository was the *last* target of: one that
+    // also writes elsewhere still has somewhere to go and keeps running, it
+    // just loses this copy.
     sqlx::query!(
         "UPDATE schedules SET enabled = false, auto_disabled_agent_unreachable = false, \
          auto_disabled_by_agent_id = NULL, consecutive_failures = 0, \
-         failure_streak_pure_connectivity = true WHERE repo_id = $1",
+         failure_streak_pure_connectivity = true WHERE id IN (SELECT schedule_id FROM \
+         schedule_repos GROUP BY schedule_id HAVING bool_and(repo_id = $1))",
         repo_id
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
 
     let result = sqlx::query!("DELETE FROM repos WHERE id = $1", repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound(format!("repo {repo_id} not found")));
     }
-    Ok(())
+
+    // The delete cascaded the `schedule_repos` rows and nulled the denormalised
+    // `schedules.repo_id` that pointed here. Re-point every schedule that still
+    // has targets at the first of them, so everything reading a schedule's
+    // repository agrees with the list again.
+    sqlx::query!(
+        "UPDATE schedules s SET repo_id = first_target.repo_id FROM (SELECT DISTINCT ON \
+         (schedule_id) schedule_id, repo_id FROM schedule_repos ORDER BY schedule_id, required \
+         DESC, execution_order, repo_id) AS first_target WHERE s.id = first_target.schedule_id \
+         AND s.repo_id IS NULL",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    // A schedule left with only best-effort targets could report success
+    // without writing a copy, which the create/update API refuses to produce.
+    // Promote its first target rather than leave that state reachable.
+    sqlx::query!(
+        "UPDATE schedule_repos SET required = true WHERE id IN (SELECT DISTINCT ON (schedule_id) \
+         id FROM schedule_repos WHERE schedule_id IN (SELECT schedule_id FROM schedule_repos \
+         GROUP BY schedule_id HAVING bool_and(NOT required)) ORDER BY schedule_id, \
+         execution_order, repo_id)",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)
 }
 
 /// # Errors
@@ -2495,7 +2627,13 @@ pub async fn insert_schedule(
     params: &ScheduleParams<'_>,
     owner_id: Option<i64>,
 ) -> Result<ScheduleRow, ApiError> {
-    sqlx::query_as!(
+    // One transaction: `list_due_schedules` and `config_assembler` dispatch
+    // strictly off `schedule_repos`, so a schedules row that lost its target
+    // row to a failed or cancelled second statement would silently never run
+    // and never reach an agent's config, with no error surfaced to anyone.
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    let schedule = sqlx::query_as!(
         ScheduleRow,
         "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, \
          canary_enabled, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, \
@@ -2542,9 +2680,27 @@ pub async fn insert_schedule(
         params.catch_up_min_lead_minutes,
         params.wake_override.to_string(),
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(ApiError::Database)
+    .map_err(ApiError::Database)?;
+
+    // Every schedule owns at least the repository it was created with, so
+    // callers that know nothing about multiple targets (config import, the
+    // agent-side auto-provisioning in `ws::handler`) still produce a schedule
+    // the scheduler can dispatch.
+    sqlx::query!(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 0, TRUE)",
+        schedule.id,
+        repo_id,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)?;
+
+    Ok(schedule)
 }
 
 /// # Errors
@@ -2625,25 +2781,26 @@ pub async fn update_schedule(
     })
 }
 
+/// Points a schedule at a single repository, replacing whatever target list
+/// it had.
+///
+/// This is the pre-multi-target contract of `PUT /schedules/{id}` with a bare
+/// `repo_id`: a caller that says "this schedule backs up to X" and knows
+/// nothing about a list is asserting the whole list. Callers that do know send
+/// `repo_targets`, which goes through [`replace_schedule_repos`] instead.
+///
 /// # Errors
 ///
 /// Returns an error if:
-/// - [`ApiError::Database`]: the database query fails
 /// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn update_schedule_repo(pool: &PgPool, id: i64, repo_id: i64) -> Result<(), ApiError> {
-    let rows_affected = sqlx::query!(
-        "UPDATE schedules SET repo_id = $2 WHERE id = $1",
-        id,
-        repo_id
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?
-    .rows_affected();
-    if rows_affected == 0 {
-        return Err(ApiError::NotFound(format!("schedule {id} not found")));
-    }
-    Ok(())
+    sqlx::query_scalar!("SELECT id FROM schedules WHERE id = $1", id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::Database)?
+        .ok_or_else(|| ApiError::NotFound(format!("schedule {id} not found")))?;
+    replace_schedule_repos(pool, id, &[(repo_id, true)]).await
 }
 
 /// A row from the `repos` table including the encrypted passphrase.
@@ -2752,8 +2909,9 @@ pub async fn list_repos_for_agent(
         RepoWithPassphraseRow,
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.ssh_host_key, r.passphrase_encrypted, r.compression, r.encryption, r.enabled, \
-         r.relocation_pending, r.sync_schedule FROM repos r JOIN schedules s ON s.repo_id = r.id \
-         JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.relocation_pending, r.sync_schedule FROM repos r JOIN schedule_repos sr ON sr.repo_id \
+         = r.id JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = \
+         $1 ORDER BY r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -2773,8 +2931,9 @@ pub async fn list_repos_for_agent_public(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
          r.wake_enabled, r.wake_mac_address, r.wake_broadcast_address, r.wake_timeout_seconds, \
-         r.shutdown_after_backup FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN \
-         schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.shutdown_after_backup FROM repos r JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
+         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER BY \
+         r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3364,6 +3523,9 @@ pub async fn get_schedule_for_hostname_repo(
     .map_err(ApiError::Database)
 }
 
+/// Every schedule that writes into `repo_id`, whether as its primary target or
+/// as one of the further copies it also writes.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -3386,7 +3548,8 @@ pub async fn list_schedules_for_repo(
          st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), \
          ARRAY[]::TEXT[]) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
          WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+         \"catch_up_pending_count!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM schedule_repos \
+         sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -3461,6 +3624,9 @@ pub struct DueScheduleRow {
     pub on_failure: String,
     /// Execution order among targets.
     pub execution_order: i32,
+    /// Whether a failure writing to this repository fails the whole run. A
+    /// best-effort target only warns and never stops the remaining targets.
+    pub required: bool,
     /// How many consecutive missed backups this schedule tolerates before it
     /// is marked failed and auto-disabled.
     pub missed_backup_threshold: i32,
@@ -3485,13 +3651,14 @@ pub async fn list_due_schedules(
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as!(
         DueScheduleRow,
-        "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", \
-         st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, \
-         st.execution_order, s.missed_backup_threshold, s.catch_up_missed_runs, s.wake_override, \
-         s.next_run_at AS \"due_at!\" FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN \
-         schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE \
-         s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT \
-         NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
+        "SELECT s.id AS schedule_id, s.name AS schedule_name, sr.repo_id, st.agent_id, \
+         a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, \
+         sr.required, s.missed_backup_threshold, s.catch_up_missed_runs, s.wake_override, \
+         s.next_run_at AS \"due_at!\" FROM schedules s JOIN schedule_repos sr ON sr.schedule_id = \
+         s.id JOIN repos r ON r.id = sr.repo_id JOIN schedule_targets st ON st.schedule_id = s.id \
+         JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND \
+         a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, \
+         st.execution_order, sr.execution_order",
         now,
     )
     .fetch_all(pool)
@@ -5074,10 +5241,11 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
          schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = \
          st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, \
          br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = \
-         a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT \
-         br.status, br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND \
-         br.agent_id = a.id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at \
-         DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+         a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true \
+         LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
+         NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
+         WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await

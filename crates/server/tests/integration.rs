@@ -2123,7 +2123,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "sync-accepted-repo").await;
 
@@ -2149,6 +2149,14 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
         stats.import_error.is_some(),
         "import_error should be set after sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 #[tokio::test]
@@ -2164,7 +2172,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     // SAFETY: BORG_BINARY/env changes are serialised by borg_binary_lock.
     unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "hanging-borg-repo").await;
 
     let started = std::time::Instant::now();
@@ -2184,6 +2192,15 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     );
 
     wait_for_import_completion(&pool, repo_id).await;
+    // Before the env var goes away, rather than at the end of the test: the wait
+    // above only polls the `importing` DB flag, which `handle_repo_sync_failure`
+    // clears from inside the task's `tokio::select!` while `finish_server_sync_task`
+    // still has to run. Waiting on the tracker instead of that intermediate side
+    // effect is what makes the SAFETY comment below true.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 
     // SAFETY: env var must remain set until the background task finishes.
     unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
@@ -2226,7 +2243,7 @@ async fn test_delete_archive_runs_in_background() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
     )
@@ -2267,8 +2284,11 @@ async fn test_delete_archive_runs_in_background() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
-    // The audit entry is written last in the background task, so waiting for it
-    // guarantees the borg delete and DB cleanup have already completed.
+    // Waiting for the audit entry confirms the borg delete and DB cleanup ran.
+    // It is not the end of the task, though: finalize_archive_deletion goes on
+    // to refresh the archive list and clear the import-progress state after
+    // writing it, which is why the tracker wait at the end of this test is what
+    // actually bounds the task.
     timeout(Duration::from_secs(10), async {
         loop {
             let audit_rows: i64 = sqlx::query_scalar(
@@ -2310,6 +2330,15 @@ async fn test_delete_archive_runs_in_background() {
         index_rows, 0,
         "index job rows should be removed with the archive"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2335,7 +2364,7 @@ async fn test_delete_archive_runs_compact_afterwards() {
     let (borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-host', 'hash') \
          RETURNING id",
@@ -2368,6 +2397,15 @@ async fn test_delete_archive_runs_compact_afterwards() {
         settled, 1,
         "exactly one compact should run after a single archive delete"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2402,7 +2440,7 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
     unsafe { std::env::set_var("FAKE_BORG_COMPACT_EXIT", "2") };
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-fail-host', 'hash') \
          RETURNING id",
@@ -2469,6 +2507,15 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     // cleared here, before dropping the borg binary lock, same as other
     // tests that mutate process-global borg-related env vars.
     unsafe { std::env::remove_var("FAKE_BORG_COMPACT_EXIT") };
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2572,6 +2619,15 @@ async fn test_delete_archive_transitions_straight_to_compact_without_a_stale_dra
         "no RepoOpChanged with a cleared op should be broadcast between the delete and compact \
          phases of the same archive deletion, got {kinds:?}"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// The exact race a follow-up review flagged: when a repo has no operation
@@ -2666,6 +2722,14 @@ async fn test_delete_archive_does_not_broadcast_a_drained_op_before_it_ever_begi
          op - a client that just marked this archive as deleting client-side would see that state \
          wiped out by a stale 'nothing happening' signal"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the broadcasts asserted
+    // above. Wait for the task itself, so it can't run on into the next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2762,6 +2826,14 @@ async fn test_delete_archive_broadcasts_archive_deleted_before_data_changed() {
         archive_deleted_at < data_changed_at,
         "ArchiveDeleted should broadcast before DataChanged"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the broadcasts asserted
+    // above. Wait for the task itself, so it can't run on into the next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2789,7 +2861,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
     let (borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING id",
     )
@@ -2858,6 +2930,15 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
         names.len(),
         "each successful delete in the batch should trigger its own compact"
     );
+
+    // Three deletions are dispatched here, each a tracked background task
+    // whose tail (the post-delete archive-list refresh) outlives the compact
+    // log entry asserted above. Wait for all three, so none runs on into the
+    // next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -3203,6 +3284,9 @@ async fn test_reset_import_clears_state() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
+    // Plain `build_test_app`: `reset_import` cancels the in-flight import task and
+    // clears the DB flags synchronously, spawning no tracked background work, so a
+    // tracker wait here would return instantly and prove nothing.
     let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "reset-import-repo").await;
@@ -4546,6 +4630,20 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
     .bind(repo_id)
     .bind("")
     .fetch_one(pool)
+    .await
+    .unwrap();
+
+    // The repository a schedule writes into lives in `schedule_repos`, which
+    // `db::insert_schedule` seeds; this helper builds the row by hand, so it
+    // has to seed it too or the schedule is one no dispatch or repo listing
+    // can see.
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 0, TRUE)",
+    )
+    .bind(schedule_id)
+    .bind(repo_id)
+    .execute(pool)
     .await
     .unwrap();
 
@@ -6876,7 +6974,7 @@ async fn test_run_schedule_now_restricted_to_agent_ids() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-repo").await;
     let agent_a: i64 = sqlx::query_scalar(
@@ -6955,6 +7053,14 @@ async fn test_run_schedule_now_restricted_to_agent_ids() {
     let mut expected = vec![agent_a, agent_b];
     expected.sort_unstable();
     assert_eq!(pending_agents, expected);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: `run_schedule_now` used to require a JSON body
@@ -6968,7 +7074,7 @@ async fn test_run_schedule_now_without_a_body_runs_every_target() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-no-body-repo").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -6992,6 +7098,135 @@ async fn test_run_schedule_now_without_a_body_runs_every_target() {
     .await
     .unwrap();
     assert_eq!(pending_agents, vec![agent_id]);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
+}
+
+/// The bug this guards: manual "Run now" dispatched from the denormalised
+/// `schedules.repo_id` alone, so a two-target schedule quietly wrote only its
+/// primary copy - while the scheduler, rewired onto `schedule_repos`, wrote
+/// both. Same schedule, two different outcomes depending on who started it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_run_schedule_now_covers_every_target_repository() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let primary = insert_test_repo(&pool, "run-now-primary-repo").await;
+    let offsite = insert_test_repo(&pool, "run-now-offsite-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-now-two-targets', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, primary).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, false)",
+    )
+    .bind(schedule_id)
+    .bind(offsite)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = post_request_without_body(&format!("/api/schedules/{schedule_id}/run"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let mut pending_repos: Vec<i64> = sqlx::query_scalar(
+        "SELECT repo_id FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    pending_repos.sort_unstable();
+    let mut expected = vec![primary, offsite];
+    expected.sort_unstable();
+    assert_eq!(
+        pending_repos, expected,
+        "a manual run must queue every target the scheduler would write"
+    );
+}
+
+/// The bug this guards: a manual run was authorised against the schedule's
+/// primary alone while dispatching to every target, so an operator holding
+/// nothing on the offsite copy could start a real borg run into it on demand.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn running_a_schedule_needs_permission_on_every_target_repository() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "run-perm-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "run-perm-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-perm-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, granted_repo).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(schedule_id)
+    .bind(ungranted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}/run"))
+        .method("POST")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "starting a run that writes into a repository the caller cannot modify must be refused"
+    );
+
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending, 0, "the refused run must not queue anything");
 }
 
 /// Regression test for: duplicate `agent_ids` entries used to be compared
@@ -7004,7 +7239,7 @@ async fn test_run_schedule_now_allows_duplicate_agent_ids() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-dup-repo").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -7023,6 +7258,14 @@ async fn test_run_schedule_now_allows_duplicate_agent_ids() {
     );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: `cancel_running_backup`'s offline-agent fallback (the
@@ -8030,6 +8273,187 @@ async fn bulk_and_per_entry_acknowledge_agree_on_who_may_touch_what() {
     );
 }
 
+/// A multi-target schedule is editable by whoever runs it, not only by
+/// whoever can reach every repository it writes to.
+///
+/// `ScheduleDetailView` sends the whole target list on every save, so
+/// permission for "new" targets was originally measured against the schedule's
+/// denormalised primary alone - which made every *secondary* target look new
+/// on every edit. An operator granted `can_modify_schedules` on the local
+/// repository but not on the offsite copy could then never rename, pause or
+/// re-time that schedule again.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_secondary_target_the_caller_cannot_reach_does_not_block_editing_a_schedule() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "targets-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "targets-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('targets-perm-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, granted_repo).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(schedule_id)
+    .bind(ungranted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Renaming it, resending the target list exactly as it already is.
+    // Left disabled so the save stops at the permission check rather than the
+    // SSH reachability probe an enabled schedule also runs.
+    let body = serde_json::json!({
+        "name": "renamed by the operator",
+        "cron_expression": "0 3 * * *",
+        "enabled": false,
+        "repo_targets": [
+            { "repo_id": granted_repo, "required": true },
+            { "repo_id": ungranted_repo, "required": false },
+        ],
+    });
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}"))
+        .method("PUT")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "re-sending a schedule's existing targets must not need permission on each of them"
+    );
+
+    // Adding a repository the caller cannot reach is still refused.
+    let third_repo = insert_test_repo(&pool, "targets-third-repo").await;
+    let body = serde_json::json!({
+        "cron_expression": "0 3 * * *",
+        "enabled": false,
+        "repo_targets": [
+            { "repo_id": granted_repo, "required": true },
+            { "repo_id": third_repo, "required": false },
+        ],
+    });
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}"))
+        .method("PUT")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "pointing a schedule at a repository the caller cannot modify must still be refused"
+    );
+}
+
+/// The bug this guards: only the targets an update *added* were permission
+/// checked, so an operator holding nothing on the offsite copy could drop it
+/// off a shared schedule - permanently stopping backups to a repository they
+/// have no rights over - and get a 200 with no check ever touching it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn dropping_a_target_the_caller_has_no_permission_on_is_refused() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let granted_repo = insert_test_repo(&pool, "drop-granted-repo").await;
+    let ungranted_repo = insert_test_repo(&pool, "drop-ungranted-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('drop-target-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, granted_repo).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(schedule_id)
+    .bind(ungranted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) VALUES \
+         ($1, $2, true, true)",
+    )
+    .bind(user_id)
+    .bind(granted_repo)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = serde_json::json!({
+        "cron_expression": "0 3 * * *",
+        "enabled": false,
+        "repo_targets": [{ "repo_id": granted_repo, "required": true }],
+    });
+    let req = Request::builder()
+        .uri(format!("/api/schedules/{schedule_id}"))
+        .method("PUT")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "dropping a target the caller cannot modify must be refused"
+    );
+
+    let remaining: Vec<i64> =
+        sqlx::query_scalar("SELECT repo_id FROM schedule_repos WHERE schedule_id = $1 ORDER BY id")
+            .bind(schedule_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        remaining.contains(&ungranted_repo),
+        "the refused update must leave the target it tried to drop in place"
+    );
+}
+
 /// The realistic middle case between the two extremes the other bulk tests
 /// cover: a non-admin holding `can_modify_schedules` on one repository but not
 /// on another that also has outstanding reports. This is the
@@ -8243,6 +8667,15 @@ async fn acknowledging_a_failed_run_drops_its_dashboard_finding() {
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 0, TRUE)",
+    )
+    .bind(schedule_id)
+    .bind(repo_id)
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO schedule_targets (schedule_id, agent_id) VALUES ($1, $2)")
         .bind(schedule_id)
         .bind(agent_id)
@@ -8339,7 +8772,7 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "empty-repo-hanging-info").await;
 
     let started = std::time::Instant::now();
@@ -8364,6 +8797,14 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     );
 
     wait_for_import_completion(&pool, repo_id).await;
+    // Same reason as the hanging-borg timeout test above: the wait polls the
+    // `importing` DB flag, which the task clears while it still has
+    // `finish_server_sync_task` to run, so the tracker is what actually says the
+    // task is done - and the SAFETY comment below depends on that.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 
     // SAFETY: env var must remain set until the background task finishes.
     unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
@@ -8452,7 +8893,7 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "spurious-empty-list-repo").await;
     seed_synced_archive(&pool, repo_id, "spurious-host", "keep-me").await;
@@ -8509,6 +8950,14 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
         stats_archive_count, 1,
         "repo_stats.archive_count must not be zeroed out by the aborted sync"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test for: the scheduled-sync loop blocking on each repo sequentially.
@@ -8719,7 +9168,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg("this is not valid json", "{}", info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "malformed-json-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -8740,6 +9189,14 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
         stats.import_error.is_some(),
         "import_error should be set after malformed JSON sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test: borg list exits 0 with valid JSON but no `archives` key.
@@ -8767,7 +9224,7 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     )
     .await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "missing-archives-key-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -8788,6 +9245,14 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
         stats.import_error.is_some(),
         "import_error should be set after no-archives-key sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test for the stale-echo bug: `PUT /api/system/settings` used to

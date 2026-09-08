@@ -589,7 +589,15 @@ pub async fn delete_archive(
             });
     }
 
-    tokio::spawn(run_archive_deletion(
+    // Tracked for the same reason the manual schedule run is (see
+    // api/schedules.rs): untracked, whether this task ran before a test's
+    // tokio runtime was dropped was a race, and it showed up as
+    // finalize_archive_deletion's post-delete refresh error path being
+    // covered in one run and not the next.
+    // The tracker is cloned up front because `state` itself is moved into the
+    // deletion future.
+    let background_task_tracker = state.background_task_tracker.clone();
+    let deletion = run_archive_deletion(
         state,
         repo_id,
         archive_name.clone(),
@@ -597,7 +605,8 @@ pub async fn delete_archive(
         env,
         auth.user_id,
         auth.username,
-    ));
+    );
+    background_task_tracker.spawn_tracked(deletion);
 
     Ok((
         StatusCode::ACCEPTED,

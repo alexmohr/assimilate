@@ -25,10 +25,13 @@ vi.mock('../components/CronBuilder.vue', () => ({
 
 vi.mock('../components/ToggleSwitch.vue', () => ({
   default: {
-    props: ['modelValue'],
+    // `label` is carried through so a test can pick one toggle out of a
+    // section that has several - the Targets section has one per repository
+    // as well as the per-agent-paths switch.
+    props: ['modelValue', 'label'],
     emits: ['update:modelValue'],
     template:
-      '<input type="checkbox" class="toggle-switch-stub" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+      '<input type="checkbox" class="toggle-switch-stub" :data-label="label" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
   },
 }))
 
@@ -137,20 +140,14 @@ const mockRepos = [
 function setupEditMode(schedule = mockSchedule): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === `/schedules/${schedule.id}`) return Promise.resolve({ data: schedule })
+    if (url === `/schedules/${schedule.id}/repos`)
+      return Promise.resolve({
+        data: [{ repo_id: schedule.repo_id, execution_order: 0, required: true }],
+      })
     if (url === `/schedules/${schedule.id}/targets`)
       return Promise.resolve({ data: [{ agent_id: schedule.agent_id, execution_order: 0 }] })
     if (url === `/schedules/${schedule.id}/sources`)
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_agent: [] } })
-    if (url === '/agents') return Promise.resolve({ data: mockAgents })
-    if (url === '/repos') return Promise.resolve({ data: mockRepos })
-    if (String(url).endsWith('/reports'))
-      return Promise.resolve({ data: { reports: [], total: 0 } })
-    return Promise.resolve({ data: [] })
-  })
-}
-
-function setupCreateMode(): void {
-  mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     if (String(url).endsWith('/reports'))
@@ -167,14 +164,19 @@ async function createEditWrapper(): Promise<ReturnType<typeof renderWithPlugins>
 }
 
 function setupEditModeWithReport(report: Record<string, unknown>): void {
+  // Every report the API returns names the repository it was written to, and
+  // the Backups tab only lists the ones belonging to the target it browses.
+  const withRepo = { repo_id: mockSchedule.repo_id, ...report }
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+    if (url === '/schedules/1/repos')
+      return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
     if (url === '/schedules/1/targets')
       return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
     if (url === '/schedules/1/sources')
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
     if (url === '/schedules/1/reports')
-      return Promise.resolve({ data: { reports: [report], total: 1 } })
+      return Promise.resolve({ data: { reports: [withRepo], total: 1 } })
     if (url === '/schedules/1/reports/failed/count') {
       const count = report.status === 'failed' ? 1 : 0
       return Promise.resolve({ data: { count } })
@@ -436,13 +438,80 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.text()).toContain('Saved')
   })
 
+  /** The banner is on a three-second timer, so a save that just succeeded and
+      one that finished a while ago have to stop looking alike - otherwise a
+      stale "Saved" sits over unsaved edits. */
+  it('clears the saved banner once its timeout elapses', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const wrapper = await renderEditModeAndSave()
+      expect(wrapper.find('.save-success').exists()).toBe(true)
+
+      vi.advanceTimersByTime(3000)
+      await nextTick()
+
+      expect(wrapper.find('.save-success').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /** The editor is bound to the same state the save is reading, so leaving it
+      live during the request invites edits that quietly never reach the server. */
+  it('locks the target editor while the save is in flight', async () => {
+    setupEditMode()
+    // A save that never settles, so the page stays mid-request.
+    mockApiClient.put.mockReturnValue(new Promise(() => {}))
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Targets')
+
+    const repoSelect = (): ReturnType<typeof wrapper.find> =>
+      wrapper.find('select[aria-label="Repository for target 1"]')
+    expect(repoSelect().attributes('disabled')).toBeUndefined()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save changes')!
+      .trigger('click')
+    await nextTick()
+
+    expect(repoSelect().attributes('disabled')).toBeDefined()
+  })
+
+  /** The API refuses a target list with nothing required; saying so here beats
+      a round trip that comes back 400. */
+  it('refuses to save a schedule left with no required repository', async () => {
+    const wrapper = await createEditWrapper()
+    const vm = wrapper.vm as unknown as {
+      save: () => Promise<void>
+      saveError: string | null
+      repoTargets: { repo_id: number; required: boolean }[]
+    }
+
+    vm.repoTargets = [{ repo_id: 20, required: false }]
+    await vm.save()
+    await flushPromises()
+
+    expect(vm.saveError).toContain('mark at least one of them required')
+    expect(mockApiClient.put).not.toHaveBeenCalled()
+
+    vm.repoTargets = []
+    await vm.save()
+    await flushPromises()
+
+    expect(vm.saveError).toContain('Select at least one repository')
+    expect(mockApiClient.put).not.toHaveBeenCalled()
+  })
+
   it('shows save error when schedule is null (edit mode)', async () => {
     mockApiClient.get.mockRejectedValue(new Error('Load failed'))
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '999' } })
     await flushPromises()
 
     // The save() null-guard is defensive - the save bar is hidden when schedule
-    // is null (v-if="schedule || isCreate" wraps the form). Test the ref directly.
+    // is null (v-if="schedule" wraps the form). Test the ref directly.
     const vm = wrapper.vm as { save: () => Promise<void>; saveError: string | null }
     expect(vm.saveError).toBeNull()
 
@@ -532,6 +601,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('shows an Overdue badge and Retry button for an overdue target, with an offline note', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({
           data: [
@@ -933,6 +1004,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('reorders targets from the real Settings tab and saves the new order', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({
           data: [
@@ -996,6 +1069,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('propagates repo and on-failure select changes from the real Settings tab into the save payload', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
       if (url === '/schedules/1/sources')
@@ -1033,6 +1108,8 @@ describe('ScheduleDetailView - edit mode', () => {
   it('propagates the per-host-paths toggle and a per-host textarea into the save payload', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({
           data: [
@@ -1056,7 +1133,7 @@ describe('ScheduleDetailView - edit mode', () => {
     await goToSettings(wrapper)
     await goToSection(wrapper, 'Targets')
 
-    await wrapper.find('.toggle-switch-stub').setValue(true)
+    await wrapper.find('.toggle-switch-stub[data-label="Configure paths per agent"]').setValue(true)
     await nextTick()
     await wrapper.find('.area-input-sm').setValue('/custom/backup/path')
 
@@ -1071,95 +1148,6 @@ describe('ScheduleDetailView - edit mode', () => {
       expect.objectContaining({
         backup_sources_per_agent: [{ agent_id: 10, paths: ['/custom/backup/path'] }],
       }),
-    )
-  })
-})
-
-describe('ScheduleDetailView - create mode', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('renders New Schedule title', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    expect(wrapper.find('h1').text()).toContain('New Schedule')
-  })
-
-  it('shows breadcrumb with New', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('New')
-  })
-
-  it('shows only the Settings tab - there is no status yet to give Overview or Backups content', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    const tabs = wrapper.findAll('.tab')
-    expect(tabs).toHaveLength(1)
-    expect(tabs[0].text()).toBe('Settings')
-  })
-
-  it('shows agent and repo pickers under the Targets section', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-    await goToSection(wrapper, 'Targets')
-
-    expect(wrapper.text()).toContain('Select agents...')
-    expect(wrapper.text()).toContain('server-daily')
-  })
-
-  it('shows schedule type selector', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Schedule type')
-    expect(wrapper.text()).toContain('Integrity check')
-    expect(wrapper.text()).toContain('Verify (extract dry-run)')
-  })
-
-  it('shows Create schedule button', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    const createBtn = wrapper.findAll('button').find((b) => b.text() === 'Create schedule')
-    expect(createBtn).toBeTruthy()
-  })
-
-  it('propagates the Schedule type select into the create payload', async () => {
-    setupCreateMode()
-    mockApiClient.post.mockResolvedValue({ data: { id: 5 } })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
-    await flushPromises()
-
-    await wrapper.find('select').setValue('check')
-
-    await goToSection(wrapper, 'Targets')
-    await wrapper.find('.multi-select-trigger').trigger('click')
-    await wrapper.findAll('.multi-select-item input[type="checkbox"]')[0].trigger('change')
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Create schedule')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.post).toHaveBeenCalledWith(
-      '/schedules',
-      expect.objectContaining({ schedule_type: 'check' }),
     )
   })
 })
@@ -1246,59 +1234,126 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   it('BackupCompleted with matching schedule_id hides the live progress card', async () => {
     const wrapper = await createActiveBackupWrapper()
 
+    // The server carries the ids inside the report, not beside it.
     wsHandlers['BackupCompleted']?.({
       hostname: 'web-server-01',
       target_name: 'server-daily',
-      report: { schedule_id: 1 },
+      report: { schedule_id: 1, repo_id: mockSchedule.repo_id },
     })
     await nextTick()
 
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
   })
 
-  // A repo can be shared by more than one schedule (e.g. two daily jobs
-  // against the same target), so a sibling schedule's own completion must
-  // not clear this page's still-running state - see the BackupStarted
-  // schedule_id tests above for the same reasoning on the started side.
-  it('BackupCompleted with non-matching schedule_id does not hide the live progress card', async () => {
+  /**
+   * The bug this guards: the handler compared `target_name` against this
+   * page's primary repository, so a completion on a secondary target never
+   * matched and the card sat on "running" until a full reload.
+   */
+  it('BackupCompleted on a secondary target still hides the live progress card', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'offsite-weekly',
+      report: { schedule_id: 1, repo_id: 999 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  /**
+   * The fallback for a completion that carries no schedule: the repository has
+   * to be one this schedule writes to.
+   */
+  /**
+   * The bug this guards: the page derived the primary from `repoTargets[0]`,
+   * the first target *written*, while the server keeps `schedules.repo_id` on
+   * the first target *required*. A list that writes a best-effort copy first
+   * made the page name the wrong repository.
+   */
+  it('names the repository the server calls primary, not the first written', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: { ...mockSchedule, repo_id: 21 } })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({
+          data: [
+            { repo_id: 20, execution_order: 0, required: false },
+            { repo_id: 21, execution_order: 1, required: true },
+          ],
+        })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({ data: { backup_sources: [], backup_sources_per_agent: [] } })
+      if (url === '/schedules/1/reports') return Promise.resolve({ data: { reports: [], total: 0 } })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const overview = wrapper.findComponent({ name: 'ScheduleOverviewTab' })
+    expect(overview.exists()).toBe(true)
+    // repo 21 is required and second in write order; repo 20 is best effort
+    // and written first. The server's primary is 21.
+    expect(overview.props('repoName')).toBe('database-hourly')
+  })
+
+  it('BackupCompleted without a schedule matches on the target repository', async () => {
     const wrapper = await createActiveBackupWrapper()
 
     wsHandlers['BackupCompleted']?.({
       hostname: 'web-server-01',
       target_name: 'server-daily',
-      report: { schedule_id: 999 },
+      report: { schedule_id: null, repo_id: mockSchedule.repo_id },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupCompleted without a schedule ignores a repository this one does not write to', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'someone-elses-repo',
+      report: { schedule_id: null, repo_id: 4242 },
     })
     await nextTick()
 
     expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
-  it('BackupCompleted with null schedule_id and matching repo name hides the live progress card', async () => {
+  /** Websocket input: a malformed message must be ignored, not thrown on. */
+  it('BackupCompleted without a report is ignored', async () => {
     const wrapper = await createActiveBackupWrapper()
 
-    wsHandlers['BackupCompleted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      report: { schedule_id: null },
-    })
+    expect(() =>
+      wsHandlers['BackupCompleted']?.({
+        hostname: 'web-server-01',
+        target_name: 'server-daily',
+      }),
+    ).not.toThrow()
     await nextTick()
 
-    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
-  // The real server always sends a report, but a caller that only cares
-  // about hostname/target_name (as some e2e specs' WS mocks do) shouldn't be
-  // able to crash this handler and leave the card stuck open.
-  it('BackupCompleted with no report field falls back to the repo name match', async () => {
+  it('BackupCompleted for another schedule leaves the card alone', async () => {
     const wrapper = await createActiveBackupWrapper()
 
     wsHandlers['BackupCompleted']?.({
       hostname: 'web-server-01',
       target_name: 'server-daily',
+      report: { schedule_id: 2, repo_id: mockSchedule.repo_id },
     })
     await nextTick()
 
-    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
   it('BackupLog with matching schedule_id and archive_progress JSON updates progress data', async () => {
@@ -1438,8 +1493,16 @@ describe('ScheduleDetailView - Backups tab', () => {
   })
 
   function setupBackupWithReports(mockReports: unknown[]): void {
+    // Reports name the repository they were written to; the tab lists only the
+    // ones for the target it browses, so the fixtures carry the primary's id.
+    const withRepo = mockReports.map((r) => ({
+      repo_id: mockSchedule.repo_id,
+      ...(r as Record<string, unknown>),
+    }))
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets')
         return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
       if (url === '/schedules/1/sources')
@@ -1447,7 +1510,7 @@ describe('ScheduleDetailView - Backups tab', () => {
           data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
         })
       if (url === '/schedules/1/reports')
-        return Promise.resolve({ data: { reports: mockReports, total: mockReports.length } })
+        return Promise.resolve({ data: { reports: withRepo, total: withRepo.length } })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (String(url).endsWith('/reports'))
@@ -1483,6 +1546,8 @@ describe('ScheduleDetailView - Backups tab', () => {
   it('does NOT show Backups tab button for check-type schedule', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/2') return Promise.resolve({ data: mockCheckSchedule })
+      if (url === '/schedules/2/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/2/targets')
         return Promise.resolve({
           data: [{ agent_id: mockCheckSchedule.agent_id, execution_order: 0 }],
@@ -1496,15 +1561,6 @@ describe('ScheduleDetailView - Backups tab', () => {
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
-    await flushPromises()
-
-    const tabs = wrapper.findAll('.tab')
-    expect(tabs.some((t) => t.text() === 'Backups')).toBe(false)
-  })
-
-  it('does NOT show Backups tab button in create mode', async () => {
-    setupCreateMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
     const tabs = wrapper.findAll('.tab')
@@ -1716,6 +1772,8 @@ describe('ScheduleDetailView - Backups tab', () => {
   // (regression: it used to sit inside the same Promise.all as the report
   // list, so a rejection there took the whole refresh down with it).
   it('logs and keeps the report list refresh working when the count fetch fails', async () => {
+    // Re-mocked below as the refresh payload, so it carries its repository the
+    // way the API's own rows do.
     const report = {
       id: 1,
       status: 'success',
@@ -1724,6 +1782,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       original_size: 500,
       agent_id: 10,
       hostname: 'web-server-01',
+      repo_id: mockSchedule.repo_id,
     }
     const wrapper = await createBackupsWrapper([report])
     await goToBackups(wrapper)
@@ -2095,6 +2154,8 @@ describe('ScheduleDetailView - per-agent overrides', () => {
   function setupWithSources(sources: Record<string, unknown>): void {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
       if (url === '/schedules/1/targets') return Promise.resolve({ data: TWO_TARGETS })
       if (url === '/schedules/1/sources') return Promise.resolve({ data: sources })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })

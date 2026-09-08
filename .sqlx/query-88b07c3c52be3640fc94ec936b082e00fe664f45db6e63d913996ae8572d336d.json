@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM schedule_repos WHERE schedule_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "88b07c3c52be3640fc94ec936b082e00fe664f45db6e63d913996ae8572d336d"
+}

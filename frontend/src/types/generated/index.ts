@@ -117,6 +117,8 @@ export type { ScheduleCountByAgentListResponse } from './ScheduleCountByAgentLis
 export type { ScheduleCountByAgentResponse } from './ScheduleCountByAgentResponse'
 export type { ScheduleExportResponse } from './ScheduleExportResponse'
 export type { ScheduleListResponse } from './ScheduleListResponse'
+export type { ScheduleRepoExportResponse } from './ScheduleRepoExportResponse'
+export type { ScheduleRepoResponse } from './ScheduleRepoResponse'
 export type { ScheduleResponse } from './ScheduleResponse'
 export type { ScheduleTargetListResponse } from './ScheduleTargetListResponse'
 export type { ScheduleTargetResponse } from './ScheduleTargetResponse'

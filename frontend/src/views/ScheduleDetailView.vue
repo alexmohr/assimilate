@@ -10,18 +10,18 @@ import { storeToRefs } from 'pinia'
 import { useAuthStore } from '../stores/auth'
 import {
   getSchedule,
-  createSchedule,
   updateSchedule,
   deleteSchedule,
   runSchedule,
   cancelSchedule,
+  listScheduleRepos,
   listScheduleTargets,
   getScheduleBackupSources,
   listScheduleReports,
   deleteFailedScheduleReports,
   countFailedScheduleReports,
   getScheduleHealth,
-  type CreateScheduleRequest,
+  type ScheduleRepoTarget,
 } from '../api/schedules'
 import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
@@ -32,7 +32,14 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
-import { dropBlankCommands, parseLines } from '../utils/validation'
+import {
+  agentOverridePayload,
+  primaryRepoId as primaryTargetRepoId,
+  repoTargetsProblem,
+  scheduleFormPayload,
+  type ScheduleFormPayload,
+} from '../utils/schedulePayload'
+import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
 import { parseArchiveProgress } from '../utils/archiveProgress'
@@ -67,18 +74,12 @@ const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
 
-// The route param is either a numeric schedule id or this sentinel for the
-// "create new schedule" route.
-const NEW_SCHEDULE_ROUTE_ID = 'new'
-
-const isCreate = computed(() => props.id === NEW_SCHEDULE_ROUTE_ID)
-
 const { isAdmin, canViewWakeSecrets } = storeToRefs(useAuthStore())
 
 const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
 const repos = ref<Repo[]>([])
-const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
+const repo = computed(() => repos.value.find((r) => r.id === primaryRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTargetResponse[]>([])
 const health = ref<HealthSummaryResponse[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedule')
@@ -103,8 +104,15 @@ const expandedReportId = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
 const selectedAgentIds = ref<number[]>([])
-const selectedRepoId = ref<number | null>(null)
-const selectedType = ref<ScheduleType>('backup')
+const repoTargets = ref<ScheduleRepoTarget[]>([])
+/**
+ * The schedule's primary target, as the server decides it: the first
+ * *required* target, not the first one written. Taking `repoTargets[0]` here
+ * would disagree with `schedules.repo_id` for a list that writes a best-effort
+ * copy first - a shape the API accepts on purpose - and this drives the
+ * repository name the page shows.
+ */
+const primaryRepoId = computed(() => schedule.value?.repo_id ?? null)
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
@@ -162,7 +170,6 @@ const estimatedRemainingSecs = computed<number | null>(() => {
 type TabId = 'overview' | 'backups' | 'logs' | 'settings'
 const activeTab = computed<TabId>({
   get() {
-    if (isCreate.value) return 'settings'
     const t = route.query.tab
     if (t === 'backups' && isBackup.value) return 'backups'
     if (t === 'logs') return 'logs'
@@ -211,22 +218,15 @@ function openReportDetail(r: ReportRow): void {
   })
 }
 
-const scheduleType = computed(() =>
-  isCreate.value ? selectedType.value : (schedule.value?.schedule_type ?? 'backup'),
-)
+const scheduleType = computed<ScheduleType>(() => schedule.value?.schedule_type ?? 'backup')
 const isBackup = computed(() => scheduleType.value === 'backup')
 
 /**
- * A single "Settings" tab in create mode rather than a whole Overview/Backups
- * strip - there is nothing to show status for yet, and nowhere else the
- * create form could go.
- *
  * Backups carries no count: it is the archive browser, and the true archive
  * count isn't known until it loads. Logs can show one - `reportsPager.total`
  * is the server's real total, not just how many pages have been fetched.
  */
 const visibleTabs = computed<TabOption<TabId>[]>(() => {
-  if (isCreate.value) return [{ id: 'settings', label: 'Settings' }]
   const tabs: TabOption<TabId>[] = [{ id: 'overview', label: 'Overview' }]
   if (isBackup.value) tabs.push({ id: 'backups', label: 'Backups' })
   tabs.push({ id: 'logs', label: 'Logs', count: reportsPager.total.value })
@@ -256,6 +256,11 @@ const headerCronSummary = computed(
   () => cronToHuman(form.value.cron_expression) ?? form.value.cron_expression,
 )
 const repoName = computed(() => repo.value?.name ?? null)
+const repoTargetNames = computed(() =>
+  repoTargets.value.map(
+    (t) => repos.value.find((r) => r.id === t.repo_id)?.name ?? `#${t.repo_id}`,
+  ),
+)
 
 // Spread rather than shared by reference: this ref is mutated in place
 // elsewhere (e.g. populateForm(), the backup_sources assignment below), and
@@ -320,22 +325,12 @@ function populateForm(s: ScheduleRow): void {
     catch_up_min_lead_minutes: s.catch_up_min_lead_minutes,
     backup_sources: '',
   }
-  selectedRepoId.value = s.repo_id ?? null
   onFailure.value = s.on_failure
 }
 
 async function loadData(): Promise<void> {
   await run(async () => {
-    if (isCreate.value) {
-      const [agentRows, repoRows] = await Promise.all([listAgents(), listRepos()])
-      agents.value = agentRows
-      repos.value = repoRows
-      const queryAgentId = Number(route.query.agent_id)
-      if (queryAgentId && agents.value.some((c) => c.id === queryAgentId)) {
-        selectedAgentIds.value = [queryAgentId]
-      }
-      selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
-    } else {
+    {
       // Fetched independently of the Promise.all below: it backs a menu
       // badge, not the page itself, so a failure here must not take down
       // the rest of the schedule's data with it.
@@ -345,12 +340,13 @@ async function loadData(): Promise<void> {
         })
         .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
 
-      const [scheduleRow, agentRows, repoRows, targetRows, sourcesResponse, , healthRows] =
+      const [scheduleRow, agentRows, repoRows, targetRows, repoTargetRows, sourcesResponse, , healthRows] =
         await Promise.all([
           getSchedule(props.id),
           listAgents(),
           listRepos(),
           listScheduleTargets(props.id),
+          listScheduleRepos(props.id),
           getScheduleBackupSources(props.id),
           reportsPager.load(),
           getScheduleHealth(),
@@ -359,7 +355,10 @@ async function loadData(): Promise<void> {
       agents.value = agentRows
       repos.value = repoRows
       scheduleTargets.value = targetRows
-      selectedRepoId.value = scheduleRow.repo_id ?? null
+      repoTargets.value = repoTargetRows.map((t) => ({
+        repo_id: t.repo_id,
+        required: t.required,
+      }))
       health.value = healthRows
       const runningReport = reports.value.find((r) => {
         const status = normalizeBackupStatus(r.status)
@@ -425,33 +424,10 @@ async function save(): Promise<void> {
   saveError.value = null
   saveSuccess.value = false
   try {
-    const payload: Omit<
-      CreateScheduleRequest,
-      'agent_ids' | 'repo_id' | 'schedule_type' | 'on_failure'
-    > = {
-      name: form.value.name,
-      cron_expression: form.value.cron_expression,
-      enabled: form.value.enabled,
-      canary_enabled: form.value.canary_enabled,
-      vm_snapshot_enabled: form.value.vm_snapshot_enabled,
-      exclude_patterns_raw: form.value.exclude_patterns,
-      file_change_patterns_raw: form.value.file_change_patterns,
-      ignore_global_excludes: form.value.ignore_global_excludes,
-      keep_hourly: form.value.keep_hourly,
-      keep_daily: form.value.keep_daily,
-      keep_weekly: form.value.keep_weekly,
-      keep_monthly: form.value.keep_monthly,
-      keep_yearly: form.value.keep_yearly,
-      compact_enabled: form.value.compact_enabled,
-      rate_limit_kbps: form.value.rate_limit_kbps,
-      pre_backup_commands: dropBlankCommands(form.value.pre_backup_commands),
-      post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
-      hook_timeout_seconds: form.value.hook_timeout_seconds,
-      missed_backup_threshold: form.value.missed_backup_threshold,
-      wake_override: form.value.wake_override,
-      catch_up_missed_runs: form.value.catch_up_missed_runs,
-      catch_up_min_lead_minutes: form.value.catch_up_min_lead_minutes,
-      backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
+    const payload: ScheduleFormPayload = {
+      ...scheduleFormPayload(form.value),
+      // Per-agent paths replace the shared list rather than adding to it.
+      ...(usePerHostPaths.value ? { backup_sources: [] } : {}),
     }
 
     if (usePerHostPaths.value) {
@@ -466,67 +442,23 @@ async function save(): Promise<void> {
       payload.backup_sources_per_agent = perHost
     }
 
-    if (agentOverrides.value.usePerHostExcludes) {
-      payload.exclude_patterns_raw = ''
-      const perHost: { agent_id: number; raw_text: string }[] = []
-      for (const id of selectedAgentIds.value) {
-        const raw_text = agentOverrides.value.perHostExcludes[id] ?? ''
-        perHost.push({ agent_id: id, raw_text })
-      }
-      payload.exclude_patterns_per_agent = perHost
-    }
+    Object.assign(payload, agentOverridePayload(agentOverrides.value, selectedAgentIds.value))
 
-    if (agentOverrides.value.usePerHostFileChangePatterns) {
-      payload.file_change_patterns_raw = ''
-      const perHost: { agent_id: number; raw_text: string }[] = []
-      for (const id of selectedAgentIds.value) {
-        const raw_text = agentOverrides.value.perHostFileChangePatterns[id] ?? ''
-        perHost.push({ agent_id: id, raw_text })
-      }
-      payload.file_change_patterns_per_agent = perHost
-    }
-
-    if (agentOverrides.value.usePerAgentCmds) {
-      payload.pre_backup_commands = []
-      payload.post_backup_commands = []
-      const perAgent: {
-        agent_id: number
-        pre_backup_commands: HookCommand[]
-        post_backup_commands: HookCommand[]
-      }[] = []
-      for (const id of selectedAgentIds.value) {
-        perAgent.push({
-          agent_id: id,
-          pre_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPreCmds[id] ?? []),
-          post_backup_commands: dropBlankCommands(agentOverrides.value.perAgentPostCmds[id] ?? []),
-        })
-      }
-      payload.commands_per_agent = perAgent
-    }
-
-    if (isCreate.value) {
-      if (selectedAgentIds.value.length === 0 || !selectedRepoId.value) {
-        saveError.value = 'Please select at least one agent and a repository.'
-        return
-      }
-      const created = await createSchedule({
-        ...payload,
-        agent_ids: selectedAgentIds.value,
-        repo_id: selectedRepoId.value,
-        schedule_type: selectedType.value,
-        on_failure: onFailure.value,
-      })
-      router.push(`/schedules/${created.id}`)
-    } else {
+    {
       const scheduleId = schedule.value?.id
       if (scheduleId == null) {
         saveError.value = 'Schedule not found'
         return
       }
+      if (repoTargetsProblem(repoTargets.value)) {
+        saveError.value = 'Select at least one repository, and mark at least one of them required.'
+        return
+      }
       const updated = await updateSchedule(scheduleId, {
         ...payload,
         agent_ids: selectedAgentIds.value,
-        repo_id: selectedRepoId.value ?? undefined,
+        repo_id: primaryTargetRepoId(repoTargets.value),
+        repo_targets: repoTargets.value,
         on_failure: onFailure.value,
       })
       schedule.value = updated
@@ -673,23 +605,34 @@ onMessage('BackupStarted', (payload) => {
 onMessage('BackupCompleted', (payload) => {
   // Matched the same way as BackupStarted above: by schedule_id when the
   // report has one, since a repo can be shared by more than one schedule
-  // (e.g. two daily jobs against the same target) - a target_name-only
-  // match would clear this page's running state on a sibling schedule's
-  // completion while this schedule's own run is still in flight.
-  const scheduleId = payload.report?.schedule_id
-  if (scheduleId != null && scheduleId !== Number(props.id)) return
-  if (scheduleId == null && !(repo.value != null && payload.target_name === repo.value.name)) return
+  // (e.g. two daily jobs against the same target) - a schedule_id-only match
+  // means a sibling schedule's completion on a shared repo can't clear this
+  // page's running state while this schedule's own run is still in flight.
+  // Falls back to checking every one of this schedule's own repo targets
+  // (not just a single "primary" one) when schedule_id is absent, since a
+  // multi-target schedule's completion on a secondary repo would otherwise
+  // never clear this state either. Optional-chained rather than destructured:
+  // this is websocket input, and a message without a report should be
+  // ignored, not throw out of the handler.
+  const schedule_id = payload.report?.schedule_id
+  const repo_id = payload.report?.repo_id
+  if (repo_id == null) return
+  if (schedule_id != null) {
+    if (schedule_id !== Number(props.id)) return
+  } else if (!repoTargets.value.some((t) => t.repo_id === repo_id)) {
+    return
+  }
   backupRunning.value = false
   backupHostname.value = null
   backupArchiveName.value = null
 })
 
 onMessage('BackupLog', (payload) => {
-  // Prefer schedule_id matching so progress arrives even before loadData() resolves
-  // selectedRepoId; fall back to repo_id when schedule_id is absent.
+  // Prefer schedule_id matching so progress arrives even before loadData()
+  // resolves the target list; fall back to repo_id when schedule_id is absent.
   if (payload.schedule_id != null) {
     if (payload.schedule_id !== Number(props.id)) return
-  } else if (selectedRepoId.value == null || payload.repo_id !== selectedRepoId.value) {
+  } else if (!repoTargets.value.some((t) => t.repo_id === payload.repo_id)) {
     return
   }
   const progress = parseArchiveProgress(payload.line)
@@ -711,7 +654,7 @@ onMessage('BackupLog', (payload) => {
 useArchiveDeletionEvents({
   target: () => backupsTab.value,
   repoId: () => schedule.value?.repo_id ?? null,
-  reload: () => (isCreate.value ? Promise.resolve() : loadReports()),
+  reload: () => loadReports(),
 })
 
 watch(
@@ -730,7 +673,7 @@ watch(
 // "Load more" progress the reports pager had - so this now only fills a
 // tab that has never loaded anything, not one already showing data.
 watch(activeTab, (tab) => {
-  if ((tab === 'backups' || tab === 'logs') && !isCreate.value && reports.value.length === 0) {
+  if ((tab === 'backups' || tab === 'logs') && reports.value.length === 0) {
     loadReports().catch(() => undefined)
   }
 })
@@ -747,8 +690,7 @@ watch(activeTab, (tab) => {
       </RouterLink>
       <span class="crumb-sep">/</span>
       <span class="crumb-current">
-        <template v-if="isCreate">New</template>
-        <template v-else-if="schedule">{{
+        <template v-if="schedule">{{
           schedule.name || scheduleTypeLabel(schedule.schedule_type)
         }}</template>
         <template v-else>#{{ props.id }}</template>
@@ -763,13 +705,13 @@ watch(activeTab, (tab) => {
     </div>
 
     <BaseSpinner
-      v-if="loading && !schedule && !isCreate"
+      v-if="loading && !schedule"
       size="lg"
     />
 
-    <template v-if="schedule || isCreate">
+    <template v-if="schedule">
       <ScheduleHeader
-        v-if="!isCreate && schedule"
+        v-if="schedule"
         :schedule="schedule"
         :type-label="headerTypeLabel"
         :cron-summary="headerCronSummary"
@@ -802,6 +744,7 @@ watch(activeTab, (tab) => {
           :schedule="schedule"
           :targets="scheduleTargets"
           :repo-name="repoName"
+          :repo-target-names="repoTargetNames"
           :cron-summary="headerCronSummary"
           :agent-ids="selectedAgentIds"
           :agent-label="agentLabel"
@@ -832,7 +775,7 @@ watch(activeTab, (tab) => {
           :loading-more="reportsPager.loadingMore.value"
           :error="reportsError"
           :agents="agentMap"
-          :repo-id="schedule?.repo_id ?? null"
+          :repo-id="primaryRepoId"
           :repo-name="repoName ?? ''"
           :is-admin="isAdmin"
           :reload="loadReports"
@@ -860,17 +803,16 @@ watch(activeTab, (tab) => {
           v-model:form="form"
           v-model:overrides="agentOverrides"
           v-model:selected-agent-ids="selectedAgentIds"
-          v-model:selected-repo-id="selectedRepoId"
-          v-model:selected-type="selectedType"
+          v-model:repo-targets="repoTargets"
           v-model:on-failure="onFailure"
           v-model:use-per-host-paths="usePerHostPaths"
           v-model:per-host-sources="perHostSources"
-          :is-create="isCreate"
           :is-backup="isBackup"
           :agents="agents"
           :repos="repos"
           :agent-label="agentLabel"
           :can-see-wake-details="canViewWakeSecrets"
+          :saving="saving"
         />
       </div>
 
@@ -895,7 +837,7 @@ watch(activeTab, (tab) => {
           :disabled="saving"
           @click="save"
         >
-          {{ saving ? 'Saving...' : isCreate ? 'Create schedule' : 'Save changes' }}
+          {{ saving ? 'Saving...' : 'Save changes' }}
         </button>
       </div>
     </template>

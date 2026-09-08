@@ -365,7 +365,11 @@ pub async fn create_repo(
     ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
     let (task_id, cancel) = state.import_tasks.start(repo_id).await;
 
-    tokio::spawn(run_initial_import_task(InitialImportTask {
+    // Tracked like the stat-enrichment spawn below: this task acquires the
+    // repo lock and runs borg via sync_existing_archives, so a test that
+    // returns without waiting for it leaves it running into whatever test
+    // comes next.
+    let import = run_initial_import_task(InitialImportTask {
         pool,
         encryption_key,
         ui_broadcast,
@@ -380,7 +384,8 @@ pub async fn create_repo(
         bg_ssh_host,
         bg_ssh_port: ssh_port_u16,
         bg_ssh_host_key,
-    }));
+    });
+    state.background_task_tracker.spawn_tracked(import);
 
     Ok((StatusCode::CREATED, Json(RepoResponse::from(repo))))
 }
@@ -3116,14 +3121,7 @@ fn enrich_archive_stats_background(
     background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
     task_registry: shared::task_registry::TaskRegistry,
 ) {
-    // Guard is claimed synchronously, before the task is spawned - any_active()
-    // must read true the instant this function returns, not merely once the
-    // scheduler gets around to polling the new task for the first time (which
-    // depends on incidental yield points elsewhere in the caller, not on any
-    // synchronization guarantee).
-    let task_guard = background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
+    background_task_tracker.spawn_tracked(async move {
         // Immutable archives that already have stats never change, so only query
         // borg for the ones still missing them.
         let needing = match db::list_archive_names_needing_stats(&pool, repo_id).await {
@@ -3673,7 +3671,11 @@ pub async fn sync_repo(
     // Spawn the sync in a background task so client/proxy disconnects (e.g.
     // nginx 504 after 60s) do not cancel the cleanup -- the task owns the full
     // lifecycle and always clears importing + broadcasts DataChanged.
-    tokio::spawn(run_repo_sync_task(RepoSyncTask {
+    // Tracked like the `enrich_archive_stats_background` spawn above: this task
+    // acquires the repo lock and runs borg via sync_existing_archives, so a test
+    // that returns without waiting for it leaves it running into whatever test
+    // comes next.
+    let sync = run_repo_sync_task(RepoSyncTask {
         task_state: state.clone(),
         pool: state.pool.clone(),
         encryption_key: state.encryption_key,
@@ -3686,7 +3688,8 @@ pub async fn sync_repo(
         cancel,
         reset_first: false,
         operation_label: "repo sync",
-    }));
+    });
+    state.background_task_tracker.spawn_tracked(sync);
 
     Ok((
         StatusCode::ACCEPTED,
@@ -4056,7 +4059,11 @@ pub async fn reset_and_sync_repo(
 
     // Spawn the reset + sync in a background task so client/proxy disconnects
     // do not cancel the cleanup.
-    tokio::spawn(run_repo_sync_task(RepoSyncTask {
+    // Tracked like the `enrich_archive_stats_background` spawn above: this task
+    // acquires the repo lock and runs borg via sync_existing_archives, so a test
+    // that returns without waiting for it leaves it running into whatever test
+    // comes next.
+    let sync = run_repo_sync_task(RepoSyncTask {
         task_state: state.clone(),
         pool: state.pool.clone(),
         encryption_key: state.encryption_key,
@@ -4069,7 +4076,8 @@ pub async fn reset_and_sync_repo(
         cancel,
         reset_first: true,
         operation_label: "reset-and-sync",
-    }));
+    });
+    state.background_task_tracker.spawn_tracked(sync);
 
     Ok((
         StatusCode::ACCEPTED,

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, $2, 0, TRUE)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4b849355a265a2e72fd8ca640527b3bd1edb2d8ca763c78527b7e43cde015705"
+}

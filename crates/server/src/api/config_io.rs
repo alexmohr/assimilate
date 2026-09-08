@@ -9,7 +9,8 @@ use chrono::Utc;
 pub use shared::responses::{
     ConfigExportResponse as ConfigExport, HostExportResponse as HostExport,
     ImportResultResponse as ImportResult, RepoExportResponse as RepoExport,
-    ScheduleExportResponse as ScheduleExport, ScheduleTargetExportResponse as ScheduleTargetExport,
+    ScheduleExportResponse as ScheduleExport, ScheduleRepoExportResponse as ScheduleRepoExport,
+    ScheduleTargetExportResponse as ScheduleTargetExport,
 };
 use shared::{
     crypto::encrypt_passphrase,
@@ -167,6 +168,19 @@ async fn build_schedule_export(
         .and_then(|rid| repo_id_to_name.get(&rid).copied())
         .map(str::to_owned);
 
+    let repo_targets = db::list_schedule_repos(pool, sched.id)
+        .await?
+        .into_iter()
+        .filter_map(|target| {
+            repo_id_to_name
+                .get(&target.repo_id)
+                .map(|name| ScheduleRepoExport {
+                    repo_name: (*name).to_owned(),
+                    required: target.required,
+                })
+        })
+        .collect();
+
     let target_rows = db::list_schedule_targets(pool, sched.id).await?;
     let backup_sources = db::list_backup_sources_for_schedule(pool, sched.id).await?;
     let per_agent_sources =
@@ -244,6 +258,7 @@ async fn build_schedule_export(
         catch_up_missed_runs: sched.catch_up_missed_runs,
         catch_up_min_lead_minutes: sched.catch_up_min_lead_minutes,
         repo_name,
+        repo_targets,
         backup_sources,
         targets,
     })
@@ -542,6 +557,51 @@ async fn import_host(
     Ok(())
 }
 
+/// Maps an export's named target repositories onto this server's ids.
+///
+/// Returns `None` when the schedule's target list should be left as
+/// `insert_schedule` created it - an export predating multiple targets, or one
+/// whose targets this server does not have. A repository the export names and
+/// this server lacks is warned about and dropped rather than failing the whole
+/// import, and a list that loses every required target is discarded entirely:
+/// a schedule that can report success without writing a copy is worse than one
+/// pointing at its primary repository alone.
+fn resolve_imported_repo_targets(
+    sched: &ScheduleExport,
+    repo_name_to_id: &HashMap<&str, i64>,
+) -> (Option<Vec<(i64, bool)>>, Vec<String>) {
+    if sched.repo_targets.is_empty() {
+        return (None, Vec::new());
+    }
+    let mut warnings = Vec::new();
+    let resolved: Vec<(i64, bool)> = sched
+        .repo_targets
+        .iter()
+        .filter_map(|target| {
+            let Some(&id) = repo_name_to_id.get(target.repo_name.as_str()) else {
+                warnings.push(format!(
+                    "schedule {:?}: target repository {:?} not found, skipped",
+                    sched.name, target.repo_name
+                ));
+                return None;
+            };
+            Some((id, target.required))
+        })
+        .collect();
+
+    if resolved.iter().any(|(_, required)| *required) {
+        return (Some(resolved), warnings);
+    }
+    if !resolved.is_empty() {
+        warnings.push(format!(
+            "schedule {:?}: no required target repository survived the import, keeping its \
+             primary repository as the only target",
+            sched.name
+        ));
+    }
+    (None, warnings)
+}
+
 async fn import_schedule(
     pool: &sqlx::PgPool,
     sched: &ScheduleExport,
@@ -620,6 +680,22 @@ async fn import_schedule(
 
     let new_sched = db::insert_schedule(pool, repo_id, &params, None).await?;
     db::insert_schedule_targets(pool, new_sched.id, &target_ids).await?;
+
+    // `insert_schedule` already recorded `repo_id` as the sole target, which
+    // is right for an export written before a schedule could have several.
+    // A newer one carries the full list; a repository it names that this
+    // server does not have is warned about and skipped rather than failing
+    // the whole import.
+    //
+    // Safe to do in a second transaction: import never sets `next_run_at`, and
+    // `list_due_schedules` skips a schedule without one, so nothing dispatches
+    // an imported schedule while its target list is still the seeded primary.
+    let (resolved_targets, mut target_warnings) =
+        resolve_imported_repo_targets(sched, repo_name_to_id);
+    result.warnings.append(&mut target_warnings);
+    if let Some(targets) = resolved_targets {
+        db::replace_schedule_repos(pool, new_sched.id, &targets).await?;
+    }
 
     for (i, path) in sched.backup_sources.iter().enumerate() {
         let sort_order = i32::try_from(i).unwrap_or(0);
@@ -768,4 +844,99 @@ async fn sync_repo_tags(
         tag_ids.push(tag.id);
     }
     db::set_repo_tags(pool, repo_id, &tag_ids).await
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::{
+        responses::ScheduleRepoExportResponse,
+        types::{ExecutionMode, OnFailure, ScheduleType},
+    };
+
+    use super::*;
+
+    fn export_with_targets(targets: Vec<(&str, bool)>) -> ScheduleExport {
+        ScheduleExport {
+            name: "nightly".to_owned(),
+            schedule_type: ScheduleType::Backup,
+            cron_expression: "0 2 * * *".to_owned(),
+            enabled: true,
+            canary_enabled: true,
+            vm_snapshot_enabled: false,
+            execution_mode: ExecutionMode::default(),
+            on_failure: OnFailure::default(),
+            exclude_patterns_raw: String::new(),
+            file_change_patterns_raw: String::new(),
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 0,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: Vec::new(),
+            post_backup_commands: Vec::new(),
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
+            wake_override: ScheduleWakeOverride::default(),
+            repo_name: Some("primary".to_owned()),
+            repo_targets: targets
+                .into_iter()
+                .map(|(repo_name, required)| ScheduleRepoExportResponse {
+                    repo_name: repo_name.to_owned(),
+                    required,
+                })
+                .collect(),
+            backup_sources: Vec::new(),
+            targets: Vec::new(),
+        }
+    }
+
+    fn known_repos() -> HashMap<&'static str, i64> {
+        HashMap::from([("primary", 1), ("offsite", 2)])
+    }
+
+    #[test]
+    fn an_export_without_a_target_list_keeps_its_primary_repository() {
+        let (targets, warnings) =
+            resolve_imported_repo_targets(&export_with_targets(Vec::new()), &known_repos());
+        assert!(targets.is_none());
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+
+    #[test]
+    fn target_repositories_are_resolved_by_name_in_order() {
+        let (targets, warnings) = resolve_imported_repo_targets(
+            &export_with_targets(vec![("primary", true), ("offsite", false)]),
+            &known_repos(),
+        );
+        assert_eq!(targets, Some(vec![(1, true), (2, false)]));
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_target_repository_this_server_does_not_have_is_dropped_with_a_warning() {
+        let (targets, warnings) = resolve_imported_repo_targets(
+            &export_with_targets(vec![("primary", true), ("gone", false)]),
+            &known_repos(),
+        );
+        assert_eq!(targets, Some(vec![(1, true)]));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings.first().is_some_and(|w| w.contains("\"gone\"")));
+    }
+
+    /// Importing a list whose every required target is missing would leave a
+    /// schedule that reports success without writing a copy.
+    #[test]
+    fn losing_every_required_target_falls_back_to_the_primary_repository() {
+        let (targets, warnings) = resolve_imported_repo_targets(
+            &export_with_targets(vec![("gone", true), ("offsite", false)]),
+            &known_repos(),
+        );
+        assert!(targets.is_none());
+        assert_eq!(warnings.len(), 2);
+    }
 }

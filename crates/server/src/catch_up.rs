@@ -119,23 +119,52 @@ async fn dispatch_catch_up(state: &AppState, candidate: &CatchUpCandidate, now: 
         hostname: candidate.hostname.clone(),
     }];
 
-    if matches!(schedule_type, ScheduleType::Backup)
-        && let Err(e) = db::insert_backup_pending(
-            &state.pool,
-            candidate.agent_id,
-            candidate.repo_id,
-            Some(candidate.schedule_id),
-            &run_id,
-            now,
-        )
-        .await
-    {
-        tracing::warn!(
-            hostname = %candidate.hostname,
-            schedule_id = candidate.schedule_id,
-            error = %e,
-            "catch-up run: failed to insert pending record"
-        );
+    // Every repository the missed tick would have written, not just the
+    // schedule's denormalised primary - otherwise each miss leaves the
+    // secondary copies further behind with nothing reported.
+    let repo_ids =
+        match db::catch_up::list_enabled_catch_up_repos(&state.pool, candidate.schedule_id).await {
+            Ok(repo_ids) if !repo_ids.is_empty() => repo_ids,
+            Ok(_) => {
+                tracing::warn!(
+                    hostname = %candidate.hostname,
+                    schedule_id = candidate.schedule_id,
+                    "catch-up run: no enabled target repository left, skipping"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    hostname = %candidate.hostname,
+                    schedule_id = candidate.schedule_id,
+                    error = %e,
+                    "catch-up run: failed to resolve target repositories"
+                );
+                return;
+            }
+        };
+
+    if matches!(schedule_type, ScheduleType::Backup) {
+        for repo_id in &repo_ids {
+            if let Err(e) = db::insert_backup_pending(
+                &state.pool,
+                candidate.agent_id,
+                *repo_id,
+                Some(candidate.schedule_id),
+                &run_id,
+                now,
+            )
+            .await
+            {
+                tracing::warn!(
+                    hostname = %candidate.hostname,
+                    schedule_id = candidate.schedule_id,
+                    repo_id = *repo_id,
+                    error = %e,
+                    "catch-up run: failed to insert pending record"
+                );
+            }
+        }
     }
 
     tracing::info!(
@@ -147,7 +176,7 @@ async fn dispatch_catch_up(state: &AppState, candidate: &CatchUpCandidate, now: 
     record_catch_up_event(state, candidate).await;
 
     let request = RunRequest {
-        repo_id: RepoId(candidate.repo_id),
+        repo_ids: repo_ids.into_iter().map(RepoId).collect(),
         schedule_type,
         schedule_id: candidate.schedule_id,
         run_id,
@@ -238,7 +267,6 @@ mod tests {
         CatchUpCandidate {
             schedule_id: 1,
             schedule_name: "Nightly workstations".to_owned(),
-            repo_id: 1,
             agent_id: 1,
             hostname: "lab-ws-02".to_owned(),
             schedule_type: "backup".to_owned(),

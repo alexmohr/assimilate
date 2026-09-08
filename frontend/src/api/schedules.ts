@@ -9,6 +9,7 @@ import type {
   HookCommand,
   ReportListResponse,
   ScheduleBackupSourcesResponse,
+  ScheduleRepoResponse,
   ScheduleTargetResponse,
   ScheduleWakeOverride,
   HealthSummaryResponse,
@@ -28,6 +29,16 @@ export interface ScheduleAgentCommandsOverride {
   agent_id: number
   pre_backup_commands: HookCommand[]
   post_backup_commands: HookCommand[]
+}
+
+/** One repository a schedule writes into, as sent to the API. */
+export interface ScheduleRepoTarget {
+  repo_id: number
+  /**
+   * Whether a failure on this repository fails the whole run. A best-effort
+   * target (`false`) is reported as a warning and never stops the run.
+   */
+  required: boolean
 }
 
 export interface CreateScheduleRequest {
@@ -59,7 +70,14 @@ export interface CreateScheduleRequest {
   file_change_patterns_per_agent?: ScheduleAgentTextOverride[]
   commands_per_agent?: ScheduleAgentCommandsOverride[]
   agent_ids: number[]
+  /**
+   * The schedule's primary repository. Kept alongside `repo_targets` because
+   * everything that reads a schedule's repository (health, quotas, reports)
+   * still keys off this one; the backend re-points it at the first target.
+   */
   repo_id: number
+  /** Every repository this schedule writes into, in write order. */
+  repo_targets: ScheduleRepoTarget[]
   schedule_type: ScheduleType
   on_failure: ScheduleFailureAction
 }
@@ -118,6 +136,11 @@ export async function runSchedule(
 
 export async function cancelSchedule(id: number | string): Promise<void> {
   await apiClient.post(`/schedules/${id}/cancel`)
+}
+
+export async function listScheduleRepos(id: number | string): Promise<ScheduleRepoResponse[]> {
+  const response = await apiClient.get<ScheduleRepoResponse[]>(`/schedules/${id}/repos`)
+  return response.data
 }
 
 export async function listScheduleTargets(id: number | string): Promise<ScheduleTargetResponse[]> {

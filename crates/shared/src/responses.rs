@@ -34,6 +34,12 @@ fn default_catch_up_min_lead_minutes() -> i32 {
     120
 }
 
+/// A target repository with no `required` flag in the export is required -
+/// the only shape a single-target export could have had.
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing health check.
@@ -808,6 +814,20 @@ pub struct ScheduleTargetResponse {
     /// The occurrence this target missed while its host was unreachable, waiting
     /// to be caught up when that host reconnects. `None` when nothing is pending.
     pub catch_up_pending_for: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// One repository a schedule writes into.
+pub struct ScheduleRepoResponse {
+    #[ts(type = "number")]
+    /// Identifier of the target repository.
+    pub repo_id: i64,
+    /// Order in which the schedule writes to its repositories.
+    pub execution_order: i32,
+    /// Whether a failure on this repository fails the whole run. A best-effort
+    /// target is reported as a warning and never stops the remaining targets.
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2233,6 +2253,18 @@ pub struct HostExportResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+/// One repository a schedule writes into, named rather than keyed by id so
+/// an export survives being imported into a different server.
+pub struct ScheduleRepoExportResponse {
+    /// Name of the target repository.
+    pub repo_name: String,
+    /// Whether a failure on this repository fails the whole run.
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
 /// Response containing schedule target export.
 pub struct ScheduleTargetExportResponse {
     /// Hostname of the target machine.
@@ -2332,8 +2364,13 @@ pub struct ScheduleExportResponse {
     pub backup_sources: Vec<String>,
     /// Per-target overrides.
     pub targets: Vec<ScheduleTargetExportResponse>,
-    /// Name of the repository.
+    /// Name of the schedule's primary repository. Kept for exports written
+    /// before a schedule could have more than one.
     pub repo_name: Option<String>,
+    /// Every repository the schedule writes into, in write order. Empty in an
+    /// export predating multiple targets, where `repo_name` is the only one.
+    #[serde(default)]
+    pub repo_targets: Vec<ScheduleRepoExportResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

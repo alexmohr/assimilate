@@ -2172,7 +2172,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     // SAFETY: BORG_BINARY/env changes are serialised by borg_binary_lock.
     unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "hanging-borg-repo").await;
 
     let started = std::time::Instant::now();
@@ -2192,6 +2192,15 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     );
 
     wait_for_import_completion(&pool, repo_id).await;
+    // Before the env var goes away, rather than at the end of the test: the wait
+    // above only polls the `importing` DB flag, which `handle_repo_sync_failure`
+    // clears from inside the task's `tokio::select!` while `finish_server_sync_task`
+    // still has to run. Waiting on the tracker instead of that intermediate side
+    // effect is what makes the SAFETY comment below true.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 
     // SAFETY: env var must remain set until the background task finishes.
     unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
@@ -8436,7 +8445,7 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "empty-repo-hanging-info").await;
 
     let started = std::time::Instant::now();
@@ -8461,6 +8470,14 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     );
 
     wait_for_import_completion(&pool, repo_id).await;
+    // Same reason as the hanging-borg timeout test above: the wait polls the
+    // `importing` DB flag, which the task clears while it still has
+    // `finish_server_sync_task` to run, so the tracker is what actually says the
+    // task is done - and the SAFETY comment below depends on that.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 
     // SAFETY: env var must remain set until the background task finishes.
     unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };

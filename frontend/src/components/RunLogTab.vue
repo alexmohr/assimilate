@@ -8,6 +8,7 @@ import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import AgentBackupRow from './AgentBackupRow.vue'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { REPORTS_PAGE_SIZE } from '../composables/useReportsPager'
 import type { ReportRow } from '../types/report'
 
 export type BackupFilter = 'all' | 'success' | 'warning' | 'failed'
@@ -128,7 +129,11 @@ const visible = computed(() => {
         :disabled="loadingMore"
         @click="emit('loadMore')"
       >
-        {{ loadingMore ? 'Loading...' : `Load ${Math.min(50, total - reports.length)} more` }}
+        {{
+          loadingMore
+            ? 'Loading...'
+            : `Load ${Math.min(REPORTS_PAGE_SIZE, total - reports.length)} more`
+        }}
       </button>
       <span class="load-more-note">Showing {{ reports.length }} of {{ total }} runs</span>
     </div>

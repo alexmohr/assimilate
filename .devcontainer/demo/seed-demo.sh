@@ -408,6 +408,13 @@ SQL
 echo "==> Creating schedules..."
 # The one job that wakes web-server-01, whose own wake setting is off - the
 # "Enabled" side of a per-schedule override.
+#
+# backup_sources is /etc, not /var/www or /etc/nginx (nginx's actual config
+# paths, which only ever existed inside the seed-time archives' own temp
+# directories - this container never has a real nginx installed) - "Run
+# now"/cancel-backup e2e specs dispatch a real backup against this schedule,
+# and a real borg create needs a source path that genuinely exists here, the
+# same as every other demo schedule below.
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -418,7 +425,7 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
-    \"backup_sources\": [\"/var/www\", \"/etc/nginx\"],
+    \"backup_sources\": [\"/etc\"],
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\"
 }" | jq -r '.id')
 

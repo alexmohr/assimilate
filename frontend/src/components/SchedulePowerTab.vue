@@ -26,7 +26,12 @@ const props = defineProps<{
   agents: readonly AgentRow[]
   repos: readonly Repo[]
   selectedAgentIds: number[]
-  selectedRepoId: number | null
+  /**
+   * Every repository this schedule writes to, in write order. A multi-target
+   * schedule wakes each target's host in turn, so the read-out lists them all
+   * rather than only the primary.
+   */
+  selectedRepoIds: readonly number[]
   /**
    * Whether the viewer is allowed to see wake details. The API redacts a
    * host's MAC address for anyone below operator, so without this the
@@ -145,8 +150,13 @@ const effects = computed<HostEffect[]>(() => {
         agent.power.wake.shutdown_after_backup,
       ),
     )
-  const repo = props.repos.find((r) => r.id === props.selectedRepoId)
-  if (repo) {
+  // Two targets can live on one machine, and waking is per host - so the
+  // hosts are deduplicated rather than listed once per repository.
+  const seenHosts = new Set<string>()
+  for (const repoId of props.selectedRepoIds) {
+    const repo = props.repos.find((r) => r.id === repoId)
+    if (!repo || seenHosts.has(repo.ssh_host)) continue
+    seenHosts.add(repo.ssh_host)
     rows.push(
       effectFor(
         `repo-${repo.id}`,

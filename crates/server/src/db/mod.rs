@@ -3548,8 +3548,8 @@ pub async fn list_schedules_for_repo(
          st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), \
          ARRAY[]::TEXT[]) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
          WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
-         \"catch_up_pending_count!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM \
-         schedule_repos sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
+         \"catch_up_pending_count!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM schedule_repos \
+         sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -3654,11 +3654,11 @@ pub async fn list_due_schedules(
         "SELECT s.id AS schedule_id, s.name AS schedule_name, sr.repo_id, st.agent_id, \
          a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, \
          sr.required, s.missed_backup_threshold, s.catch_up_missed_runs, s.wake_override, \
-         s.next_run_at AS \"due_at!\" FROM schedules s JOIN schedule_repos sr ON \
-         sr.schedule_id = s.id JOIN repos r ON r.id = sr.repo_id JOIN schedule_targets st ON \
-         st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND \
-         r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at \
-         <= $1 ORDER BY s.id, st.execution_order, sr.execution_order",
+         s.next_run_at AS \"due_at!\" FROM schedules s JOIN schedule_repos sr ON sr.schedule_id = \
+         s.id JOIN repos r ON r.id = sr.repo_id JOIN schedule_targets st ON st.schedule_id = s.id \
+         JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND \
+         a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, \
+         st.execution_order, sr.execution_order",
         now,
     )
     .fetch_all(pool)

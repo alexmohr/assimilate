@@ -879,6 +879,9 @@ mod tests {
             post_backup_commands: Vec::new(),
             hook_timeout_seconds: 60,
             missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
+            wake_override: ScheduleWakeOverride::default(),
             repo_name: Some("primary".to_owned()),
             repo_targets: targets
                 .into_iter()

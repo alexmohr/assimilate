@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, sr.repo_id, st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order, sr.required, s.missed_backup_threshold, s.catch_up_missed_runs, s.wake_override, s.next_run_at AS \"due_at!\" FROM schedules s JOIN schedule_repos sr ON sr.schedule_id = s.id JOIN repos r ON r.id = sr.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order, sr.execution_order",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "schedule_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "on_failure",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "execution_order",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "required",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "missed_backup_threshold",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "catch_up_missed_runs",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "wake_override",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "due_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "430312a1c6db5a5202006a635462e4188d3db6e1c44a5020905cb9bba89291b8"
+}

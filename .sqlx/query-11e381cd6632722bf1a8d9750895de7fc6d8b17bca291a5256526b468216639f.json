@@ -1,10 +1,6 @@
 {
   "db_name": "PostgreSQL",
-<<<<<<<< HEAD:.sqlx/query-968458bfa407a1c24239478cabdd40b87965353181aa822d169d4f6a5ad782a8.json
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
-========
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.consecutive_failures, s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM schedule_repos sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
->>>>>>>> 382db46 (feat(schedules): write one schedule into several repositories):.sqlx/query-52e7f2b8581bb49649f7d68672653965a5ae346244553db59dab8d1f728a2f3c.json
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.vm_snapshot_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands AS \"pre_backup_commands: HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s WHERE EXISTS (SELECT 1 FROM schedule_repos sr WHERE sr.schedule_id = s.id AND sr.repo_id = $1) ORDER BY s.id",
   "describe": {
     "columns": [
       {
@@ -226,9 +222,5 @@
       null
     ]
   },
-<<<<<<<< HEAD:.sqlx/query-968458bfa407a1c24239478cabdd40b87965353181aa822d169d4f6a5ad782a8.json
-  "hash": "968458bfa407a1c24239478cabdd40b87965353181aa822d169d4f6a5ad782a8"
-========
-  "hash": "52e7f2b8581bb49649f7d68672653965a5ae346244553db59dab8d1f728a2f3c"
->>>>>>>> 382db46 (feat(schedules): write one schedule into several repositories):.sqlx/query-52e7f2b8581bb49649f7d68672653965a5ae346244553db59dab8d1f728a2f3c.json
+  "hash": "11e381cd6632722bf1a8d9750895de7fc6d8b17bca291a5256526b468216639f"
 }

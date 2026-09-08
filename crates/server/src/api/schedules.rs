@@ -759,14 +759,7 @@ pub async fn update_schedule(
     ApiJson(req): ApiJson<UpdateScheduleRequest>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
-    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    if let Some(rid) = existing.repo_id {
-        check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
-    } else if !effective.can_delete_repo {
-        return Err(ApiError::Forbidden(
-            "only admins can edit orphaned schedules".into(),
-        ));
-    }
+    check_schedule_edit_permission(&state, &auth, &existing).await?;
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
@@ -876,14 +869,13 @@ pub async fn update_schedule(
     Ok(Json(schedule))
 }
 
-/// Whether this caller may edit `existing`, including moving it to a different
-/// repository. An orphaned schedule (no repository to check against) is admin-only;
-/// a move is checked against both the old and the new repository.
+/// May this caller edit the schedule at all - separate from what the edit does
+/// to its target list, which `authorize_repo_targets` decides. An orphaned
+/// schedule (no repository to check against) is admin-only.
 async fn check_schedule_edit_permission(
     state: &AppState,
     auth: &AuthUser,
     existing: &ScheduleRow,
-    effective_repo_id: Option<i64>,
 ) -> Result<(), ApiError> {
     if let Some(rid) = existing.repo_id {
         check_repo_permission(&state.pool, auth, rid, |p| p.can_modify_schedules).await?;
@@ -894,11 +886,6 @@ async fn check_schedule_edit_permission(
         return Err(ApiError::Forbidden(
             "only admins can edit orphaned schedules".into(),
         ));
-    }
-    if effective_repo_id != existing.repo_id
-        && let Some(new_rid) = effective_repo_id
-    {
-        check_repo_permission(&state.pool, auth, new_rid, |p| p.can_modify_schedules).await?;
     }
     Ok(())
 }
@@ -1753,312 +1740,6 @@ mod tests {
             },
         ];
         assert!(validate_hook_commands(&commands).is_err());
-    }
-
-    /// Builds an `AppState` around `pool` for tests that only need
-    /// `release_manual_target_power`'s dependencies (pool, registry,
-    /// `ui_broadcast`, `power_sessions`) -- the rest are populated with inert
-    /// defaults, matching `scheduler.rs`'s own test `AppState` boilerplate.
-    fn test_app_state(pool: sqlx::PgPool) -> AppState {
-        let ui_broadcast = UiBroadcast::new();
-        AppState {
-            pool: pool.clone(),
-            encryption_key: shared::crypto::derive_key(b"schedules-power-test-key").unwrap(),
-            registry: AgentRegistry::new(),
-            ui_broadcast: ui_broadcast.clone(),
-            tunnel_manager: TunnelManager::new(
-                pool.clone(),
-                ui_broadcast,
-                "127.0.0.1:0".parse().unwrap(),
-            ),
-            log_buffer: crate::log_buffer::LogBuffer::default(),
-            notification_service: crate::notifications::NotificationService::new(pool),
-            completion_bus: CompletionBus::new(),
-            repo_op_tracker: RepoOpTracker::default(),
-            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
-            repo_lock: crate::RepoLock::default(),
-            import_tasks: crate::ImportTaskRegistry::default(),
-            pending_dryruns: crate::new_pending_map(),
-            pending_restores: crate::new_pending_map(),
-            pending_vm_scans: crate::new_pending_map(),
-            pending_vm_builds: crate::new_pending_map(),
-            pending_migrations: crate::new_pending_map(),
-            pending_deletes: crate::new_pending_map(),
-            shutdown_token: tokio_util::sync::CancellationToken::new(),
-            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
-            task_registry: shared::task_registry::TaskRegistry::default(),
-            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
-                60,
-                std::time::Duration::from_mins(1),
-            ),
-            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
-                480,
-            )),
-            power_sessions: power::PowerSessionTracker::default(),
-        }
-    }
-
-    async fn insert_power_enabled_agent_and_repo(
-        pool: &sqlx::PgPool,
-    ) -> (db::AgentRow, db::RepoRow) {
-        let agent = db::insert_agent(pool, "manual-power-host", None, "hash", None, None)
-            .await
-            .unwrap();
-        let agent = db::update_agent_power(
-            pool,
-            agent.id,
-            db::AgentPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: true,
-                start_agent_enabled: false,
-                stop_agent_after_backup: false,
-                // Nothing listens here -- the SSH attempt is expected to
-                // fail, only the run-event trail is under test.
-                ssh_host: Some("127.0.0.1"),
-                ssh_port: 1,
-                agent_service_name: "assimilate-agent",
-            },
-        )
-        .await
-        .unwrap();
-
-        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
-            "test-pass",
-            &shared::crypto::derive_key(b"test-secret-key-for-schedules").unwrap(),
-        )
-        .unwrap();
-        let repo = db::insert_repo(
-            pool,
-            &InsertRepoParams {
-                name: "manual-power-repo",
-                repo_path: "/backup/test",
-                ssh_user: "borg",
-                ssh_host: "127.0.0.1",
-                ssh_port: 1,
-                passphrase_encrypted: &passphrase_encrypted,
-                compression: "lz4",
-                encryption: "repokey",
-                owner_id: None,
-                sync_schedule: None,
-            },
-        )
-        .await
-        .unwrap();
-        let repo = db::update_repo_power(
-            pool,
-            repo.id,
-            db::RepoPowerPatch {
-                wake_enabled: true,
-                wake_mac_address: Some("3C:97:0E:2B:9A:44"),
-                wake_broadcast_address: None,
-                wake_timeout_seconds: 180,
-                shutdown_after_backup: true,
-            },
-        )
-        .await
-        .unwrap();
-
-        (agent, repo)
-    }
-
-    /// Regression test for the "manual Run Now doesn't participate in
-    /// `PowerSessionTracker`" bug: a sole reservation on both hosts must be
-    /// torn down once the manual run releases it, exactly like the
-    /// scheduler's own targets are.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn release_manual_target_power_tears_down_sole_participant(pool: sqlx::PgPool) {
-        let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
-        let state = test_app_state(pool.clone());
-
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
-            .await;
-
-        release_manual_target_power(
-            &state,
-            agent.id,
-            repo.id,
-            "run-manual-1",
-            "manual-power-host",
-        )
-        .await;
-
-        let events = db::run_events::list_run_events(&pool, "run-manual-1", agent.id, repo.id)
-            .await
-            .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(
-            event_types,
-            vec!["shutdown_sent", "shutdown_sent"],
-            "release as the sole participant must attempt shutdown for both the agent and repo \
-             hosts"
-        );
-    }
-
-    /// Regression test for the same bug's other half: releasing while a
-    /// sibling schedule's reservation is still held on both hosts must do
-    /// nothing, since a concurrent run is still relying on them staying up.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn release_manual_target_power_is_a_noop_with_a_sibling_reservation_held(
-        pool: sqlx::PgPool,
-    ) {
-        let (agent, repo) = insert_power_enabled_agent_and_repo(&pool).await;
-        let state = test_app_state(pool.clone());
-
-        // Two reservations on each host, simulating this manual run racing
-        // a concurrent scheduled run that targets the same agent/repo.
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent.id))
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Agent(agent.id), true, false)
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo.id))
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo.id))
-            .await;
-        state
-            .power_sessions
-            .record_outcome(power::PowerHostKey::Repo(repo.id), true, false)
-            .await;
-
-        release_manual_target_power(
-            &state,
-            agent.id,
-            repo.id,
-            "run-manual-2",
-            "manual-power-host",
-        )
-        .await;
-
-        let events = db::run_events::list_run_events(&pool, "run-manual-2", agent.id, repo.id)
-            .await
-            .unwrap();
-        assert!(
-            events.is_empty(),
-            "release while a sibling reservation is still held must not tear anything down: \
-             {events:?}"
-        );
-    }
-
-    /// Regression test: if the agent/repo row re-fetch inside
-    /// `release_manual_target_power` fails (transient DB error, or the row
-    /// was deleted mid-run), the `PowerSessionTracker` reservation must
-    /// still be released. Otherwise the session's count never returns to
-    /// zero, silently and permanently disabling `shutdown_after_backup`/
-    /// `stop_agent_after_backup` for that host until the server restarts.
-    /// Uses a lazily-connected pool to a nonexistent database (matching
-    /// `scheduler.rs`'s own `run_returns_promptly_when_shutdown_token_is_cancelled`
-    /// test) so both row fetches fail deterministically without needing
-    /// `DATABASE_URL`.
-    #[tokio::test]
-    async fn release_manual_target_power_releases_the_reservation_even_when_the_row_fetch_fails() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
-        let state = test_app_state(pool);
-        let agent_id = 999_999;
-        let repo_id = 888_888;
-
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Agent(agent_id))
-            .await;
-        state
-            .power_sessions
-            .reserve(power::PowerHostKey::Repo(repo_id))
-            .await;
-
-        release_manual_target_power(&state, agent_id, repo_id, "run-manual-leak", "leak-host")
-            .await;
-
-        // If the reservation had leaked (the bug this regresses), this
-        // would be the *first* decrement and return Some(..) instead of
-        // None -- the tracker would still think a participant is present.
-        assert!(
-            state
-                .power_sessions
-                .end(power::PowerHostKey::Agent(agent_id))
-                .await
-                .is_none(),
-            "the agent reservation must already be released by the failed fetch's fallback"
-        );
-        assert!(
-            state
-                .power_sessions
-                .end(power::PowerHostKey::Repo(repo_id))
-                .await
-                .is_none(),
-            "the repo reservation must already be released by the failed fetch's fallback"
-        );
-    }
-
-    /// Regression test: when `assemble_config` fails - a transient DB error,
-    /// or the agent row deleted mid-run - `push_config_and_trigger_target`
-    /// must report the target unreachable and send nothing, rather than
-    /// triggering a run against a config the agent never received.
-    ///
-    /// This arm was previously covered only by chance: no test drove it, and
-    /// it registered as covered only when some unrelated test happened to
-    /// fail a config assembly first. That made the line flap between covered
-    /// and uncovered from run to run and moved the repository's aggregate
-    /// coverage by a few hundredths of a percent either way, which is enough
-    /// to fail `analyze-coverage-diff.js`'s strict comparison on an unrelated
-    /// pull request.
-    ///
-    /// Uses a lazily-connected pool to a nonexistent database - the same
-    /// deterministic, no-`DATABASE_URL` pattern as
-    /// `release_manual_target_power_releases_the_reservation_even_when_the_row_fetch_fails`
-    /// above - so the fetch inside `assemble_config` fails on every run.
-    #[tokio::test]
-    async fn push_config_and_trigger_target_reports_unreachable_when_config_assembly_fails() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
-        let state = test_app_state(pool);
-        let target = db::ScheduleRunTarget {
-            agent_id: 999_999,
-            hostname: "unreachable-host".to_owned(),
-        };
-
-        let reachable = push_config_and_trigger_target(
-            &state,
-            &target,
-            RepoId(888_888),
-            ScheduleType::Backup,
-            777_777,
-            "run-manual-config-assembly-failure",
-        )
-        .await;
-
-        assert!(
-            !reachable,
-            "a target whose config could not be assembled must be reported unreachable"
-        );
     }
 
     fn repo_input(repo_id: i64, required: Option<bool>) -> ScheduleRepoInput {

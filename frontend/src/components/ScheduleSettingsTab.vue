@@ -401,7 +401,7 @@ const leadValue = computed<number>({
       :agents="agents"
       :repos="repos"
       :selected-agent-ids="selectedAgentIds"
-      :selected-repo-id="selectedRepoId"
+      :selected-repo-ids="repoTargets.map((t) => t.repo_id)"
       :can-see-wake-details="canSeeWakeDetails"
     />
 

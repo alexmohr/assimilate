@@ -132,4 +132,30 @@ describe('useReportsPager', () => {
     await loadMore
     expect(pager.loadingMore.value).toBe(false)
   })
+
+  // Regression: load() is not just the initial fetch - both detail views
+  // also run it on every WebSocket DataChanged event (fleet-wide, not
+  // scoped to this agent/schedule) to keep the Logs tab live. A flat
+  // REPORTS_PAGE_SIZE refetch there silently collapsed a user's "Load more"
+  // progress back to page 1 the next time any unrelated backup started or
+  // finished, with nothing on screen to explain the row count dropping.
+  it('load() re-fetches enough rows to cover what was already loaded, not just a first page', async () => {
+    const fetchPage = vi
+      .fn()
+      .mockResolvedValueOnce(page(REPORTS_PAGE_SIZE, 120))
+      .mockResolvedValueOnce(page(20, 120))
+      .mockResolvedValueOnce(page(REPORTS_PAGE_SIZE + 20, 120))
+    const pager = useReportsPager(fetchPage)
+
+    await pager.load()
+    await pager.loadMore()
+    expect(pager.reports.value).toHaveLength(REPORTS_PAGE_SIZE + 20)
+
+    // Simulates a live refresh (e.g. DataChanged) firing after the user has
+    // paged past the first 50 rows.
+    await pager.load()
+
+    expect(fetchPage).toHaveBeenNthCalledWith(3, REPORTS_PAGE_SIZE + 20, 0)
+    expect(pager.reports.value).toHaveLength(REPORTS_PAGE_SIZE + 20)
+  })
 })

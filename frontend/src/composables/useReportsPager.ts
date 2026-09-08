@@ -33,9 +33,19 @@ export interface ReportsPager {
  * this there was no `total` in the response, so a tab showing "50" had no
  * way to say whether that was everything or just where the cap happened to
  * land. `load` replaces the list (used on mount and on any change that could
- * invalidate it, e.g. a WebSocket `DataChanged`); `loadMore` appends the next
- * page, keyed off how many rows are already loaded rather than a page index,
- * so a concurrent insert can't leave a gap or a duplicate at the boundary.
+ * invalidate it, e.g. a WebSocket `DataChanged`) - refetching at least as
+ * many rows as were already showing, not a flat first page, so a live
+ * refresh triggered by an unrelated event elsewhere doesn't undo a user's
+ * "Load more" progress. `loadMore` appends the next page, keyed off how many
+ * rows are already loaded rather than a page index - this only protects
+ * against a same-`started_at` tie at the boundary (paired with the `id DESC`
+ * secondary sort server-side); a genuinely new row inserted with a newer
+ * `started_at` between two `loadMore()` calls still shifts every
+ * already-loaded row's rank by one, so the next page can re-return the row
+ * already shown last. Low-impact (a duplicate list entry, self-heals on the
+ * next `load()`) and not fixed here - true gap/duplicate-free paging would
+ * need a cursor keyed off the last loaded row's `(started_at, id)` rather
+ * than a raw row count.
  */
 export function useReportsPager(
   fetchPage: (limit: number, offset: number) => Promise<ReportsPage>,
@@ -64,8 +74,17 @@ export function useReportsPager(
     // stay disabled until the component remounts.
     loadingMore.value = false
     error.value = null
+    // Re-fetches at least as many rows as are already showing, not a flat
+    // first page. load() isn't only the initial fetch - it's also what a
+    // live WebSocket DataChanged refresh runs on every backup event
+    // fleet-wide (see AgentDetailView's fetchAgent/loadTabData and
+    // ScheduleDetailView's useArchiveDeletionEvents), and a flat
+    // REPORTS_PAGE_SIZE there would silently collapse a user's "Load more"
+    // progress back to page 1 on the next unrelated event, with nothing on
+    // screen to explain why.
+    const limit = Math.max(reports.value.length, REPORTS_PAGE_SIZE)
     try {
-      const page = await fetchPage(REPORTS_PAGE_SIZE, 0)
+      const page = await fetchPage(limit, 0)
       if (token !== loadToken) return
       reports.value = page.reports
       total.value = page.total

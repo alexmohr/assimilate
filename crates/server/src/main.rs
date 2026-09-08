@@ -58,14 +58,18 @@ enum StartupError {
 /// process exit anyway.
 const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
 
-/// How long shutdown waits for `AppState::background_task_tracker` (the outer
-/// scheduled-sync/post-backup-sync/post-backup-indexing/initial-import tasks, each of
-/// which claims a guard synchronously before being spawned) to go idle before giving up
-/// and draining `task_registry` anyway. These tasks aren't themselves registered with
-/// `task_registry` - only the `GracefulChild` reapers a *cancelled* borg call inside them
-/// would spawn are - so without this wait, a task still normally running a borg call when
-/// shutdown lands would have that call force-dropped when the runtime tears down, with
-/// nothing having ever tried to let it finish first.
+/// How long shutdown waits for `AppState::background_task_tracker` to go idle before giving up
+/// and draining `task_registry` anyway. It covers every task that claims a tracker guard. That
+/// is deliberately stated as a rule rather than a list: the list version of this comment went
+/// stale three times, so read it as every `BackgroundTaskTracker::spawn_tracked` call site, plus
+/// the three that thread a guard through by value instead (`resume_single_import`'s parameter,
+/// and `scheduler.rs`'s `ScheduledRepoSync` and `SequentialExecution` fields). All of them claim
+/// the guard synchronously, before the spawn, so `any_active()` reads true the instant the
+/// spawning call returns rather than only once the task is first polled. These tasks
+/// aren't themselves registered with `task_registry` - only the `GracefulChild` reapers a
+/// *cancelled* borg call inside them would spawn are - so without this wait, a task still
+/// normally running a borg call when shutdown lands would have that call force-dropped when
+/// the runtime tears down, with nothing having ever tried to let it finish first.
 const BACKGROUND_TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
 
 #[tokio::main]

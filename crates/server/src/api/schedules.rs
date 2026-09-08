@@ -1098,7 +1098,19 @@ pub async fn run_schedule_now(
         }
     }
 
-    tokio::spawn(run_dispatch::run_targets_sequential(
+    // Tracked, like the archive-deletion spawn and archive_index's indexing
+    // spawn, so a test can wait for this dispatch instead of racing it.
+    // Untracked, whether this task got scheduled at all before the test's
+    // tokio runtime was dropped was a coin flip, which showed up as ~49 lines
+    // of the manual-run path being covered in one CI run and not the next --
+    // a 0.14pp swing between runs of byte-identical code.
+    //
+    // The dispatch future is wrapped here rather than tracked inside
+    // run_targets_sequential because that function is shared with the
+    // scheduler, which dispatches on its own schedule and has no test waiting
+    // on it.
+    let background_task_tracker = state.background_task_tracker.clone();
+    let dispatch = run_dispatch::run_targets_sequential(
         state,
         targets,
         run_dispatch::RunRequest {
@@ -1108,7 +1120,8 @@ pub async fn run_schedule_now(
             run_id,
             origin: run_dispatch::RunOrigin::Manual,
         },
-    ));
+    );
+    background_task_tracker.spawn_tracked(dispatch);
 
     Ok(StatusCode::ACCEPTED)
 }

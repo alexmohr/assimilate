@@ -2123,7 +2123,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "sync-accepted-repo").await;
 
@@ -2149,6 +2149,14 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
         stats.import_error.is_some(),
         "import_error should be set after sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 #[tokio::test]
@@ -2164,7 +2172,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     // SAFETY: BORG_BINARY/env changes are serialised by borg_binary_lock.
     unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "hanging-borg-repo").await;
 
     let started = std::time::Instant::now();
@@ -2184,6 +2192,15 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     );
 
     wait_for_import_completion(&pool, repo_id).await;
+    // Before the env var goes away, rather than at the end of the test: the wait
+    // above only polls the `importing` DB flag, which `handle_repo_sync_failure`
+    // clears from inside the task's `tokio::select!` while `finish_server_sync_task`
+    // still has to run. Waiting on the tracker instead of that intermediate side
+    // effect is what makes the SAFETY comment below true.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 
     // SAFETY: env var must remain set until the background task finishes.
     unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
@@ -2226,7 +2243,7 @@ async fn test_delete_archive_runs_in_background() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
     )
@@ -2267,8 +2284,11 @@ async fn test_delete_archive_runs_in_background() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
-    // The audit entry is written last in the background task, so waiting for it
-    // guarantees the borg delete and DB cleanup have already completed.
+    // Waiting for the audit entry confirms the borg delete and DB cleanup ran.
+    // It is not the end of the task, though: finalize_archive_deletion goes on
+    // to refresh the archive list and clear the import-progress state after
+    // writing it, which is why the tracker wait at the end of this test is what
+    // actually bounds the task.
     timeout(Duration::from_secs(10), async {
         loop {
             let audit_rows: i64 = sqlx::query_scalar(
@@ -2310,6 +2330,15 @@ async fn test_delete_archive_runs_in_background() {
         index_rows, 0,
         "index job rows should be removed with the archive"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2335,7 +2364,7 @@ async fn test_delete_archive_runs_compact_afterwards() {
     let (borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-host', 'hash') \
          RETURNING id",
@@ -2368,6 +2397,15 @@ async fn test_delete_archive_runs_compact_afterwards() {
         settled, 1,
         "exactly one compact should run after a single archive delete"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2402,7 +2440,7 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     // SAFETY: tests serialize BORG_BINARY (and this) changes with borg_binary_lock.
     unsafe { std::env::set_var("FAKE_BORG_COMPACT_EXIT", "2") };
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-fail-host', 'hash') \
          RETURNING id",
@@ -2469,6 +2507,15 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     // cleared here, before dropping the borg binary lock, same as other
     // tests that mutate process-global borg-related env vars.
     unsafe { std::env::remove_var("FAKE_BORG_COMPACT_EXIT") };
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2572,6 +2619,15 @@ async fn test_delete_archive_transitions_straight_to_compact_without_a_stale_dra
         "no RepoOpChanged with a cleared op should be broadcast between the delete and compact \
          phases of the same archive deletion, got {kinds:?}"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the audit-log write.
+    // Wait for the task itself rather than for one of its intermediate side
+    // effects, so the runtime can't tear down mid-flight.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// The exact race a follow-up review flagged: when a repo has no operation
@@ -2666,6 +2722,14 @@ async fn test_delete_archive_does_not_broadcast_a_drained_op_before_it_ever_begi
          op - a client that just marked this archive as deleting client-side would see that state \
          wiped out by a stale 'nothing happening' signal"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the broadcasts asserted
+    // above. Wait for the task itself, so it can't run on into the next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2762,6 +2826,14 @@ async fn test_delete_archive_broadcasts_archive_deleted_before_data_changed() {
         archive_deleted_at < data_changed_at,
         "ArchiveDeleted should broadcast before DataChanged"
     );
+
+    // The archive deletion runs as a tracked background task whose tail (the
+    // post-delete archive-list refresh) continues past the broadcasts asserted
+    // above. Wait for the task itself, so it can't run on into the next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -2789,7 +2861,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
     let (borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING id",
     )
@@ -2858,6 +2930,15 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
         names.len(),
         "each successful delete in the batch should trigger its own compact"
     );
+
+    // Three deletions are dispatched here, each a tracked background task
+    // whose tail (the post-delete archive-list refresh) outlives the compact
+    // log entry asserted above. Wait for all three, so none runs on into the
+    // next test.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 #[tokio::test]
@@ -3203,6 +3284,9 @@ async fn test_reset_import_clears_state() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
+    // Plain `build_test_app`: `reset_import` cancels the in-flight import task and
+    // clears the DB flags synchronously, spawning no tracked background work, so a
+    // tracker wait here would return instantly and prove nothing.
     let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "reset-import-repo").await;
@@ -6876,7 +6960,7 @@ async fn test_run_schedule_now_restricted_to_agent_ids() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-repo").await;
     let agent_a: i64 = sqlx::query_scalar(
@@ -6955,6 +7039,14 @@ async fn test_run_schedule_now_restricted_to_agent_ids() {
     let mut expected = vec![agent_a, agent_b];
     expected.sort_unstable();
     assert_eq!(pending_agents, expected);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: `run_schedule_now` used to require a JSON body
@@ -6968,7 +7060,7 @@ async fn test_run_schedule_now_without_a_body_runs_every_target() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-no-body-repo").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -6992,6 +7084,14 @@ async fn test_run_schedule_now_without_a_body_runs_every_target() {
     .await
     .unwrap();
     assert_eq!(pending_agents, vec![agent_id]);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: duplicate `agent_ids` entries used to be compared
@@ -7004,7 +7104,7 @@ async fn test_run_schedule_now_allows_duplicate_agent_ids() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "run-now-dup-repo").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -7023,6 +7123,14 @@ async fn test_run_schedule_now_allows_duplicate_agent_ids() {
     );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The manual run is dispatched to a tracked background task; wait for it
+    // rather than letting the runtime tear down mid-flight. Racing it left
+    // this module's coverage differing between runs of identical code.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
 }
 
 /// Regression test for: `cancel_running_backup`'s offline-agent fallback (the
@@ -8337,7 +8445,7 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "empty-repo-hanging-info").await;
 
     let started = std::time::Instant::now();
@@ -8362,6 +8470,14 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     );
 
     wait_for_import_completion(&pool, repo_id).await;
+    // Same reason as the hanging-borg timeout test above: the wait polls the
+    // `importing` DB flag, which the task clears while it still has
+    // `finish_server_sync_task` to run, so the tracker is what actually says the
+    // task is done - and the SAFETY comment below depends on that.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 
     // SAFETY: env var must remain set until the background task finishes.
     unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
@@ -8450,7 +8566,7 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "spurious-empty-list-repo").await;
     seed_synced_archive(&pool, repo_id, "spurious-host", "keep-me").await;
@@ -8507,6 +8623,14 @@ async fn test_sync_refuses_to_prune_all_archives_when_borg_list_returns_empty() 
         stats_archive_count, 1,
         "repo_stats.archive_count must not be zeroed out by the aborted sync"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test for: the scheduled-sync loop blocking on each repo sequentially.
@@ -8717,7 +8841,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg("this is not valid json", "{}", info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "malformed-json-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -8738,6 +8862,14 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
         stats.import_error.is_some(),
         "import_error should be set after malformed JSON sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test: borg list exits 0 with valid JSON but no `archives` key.
@@ -8765,7 +8897,7 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     )
     .await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "missing-archives-key-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -8786,6 +8918,14 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
         stats.import_error.is_some(),
         "import_error should be set after no-archives-key sync fails"
     );
+
+    // The sync/import runs as a tracked background task that acquires the repo
+    // lock and runs borg. Wait for it rather than letting it run on into the
+    // next test, where it would race that test's own borg calls.
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(60))
+        .await;
 }
 
 /// Regression test for the stale-echo bug: `PUT /api/system/settings` used to

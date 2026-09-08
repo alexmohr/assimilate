@@ -662,9 +662,7 @@ fn dispatch_quota_breach_notification(
 fn spawn_notification_dispatch(state: &AppState, event: NotificationEvent) {
     let service = state.notification_service.clone();
     let task_registry = state.task_registry.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
+    state.background_task_tracker.spawn_tracked(async move {
         if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
@@ -1203,9 +1201,7 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
     let repo_lock = state.repo_lock.clone();
     let background_task_tracker = state.background_task_tracker.clone();
     let task_registry = state.task_registry.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
+    state.background_task_tracker.spawn_tracked(async move {
         match archive_index::ensure_indexed(
             pool,
             encryption_key,
@@ -1398,7 +1394,10 @@ async fn dispatch_backup_completion_notification(
 
 /// Runs the post-backup archive sync in the background: marks the repo as
 /// importing, syncs any new archives, and clears importing/error state
-/// regardless of outcome.
+/// regardless of outcome. Tracking is the caller's job (see
+/// `spawn_post_backup_sync`): claiming the guard in this body would only
+/// happen once the runtime first polls the spawned task, which is the race
+/// the tracker exists to close.
 async fn run_post_backup_sync(
     pool: PgPool,
     encryption_key: [u8; 32],
@@ -1408,7 +1407,6 @@ async fn run_post_backup_sync(
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     task_registry: shared::task_registry::TaskRegistry,
 ) {
-    let _task_guard = background_task_tracker.begin();
     // Held for the rest of this function so a panic inside sync_new_archives
     // still clears repo_import_state.importing (via spawned cleanup, since
     // Drop can't await) instead of leaving it permanently "importing" - see
@@ -1479,15 +1477,17 @@ async fn run_post_backup_sync(
 }
 
 fn spawn_post_backup_sync(state: &AppState, repo_id: i64) {
-    tokio::spawn(run_post_backup_sync(
-        state.pool.clone(),
-        state.encryption_key,
-        repo_id,
-        state.ui_broadcast.clone(),
-        state.repo_lock.clone(),
-        state.background_task_tracker.clone(),
-        state.task_registry.clone(),
-    ));
+    state
+        .background_task_tracker
+        .spawn_tracked(run_post_backup_sync(
+            state.pool.clone(),
+            state.encryption_key,
+            repo_id,
+            state.ui_broadcast.clone(),
+            state.repo_lock.clone(),
+            state.background_task_tracker.clone(),
+            state.task_registry.clone(),
+        ));
 }
 
 async fn finalize_backup_completion(
@@ -2444,6 +2444,34 @@ exit 0
         .await
         .expect("query reports");
         assert_eq!(reports.unwrap_or(0), 0);
+    }
+
+    /// `spawn_post_backup_sync` must mark the task in flight before it returns.
+    /// Claiming the guard as the first statement of `run_post_backup_sync`'s own
+    /// body looked equivalent but wasn't: calling an async fn runs none of it, so
+    /// `any_active()` only turned true once the runtime first polled the spawned
+    /// task - and whether that happens before a caller (or a test's runtime
+    /// teardown) looks is a scheduling race, not a guarantee.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn spawn_post_backup_sync_is_tracked_before_the_task_is_first_polled(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+
+        // No repo with this id exists, so the task fails out immediately without
+        // running borg - what it does is irrelevant here, only when it starts
+        // counting is.
+        spawn_post_backup_sync(&state, 987_654);
+
+        // Deliberately no await between the spawn and this assertion.
+        assert!(
+            state.background_task_tracker.any_active(),
+            "post-backup sync must be tracked the moment it is spawned"
+        );
+
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
     }
 
     #[ignore = "requires DATABASE_URL"]

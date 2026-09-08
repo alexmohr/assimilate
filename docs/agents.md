@@ -294,7 +294,7 @@ The chosen tab and section are both recorded in the URL (`?tab=settings&section=
 
 ### Imported hosts
 
-An imported host keeps all four tabs. It has archives but no agent, so its Schedules tab is empty — and explains why, offering **Adopt** and **Merge into...** rather than leaving you to work it out. The header omits the agent version, revision and build time, since there is no agent to report them, and the Settings tab hides the sections that need one.
+An imported host keeps all five tabs. It has archives but no agent, so its Schedules tab is empty — and explains why, offering **Adopt** and **Merge into...** rather than leaving you to work it out. The header omits the agent version, revision and build time, since there is no agent to report them, and the Settings tab hides the sections that need one.
 
 ## Hostname Aliases (Glob Patterns)
 

@@ -721,8 +721,16 @@ watch(
     loadData()
   },
 )
+// Only a first visit with nothing loaded yet triggers a fetch here - reports
+// are already kept fresh regardless of which tab is active (loadData() on
+// mount, then every WebSocket DataChanged via useArchiveDeletionEvents's
+// reload below). Refetching unconditionally on every switch to this tab
+// used to be harmless when only the Backups tab (no incremental pagination)
+// depended on it, but doing the same for the Logs tab discarded whatever
+// "Load more" progress the reports pager had - so this now only fills a
+// tab that has never loaded anything, not one already showing data.
 watch(activeTab, (tab) => {
-  if ((tab === 'backups' || tab === 'logs') && !isCreate.value) {
+  if ((tab === 'backups' || tab === 'logs') && !isCreate.value && reports.value.length === 0) {
     loadReports().catch(() => undefined)
   }
 })

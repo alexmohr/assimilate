@@ -788,6 +788,54 @@ describe('ScheduleDetailView - edit mode', () => {
     )
   })
 
+  // Regression test: the activeTab watcher used to call loadReports()
+  // unconditionally on every switch to the Backups/Logs tab, which is a full
+  // reportsPager.load() - a first-page reset. Leaving the Logs tab (e.g. to
+  // Overview) and coming back used to silently throw away whatever "Load
+  // more" progress the user had made, with nothing on screen to explain why
+  // their report count dropped back down.
+  it('keeps Load more progress on the Logs tab across a tab switch away and back', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      original_size: 100,
+      duration_secs: 10,
+    })
+    const baseImpl = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/reports') {
+        return baseImpl(url).then((res: { data: { reports: unknown[]; total: number } }) => ({
+          data: { ...res.data, total: 5 },
+        }))
+      }
+      return baseImpl(url)
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.find('.section-link').trigger('click')
+    await flushPromises()
+
+    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
+    await loadMoreBtn!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
+
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text() === 'Overview')!
+      .trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text().startsWith('Logs'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
+  })
+
   // A run in the preview is a way in, not just a status line: its archive is
   // on this schedule's own Backups tab, one click away.
   it('selects the archive of a preview run on the Backups tab', async () => {

@@ -105,4 +105,31 @@ describe('useReportsPager', () => {
     expect(pager.reports.value).toHaveLength(1)
     expect(pager.total.value).toBe(1)
   })
+
+  // Regression: load() bumping loadToken while a loadMore() is still in
+  // flight made that loadMore()'s own `finally` block's token check fail,
+  // which left `loadingMore` stuck true forever - permanently disabling the
+  // Logs tab's "Load more" button until the component remounted. Reachable
+  // any time a live refresh (e.g. a WebSocket DataChanged event) fires while
+  // a user is mid-"Load more".
+  it('a load() that preempts an in-flight loadMore() clears loadingMore', async () => {
+    let resolveLoadMore!: (p: ReportsPage) => void
+    const fetchPage = vi
+      .fn()
+      .mockResolvedValueOnce(page(REPORTS_PAGE_SIZE, 100))
+      .mockImplementationOnce(() => new Promise<ReportsPage>((r) => (resolveLoadMore = r)))
+      .mockResolvedValueOnce(page(REPORTS_PAGE_SIZE, 100))
+    const pager = useReportsPager(fetchPage)
+
+    await pager.load()
+    const loadMore = pager.loadMore()
+    expect(pager.loadingMore.value).toBe(true)
+
+    await pager.load()
+    expect(pager.loadingMore.value).toBe(false)
+
+    resolveLoadMore(page(20, 100))
+    await loadMore
+    expect(pager.loadingMore.value).toBe(false)
+  })
 })

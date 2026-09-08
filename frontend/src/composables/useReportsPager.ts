@@ -57,6 +57,12 @@ export function useReportsPager(
   async function load(): Promise<void> {
     const token = ++loadToken
     loading.value = true
+    // A fresh load() replaces the list wholesale, so any loadMore() still in
+    // flight is now moot: its own token check below will discard its
+    // response, but that leaves its `finally` block unable to match tokens
+    // and clear this flag - without resetting it here, "Load more" would
+    // stay disabled until the component remounts.
+    loadingMore.value = false
     error.value = null
     try {
       const page = await fetchPage(REPORTS_PAGE_SIZE, 0)

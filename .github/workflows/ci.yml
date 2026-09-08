@@ -154,6 +154,22 @@ jobs:
         run: pip install -r docs/requirements.txt
       - name: Build docs (strict)
         run: mkdocs build --strict
+  ci-scripts:
+    name: CI Scripts (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # No install step: these tests use node's built-in runner and require
+      # only the scripts themselves, so `.github/scripts/` stays dependency
+      # free. They pin the gates this repo's automation trusts - the
+      # zero-tolerance aggregate coverage comparison, and auto-merge's refusal
+      # to land changes to .github/ unattended.
+      - name: Run CI script tests
+        run: node --test .github/scripts/__tests__/*.test.js
   deps-audit:
     name: Rust Dependency Audit (cargo-deny)
     runs-on: ubuntu-latest

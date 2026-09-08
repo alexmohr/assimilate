@@ -374,6 +374,27 @@ function parseAutoMergeEnabled(rawValue, core) {
   return false;
 }
 
+// Path prefix whose contents auto-merge will never land on its own.
+// `.github/` holds every gate this automation trusts - the coverage-diff
+// analyzer, the duplicate-code check, the workflows, and this script, which
+// decides what "ready to merge" even means. A PR editing any of them is a PR
+// editing the rails, and the rails must not be able to widen themselves
+// without a person: a one-line epsilon in analyze-coverage-diff.js would turn
+// the "aggregate coverage must not drop" gate into a suggestion, and would
+// otherwise merge unattended on the automation's own approval.
+const AUTO_MERGE_PROTECTED_PREFIX = ".github/";
+
+// Whether `files` (as returned by `pulls.listFiles`) touches anything
+// auto-merge must not land unattended. Both the current and previous path are
+// checked so a rename *out of* `.github/` can't launder a change through.
+function touchesProtectedPaths(files) {
+  return files.some(
+    (file) =>
+      file.filename?.startsWith(AUTO_MERGE_PROTECTED_PREFIX) ||
+      file.previous_filename?.startsWith(AUTO_MERGE_PROTECTED_PREFIX),
+  );
+}
+
 // Squash-merges `pr` and deletes its branch (same-repo PRs only - a fork's
 // branch can't be deleted by this token, mirroring `gh pr merge
 // --delete-branch`'s own behavior). Called only once every deterministic
@@ -386,6 +407,21 @@ function parseAutoMergeEnabled(rawValue, core) {
 // failing the whole label-sync job over it - the next sync will simply
 // re-evaluate from scratch.
 async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr) {
+  const files = await github.paginate(github.rest.pulls.listFiles, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  if (touchesProtectedPaths(files)) {
+    core.info(
+      `PR #${prNumber}: ready to merge, but it changes ${AUTO_MERGE_PROTECTED_PREFIX} - ` +
+        "auto-merge deliberately does not land changes to CI, the coverage gate or this " +
+        "script itself. Merge it by hand once a person has read the diff.",
+    );
+    return;
+  }
+
   try {
     await github.rest.pulls.merge({ owner, repo, pull_number: prNumber, merge_method: "squash" });
     core.info(`PR #${prNumber}: auto-merged (squash) - ready to merge with a genuine approval.`);
@@ -865,6 +901,10 @@ module.exports.ensureLabelExists = ensureLabelExists;
 // into the `autoMergeEnabled` boolean the same way - the parsing lives here,
 // not duplicated in two `script:` blocks that could drift apart.
 module.exports.parseAutoMergeEnabled = parseAutoMergeEnabled;
+// Exported for the tests that pin the guard: auto-merge must never land a
+// change to `.github/`, which is where every gate it trusts lives.
+module.exports.touchesProtectedPaths = touchesProtectedPaths;
+module.exports.AUTO_MERGE_PROTECTED_PREFIX = AUTO_MERGE_PROTECTED_PREFIX;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,
 // circular check run (its conclusion depends on the review having already
 // happened) from the "wait for every other check on this commit" gate.

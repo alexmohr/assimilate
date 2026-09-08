@@ -406,6 +406,32 @@ green, no merge conflict, no `coverage failed`/`duplicate code`, no active
 `changes requested` verdict, and a genuine approval are all required for the
 status itself.
 
+**Auto-merge never lands a change to `.github/`.** Before merging,
+`autoMergeIfApproved` lists the PR's files and bails if any of them (or any
+`previous_filename`, so a rename out of the directory can't launder one) sits
+under `.github/`. That directory holds every gate this automation trusts —
+the coverage-diff analyzer, the duplicate-code check, the workflows, and
+`sync-pr-labels.js` itself, which decides what `ready to merge` means. A PR
+editing the rails is exactly the PR that must not merge on the automation's
+own approval: a one-line epsilon in `analyze-coverage-diff.js` would turn
+"aggregate coverage must not drop" into a suggestion, unattended. Such a PR
+still reaches `ready to merge` and still gets its labels; it just waits for a
+person to press the button, with the reason logged in the job.
+
+**The aggregate coverage gate is zero tolerance, and pinned as such.** Any
+decrease fails, however small — the comparison is on raw floats, not on the
+two decimals the finding prints. Coverage that moves between runs of
+identical source is a determinism bug in the tests (#489 removed the last
+known source of it by tracking fire-and-forget spawns), never a reason to
+widen the gate. `.github/scripts/__tests__/analyze-coverage-diff.test.js`
+holds that line: `sub_precision_decrease_is_still_a_regression` fails if
+anyone adds an epsilon or rounds before comparing, so widening the gate means
+visibly editing a test — which `AGENTS.md` forbids without human approval —
+rather than quietly editing one comparison. The `CI Scripts (node --test)`
+job runs those tests, plus the auto-merge guard and kill-switch cases, using
+node's built-in runner (no dependency, no `package.json` outside
+`frontend/`).
+
 This is deliberately **not** something the reviewing agent does itself
 anymore — `claude-review.yml`'s prompt explicitly tells Claude never to run
 `gh pr merge`; it ends its job at submitting the verdict. Moving the merge

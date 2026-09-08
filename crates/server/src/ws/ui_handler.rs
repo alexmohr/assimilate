@@ -95,7 +95,19 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
         loop {
             tokio::select! {
                 event = rx.recv() => {
-                    let Ok(event) = event else { return };
+                    let event = match event {
+                        Ok(event) => event,
+                        // A burst of events (e.g. `borg create --list` logging one
+                        // line per file) can outrun a single client's send loop
+                        // faster than this broadcast channel's fixed capacity.
+                        // Dropping the connection here would be worse than the
+                        // lag itself: a `BackupStarted`/`BackupCompleted` lost in
+                        // the gap has no other way to reach the client, since
+                        // nothing re-polls for it after page load. Skip past the
+                        // gap and keep receiving instead of closing the socket.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    };
                     let Ok(json) = serde_json::to_string(&event) else {
                         continue;
                     };
@@ -146,5 +158,37 @@ mod tests {
             result.is_ok(),
             "send_task did not exit within 5s after token cancellation"
         );
+    }
+
+    // Mirrors send_task's own recv-error handling: a lagged receiver must
+    // keep consuming later messages instead of dropping the connection, since
+    // a burst of BackupLog lines outrunning a slow client would otherwise
+    // silently disconnect it mid-run and lose whatever it hasn't seen yet
+    // (there is no other path that redelivers a missed BackupStarted).
+    #[tokio::test]
+    async fn lagged_receiver_keeps_going_instead_of_exiting() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<i32>(2);
+
+        // Overflow the receiver's buffer (capacity 2) before it reads anything.
+        for i in 0..5 {
+            tx.send(i).unwrap();
+        }
+
+        let mut received = Vec::new();
+        loop {
+            match rx.recv().await {
+                Ok(event) => received.push(event),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+            if received.len() == 2 {
+                break;
+            }
+        }
+
+        // The oldest two of the five sent values were evicted by the lag; the
+        // receiver must still have read past the gap to the newest ones
+        // rather than exiting for good on the first Lagged.
+        assert_eq!(received, vec![3, 4]);
     }
 }

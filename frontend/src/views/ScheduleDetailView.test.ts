@@ -488,6 +488,47 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', {})
   })
 
+  // The backup_reports row for a run-now is inserted before the request even
+  // returns, so refetching reports right after is a reliable way to pick up
+  // "Cancel backup" - unlike the BackupStarted WS broadcast alone, which a
+  // burst of BackupLog lines from the very run it announces can delay past
+  // the point the run has already finished (see run_dispatch.rs).
+  it('shows Cancel backup after Run now without waiting on a WS event', async () => {
+    let reportsRequested = false
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/schedules/1/reports') {
+        const reports = reportsRequested ? [{ id: 1, status: 'pending' }] : []
+        reportsRequested = true
+        return Promise.resolve({ data: { reports, total: reports.length } })
+      }
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('Run now')
+
+    const runNowButton = wrapper.findAll('button').find((b) => b.text() === 'Run now')
+    await runNowButton!.trigger('click')
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button').map((b) => b.text())
+    expect(buttons).toContain('Cancel backup')
+    expect(buttons).not.toContain('Run now')
+  })
+
   it('shows an Overdue badge and Retry button for an overdue target, with an offline note', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })

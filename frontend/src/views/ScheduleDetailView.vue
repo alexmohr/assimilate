@@ -595,6 +595,12 @@ async function runNow(agentId?: number): Promise<void> {
         ? `Retry started for ${agentLabel(agentId)}.`
         : `${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`,
     )
+    // The pending report row is inserted before the run-now request even
+    // returns, so this is a reliable way to pick up the running state right
+    // away rather than depending solely on the BackupStarted WS broadcast -
+    // which a burst of BackupLog lines from the run it announces can itself
+    // delay past the point the run has already finished.
+    await loadReports()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {

@@ -5,19 +5,41 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Scheduling & Retention
 
-Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, optional pre/post commands (each bounded by a configurable timeout), and optional Borg bandwidth cap.
+Assimilate runs backups on a schedule you define. Each schedule carries its own cron expression, one or more target repositories, retention policy, exclude patterns, optional pre/post commands (each bounded by a configurable timeout), and optional Borg bandwidth cap.
 
 When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 
 ## Creating a Schedule
 
-1. Navigate to **Agents** and select the agent you want to back up.
-2. Choose the repository to back up to (see [Repositories](repositories.md)).
-3. Click **Add Schedule**.
-4. Set the cron expression (see [Cron Expression Builder](#cron-expression-builder)).
-5. Configure the retention policy (see [Retention Policy](#retention-policy)).
-6. Optionally add exclude patterns, backup sources, pre/post commands, and a remote bandwidth limit.
-7. Click **Save**. The server validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to the repository before saving.
+**New** on the Schedules page opens a wizard. Each step states what it still needs, the next step unlocks only once that is answered, and **Create schedule** exists on the final Review step alone — so a half-filled form can no longer be submitted.
+
+![New schedule wizard](assets/screenshots/schedule-wizard.png)
+
+1. **Basics** — name the schedule and pick its type (Backup, Integrity check, or Verify). The type decides which later steps apply: a check or verify schedule creates no archives, so Retention and Advanced are skipped.
+2. **Sources** — the hosts this schedule runs on and the paths to back up. Leave the paths empty to use each agent's own defaults.
+3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)), and, once there is more than one host or more than one target, what a failure does to the rest of the run.
+4. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
+5. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
+6. **Advanced** — exclude patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
+7. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
+
+## Backup targets
+
+A schedule writes into one or more repositories. Several targets means several independent copies from one schedule — one cron expression, one retention policy, one set of exclude patterns and hooks — typically a local repository that restores fast and an offsite one that survives losing the building.
+
+Each host runs its targets in the order shown, one after another. Every target is its own borg run over the source, so a second target roughly doubles how long the schedule takes; targets are never written in parallel. Per target you choose how a failure is treated:
+
+- **Required** — a failure on this repository is the schedule's failure. It counts towards the missed-backup threshold that auto-disables the schedule, and with **On failure: stop the run** it ends the whole run there — the targets after it on that host, and any host the run had not reached yet, are skipped until the next scheduled time.
+- **Best effort** — a failure is recorded as a warning. It never stops the remaining targets and never counts towards the auto-disable threshold.
+
+At least one target must be required: without one, a run could report success having written nothing.
+
+!!! warning "Two targets on one storage host are one copy"
+    The target list flags two repositories that live on the same SSH host. They fail together, so they do not give you the independence multiple targets are for.
+
+Retention, exclude patterns, hooks and the bandwidth cap are schedule-wide: every target keeps the same history.
+
+The repositories a schedule writes into can be changed later under **Settings → Targets** on the schedule's detail page.
 
 ![Schedules](assets/screenshots/schedules.png)
 
@@ -56,7 +78,7 @@ Each schedule card shows the repository or schedule name, agent count, execution
 
 A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention, and an **N/threshold missed** chip appears once the schedule has missed at least one backup but hasn't yet crossed its [missed backup threshold](#missed-backup-threshold) — click a chip to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue/missed). While a backup for the schedule is currently running, the card also shows a **Running** pill and the **Run** button is replaced with **Cancel**.
 
-Next to the **Run** button, an **Enabled**/**Disabled** switch lets you pause or resume the schedule directly from the list, without opening it. Flipping it saves immediately; enabling a schedule with no repository assigned, or whose repository's SSH connection can't be reached, shows an error toast instead.
+Next to the **Run** button, an **Enabled**/**Disabled** switch lets you pause or resume the schedule directly from the list, without opening it. Flipping it saves immediately; enabling a schedule with no repository assigned, or any of whose target repositories can't be reached over SSH, shows an error toast instead.
 
 Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the Overdue chip to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
 
@@ -211,7 +233,7 @@ A pending miss is also dropped, without running, when the schedule or its reposi
 
 To run a backup immediately without waiting for the next scheduled time, click **Run now** on the schedule row. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
 
-Manual runs follow the same retention policy and exclude patterns as scheduled runs.
+Manual runs follow the same retention policy and exclude patterns as scheduled runs, and write every [backup target](#backup-targets) in the same order, so **Run now** produces the same copies the cron would. Because it writes them all, it needs permission on every target repository, not only the schedule's primary one. **Cancel** stops the run on all of them and asks only for permission on the schedule, so whoever can pause it can also stop a run already going.
 
 ## Backup Notifications
 

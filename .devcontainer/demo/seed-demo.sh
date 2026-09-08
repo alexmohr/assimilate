@@ -414,6 +414,34 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\"
 }" | jq -r '.id')
 
+# A schedule with two target repositories: the daily repo is required, the
+# weekly one is best effort - so a failure writing the second copy warns
+# rather than failing the run. Covers docs/scheduling.md#backup-targets.
+#
+# Both repositories sit on `localhost`, because the demo serves every borg
+# repository from this one container - there is no second storage host to
+# point at, and inventing one would leave a target nothing could actually
+# write to. So the Targets pane shows the "shares a storage host" warning on
+# this schedule. That is correct and worth seeing: it is exactly what the
+# warning is for, and the demo has no way to show the local+offsite pair the
+# docs describe without a second host to serve it.
+api POST "/api/schedules" "{
+    \"name\": \"Web server dual-target\",
+    \"agent_ids\": [$WEB01_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"repo_targets\": [
+        { \"repo_id\": $REPO_DAILY_ID, \"required\": true },
+        { \"repo_id\": $REPO_WEEKLY_ID, \"required\": false }
+    ],
+    \"cron_expression\": \"30 3 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/var/www\"]
+}" > /dev/null
+
 api POST "/api/schedules" "{
     \"name\": \"Offline agent due soon\",
     \"agent_ids\": [$OFFLINE_DUE_ID],

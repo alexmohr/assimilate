@@ -41,8 +41,9 @@ impl fmt::Display for RunOrigin {
 
 /// Everything about a run that is the same for every target of it.
 pub struct RunRequest {
-    /// Repository the run writes to.
-    pub repo_id: RepoId,
+    /// Repositories the run writes to, in write order. A schedule with several
+    /// targets writes each of them, the same as its scheduler tick does.
+    pub repo_ids: Vec<RepoId>,
     /// What the targets are being asked to do.
     pub schedule_type: ScheduleType,
     /// Schedule the run belongs to.
@@ -53,9 +54,12 @@ pub struct RunRequest {
     pub origin: RunOrigin,
 }
 
-/// Runs each target in turn, returning how many of them the command actually
-/// reached. Targets are never run concurrently: they share one repository, and
-/// the repo lock would serialise them anyway.
+/// Runs each (host, repository) pair in turn, returning how many of them the
+/// command actually reached. Nothing runs concurrently: pairs sharing a
+/// repository would be serialised by the repo lock anyway, and the order here -
+/// host-major, then write order - is the one `list_due_schedules` hands the
+/// scheduler, so a manual run writes the same copies in the same sequence a
+/// scheduled one does.
 pub async fn run_targets_sequential(
     state: AppState,
     targets: Vec<db::ScheduleRunTarget>,
@@ -63,8 +67,10 @@ pub async fn run_targets_sequential(
 ) -> usize {
     let mut dispatched: usize = 0;
     for target in &targets {
-        if run_target(&state, target, &request).await {
-            dispatched = dispatched.saturating_add(1);
+        for repo_id in &request.repo_ids {
+            if run_target(&state, target, &request, *repo_id).await {
+                dispatched = dispatched.saturating_add(1);
+            }
         }
     }
     dispatched
@@ -75,8 +81,8 @@ async fn run_target(
     state: &AppState,
     target: &db::ScheduleRunTarget,
     request: &RunRequest,
+    repo_id: RepoId,
 ) -> bool {
-    let repo_id = request.repo_id;
     let schedule_id = request.schedule_id;
     let origin = request.origin;
     let rx = state.completion_bus.subscribe();
@@ -100,7 +106,7 @@ async fn run_target(
 
     let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
 
-    let command_sent = push_config_and_trigger_target(state, target, request).await;
+    let command_sent = push_config_and_trigger_target(state, target, request, repo_id).await;
 
     // For backup schedules, broadcast BackupStarted even when the agent is
     // offline so the UI can immediately show the "Cancel Backup" button. The
@@ -209,6 +215,7 @@ async fn push_config_and_trigger_target(
     state: &AppState,
     target: &db::ScheduleRunTarget,
     request: &RunRequest,
+    repo_id: RepoId,
 ) -> bool {
     let origin = request.origin;
     let schedule_id = request.schedule_id;
@@ -251,7 +258,6 @@ async fn push_config_and_trigger_target(
         return false;
     }
 
-    let repo_id = request.repo_id;
     let msg = match request.schedule_type {
         ScheduleType::Check => ServerToAgent::RunCheckNow {
             repo_id,
@@ -360,7 +366,7 @@ mod tests {
             agent_id,
             repo_id,
             &RunRequest {
-                repo_id: RepoId(repo_id),
+                repo_ids: vec![RepoId(repo_id)],
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
                 run_id: run_id.to_owned(),
@@ -517,7 +523,7 @@ mod tests {
             agent_id,
             repo_id,
             &RunRequest {
-                repo_id: RepoId(repo_id),
+                repo_ids: vec![RepoId(repo_id)],
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
                 run_id: "run-manual-leak".to_owned(),
@@ -578,12 +584,13 @@ mod tests {
             &state,
             &target,
             &RunRequest {
-                repo_id: RepoId(888_888),
+                repo_ids: vec![RepoId(888_888)],
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 777_777,
                 run_id: "run-manual-config-assembly-failure".to_owned(),
                 origin: RunOrigin::Manual,
             },
+            RepoId(888_888),
         )
         .await;
 

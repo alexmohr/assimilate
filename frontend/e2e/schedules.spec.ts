@@ -878,42 +878,75 @@ test.describe('Schedules management', () => {
     await expect(card.locator('.entity-status-pill')).toHaveText('Disabled')
   })
 
-  test('creating a new schedule succeeds (regression: agent_ids/_per_agent field naming)', async ({
+  test('the creation wizard gates each step and creates a multi-target schedule', async ({
     page,
   }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/new')
     await page.waitForLoadState('networkidle')
 
-    // Hosts and Repository live under the Targets section; Schedule type
-    // stays on General, where create mode opens.
-    await page.getByRole('button', { name: 'Targets' }).click()
-    const targetsSection = page.locator('.settings-pane')
+    // Scoped to the footer: the rail's Review step is a button too, captioned
+    // "Create schedule", and getByRole matches an accessible name by substring
+    // by default - so an unscoped locator finds the step, not the action.
+    const foot = page.locator('.wizard-foot')
+    const nextButton = foot.getByRole('button', { name: 'Continue' })
+    const createButton = foot.getByRole('button', { name: 'Create schedule', exact: true })
 
-    await targetsSection.locator('.multi-select-trigger').click()
-    await targetsSection.getByText('Production Web Server').click()
-    // Close the dropdown so it doesn't cover the repository select.
-    await targetsSection.locator('.multi-select-trigger').click()
+    // Step 1 - the create action does not exist yet, and the step will not
+    // advance while a mandatory field is empty. Pressing "Create schedule"
+    // with half a form filled in is what the wizard exists to prevent.
+    await expect(createButton).toHaveCount(0)
+    await expect(nextButton).toBeDisabled()
+    await page.locator('#schedule-name').fill('Wizard integrity check')
+    // Integrity check, so the run does not depend on backup source paths.
+    await page.locator('#schedule-type').selectOption({ label: 'Integrity check' })
+    await expect(nextButton).toBeEnabled()
+    await nextButton.click()
 
-    await targetsSection
-      .locator('.field', { hasText: 'Repository' })
-      .locator('select')
-      .selectOption({ label: 'server-daily' })
+    // Step 2 - hosts.
+    await expect(nextButton).toBeDisabled()
+    await page.locator('.multi-select-trigger').click()
+    await page.getByText('Production Web Server').click()
+    await page.locator('.multi-select-trigger').click()
+    await nextButton.click()
 
-    // Use Integrity Check so the test doesn't depend on backup source paths.
-    await page.getByRole('button', { name: 'General' }).click()
-    await page
-      .locator('.field', { hasText: 'Schedule type' })
-      .locator('select')
-      .selectOption({ label: 'Integrity check' })
+    // Step 3 - targets. One repository is preselected; add a second so the
+    // schedule writes two independent copies.
+    await expect(page.locator('.order-item')).toHaveCount(1)
+    await page.getByRole('button', { name: 'Add repository' }).click()
+    await expect(page.locator('.order-item')).toHaveCount(2)
+    await nextButton.click()
 
-    await page.getByRole('button', { name: 'Create schedule' }).click()
+    // Step 4 - Power. Nothing is required here: it defaults to each host's own
+    // wake setting. Asserted by name so inserting another step fails here
+    // rather than further along, where the symptom is a missing Create button.
+    await expect(page.locator('.wizard-step--current')).toContainText('Power')
+    await nextButton.click()
 
-    // The create request used to fail with "missing field `agent_ids`" because the
-    // frontend sent client_ids/backup_sources_per_host instead of the names the
-    // backend expects. A successful save navigates to the new schedule's detail page.
+    // Step 5 - timing is prefilled, so straight on to Review.
+    await expect(page.locator('.wizard-step--current')).toContainText('Timing')
+    await nextButton.click()
+
+    const [createResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().endsWith('/api/schedules') && resp.request().method() === 'POST',
+      ),
+      createButton.click(),
+    ])
+    expect(createResponse.ok()).toBe(true)
+    const created = createResponse.request().postDataJSON()
+    expect(created.repo_targets).toHaveLength(2)
+    expect(created.repo_targets[0].required).toBe(true)
+
+    // A successful create lands on the new schedule's detail page.
     await expect(page).toHaveURL(/\/schedules\/\d+$/)
     await expect(page.locator('.error-inline')).not.toBeVisible()
+
+    // ...and the detail page's Targets section round-trips both repositories.
+    const scheduleUrl = page.url()
+    await page.goto(`${scheduleUrl}?tab=settings&section=targets`)
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('.order-item')).toHaveCount(2)
   })
 
   test('a schedule the scheduler auto-disabled for an unreachable agent shows why, not just that it is off', async ({

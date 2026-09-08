@@ -978,6 +978,78 @@ async fn catch_up_marks_do_not_stack(pool: PgPool) {
     assert_eq!(candidate.min_lead_minutes, 120);
 }
 
+/// The bug this guards: a catch-up run resolved its repository from the
+/// schedule's denormalised primary, so a host coming back from a miss wrote
+/// only that copy and every secondary target fell a run further behind, with
+/// nothing reported.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_covers_every_enabled_target_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    let disabled = create_test_repo_with_host(&pool, "disabled", "disabled.local").await;
+    db::replace_schedule_repos(
+        &pool,
+        schedule.id,
+        &[(repo.id, true), (offsite.id, false), (disabled.id, false)],
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE repos SET enabled = false WHERE id = $1")
+        .bind(disabled.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let repos = db::catch_up::list_enabled_catch_up_repos(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        repos,
+        vec![repo.id, offsite.id],
+        "a catch-up must write every target the missed tick would have, in write order, and skip \
+         a disabled repository the same way a tick does"
+    );
+}
+
+/// The candidacy half of the same change: the gate used to require the
+/// schedule's *primary* repository to be enabled, so a multi-target schedule
+/// whose primary was disabled dropped out of catch-up entirely even though a
+/// live secondary target still had a copy to write.
+#[sqlx::test(migrations = "./migrations")]
+async fn catch_up_still_applies_when_only_the_primary_repository_is_disabled(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    enable_catch_up(&pool, schedule.id).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
+        .await
+        .unwrap();
+    sqlx::query("UPDATE repos SET enabled = false WHERE id = $1")
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+        .await
+        .unwrap();
+
+    let candidates = db::catch_up::list_catch_up_candidates_for_agent(&pool, agent.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        candidates.len(),
+        1,
+        "a live secondary target still has a copy to catch up"
+    );
+
+    assert_eq!(
+        db::catch_up::list_enabled_catch_up_repos(&pool, schedule.id)
+            .await
+            .unwrap(),
+        vec![offsite.id],
+        "and the run writes only the target whose repository is enabled"
+    );
+}
+
 /// Clearing is unconditional and per agent: whether the miss ran or was skipped,
 /// it must not be reconsidered on the next reconnect.
 #[sqlx::test(migrations = "./migrations")]
@@ -1690,6 +1762,63 @@ async fn per_agent_excludes_upsert_replaces_existing(pool: PgPool) {
         .unwrap();
     assert_eq!(all.len(), 1);
     assert_eq!(all.first().unwrap().raw_text, "second\n\n# comment");
+}
+
+/// The bug this guards: `list_repos_for_agent` decided which repositories an
+/// agent's config may mention by joining the denormalised `schedules.repo_id`,
+/// so a repository that is only ever a *secondary* target never entered the
+/// map `assemble_config` fills - and the loop that adds a schedule to each of
+/// its targets silently skipped it. The agent then never received a
+/// `RepoConfig` for the second target and never wrote a copy there, with no
+/// error anywhere. Exactly the shape of the demo's dual-target schedule.
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_includes_a_secondary_target_repository(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-targets").unwrap();
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, false)])
+        .await
+        .unwrap();
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    for id in [repo.id, offsite.id] {
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        sqlx::query(
+            "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE \
+             id = $3",
+        )
+        .bind(passphrase_encrypted.as_slice())
+        .bind("ssh-ed25519 AAAATEST")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let config = server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
+        .await
+        .unwrap();
+
+    let mut assembled: Vec<i64> = config.repos.iter().map(|r| r.repo_id.0).collect();
+    assembled.sort_unstable();
+    let mut expected = vec![repo.id, offsite.id];
+    expected.sort_unstable();
+    assert_eq!(
+        assembled, expected,
+        "both target repositories must reach the agent's config"
+    );
+
+    for r in &config.repos {
+        assert_eq!(
+            r.schedules.len(),
+            1,
+            "each target carries its own copy of the schedule"
+        );
+    }
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3118,6 +3247,110 @@ async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(p
         Some("success"),
         "last_backup_status must be the completed run's own outcome"
     );
+}
+
+/// A multi-target schedule writes one `backup_reports` row per target, so
+/// "the schedule's latest report" is ambiguous unless it is pinned to a
+/// repository. Health keys off the denormalised primary (see the
+/// `schedule_repos` migration), and targets run in write order, so the *last*
+/// row is the last target rather than the primary. Without the `repo_id`
+/// filter a best-effort secondary's failure surfaces as the schedule's health
+/// status against the primary's name - the opposite of "best effort only
+/// warns".
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool: PgPool) {
+    let (agent, primary, schedule) = create_test_schedule(&pool).await;
+    let secondary = create_test_repo(&pool).await;
+    db::replace_schedule_repos(
+        &pool,
+        schedule.id,
+        &[(primary.id, true), (secondary.id, false)],
+    )
+    .await
+    .unwrap();
+
+    let started = Utc::now()
+        .checked_sub_signed(Duration::minutes(10))
+        .unwrap();
+    insert_report_for_schedule(
+        &pool,
+        agent.id,
+        primary.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+        started,
+    )
+    .await;
+    // The best-effort target is written second, so its row is the newest.
+    insert_report_for_schedule(
+        &pool,
+        agent.id,
+        secondary.id,
+        schedule.id,
+        shared::types::BackupStatus::Failed,
+        started.checked_add_signed(Duration::minutes(5)).unwrap(),
+    )
+    .await;
+
+    let health = db::get_health_summary(&pool).await.unwrap();
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
+
+    assert_eq!(
+        entry.repo_id, primary.id,
+        "the health row is reported against the primary repository"
+    );
+    assert_eq!(
+        entry.last_status.as_deref(),
+        Some("success"),
+        "a best-effort secondary's failure must not become the schedule's status"
+    );
+    assert_eq!(
+        entry.last_backup_status.as_deref(),
+        Some("success"),
+        "the completed-run outcome must come from the primary too"
+    );
+}
+
+/// Like `insert_report_with_status_at`, but linked to a schedule and a chosen
+/// repository - what a multi-target run actually writes.
+#[cfg(test)]
+async fn insert_report_for_schedule(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    schedule_id: i64,
+    status: shared::types::BackupStatus,
+    started_at: chrono::DateTime<Utc>,
+) {
+    db::insert_backup_report(
+        pool,
+        &InsertReportParams {
+            agent_id,
+            repo_id,
+            schedule_id: Some(schedule_id),
+            started_at,
+            finished_at: started_at.checked_add_signed(Duration::minutes(1)).unwrap(),
+            status,
+            original_size: 1_000,
+            compressed_size: 500,
+            deduplicated_size: 250,
+            repo_unique_csize: 250,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -7422,6 +7655,220 @@ async fn schedule_targets_list_and_delete(pool: PgPool) {
 
     let empty = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
     assert_eq!(empty.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_repos_seeded_from_the_creating_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert_eq!(target.repo_id, repo.id);
+    assert_eq!(target.execution_order, 0);
+    assert!(target.required);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn replace_schedule_repos_stores_order_and_repoints_primary(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+
+    db::replace_schedule_repos(&pool, schedule.id, &[(offsite.id, true), (repo.id, false)])
+        .await
+        .unwrap();
+
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|t| (t.repo_id, t.execution_order, t.required))
+            .collect::<Vec<_>>(),
+        vec![(offsite.id, 0, true), (repo.id, 1, false)],
+    );
+
+    // The denormalised primary target follows the first entry, so everything
+    // still reading `schedules.repo_id` agrees with the list.
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(fetched.repo_id, Some(offsite.id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_schedule_repo_replaces_the_whole_target_list(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
+        .await
+        .unwrap();
+
+    db::update_schedule_repo(&pool, schedule.id, offsite.id)
+        .await
+        .unwrap();
+
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets.iter().map(|t| t.repo_id).collect::<Vec<_>>(),
+        vec![offsite.id],
+    );
+
+    assert!(
+        db::update_schedule_repo(&pool, 999_999_999, offsite.id)
+            .await
+            .is_err()
+    );
+}
+
+/// Why `create_schedule` may seed the primary target and replace the list in
+/// two transactions: a schedule is not dispatchable until something sets
+/// `next_run_at`, which the create handler does last, after the target list and
+/// the agent targets are both in place. Without this guard the window between
+/// the seed and the replacement would dispatch a run that silently skipped
+/// every secondary target.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_schedule_is_not_due_until_its_next_run_is_set(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    assert!(schedule.enabled, "the fixture must be an enabled schedule");
+    assert!(
+        schedule.next_run_at.is_none(),
+        "insert_schedule must not schedule a run by itself"
+    );
+
+    let now = Utc::now();
+    assert!(
+        db::list_due_schedules(&pool, now).await.unwrap().is_empty(),
+        "a schedule with agent targets and a seeded repository target is still not dispatchable \
+         before next_run_at is set"
+    );
+
+    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+    assert_eq!(db::list_due_schedules(&pool, now).await.unwrap().len(), 1);
+}
+
+/// The bug this guards: the denormalised primary took the first target in
+/// write order even when that one was best-effort, so health summaries, quota
+/// accounting and reports keyed off the copy the schedule is allowed to lose.
+#[sqlx::test(migrations = "./migrations")]
+async fn the_primary_target_is_the_first_required_one(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+
+    // Written first, but best effort - the required one answers for the schedule.
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, false), (offsite.id, true)])
+        .await
+        .unwrap();
+
+    let row = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(row.repo_id, Some(offsite.id));
+
+    // Write order is still the list's own order, untouched by that choice.
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets.iter().map(|t| t.repo_id).collect::<Vec<_>>(),
+        vec![repo.id, offsite.id],
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn due_schedules_yield_one_row_per_target_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, false)])
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+
+    let due = db::list_due_schedules(&pool, now).await.unwrap();
+    assert_eq!(
+        due.iter()
+            .map(|row| (row.repo_id, row.required))
+            .collect::<Vec<_>>(),
+        vec![(repo.id, true), (offsite.id, false)],
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn due_schedules_skip_a_disabled_target_repository(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, true)])
+        .await
+        .unwrap();
+    db::update_repo(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: offsite.id,
+            name: &offsite.name,
+            repo_path: &offsite.repo_path,
+            ssh_user: &offsite.ssh_user,
+            ssh_host: &offsite.ssh_host,
+            ssh_port: offsite.ssh_port,
+            compression: &offsite.compression,
+            encryption: &offsite.encryption,
+            enabled: false,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now();
+    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+
+    let due = db::list_due_schedules(&pool, now).await.unwrap();
+    assert_eq!(
+        due.iter().map(|row| row.repo_id).collect::<Vec<_>>(),
+        vec![repo.id],
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_one_of_several_target_repositories_keeps_the_schedule_running(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+    let offsite = create_test_repo_with_host(&pool, "offsite", "offsite.local").await;
+    db::replace_schedule_repos(&pool, schedule.id, &[(repo.id, true), (offsite.id, false)])
+        .await
+        .unwrap();
+
+    db::delete_repo(&pool, repo.id).await.unwrap();
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert!(
+        fetched.enabled,
+        "a schedule that still has somewhere to write must keep running"
+    );
+    // The primary target follows the survivor, and it is promoted to required
+    // so the schedule cannot report success without writing a copy.
+    assert_eq!(fetched.repo_id, Some(offsite.id));
+    let targets = db::list_schedule_repos(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|t| (t.repo_id, t.required))
+            .collect::<Vec<_>>(),
+        vec![(offsite.id, true)],
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn deleting_the_last_target_repository_disables_the_schedule(pool: PgPool) {
+    let (_, repo, schedule) = create_test_schedule(&pool).await;
+
+    db::delete_repo(&pool, repo.id).await.unwrap();
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert!(!fetched.enabled);
+    assert_eq!(fetched.repo_id, None);
+    assert!(
+        db::list_schedule_repos(&pool, schedule.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

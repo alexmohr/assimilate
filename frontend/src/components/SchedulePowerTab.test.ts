@@ -37,6 +37,32 @@ const REPO = {
   },
 } as unknown as Repo
 
+/** A second target, on a host of its own. */
+const OFFSITE_REPO = {
+  id: 21,
+  ssh_host: 'offsite-nas.lan',
+  power: {
+    wake_enabled: false,
+    wake_mac_address: 'AA:BB:CC:DD:EE:01',
+    wake_broadcast_address: null,
+    wake_timeout_seconds: 180,
+    shutdown_after_backup: false,
+  },
+} as unknown as Repo
+
+/** A third target that shares `REPO`'s machine. */
+const SAME_HOST_REPO = {
+  id: 22,
+  ssh_host: 'backup-nas.lan',
+  power: {
+    wake_enabled: false,
+    wake_mac_address: '9C:B6:D0:1A:44:7F',
+    wake_broadcast_address: null,
+    wake_timeout_seconds: 180,
+    shutdown_after_backup: false,
+  },
+} as unknown as Repo
+
 /** Wakes by default, with a MAC address and a shutdown configured. */
 const WAKING = agent(10, 'web-server-01', {
   wake_enabled: true,
@@ -53,7 +79,7 @@ function mount(wakeOverride: ScheduleWakeOverride, props: Record<string, unknown
       agents: [WAKING, NO_MAC],
       repos: [REPO],
       selectedAgentIds: [10, 11],
-      selectedRepoId: 20,
+      selectedRepoIds: [20],
       canSeeWakeDetails: true,
       ...props,
     },
@@ -112,10 +138,34 @@ describe('SchedulePowerTab', () => {
   })
 
   it('asks for targets first when none are selected', () => {
-    const wrapper = mount('host_default', { selectedAgentIds: [], selectedRepoId: null })
+    const wrapper = mount('host_default', { selectedAgentIds: [], selectedRepoIds: [] })
 
     expect(wrapper.findAll('.badge')).toHaveLength(0)
     expect(wrapper.text()).toContain("Pick this job's agents and repository first")
+  })
+
+  /** Every target's host is woken in turn, so reporting only the primary
+      would under-report what the run actually powers on. */
+  it('reports the host of every target repository', () => {
+    const wrapper = mount('host_default', {
+      repos: [REPO, OFFSITE_REPO],
+      selectedRepoIds: [20, 21],
+    })
+
+    expect(wrapper.text()).toContain('backup-nas.lan')
+    expect(wrapper.text()).toContain('offsite-nas.lan')
+  })
+
+  /** Waking is per machine, so two targets on one host are one host. */
+  it('lists a host shared by two targets once', () => {
+    const wrapper = mount('host_default', {
+      repos: [REPO, SAME_HOST_REPO],
+      selectedRepoIds: [20, 22],
+    })
+
+    const hosts = wrapper.findAll('.badge').length
+    expect(hosts).toBe(3)
+    expect(wrapper.text().match(/backup-nas\.lan/g)).toHaveLength(1)
   })
 
   it('names every selected host and its role', () => {

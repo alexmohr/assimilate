@@ -144,14 +144,15 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
             SELECT br.id, br.started_at, br.finished_at, br.status, br.error_message,
                    br.warnings, br.acknowledged
             FROM backup_reports br
-            WHERE br.schedule_id = s.id AND br.agent_id = c.id
+            WHERE br.schedule_id = s.id AND br.agent_id = c.id AND br.repo_id = s.repo_id
             ORDER BY br.started_at DESC
             LIMIT 1
         ) latest ON true
         LEFT JOIN LATERAL (
             SELECT br.finished_at
             FROM backup_reports br
-            WHERE br.schedule_id = s.id AND br.agent_id = c.id AND br.status = 'success'
+            WHERE br.schedule_id = s.id AND br.agent_id = c.id AND br.repo_id = s.repo_id
+              AND br.status = 'success'
             ORDER BY br.finished_at DESC
             LIMIT 1
         ) success ON true

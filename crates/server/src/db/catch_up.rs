@@ -15,8 +15,6 @@ pub struct CatchUpCandidate {
     pub schedule_id: i64,
     /// Schedule display name, for the log line and system event.
     pub schedule_name: String,
-    /// Repository the catch-up run would write to.
-    pub repo_id: i64,
     /// Agent that missed the occurrence.
     pub agent_id: i64,
     /// That agent's hostname.
@@ -33,6 +31,30 @@ pub struct CatchUpCandidate {
     /// The schedule's configured floor: how much time must be left before
     /// `next_run_at` for the catch-up to still be worth running.
     pub min_lead_minutes: i32,
+}
+
+/// The repositories a catch-up run for `schedule_id` writes to, in write
+/// order, skipping any whose repository is disabled.
+///
+/// A catch-up has to cover the same targets the tick it stands in for would
+/// have: resolving only the schedule's denormalised primary would quietly let
+/// every secondary copy fall further behind on every miss.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_enabled_catch_up_repos(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT sr.repo_id FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE \
+         sr.schedule_id = $1 AND r.enabled = true ORDER BY sr.execution_order, sr.repo_id",
+        schedule_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
 }
 
 /// Records that `agent_id` missed `due_at` for `schedule_id`, so the run can be
@@ -84,13 +106,13 @@ pub async fn list_catch_up_candidates_for_agent(
 ) -> Result<Vec<CatchUpCandidate>, ApiError> {
     sqlx::query_as!(
         CatchUpCandidate,
-        "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", \
-         st.agent_id, a.hostname, s.schedule_type, st.catch_up_pending_for AS \"pending_for!\", \
-         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st \
-         JOIN schedules s ON s.id = st.schedule_id JOIN repos r ON r.id = s.repo_id JOIN agents a \
-         ON a.id = st.agent_id WHERE st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND \
-         s.catch_up_missed_runs = true AND s.enabled = true AND r.enabled = true AND a.is_hidden \
-         = false ORDER BY s.id",
+        "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
+         s.schedule_type, st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, \
+         s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st JOIN schedules \
+         s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE st.agent_id = $1 \
+         AND st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = true AND s.enabled \
+         = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r \
+         ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) ORDER BY s.id",
         agent_id,
     )
     .fetch_all(pool)

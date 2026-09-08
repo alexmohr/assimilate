@@ -34,6 +34,7 @@ function mount(overrides: Record<string, unknown> = {}) {
       schedule: SCHEDULE,
       targets: TARGETS,
       repoName: 'server-daily',
+      repoTargetNames: ['server-daily'],
       cronSummary: 'Daily at 02:00',
       agentIds: [10, 11],
       agentLabel: (id: number) => AGENT_LABELS[id] ?? `#${id}`,
@@ -102,6 +103,13 @@ describe('ScheduleOverviewTab', () => {
   it('shows no catch-up badge when nothing is pending', () => {
     const wrapper = mount()
     expect(wrapper.text()).not.toContain('Catch-up pending')
+  })
+
+  it('names every repository a multi-target schedule writes into', () => {
+    const wrapper = mount({ repoTargetNames: ['server-daily', 'offsite-weekly'] })
+    const labels = wrapper.findAll('.info-grid dt').map((d) => d.text())
+    expect(labels).toContain('Repositories')
+    expect(wrapper.text()).toContain('server-daily, offsite-weekly')
   })
 
   it('shows Never for a null last run', () => {

@@ -36,9 +36,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/schedules', component: () => import('../views/SchedulesView.vue'), name: 'schedules' },
   {
     path: '/schedules/new',
-    component: () => import('../views/ScheduleDetailView.vue'),
+    component: () => import('../views/ScheduleCreateView.vue'),
     name: 'schedule-create',
-    props: { id: 'new' },
   },
   {
     path: '/schedules/:id',

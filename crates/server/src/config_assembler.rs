@@ -32,11 +32,19 @@ pub async fn assemble_config(
     > = std::collections::HashMap::new();
 
     for schedule in schedule_rows {
-        let Some(repo_id) = schedule.repo_id else {
+        // Every repository the schedule writes into gets its own copy of the
+        // schedule config: the agent's config is keyed by repository, so a
+        // two-target schedule appears under both, and each run writes one.
+        let repo_ids: Vec<i64> = db::list_schedule_repos(pool, schedule.id)
+            .await?
+            .into_iter()
+            .map(|target| target.repo_id)
+            .collect();
+        if repo_ids.is_empty() {
             continue;
-        };
+        }
 
-        if !repo_map.contains_key(&repo_id) {
+        if repo_ids.iter().any(|id| !repo_map.contains_key(id)) {
             let repo_rows = db::list_repos_for_agent(pool, agent.id).await?;
             for repo in repo_rows {
                 repo_map
@@ -48,8 +56,10 @@ pub async fn assemble_config(
         let schedule_config =
             build_schedule_config(pool, &agent, schedule, &global_excludes).await?;
 
-        if let Some((_, schedules)) = repo_map.get_mut(&repo_id) {
-            schedules.push(schedule_config);
+        for repo_id in repo_ids {
+            if let Some((_, schedules)) = repo_map.get_mut(&repo_id) {
+                schedules.push(schedule_config.clone());
+            }
         }
     }
 

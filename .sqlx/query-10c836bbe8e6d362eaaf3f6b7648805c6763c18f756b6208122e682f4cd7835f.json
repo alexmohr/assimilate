@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sr.repo_id FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = $1 AND r.enabled = true ORDER BY sr.execution_order, sr.repo_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "10c836bbe8e6d362eaaf3f6b7648805c6763c18f756b6208122e682f4cd7835f"
+}

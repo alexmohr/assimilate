@@ -2446,13 +2446,13 @@ exit 0
         assert_eq!(reports.unwrap_or(0), 0);
     }
 
-    #[ignore = "requires DATABASE_URL"]
     /// `spawn_post_backup_sync` must mark the task in flight before it returns.
     /// Claiming the guard as the first statement of `run_post_backup_sync`'s own
     /// body looked equivalent but wasn't: calling an async fn runs none of it, so
     /// `any_active()` only turned true once the runtime first polled the spawned
     /// task - and whether that happens before a caller (or a test's runtime
     /// teardown) looks is a scheduling race, not a guarantee.
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn spawn_post_backup_sync_is_tracked_before_the_task_is_first_polled(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -2474,6 +2474,7 @@ exit 0
             .await;
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_log_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;

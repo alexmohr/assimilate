@@ -3672,9 +3672,9 @@ pub async fn sync_repo(
     // Spawn the sync in a background task so client/proxy disconnects (e.g.
     // nginx 504 after 60s) do not cancel the cleanup -- the task owns the full
     // lifecycle and always clears importing + broadcasts DataChanged.
-    // Tracked like the stat-enrichment spawn below: this task acquires the
-    // repo lock and runs borg via sync_existing_archives, so a test that
-    // returns without waiting for it leaves it running into whatever test
+    // Tracked like the `enrich_archive_stats_background` spawn above: this task
+    // acquires the repo lock and runs borg via sync_existing_archives, so a test
+    // that returns without waiting for it leaves it running into whatever test
     // comes next.
     let sync = run_repo_sync_task(RepoSyncTask {
         task_state: state.clone(),
@@ -4060,9 +4060,9 @@ pub async fn reset_and_sync_repo(
 
     // Spawn the reset + sync in a background task so client/proxy disconnects
     // do not cancel the cleanup.
-    // Tracked like the stat-enrichment spawn below: this task acquires the
-    // repo lock and runs borg via sync_existing_archives, so a test that
-    // returns without waiting for it leaves it running into whatever test
+    // Tracked like the `enrich_archive_stats_background` spawn above: this task
+    // acquires the repo lock and runs borg via sync_existing_archives, so a test
+    // that returns without waiting for it leaves it running into whatever test
     // comes next.
     let sync = run_repo_sync_task(RepoSyncTask {
         task_state: state.clone(),

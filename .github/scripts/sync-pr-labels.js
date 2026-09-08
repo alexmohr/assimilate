@@ -495,18 +495,28 @@ module.exports = async ({
   prNumber,
   eventAction,
   selfCheckNames = [],
-  // On by default - a PR that reaches `ready to merge` has already cleared
-  // every deterministic gate this script computes *and* carries a genuine,
-  // provenance-checked approval (see hasGenuineApproval below), so there's
-  // nothing left for a human to add by clicking the button. Every gate still
-  // runs and gets logged whichever way this lands, so it only decides
-  // whether the merge call happens, never how the verdict is computed.
+  // Whether the merge call happens at all. A PR that reaches `ready to merge`
+  // has already cleared every deterministic gate this script computes *and*
+  // carries a genuine, provenance-checked approval (see hasGenuineApproval
+  // below), so there's nothing left for a human to add by clicking the
+  // button. Every gate still runs and gets logged whichever way this lands,
+  // so this only decides whether the merge happens, never how the verdict is
+  // computed.
+  //
+  // The *parameter* defaults to off while the *feature* is on by default:
+  // "on unless AUTO_MERGE_ENABLED says otherwise" is decided by
+  // parseAutoMergeEnabled, and all three call sites pass this explicitly
+  // (both workflows through that parser, pre-review-checks.js pinned off).
+  // So this default is only ever reached by a future caller that forgot to
+  // pass it - and a forgotten argument should not be able to merge code
+  // unattended. Same reasoning as the kill switch itself: the ambiguous case
+  // resolves in the direction that doesn't merge.
   //
   // A boolean, never the raw variable: both workflow call sites pass
   // parseAutoMergeEnabled(process.env.AUTO_MERGE_ENABLED, core), which is
   // where the repo/environment variable is turned into this. See the
   // "Auto-merge" section in skills/review/SKILL.md.
-  autoMergeEnabled = true,
+  autoMergeEnabled = false,
   // Off by default - only pr-status-labels.yml's own call site turns this
   // on. See the "notify claude-review.yml" comment below for why this can't
   // just always be on: claude-review.yml calls this same function on itself

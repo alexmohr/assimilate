@@ -396,6 +396,12 @@ than interpolated into the `script:` body. `pre-review-checks.js`'s own sync
 call pins auto-merge off explicitly: it runs *before* the review it gates, so
 it must never be the thing that merges.
 
+Note where "on by default" actually lives: in `parseAutoMergeEnabled`, not in
+`syncLabels`. The `autoMergeEnabled` *parameter* defaults to **off**, and all
+three call sites pass it explicitly, so that default is only ever reached by
+a future caller that forgot to — and a forgotten argument must not be able to
+merge code unattended.
+
 The same `sync-pr-labels.js` run that computes `ready to merge` also
 squash-merges the PR itself (`--delete-branch` for same-repo branches) the
 moment `status === ready to merge`, every time it re-syncs (every push,

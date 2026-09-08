@@ -64,8 +64,9 @@ module.exports = async ({ github, context, core, prNumber, headSha, force }) => 
   // Claude's actual review work is done and only the job's own bookkeeping
   // is left, which is what the later call is for.
   //
-  // autoMergeEnabled is pinned off explicitly rather than left to its
-  // default (which is now `true` - see sync-pr-labels.js): this call exists
+  // autoMergeEnabled is pinned off explicitly rather than left to the
+  // parameter's own fail-closed default (see sync-pr-labels.js): this call
+  // exists
   // only to refresh the labels this gate is about to read, and merging from
   // inside the pre-review gate would mean merging *before* the review it
   // gates has run. Not passing it happens to be safe today only because the

@@ -627,8 +627,21 @@ impl FromStr for BackupStatus {
 /// which only ever surface completed runs). A single report row, by
 /// contrast, can be read while still in flight, so its status needs a wider
 /// type: this one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum ReportStatus {
     /// Dispatched but not yet acknowledged as started by the agent.
     #[default]
@@ -643,20 +656,6 @@ pub enum ReportStatus {
     Warning,
     /// The backup did not complete successfully.
     Failed,
-}
-
-impl std::fmt::Display for ReportStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Self::Pending => "pending",
-            Self::Started => "started",
-            Self::Cancelled => "cancelled",
-            Self::Success => "success",
-            Self::Warning => "warning",
-            Self::Failed => "failed",
-        };
-        f.write_str(s)
-    }
 }
 
 impl FromStr for ReportStatus {

@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, useTemplateRef } from 'vue'
 import ArchiveExplorer from './ArchiveExplorer.vue'
-import { REPORTS_PAGE_SIZE } from '../composables/useReportsPager'
+import PagerLoadMore from './PagerLoadMore.vue'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { ReportRow } from '../types/report'
@@ -145,39 +145,21 @@ defineExpose({
     empty-title="No archives"
     empty-description="No backup archives found for this schedule."
   />
-  <div
+  <PagerLoadMore
     v-if="hasMoreReports"
-    class="backups-more-row"
+    :loaded="reports.length"
+    :total="total"
+    :loading-more="loadingMore"
+    load-label="more runs"
+    @load-more="emit('loadMore')"
   >
-    <button
-      class="btn btn-sm btn-ghost"
-      type="button"
-      :disabled="loadingMore"
-      @click="emit('loadMore')"
-    >
-      {{
-        loadingMore
-          ? 'Loading...'
-          : `Load ${Math.min(REPORTS_PAGE_SIZE, total - reports.length)} more runs`
-      }}
-    </button>
-    <span class="backups-more-note">
-      Only this schedule's {{ reports.length }} most recent runs (of {{ total }}) have been checked
-      for archives - older ones may exist.
-    </span>
-  </div>
+    Only this schedule's {{ reports.length }} most recent runs (of {{ total }}) have been checked
+    for archives - older ones may exist.
+  </PagerLoadMore>
 </template>
 
 <style scoped>
-.backups-more-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
+:deep(.pager-load-more) {
   margin-top: var(--space-4);
-}
-
-.backups-more-note {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
 }
 </style>

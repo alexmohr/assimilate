@@ -7,8 +7,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import AgentBackupRow from './AgentBackupRow.vue'
+import AsyncSection from './AsyncSection.vue'
+import PagerLoadMore from './PagerLoadMore.vue'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { REPORTS_PAGE_SIZE } from '../composables/useReportsPager'
 import type { ReportRow } from '../types/report'
 
 export type BackupFilter = 'all' | 'success' | 'warning' | 'failed'
@@ -25,16 +26,21 @@ export type BackupFilter = 'all' | 'success' | 'warning' | 'failed'
  * counts of what's loaded, not of `total`; a filter can undercount until
  * every page is in.
  */
-const props = defineProps<{
-  reports: readonly ReportRow[]
-  total: number
-  loadingMore: boolean
-  filter: BackupFilter
-  sortAscending: boolean
-  expandedReportId: number | null
-  highlightedArchiveName: string | undefined
-  pinnedReportId: number | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    reports: readonly ReportRow[]
+    total: number
+    loading?: boolean
+    loadingMore: boolean
+    error?: string | null
+    filter: BackupFilter
+    sortAscending: boolean
+    expandedReportId: number | null
+    highlightedArchiveName: string | undefined
+    pinnedReportId: number | null
+  }>(),
+  { loading: false, error: null },
+)
 
 const emit = defineEmits<{
   'update:filter': [value: BackupFilter]
@@ -43,8 +49,6 @@ const emit = defineEmits<{
   open: [report: ReportRow]
   loadMore: []
 }>()
-
-const hasMore = computed(() => props.reports.length < props.total)
 
 function countOf(status: BackupFilter): number {
   if (status === 'all') return props.reports.length
@@ -92,51 +96,43 @@ const visible = computed(() => {
       </button>
     </div>
 
-    <div
-      v-if="visible.length === 0"
-      class="state-msg"
+    <AsyncSection
+      :loading="loading"
+      :error="error"
+      :empty="visible.length === 0"
     >
-      {{
-        reports.length === 0
-          ? 'No backup reports available.'
-          : 'No backups match the current filter.'
-      }}
-    </div>
-    <div
-      v-else
-      class="rows"
-    >
-      <AgentBackupRow
-        v-for="r in visible"
-        :key="r.id"
-        :report="r"
-        :expanded="expandedReportId === r.id"
-        :highlighted="r.archive_name === highlightedArchiveName || r.id === pinnedReportId"
-        show-detail
-        @toggle="emit('toggle', r)"
-        @open="emit('open', r)"
-      />
-    </div>
+      <div class="rows">
+        <AgentBackupRow
+          v-for="r in visible"
+          :key="r.id"
+          :report="r"
+          :expanded="expandedReportId === r.id"
+          :highlighted="r.archive_name === highlightedArchiveName || r.id === pinnedReportId"
+          show-detail
+          @toggle="emit('toggle', r)"
+          @open="emit('open', r)"
+        />
+      </div>
+      <template #empty>
+        <div class="state-msg">
+          {{
+            reports.length === 0
+              ? 'No backup reports available.'
+              : 'No backups match the current filter.'
+          }}
+        </div>
+      </template>
+    </AsyncSection>
 
-    <div
-      v-if="reports.length > 0"
-      class="load-more-row"
+    <PagerLoadMore
+      v-if="!loading && !error && reports.length > 0"
+      :loaded="reports.length"
+      :total="total"
+      :loading-more="loadingMore"
+      @load-more="emit('loadMore')"
     >
-      <button
-        v-if="hasMore"
-        class="btn btn-sm btn-ghost"
-        type="button"
-        :disabled="loadingMore"
-        @click="emit('loadMore')"
-      >
-        {{
-          loadingMore
-            ? 'Loading...'
-            : `Load ${Math.min(REPORTS_PAGE_SIZE, total - reports.length)} more`
-        }}
-      </button>
-      <span class="load-more-note">Showing {{ reports.length }} of {{ total }} runs</span>
-    </div>
+      Showing {{ reports.length }} of {{ total }} runs
+    </PagerLoadMore>
   </div>
 </template>
 
@@ -153,16 +149,5 @@ const visible = computed(() => {
 
 .backups-sort {
   margin-left: auto;
-}
-
-.load-more-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.load-more-note {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
 }
 </style>

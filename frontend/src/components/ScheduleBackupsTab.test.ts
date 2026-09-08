@@ -163,13 +163,13 @@ describe('ScheduleBackupsTab', () => {
 
   it('emits loadMore when the load-more button is clicked', async () => {
     const wrapper = mount({ reports: [report({})], total: 75 })
-    await wrapper.find('.backups-more-row button').trigger('click')
+    await wrapper.find('.pager-load-more button').trigger('click')
     expect(wrapper.emitted('loadMore')).toHaveLength(1)
   })
 
   it('disables the load-more button while a page is already loading', () => {
     const wrapper = mount({ reports: [report({})], total: 75, loadingMore: true })
-    const button = wrapper.find('.backups-more-row button')
+    const button = wrapper.find('.pager-load-more button')
     expect(button.attributes('disabled')).toBeDefined()
     expect(button.text()).toBe('Loading...')
   })

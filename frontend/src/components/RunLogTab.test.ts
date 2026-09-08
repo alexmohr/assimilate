@@ -64,13 +64,13 @@ describe('RunLogTab', () => {
 
   it('hides the load-more button once every report is loaded', () => {
     const wrapper = mount({ total: 2 })
-    expect(wrapper.find('.load-more-row button').exists()).toBe(false)
+    expect(wrapper.find('.pager-load-more button').exists()).toBe(false)
     expect(wrapper.text()).toContain('Showing 2 of 2 runs')
   })
 
   it('offers to load more when the total exceeds what is loaded, capped at 50', () => {
     const wrapper = mount({ total: 312 })
-    const button = wrapper.find('.load-more-row button')
+    const button = wrapper.find('.pager-load-more button')
     expect(button.exists()).toBe(true)
     expect(button.text()).toBe('Load 50 more')
     expect(wrapper.text()).toContain('Showing 2 of 312 runs')
@@ -78,24 +78,41 @@ describe('RunLogTab', () => {
 
   it('offers the exact remainder when fewer than a full page is left', () => {
     const wrapper = mount({ total: 5 })
-    expect(wrapper.find('.load-more-row button').text()).toBe('Load 3 more')
+    expect(wrapper.find('.pager-load-more button').text()).toBe('Load 3 more')
   })
 
   it('emits loadMore when the button is clicked', async () => {
     const wrapper = mount({ total: 312 })
-    await wrapper.find('.load-more-row button').trigger('click')
+    await wrapper.find('.pager-load-more button').trigger('click')
     expect(wrapper.emitted('loadMore')).toHaveLength(1)
   })
 
   it('disables the button and shows a loading label while a page is in flight', () => {
     const wrapper = mount({ total: 312, loadingMore: true })
-    const button = wrapper.find('.load-more-row button')
+    const button = wrapper.find('.pager-load-more button')
     expect(button.attributes('disabled')).toBeDefined()
     expect(button.text()).toBe('Loading...')
   })
 
   it('shows nothing below the rows when there are none loaded yet', () => {
     const wrapper = mount({ reports: [], total: 0 })
-    expect(wrapper.find('.load-more-row').exists()).toBe(false)
+    expect(wrapper.find('.pager-load-more').exists()).toBe(false)
+  })
+
+  it('shows a spinner instead of rows while the first page is loading', () => {
+    const wrapper = mount({ loading: true })
+    expect(wrapper.find('[role="status"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('web-01-2026-06-01')
+  })
+
+  it('surfaces a fetch failure instead of rendering "no reports"', () => {
+    const wrapper = mount({ reports: [], total: 0, error: 'network error' })
+    expect(wrapper.text()).toContain('network error')
+    expect(wrapper.text()).not.toContain('No backup reports available.')
+  })
+
+  it('hides the load-more footer while loading or errored', () => {
+    expect(mount({ loading: true }).find('.pager-load-more').exists()).toBe(false)
+    expect(mount({ error: 'boom' }).find('.pager-load-more').exists()).toBe(false)
   })
 })

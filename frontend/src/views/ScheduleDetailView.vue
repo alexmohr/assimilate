@@ -340,17 +340,25 @@ async function loadData(): Promise<void> {
         })
         .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
 
-      const [scheduleRow, agentRows, repoRows, targetRows, repoTargetRows, sourcesResponse, , healthRows] =
-        await Promise.all([
-          getSchedule(props.id),
-          listAgents(),
-          listRepos(),
-          listScheduleTargets(props.id),
-          listScheduleRepos(props.id),
-          getScheduleBackupSources(props.id),
-          reportsPager.load(),
-          getScheduleHealth(),
-        ])
+      const [
+        scheduleRow,
+        agentRows,
+        repoRows,
+        targetRows,
+        repoTargetRows,
+        sourcesResponse,
+        ,
+        healthRows,
+      ] = await Promise.all([
+        getSchedule(props.id),
+        listAgents(),
+        listRepos(),
+        listScheduleTargets(props.id),
+        listScheduleRepos(props.id),
+        getScheduleBackupSources(props.id),
+        reportsPager.load(),
+        getScheduleHealth(),
+      ])
       schedule.value = scheduleRow
       agents.value = agentRows
       repos.value = repoRows
@@ -788,7 +796,9 @@ watch(activeTab, (tab) => {
           v-model:sort-ascending="sortAscending"
           :reports="reports"
           :total="reportsPager.total.value"
+          :loading="reportsLoading"
           :loading-more="reportsPager.loadingMore.value"
+          :error="reportsError"
           :expanded-report-id="expandedReportId"
           :highlighted-archive-name="undefined"
           :pinned-report-id="null"

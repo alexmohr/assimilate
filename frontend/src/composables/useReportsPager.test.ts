@@ -73,4 +73,36 @@ describe('useReportsPager', () => {
     expect(pager.error.value).toBe('network down')
     expect(pager.reports.value).toHaveLength(10)
   })
+
+  // Regression: a page-load fetch that started first (e.g. the initial
+  // mount) can still be in flight when something else (a just-clicked
+  // action) calls load() again for a fresher snapshot. Without ordering by
+  // start time rather than arrival time, the first call's response landing
+  // after the second's would silently overwrite the fresher data with a
+  // stale one - exactly the case that let a newly-dispatched backup's
+  // pending report vanish from a page that had just refetched it.
+  it('a slower call started earlier does not clobber a faster call started later', async () => {
+    let resolveFirst!: (p: ReportsPage) => void
+    let resolveSecond!: (p: ReportsPage) => void
+    const fetchPage = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<ReportsPage>((r) => (resolveFirst = r)))
+      .mockImplementationOnce(() => new Promise<ReportsPage>((r) => (resolveSecond = r)))
+    const pager = useReportsPager(fetchPage)
+
+    const firstLoad = pager.load()
+    const secondLoad = pager.load()
+
+    // The second call's response arrives first...
+    resolveSecond(page(1, 1))
+    await secondLoad
+    expect(pager.reports.value).toHaveLength(1)
+
+    // ...then the first (stale) call's response arrives late. It must not
+    // undo the second call's result.
+    resolveFirst(page(5, 5))
+    await firstLoad
+    expect(pager.reports.value).toHaveLength(1)
+    expect(pager.total.value).toBe(1)
+  })
 })

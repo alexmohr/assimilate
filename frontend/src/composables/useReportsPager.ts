@@ -46,31 +46,45 @@ export function useReportsPager(
   const loadingMore = ref(false)
   const error = ref<string | null>(null)
 
+  // A caller (e.g. the initial page-load fetch racing a just-clicked Run
+  // now's own refresh) can have two `load()` calls in flight together; with
+  // nothing to order them, whichever response happens to land second wins,
+  // even if it started first and is now stale. Each call stamps the request
+  // it started with a token and only applies the response if it is still the
+  // most recent call made - a later call's own apply always wins instead.
+  let loadToken = 0
+
   async function load(): Promise<void> {
+    const token = ++loadToken
     loading.value = true
     error.value = null
     try {
       const page = await fetchPage(REPORTS_PAGE_SIZE, 0)
+      if (token !== loadToken) return
       reports.value = page.reports
       total.value = page.total
     } catch (e: unknown) {
+      if (token !== loadToken) return
       error.value = extractError(e)
     } finally {
-      loading.value = false
+      if (token === loadToken) loading.value = false
     }
   }
 
   async function loadMore(): Promise<void> {
+    const token = ++loadToken
     loadingMore.value = true
     error.value = null
     try {
       const page = await fetchPage(REPORTS_PAGE_SIZE, reports.value.length)
+      if (token !== loadToken) return
       reports.value = [...reports.value, ...page.reports]
       total.value = page.total
     } catch (e: unknown) {
+      if (token !== loadToken) return
       error.value = extractError(e)
     } finally {
-      loadingMore.value = false
+      if (token === loadToken) loadingMore.value = false
     }
   }
 

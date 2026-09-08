@@ -1116,6 +1116,21 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
   })
 
+  // The real server always sends a report, but a caller that only cares
+  // about hostname/target_name (as some e2e specs' WS mocks do) shouldn't be
+  // able to crash this handler and leave the card stuck open.
+  it('BackupCompleted with no report field falls back to the repo name match', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
   it('BackupLog with matching schedule_id and archive_progress JSON updates progress data', async () => {
     const wrapper = await renderAndStartBackup()
 

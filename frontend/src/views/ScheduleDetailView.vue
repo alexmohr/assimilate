@@ -676,12 +676,9 @@ onMessage('BackupCompleted', (payload) => {
   // (e.g. two daily jobs against the same target) - a target_name-only
   // match would clear this page's running state on a sibling schedule's
   // completion while this schedule's own run is still in flight.
-  if (payload.report.schedule_id != null && payload.report.schedule_id !== Number(props.id)) return
-  if (
-    payload.report.schedule_id == null &&
-    !(repo.value != null && payload.target_name === repo.value.name)
-  )
-    return
+  const scheduleId = payload.report?.schedule_id
+  if (scheduleId != null && scheduleId !== Number(props.id)) return
+  if (scheduleId == null && !(repo.value != null && payload.target_name === repo.value.name)) return
   backupRunning.value = false
   backupHostname.value = null
   backupArchiveName.value = null

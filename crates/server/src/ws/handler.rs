@@ -1394,7 +1394,10 @@ async fn dispatch_backup_completion_notification(
 
 /// Runs the post-backup archive sync in the background: marks the repo as
 /// importing, syncs any new archives, and clears importing/error state
-/// regardless of outcome.
+/// regardless of outcome. Tracking is the caller's job (see
+/// `spawn_post_backup_sync`): claiming the guard in this body would only
+/// happen once the runtime first polls the spawned task, which is the race
+/// the tracker exists to close.
 async fn run_post_backup_sync(
     pool: PgPool,
     encryption_key: [u8; 32],
@@ -1404,7 +1407,6 @@ async fn run_post_backup_sync(
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     task_registry: shared::task_registry::TaskRegistry,
 ) {
-    let _task_guard = background_task_tracker.begin();
     // Held for the rest of this function so a panic inside sync_new_archives
     // still clears repo_import_state.importing (via spawned cleanup, since
     // Drop can't await) instead of leaving it permanently "importing" - see
@@ -1475,15 +1477,17 @@ async fn run_post_backup_sync(
 }
 
 fn spawn_post_backup_sync(state: &AppState, repo_id: i64) {
-    tokio::spawn(run_post_backup_sync(
-        state.pool.clone(),
-        state.encryption_key,
-        repo_id,
-        state.ui_broadcast.clone(),
-        state.repo_lock.clone(),
-        state.background_task_tracker.clone(),
-        state.task_registry.clone(),
-    ));
+    state
+        .background_task_tracker
+        .spawn_tracked(run_post_backup_sync(
+            state.pool.clone(),
+            state.encryption_key,
+            repo_id,
+            state.ui_broadcast.clone(),
+            state.repo_lock.clone(),
+            state.background_task_tracker.clone(),
+            state.task_registry.clone(),
+        ));
 }
 
 async fn finalize_backup_completion(
@@ -2443,6 +2447,33 @@ exit 0
     }
 
     #[ignore = "requires DATABASE_URL"]
+    /// `spawn_post_backup_sync` must mark the task in flight before it returns.
+    /// Claiming the guard as the first statement of `run_post_backup_sync`'s own
+    /// body looked equivalent but wasn't: calling an async fn runs none of it, so
+    /// `any_active()` only turned true once the runtime first polled the spawned
+    /// task - and whether that happens before a caller (or a test's runtime
+    /// teardown) looks is a scheduling race, not a guarantee.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn spawn_post_backup_sync_is_tracked_before_the_task_is_first_polled(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+
+        // No repo with this id exists, so the task fails out immediately without
+        // running borg - what it does is irrelevant here, only when it starts
+        // counting is.
+        spawn_post_backup_sync(&state, 987_654);
+
+        // Deliberately no await between the spawn and this assertion.
+        assert!(
+            state.background_task_tracker.any_active(),
+            "post-backup sync must be tracked the moment it is spawned"
+        );
+
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_log_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;

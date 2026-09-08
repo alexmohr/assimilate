@@ -3249,6 +3249,110 @@ async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(p
     );
 }
 
+/// A multi-target schedule writes one `backup_reports` row per target, so
+/// "the schedule's latest report" is ambiguous unless it is pinned to a
+/// repository. Health keys off the denormalised primary (see the
+/// `schedule_repos` migration), and targets run in write order, so the *last*
+/// row is the last target rather than the primary. Without the `repo_id`
+/// filter a best-effort secondary's failure surfaces as the schedule's health
+/// status against the primary's name - the opposite of "best effort only
+/// warns".
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool: PgPool) {
+    let (agent, primary, schedule) = create_test_schedule(&pool).await;
+    let secondary = create_test_repo(&pool).await;
+    db::replace_schedule_repos(
+        &pool,
+        schedule.id,
+        &[(primary.id, true), (secondary.id, false)],
+    )
+    .await
+    .unwrap();
+
+    let started = Utc::now()
+        .checked_sub_signed(Duration::minutes(10))
+        .unwrap();
+    insert_report_for_schedule(
+        &pool,
+        agent.id,
+        primary.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+        started,
+    )
+    .await;
+    // The best-effort target is written second, so its row is the newest.
+    insert_report_for_schedule(
+        &pool,
+        agent.id,
+        secondary.id,
+        schedule.id,
+        shared::types::BackupStatus::Failed,
+        started.checked_add_signed(Duration::minutes(5)).unwrap(),
+    )
+    .await;
+
+    let health = db::get_health_summary(&pool).await.unwrap();
+    let entry = health
+        .iter()
+        .find(|h| h.schedule_id == schedule.id)
+        .expect("schedule health row");
+
+    assert_eq!(
+        entry.repo_id, primary.id,
+        "the health row is reported against the primary repository"
+    );
+    assert_eq!(
+        entry.last_status.as_deref(),
+        Some("success"),
+        "a best-effort secondary's failure must not become the schedule's status"
+    );
+    assert_eq!(
+        entry.last_backup_status.as_deref(),
+        Some("success"),
+        "the completed-run outcome must come from the primary too"
+    );
+}
+
+/// Like `insert_report_with_status_at`, but linked to a schedule and a chosen
+/// repository - what a multi-target run actually writes.
+#[cfg(test)]
+async fn insert_report_for_schedule(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    schedule_id: i64,
+    status: shared::types::BackupStatus,
+    started_at: chrono::DateTime<Utc>,
+) {
+    db::insert_backup_report(
+        pool,
+        &InsertReportParams {
+            agent_id,
+            repo_id,
+            schedule_id: Some(schedule_id),
+            started_at,
+            finished_at: started_at.checked_add_signed(Duration::minutes(1)).unwrap(),
+            status,
+            original_size: 1_000,
+            compressed_size: 500,
+            deduplicated_size: 250,
+            repo_unique_csize: 250,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_reports_status_check_constraint_rejects_invalid_status(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;

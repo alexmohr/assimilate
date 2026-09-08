@@ -14,7 +14,7 @@ import type { AgentRow } from '../types/agent'
  * rather than a native multi-select, which is unusable on touch and gives no
  * room for a display name beside a hostname.
  */
-defineProps<{
+const props = defineProps<{
   agents: readonly AgentRow[]
   disabled?: boolean
 }>()
@@ -24,10 +24,20 @@ const selected = defineModel<number[]>({ required: true })
 const open = ref(false)
 const wrapper = ref<HTMLElement | null>(null)
 
+function agentName(id: number): string {
+  const agent = props.agents.find((a) => a.id === id)
+  return agent?.display_name ?? agent?.hostname ?? `Host #${id}`
+}
+
+/**
+ * One host is named rather than counted: "1 agent selected" tells the operator
+ * nothing they did not already know, and the single-host case is the common
+ * one. Beyond that a count is all that fits.
+ */
 function label(): string {
-  return selected.value.length === 0
-    ? 'Select agents...'
-    : `${selected.value.length} agent${selected.value.length === 1 ? '' : 's'} selected`
+  if (selected.value.length === 0) return 'Select agents...'
+  if (selected.value.length === 1) return agentName(selected.value[0])
+  return `${selected.value.length} agents selected`
 }
 
 function toggle(id: number): void {

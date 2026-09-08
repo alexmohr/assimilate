@@ -5178,10 +5178,11 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
          schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = \
          st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, \
          br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = \
-         a.id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT \
-         br.status, br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND \
-         br.agent_id = a.id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at \
-         DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+         a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true \
+         LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
+         br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
+         NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
+         WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await

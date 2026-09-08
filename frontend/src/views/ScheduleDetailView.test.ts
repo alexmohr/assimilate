@@ -162,6 +162,9 @@ async function createEditWrapper(): Promise<ReturnType<typeof renderWithPlugins>
 }
 
 function setupEditModeWithReport(report: Record<string, unknown>): void {
+  // Every report the API returns names the repository it was written to, and
+  // the Backups tab only lists the ones belonging to the target it browses.
+  const withRepo = { repo_id: mockSchedule.repo_id, ...report }
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
     if (url === '/schedules/1/repos')
@@ -170,7 +173,7 @@ function setupEditModeWithReport(report: Record<string, unknown>): void {
       return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
     if (url === '/schedules/1/sources')
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-    if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
+    if (url === '/schedules/1/reports') return Promise.resolve({ data: [withRepo] })
     if (url === '/schedules/1/reports/failed/count') {
       const count = report.status === 'failed' ? 1 : 0
       return Promise.resolve({ data: { count } })
@@ -1265,6 +1268,12 @@ describe('ScheduleDetailView - Backups tab', () => {
   })
 
   function setupBackupWithReports(mockReports: unknown[]): void {
+    // Reports name the repository they were written to; the tab lists only the
+    // ones for the target it browses, so the fixtures carry the primary's id.
+    const withRepo = mockReports.map((r) => ({
+      repo_id: mockSchedule.repo_id,
+      ...(r as Record<string, unknown>),
+    }))
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
       if (url === '/schedules/1/repos')
@@ -1275,7 +1284,7 @@ describe('ScheduleDetailView - Backups tab', () => {
         return Promise.resolve({
           data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
         })
-      if (url === '/schedules/1/reports') return Promise.resolve({ data: mockReports })
+      if (url === '/schedules/1/reports') return Promise.resolve({ data: withRepo })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       return Promise.resolve({ data: [] })
@@ -1492,6 +1501,8 @@ describe('ScheduleDetailView - Backups tab', () => {
   // (regression: it used to sit inside the same Promise.all as the report
   // list, so a rejection there took the whole refresh down with it).
   it('logs and keeps the report list refresh working when the count fetch fails', async () => {
+    // Re-mocked below as the refresh payload, so it carries its repository the
+    // way the API's own rows do.
     const report = {
       id: 1,
       status: 'success',
@@ -1500,6 +1511,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       original_size: 500,
       agent_id: 10,
       hostname: 'web-server-01',
+      repo_id: mockSchedule.repo_id,
     }
     const wrapper = await createBackupsWrapper([report])
     await goToBackups(wrapper)

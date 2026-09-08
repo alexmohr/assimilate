@@ -21,6 +21,8 @@ function report(overrides: Partial<ReportRow>): ReportRow {
     deduplicated_size: 512,
     agent_id: 10,
     hostname: 'web-01',
+    // Reports carry the repository they were written to; the tab browses one.
+    repo_id: 3,
     ...overrides,
   } as unknown as ReportRow
 }
@@ -40,6 +42,22 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('ScheduleBackupsTab', () => {
+  /** The reports are the whole schedule's, so a multi-target schedule's list
+      includes runs against every target - but this tab browses and deletes
+      against one `repoId`. Listing another target's archive would send its
+      delete to the wrong repository. */
+  it('leaves out archives written to a different target repository', () => {
+    const wrapper = mount({
+      reports: [
+        report({ id: 1, archive_name: 'on-primary' }),
+        report({ id: 2, archive_name: 'on-offsite', repo_id: 4 }),
+      ],
+    })
+
+    expect(wrapper.text()).toContain('on-primary')
+    expect(wrapper.text()).not.toContain('on-offsite')
+  })
+
   it('shows placeholder rows while loading', () => {
     expect(mount({ loading: true }).find('.archive-loading').exists()).toBe(true)
   })

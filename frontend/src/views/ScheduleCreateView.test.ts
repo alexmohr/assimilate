@@ -52,14 +52,37 @@ const mockApiClient = apiClient as unknown as {
   post: ReturnType<typeof vi.fn>
 }
 
+/** The API always sends a `power` block; the Power step reads it per host. */
+const NO_WAKE = {
+  wake_enabled: false,
+  wake_mac_address: null,
+  wake_broadcast_address: null,
+  wake_timeout_seconds: 180,
+  shutdown_after_backup: false,
+}
+
 const AGENTS = [
-  { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
-  { id: 11, hostname: 'db-server-01', display_name: null },
+  { id: 10, hostname: 'web-server-01', display_name: 'Web Server', power: { wake: NO_WAKE } },
+  { id: 11, hostname: 'db-server-01', display_name: null, power: { wake: NO_WAKE } },
 ]
 
 const REPOS = [
-  { id: 20, name: 'nas-local', ssh_user: 'borg', ssh_host: 'nas.lan', repo_path: '/srv/borg' },
-  { id: 21, name: 'offsite', ssh_user: 'u1', ssh_host: 'offsite.example', repo_path: '/backups' },
+  {
+    id: 20,
+    name: 'nas-local',
+    ssh_user: 'borg',
+    ssh_host: 'nas.lan',
+    repo_path: '/srv/borg',
+    power: NO_WAKE,
+  },
+  {
+    id: 21,
+    name: 'offsite',
+    ssh_user: 'u1',
+    ssh_host: 'offsite.example',
+    repo_path: '/backups',
+    power: NO_WAKE,
+  },
 ]
 
 function setup(repos: unknown[] = REPOS): void {
@@ -90,6 +113,19 @@ async function fillBasicsAndContinue(wrapper: ReturnType<typeof renderWithPlugin
   await button(wrapper, 'Continue')!.trigger('click')
 }
 
+/** Clicks Continue until `label` is the current step. Walking by a fixed
+    number of clicks breaks whenever a step is inserted; this does not. */
+async function continueTo(
+  wrapper: ReturnType<typeof renderWithPlugins>,
+  label: string,
+): Promise<void> {
+  for (let i = 0; i < 8; i += 1) {
+    if (wrapper.find('.wizard-step--current').text().includes(label)) return
+    await button(wrapper, 'Continue')!.trigger('click')
+  }
+  throw new Error(`never reached the ${label} step`)
+}
+
 async function selectFirstAgent(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
   await wrapper.find('.multi-select-trigger').trigger('click')
   await wrapper.findAll('.multi-select-item input[type="checkbox"]')[0].trigger('change')
@@ -110,6 +146,7 @@ describe('ScheduleCreateView', () => {
       'Basics',
       'Sources',
       'Targets',
+      'Power',
       'Timing',
       'Retention',
       'Advanced',
@@ -118,11 +155,30 @@ describe('ScheduleCreateView', () => {
     expect(wrapper.find('.wizard-step--current').text()).toContain('Basics')
   })
 
+  /** Creating a schedule used to go through the Settings tab, which has always
+      carried a Power section; the wizard has to offer it too or a new schedule
+      cannot set its wake override until after it exists. */
+  it('offers a Power step for every schedule type', async () => {
+    const wrapper = await open()
+
+    expect(railLabels(wrapper)).toContain('Power')
+
+    await wrapper.find('#schedule-type').setValue('check')
+    expect(railLabels(wrapper)).toContain('Power')
+  })
+
   it('drops Retention and Advanced for a schedule type that has no archives', async () => {
     const wrapper = await open()
     await wrapper.find('#schedule-type').setValue('check')
 
-    expect(railLabels(wrapper)).toEqual(['Basics', 'Sources', 'Targets', 'Timing', 'Review'])
+    expect(railLabels(wrapper)).toEqual([
+      'Basics',
+      'Sources',
+      'Targets',
+      'Power',
+      'Timing',
+      'Review',
+    ])
   })
 
   it('will not continue past a step that is still missing something', async () => {
@@ -262,7 +318,7 @@ describe('ScheduleCreateView', () => {
     const wrapper = await open()
     await fillBasicsAndContinue(wrapper)
 
-    expect(wrapper.find('.multi-select-label').text()).toBe('1 agent selected')
+    expect(wrapper.find('.multi-select-label').text()).toBe('db-server-01')
   })
 
   it('ignores an agent_id that names no agent', async () => {
@@ -292,8 +348,7 @@ describe('ScheduleCreateView', () => {
     const wrapper = await open()
     await fillBasicsAndContinue(wrapper)
     await selectFirstAgent(wrapper)
-    await button(wrapper, 'Continue')!.trigger('click')
-    await button(wrapper, 'Continue')!.trigger('click')
+    await continueTo(wrapper, 'Timing')
 
     await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 2 *')
     expect(wrapper.find('.wizard-status--blocked').text()).toContain('a five-field cron expression')
@@ -345,9 +400,10 @@ describe('ScheduleCreateView', () => {
     await wrapper.find('#backup-paths').setValue('/etc\n/srv')
     await button(wrapper, 'Continue')!.trigger('click')
 
-    // Targets: the on-failure select the second host revealed, then Timing.
+    // Targets: the on-failure select the second host revealed, then Timing
+    // (past Power, which needs nothing and defaults to the hosts' own setting).
     await wrapper.find('#on-failure').setValue('continue')
-    await button(wrapper, 'Continue')!.trigger('click')
+    await continueTo(wrapper, 'Timing')
     await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 4 * * *')
     await wrapper.find('#missed-threshold').setValue('5')
     await button(wrapper, 'Continue')!.trigger('click')
@@ -414,9 +470,7 @@ describe('ScheduleCreateView', () => {
     const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
     await boxes[0].trigger('change')
     await boxes[1].trigger('change')
-    await button(wrapper, 'Continue')!.trigger('click')
-
-    await button(wrapper, 'Continue')!.trigger('click')
+    await continueTo(wrapper, 'Timing')
     await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 4 * * *')
     await button(wrapper, 'Continue')!.trigger('click')
     await button(wrapper, 'Continue')!.trigger('click')

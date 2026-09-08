@@ -20,11 +20,14 @@ import {
 } from '../utils/schedulePayload'
 import { parseLines } from '../utils/validation'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { storeToRefs } from 'pinia'
+import { useAuthStore } from '../stores/auth'
 import AgentMultiSelect from '../components/AgentMultiSelect.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ScheduleAdvancedTab from '../components/ScheduleAdvancedTab.vue'
+import SchedulePowerTab from '../components/SchedulePowerTab.vue'
 import ScheduleRepoTargets from '../components/ScheduleRepoTargets.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
@@ -44,7 +47,15 @@ import { Database } from '@lucide/vue'
  * each step states what it still needs, the next step unlocks only once that
  * is answered, and the create action exists on the last step alone.
  */
-type StepId = 'basics' | 'sources' | 'targets' | 'timing' | 'retention' | 'advanced' | 'review'
+type StepId =
+  | 'basics'
+  | 'sources'
+  | 'targets'
+  | 'power'
+  | 'timing'
+  | 'retention'
+  | 'advanced'
+  | 'review'
 
 interface Step {
   id: StepId
@@ -54,6 +65,10 @@ interface Step {
 
 const router = useRouter()
 const route = useRoute()
+// Gates the wake read-out the same way the Settings tab does: without it the
+// panel reports "cannot wake" for every host merely because the viewer is not
+// allowed to see MAC addresses.
+const { canViewWakeSecrets } = storeToRefs(useAuthStore())
 
 const agents = ref<AgentRow[]>([])
 const repos = ref<Repo[]>([])
@@ -86,6 +101,9 @@ const steps = computed<Step[]>(() => [
   { id: 'basics', label: 'Basics', sub: 'Name and type' },
   { id: 'sources', label: 'Sources', sub: 'Hosts and paths' },
   { id: 'targets', label: 'Targets', sub: 'Where it is written' },
+  // Power applies to every schedule type, not just backups: a check or verify
+  // run needs its hosts reachable the same way.
+  { id: 'power', label: 'Power', sub: 'Waking its hosts' },
   { id: 'timing', label: 'Timing', sub: 'When it runs' },
   ...(isBackup.value
     ? ([
@@ -444,6 +462,16 @@ async function submit(): Promise<void> {
             </span>
           </p>
         </template>
+
+        <SchedulePowerTab
+          v-else-if="currentStep.id === 'power'"
+          v-model:wake-override="form.wake_override"
+          :agents="agents"
+          :repos="repos"
+          :selected-agent-ids="selectedAgentIds"
+          :selected-repo-ids="repoTargets.map((t) => t.repo_id)"
+          :can-see-wake-details="canViewWakeSecrets"
+        />
 
         <template v-else-if="currentStep.id === 'timing'">
           <p class="pane-lede">

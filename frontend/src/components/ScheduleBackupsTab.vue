@@ -50,6 +50,11 @@ const archives = computed<ArchiveEntry[]>(() => {
   const byName = new Map<string, ArchiveEntry>()
   for (const r of props.reports) {
     if (r.archive_name == null) continue
+    // The reports are the whole schedule's, so a multi-target schedule's list
+    // includes runs against every target - but this tab browses and deletes
+    // against `repoId` alone. Listing another target's archive here would send
+    // its delete to the wrong repository.
+    if (r.repo_id !== props.repoId) continue
     const status = normalizeBackupStatus(r.status)
     if (status !== 'success' && status !== 'warning') continue
     // One archive, one row: a re-run that wrote to the same name leaves two
@@ -78,7 +83,11 @@ const selectedArchive = computed<ArchiveEntry | null>({
   },
   set: (archive) => {
     selected.value =
-      archive === null ? null : (props.reports.find((r) => r.archive_name === archive.name) ?? null)
+      archive === null
+        ? null
+        : (props.reports.find(
+            (r) => r.archive_name === archive.name && r.repo_id === props.repoId,
+          ) ?? null)
   },
 })
 

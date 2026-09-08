@@ -17,10 +17,17 @@ function mount(modelValue: number[], props: Record<string, unknown> = {}) {
 }
 
 describe('AgentMultiSelect', () => {
-  it('summarises the selection', () => {
+  /** The inline dropdown this replaced named the host when exactly one was
+      picked; "1 agent selected" says nothing the operator did not already
+      know, and one host is the common case. */
+  it('summarises the selection, naming a single host', () => {
     expect(mount([]).find('.multi-select-label').text()).toBe('Select agents...')
-    expect(mount([10]).find('.multi-select-label').text()).toBe('1 agent selected')
+    expect(mount([10]).find('.multi-select-label').text()).toBe('Web Server')
     expect(mount([10, 11]).find('.multi-select-label').text()).toBe('2 agents selected')
+  })
+
+  it('names a single host by hostname when it has no display name', () => {
+    expect(mount([11]).find('.multi-select-label').text()).toBe('db-server-01')
   })
 
   it('falls back to the hostname when an agent has no display name', async () => {

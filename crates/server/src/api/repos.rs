@@ -369,7 +369,6 @@ pub async fn create_repo(
     // repo lock and runs borg via sync_existing_archives, so a test that
     // returns without waiting for it leaves it running into whatever test
     // comes next.
-    let background_task_tracker = state.background_task_tracker.clone();
     let import = run_initial_import_task(InitialImportTask {
         pool,
         encryption_key,
@@ -386,7 +385,7 @@ pub async fn create_repo(
         bg_ssh_port: ssh_port_u16,
         bg_ssh_host_key,
     });
-    background_task_tracker.spawn_tracked(import);
+    state.background_task_tracker.spawn_tracked(import);
 
     Ok((StatusCode::CREATED, Json(RepoResponse::from(repo))))
 }

@@ -416,12 +416,17 @@ echo "==> Creating schedules..."
 # and a real borg create needs a source path that genuinely exists here, the
 # same as every other demo schedule below.
 #
-# pre_backup_commands adds a deliberate few-second delay before borg create
-# even starts: /etc is small enough that a real create/prune/compact cycle
-# against it finishes in ~1.5s, too fast for the cancel-backup e2e spec to
-# reliably click Cancel before the run completes on its own. A pre-backup
+# pre_backup_commands adds a deliberate couple-second delay before borg
+# create even starts: /etc is small enough that a real create/prune/compact
+# cycle against it finishes in ~1.5s, too fast for the cancel-backup e2e spec
+# to reliably click Cancel before the run completes on its own. A pre-backup
 # hook that takes real time (e.g. quiescing a service) is realistic, and
-# gives that spec a deterministic window to cancel within.
+# gives that spec a window to cancel within. Kept short deliberately: every
+# borg operation against this repo is serialized through the agent's
+# per-repo queue (see executor.rs's repo_operation_queue), so a long hook
+# here would make a Run Now that lands while a previous run is still mid-hook
+# queue for the full remaining cycle - risking busting the e2e specs' own
+# wait timeouts for the Cancel backup button to appear.
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -434,7 +439,7 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/etc\"],
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
-    \"pre_backup_commands\": [{\"command\": \"sleep 10\"}]
+    \"pre_backup_commands\": [{\"command\": \"sleep 2\"}]
 }" | jq -r '.id')
 
 api POST "/api/schedules" "{

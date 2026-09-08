@@ -124,9 +124,16 @@ async function saveNumericScheduleField(
   fieldLabel: string,
   jsonKey: string,
   newValue: number,
+  inputSelector?: string,
 ): Promise<Locator> {
-  const field = page.locator('.field, .pane-row', { hasText: fieldLabel })
-  const input = field.locator('input[type="number"]')
+  // A plain fieldLabel match is ambiguous once a schedule has its own
+  // pre/post-backup commands: their per-command timeout inputs sit inside
+  // the same "Hook command timeout"-mentioning row (it names the default
+  // they fall back to), so callers whose label is no longer unique on the
+  // page pass the input's own selector instead.
+  const input = inputSelector
+    ? page.locator(inputSelector)
+    : page.locator('.field, .pane-row', { hasText: fieldLabel }).locator('input[type="number"]')
   await expect(input).toBeVisible()
 
   const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
@@ -614,6 +621,7 @@ test.describe('Schedules management', () => {
       'Hook command timeout',
       'hook_timeout_seconds',
       180,
+      '#schedule-hook-timeout',
     )
     await expect(timeoutInput).toHaveValue('180')
   })

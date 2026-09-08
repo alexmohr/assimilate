@@ -38,6 +38,7 @@ const defaultMeUser = {
   session_expires_at: null,
   remember_me: false,
   can_upgrade_agent: false,
+  can_view_wake_secrets: false,
   totp_enabled: false,
 }
 
@@ -223,6 +224,40 @@ describe('auth store - isAdmin', () => {
 
   it('is false before any user is loaded', () => {
     expect(useAuthStore().isAdmin).toBe(false)
+  })
+})
+
+describe('auth store - canViewWakeSecrets', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  async function loadMe(canViewWakeSecrets: boolean): Promise<ReturnType<typeof useAuthStore>> {
+    const { apiClient } = await import('../api/client')
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: { ...defaultMeUser, role: 'operator', can_view_wake_secrets: canViewWakeSecrets },
+    })
+    const store = useAuthStore()
+    await store.fetchMe()
+    return store
+  }
+
+  // The server gates the wake MAC/broadcast address on can_delete_repo or
+  // can_view_all_repos, which an operator holds without being an admin. The
+  // flag has to come from the server rather than being inferred from the
+  // role, or the UI would tell an operator a host cannot be woken merely
+  // because it thought the address was redacted.
+  it('follows the server flag for a non-admin who may see the addresses', async () => {
+    expect((await loadMe(true)).canViewWakeSecrets).toBe(true)
+  })
+
+  it('follows the server flag for a viewer who may not', async () => {
+    expect((await loadMe(false)).canViewWakeSecrets).toBe(false)
+  })
+
+  it('is false before any user is loaded', () => {
+    expect(useAuthStore().canViewWakeSecrets).toBe(false)
   })
 })
 

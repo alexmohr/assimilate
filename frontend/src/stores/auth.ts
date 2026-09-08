@@ -36,6 +36,11 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<CurrentUserResponse | null>(null)
   const isAdmin = computed(() => holdsRole(user.value?.role, ADMIN_ROLE_NAME))
   const canUpgradeAgent = computed(() => user.value?.can_upgrade_agent ?? false)
+  // Operators see a host's wake MAC/broadcast address; anyone below has them
+  // redacted out of the agent and repo responses. This is the server's own
+  // answer (`RoleRow::can_view_wake_secrets`) rather than the admin role,
+  // which is a narrower tier.
+  const canViewWakeSecrets = computed(() => user.value?.can_view_wake_secrets ?? false)
   const loading = ref(false)
   const sessionExpiresAt = ref<string | null>(null)
   const rememberMe = ref(false)
@@ -145,6 +150,7 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     isAdmin,
     canUpgradeAgent,
+    canViewWakeSecrets,
     fetchMe,
     login,
     verifyTotp,

@@ -172,11 +172,7 @@ pub async fn list_repos(
     let repos = db::list_all_repos(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
-    // See list_repos_with_stats: Wake-on-LAN's MAC/broadcast address let
-    // anyone who has them power the host on remotely, so they're gated to
-    // operators/admins rather than embedded for any viewer who can merely
-    // see the repo.
-    let can_view_wake_secrets = effective.can_delete_repo || effective.can_view_all_repos;
+    let can_view_wake_secrets = effective.can_view_wake_secrets();
     let mut visible = Vec::with_capacity(repos.len());
     for repo in repos {
         if is_visible_to_user(

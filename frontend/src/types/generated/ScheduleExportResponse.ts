@@ -97,6 +97,11 @@ export type ScheduleExportResponse = {
    */
   missed_backup_threshold: number;
   /**
+   * Whether this schedule wakes the hosts it needs, overriding what those
+   * hosts default to. Defaulted for exports predating the field.
+   */
+  wake_override: string;
+  /**
    * Whether a run missed while a target host was unreachable is caught up on
    * reconnect.
    */

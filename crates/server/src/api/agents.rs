@@ -106,7 +106,14 @@ pub struct UpdateHostWakeRequest {
 /// -- the DB's MAC-format CHECK constraint applies unconditionally, and the
 /// UI deliberately keeps stale values in the form after the wake toggle is
 /// switched off), `wake_enabled` requiring a MAC, and `shutdown_after_backup`
-/// requiring `wake_enabled`.
+/// requiring a MAC too.
+///
+/// Shutting down deliberately keys off having a MAC address rather than off
+/// `wake_enabled`: a schedule's own `wake_override` can wake a host whose
+/// `wake_enabled` is off (see [`shared::types::ScheduleWakeOverride`]), and
+/// such a host still has to be allowed to shut down afterwards. Mirrors the
+/// `agents_shutdown_requires_mac` / `repos_shutdown_requires_mac` CHECK
+/// constraints.
 pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), ApiError> {
     if wake.wake_timeout_seconds <= 0 {
         return Err(ApiError::BadRequest(
@@ -126,16 +133,18 @@ pub(crate) fn validate_host_wake(wake: &UpdateHostWakeRequest) -> Result<(), Api
             .parse::<std::net::Ipv4Addr>()
             .map_err(|_| ApiError::BadRequest("invalid broadcast address".to_owned()))?;
     }
-    if wake.wake_enabled {
-        if wake.wake_mac_address.is_none() {
+    if wake.wake_mac_address.is_none() {
+        if wake.wake_enabled {
             return Err(ApiError::BadRequest(
                 "a MAC address is required to wake this host".to_owned(),
             ));
         }
-    } else if wake.shutdown_after_backup {
-        return Err(ApiError::BadRequest(
-            "shutting down after backup requires waking the host to be enabled".to_owned(),
-        ));
+        if wake.shutdown_after_backup {
+            return Err(ApiError::BadRequest(
+                "shutting down after backup requires a MAC address to wake this host with"
+                    .to_owned(),
+            ));
+        }
     }
     Ok(())
 }
@@ -296,11 +305,7 @@ pub async fn list_agents(
 ) -> Result<Json<Vec<AgentResponse>>, ApiError> {
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
-    // Wake-on-LAN's MAC/broadcast address let anyone who has them power the
-    // host on remotely, so - like `RepoWithStatsResponse.quota` - they're
-    // gated to operators/admins rather than embedded for any viewer who can
-    // merely see the agent.
-    let can_view_wake_secrets = effective.can_delete_repo || effective.can_view_all_repos;
+    let can_view_wake_secrets = effective.can_view_wake_secrets();
     let include_hidden = query.include_hidden && is_admin;
     let agents = db::list_agents(&state.pool, include_hidden).await?;
     let mut responses = Vec::with_capacity(agents.len());

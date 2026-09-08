@@ -70,7 +70,7 @@ const NEW_SCHEDULE_ROUTE_ID = 'new'
 
 const isCreate = computed(() => props.id === NEW_SCHEDULE_ROUTE_ID)
 
-const { isAdmin } = storeToRefs(useAuthStore())
+const { isAdmin, canViewWakeSecrets } = storeToRefs(useAuthStore())
 
 const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
@@ -309,6 +309,7 @@ function populateForm(s: ScheduleRow): void {
     post_backup_commands: s.post_backup_commands,
     hook_timeout_seconds: s.hook_timeout_seconds,
     missed_backup_threshold: s.missed_backup_threshold,
+    wake_override: s.wake_override,
     catch_up_missed_runs: s.catch_up_missed_runs,
     catch_up_min_lead_minutes: s.catch_up_min_lead_minutes,
     backup_sources: '',
@@ -449,6 +450,7 @@ async function save(): Promise<void> {
       post_backup_commands: dropBlankCommands(form.value.post_backup_commands),
       hook_timeout_seconds: form.value.hook_timeout_seconds,
       missed_backup_threshold: form.value.missed_backup_threshold,
+      wake_override: form.value.wake_override,
       catch_up_missed_runs: form.value.catch_up_missed_runs,
       catch_up_min_lead_minutes: form.value.catch_up_min_lead_minutes,
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
@@ -826,6 +828,7 @@ watch(activeTab, (tab) => {
           :agents="agents"
           :repos="repos"
           :agent-label="agentLabel"
+          :can-see-wake-details="canViewWakeSecrets"
         />
       </div>
 

@@ -8,6 +8,7 @@
 export type RunEventType =
   | "reachability_check"
   | "wake_sent"
+  | "wake_unavailable"
   | "host_online"
   | "agent_start_sent"
   | "agent_connected"

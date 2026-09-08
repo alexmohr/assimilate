@@ -390,6 +390,74 @@ pub enum OnFailure {
     Continue,
 }
 
+/// Whether one schedule wakes the hosts it needs, overriding what those
+/// hosts are configured to do by default.
+///
+/// Only waking is decided here. Starting the agent process over SSH keeps
+/// following the agent's own `start_agent_enabled` flag in every variant, and
+/// a host is still only shut down where this run is what woke it -- so
+/// [`Self::Disabled`] removes the shutdown by removing the wake rather than
+/// by suppressing it separately.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum ScheduleWakeOverride {
+    /// Leave it to each host's own `wake_enabled` flag.
+    #[default]
+    HostDefault,
+    /// Wake every host this schedule needs, even one whose own flag is off.
+    /// A host with no MAC address on file still cannot be woken.
+    Enabled,
+    /// Never wake anything for this schedule, whatever its hosts say.
+    Disabled,
+}
+
+impl ScheduleWakeOverride {
+    /// Resolves this override against a host's own `wake_enabled` flag into
+    /// the single answer a run acts on.
+    #[must_use]
+    pub const fn resolve(self, host_wake_enabled: bool) -> bool {
+        match self {
+            Self::HostDefault => host_wake_enabled,
+            Self::Enabled => true,
+            Self::Disabled => false,
+        }
+    }
+
+    /// Reads the value as stored on a schedule row, falling back to the
+    /// default for anything the CHECK constraint should have kept out.
+    ///
+    /// A schedule's stored override is read both when serving the row to the
+    /// API and when a due run resolves its hosts; sharing one function keeps
+    /// the fallback and the warning identical rather than leaving two copies
+    /// to drift.
+    #[must_use]
+    pub fn from_db_value(schedule_id: i64, raw: &str) -> Self {
+        raw.parse().unwrap_or_else(|_| {
+            tracing::warn!(
+                schedule_id,
+                value = %raw,
+                "invalid wake_override value in database; defaulting to host default"
+            );
+            Self::default()
+        })
+    }
+}
+
 /// Which host a [`RunEventType`] happened to, for a run that may involve both
 /// the backup source (the agent's host) and the repository host.
 #[derive(
@@ -443,6 +511,10 @@ pub enum RunEventType {
     ReachabilityCheck,
     /// A Wake-on-LAN packet was sent because the host didn't respond.
     WakeSent,
+    /// A wake was called for but could not be attempted, because the host has
+    /// no MAC address on file. Only reachable through a schedule's own
+    /// `wake_override`: a host's `wake_enabled` flag already requires one.
+    WakeUnavailable,
     /// The host came back online after being woken.
     HostOnline,
     /// The agent process was started over SSH because it still wasn't
@@ -1684,5 +1756,72 @@ mod tests {
     #[test]
     fn index_status_default_is_pending() {
         assert_eq!(IndexStatus::default(), IndexStatus::Pending);
+    }
+
+    #[test]
+    fn schedule_wake_override_display_roundtrip() {
+        assert_eq!(
+            ScheduleWakeOverride::HostDefault.to_string(),
+            "host_default"
+        );
+        assert_eq!(ScheduleWakeOverride::Enabled.to_string(), "enabled");
+        assert_eq!(ScheduleWakeOverride::Disabled.to_string(), "disabled");
+        assert_eq!(
+            "host_default".parse::<ScheduleWakeOverride>().unwrap(),
+            ScheduleWakeOverride::HostDefault
+        );
+        assert_eq!(
+            "enabled".parse::<ScheduleWakeOverride>().unwrap(),
+            ScheduleWakeOverride::Enabled
+        );
+        assert_eq!(
+            "disabled".parse::<ScheduleWakeOverride>().unwrap(),
+            ScheduleWakeOverride::Disabled
+        );
+        assert!("bogus".parse::<ScheduleWakeOverride>().is_err());
+    }
+
+    #[test]
+    fn schedule_wake_override_default_defers_to_the_host() {
+        assert_eq!(
+            ScheduleWakeOverride::default(),
+            ScheduleWakeOverride::HostDefault
+        );
+    }
+
+    /// Every cell of the host-setting x job-setting matrix the feature is
+    /// specified by: `HostDefault` echoes the host, and the other two ignore
+    /// it in their own direction.
+    #[test]
+    fn schedule_wake_override_resolves_against_the_host_default() {
+        assert!(ScheduleWakeOverride::HostDefault.resolve(true));
+        assert!(!ScheduleWakeOverride::HostDefault.resolve(false));
+        assert!(ScheduleWakeOverride::Enabled.resolve(true));
+        assert!(ScheduleWakeOverride::Enabled.resolve(false));
+        assert!(!ScheduleWakeOverride::Disabled.resolve(true));
+        assert!(!ScheduleWakeOverride::Disabled.resolve(false));
+    }
+
+    /// Both readers of a stored override go through this, so the fallback a
+    /// row outside the CHECK constraint gets is the same whether the API is
+    /// serving the schedule or a due run is resolving its hosts.
+    #[test]
+    fn schedule_wake_override_from_db_value_falls_back_on_junk() {
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, "enabled"),
+            ScheduleWakeOverride::Enabled
+        );
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, "disabled"),
+            ScheduleWakeOverride::Disabled
+        );
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, "bogus"),
+            ScheduleWakeOverride::HostDefault
+        );
+        assert_eq!(
+            ScheduleWakeOverride::from_db_value(1, ""),
+            ScheduleWakeOverride::HostDefault
+        );
     }
 }

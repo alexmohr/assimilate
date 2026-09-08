@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
-    types::{OnFailure, RepoId, ScheduleType, SystemEventType},
+    types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride, SystemEventType},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -1251,6 +1251,10 @@ async fn ensure_target_power(
     target: &DueScheduleRow,
 ) -> (Option<db::AgentRow>, Option<db::RepoRow>) {
     let power_ctx = ctx.power_ctx();
+    // Read off the target row rather than carried on the context: every
+    // target of a schedule shares the schedule's own override, and this is
+    // the only place it is needed.
+    let wake_override = ScheduleWakeOverride::from_db_value(ctx.schedule_id, &target.wake_override);
     let agent_row = match db::get_agent_by_id(ctx.pool, target.agent_id).await {
         Ok(row) => Some(row),
         Err(e) => {
@@ -1294,7 +1298,14 @@ async fn ensure_target_power(
         async {
             match &agent_row {
                 Some(agent) => {
-                    power::ensure_agent_online(power_ctx, agent, target.repo_id, ctx.run_id).await
+                    power::ensure_agent_online(
+                        power_ctx,
+                        agent,
+                        target.repo_id,
+                        ctx.run_id,
+                        wake_override,
+                    )
+                    .await
                 }
                 None => power::AgentPowerOutcome::default(),
             }
@@ -1308,6 +1319,7 @@ async fn ensure_target_power(
                         target.agent_id,
                         ctx.run_id,
                         &target.hostname,
+                        wake_override,
                     )
                     .await
                 }
@@ -2221,6 +2233,7 @@ esac
             pool,
             repo.id,
             &ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "tick-sched",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -3755,6 +3768,7 @@ esac
                 .repo_id
                 .unwrap(),
             &ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "human-disabled-sched",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -3920,6 +3934,7 @@ esac
             &pool,
             repo.id,
             &ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "continue-test-sched",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -4086,6 +4101,7 @@ esac
             &pool,
             repo.id,
             &ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "scoped-reconnect-sched",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",
@@ -4192,6 +4208,7 @@ esac
             .id;
 
         let unrelated_edit_params = |enabled: bool| ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
             name: "tick-sched-renamed",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
@@ -4324,6 +4341,7 @@ esac
             pool,
             repo.id,
             &ScheduleParams {
+                wake_override: ScheduleWakeOverride::HostDefault,
                 name: "tick-sequential-sched",
                 schedule_type: "backup",
                 cron_expression: "0 3 * * *",

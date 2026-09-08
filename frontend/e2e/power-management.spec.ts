@@ -59,4 +59,43 @@ test.describe('Power management', () => {
     await expect(pane.getByRole('button', { name: 'Edit' })).toBeVisible()
     await expect(pane).toContainText('360 seconds')
   })
+
+  /**
+   * The per-schedule override, end to end: web-server-01 has wake details on
+   * file but waking switched off, and exactly one seeded schedule wakes it
+   * anyway. Its power pane names that schedule, the link lands on the
+   * schedule's own Power section, and the read-out there says the host is
+   * woken for this job only.
+   */
+  test('a host names the schedules that wake it, and the link lands on the override', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/agents/web-server-01?tab=settings&section=power')
+    await page.waitForLoadState('networkidle')
+
+    // Scoped to the view that owns it: following the link below leaves both
+    // detail views briefly mounted, and a bare `.settings-pane` then matches
+    // two elements, which Playwright's strict mode rejects.
+    const pane = page.locator('.host-detail .settings-pane')
+    // The wake details stay on screen even though this host does not wake by
+    // default - a schedule still wakes it with them.
+    await expect(pane).toContainText('A4:BB:6D:1F:22:8E')
+    // Count-independent: the demo seeds one schedule that overrides this host,
+    // but the specs share one demo instance and others create schedules of
+    // their own, so the note's singular/plural wording is not ours to pin.
+    await expect(pane).toContainText('whatever the setting above says')
+    await expect(pane.locator('.override-link').first()).toBeVisible()
+
+    await pane.locator('.override-link').first().click()
+    // The route swap resolves after `networkidle` does, so wait on the URL
+    // rather than on the network going quiet.
+    await page.waitForURL(/\/schedules\/\d+/)
+    await page.waitForLoadState('networkidle')
+
+    const power = page.locator('.schedule-detail .settings-pane')
+    await expect(power.locator('.segmented-option[aria-checked="true"]')).toHaveText('Enabled')
+    await expect(power).toContainText('Woken for this job only')
+    await expect(power).toContainText('web-server-01')
+  })
 })

@@ -11,7 +11,7 @@ use crate::{
     types::{
         BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
         FindingStatus, IndexStatus, OnFailure, QuotaAction, RunEventTarget, RunEventType,
-        ScheduleType, SearchEntry, Visibility,
+        ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -90,6 +90,11 @@ pub struct MeResponse {
     pub remember_me: bool,
     /// Whether the user has permission to upgrade agents.
     pub can_upgrade_agent: bool,
+    /// Whether the user may see a host's Wake-on-LAN MAC and broadcast
+    /// address, which the agent and repo endpoints redact below
+    /// operator. The UI needs the answer to tell "no MAC configured" apart
+    /// from "not shown to you".
+    pub can_view_wake_secrets: bool,
     /// Whether TOTP is enabled for the user.
     pub totp_enabled: bool,
 }
@@ -764,6 +769,9 @@ pub struct ScheduleResponse {
     #[ts(type = "string")]
     /// Visibility scope of this entity.
     pub visibility: Visibility,
+    /// Whether this schedule wakes the hosts it needs, overriding what those
+    /// hosts default to.
+    pub wake_override: ScheduleWakeOverride,
     /// Hostnames targeted by this schedule.
     pub target_hostnames: Vec<String>,
     /// How many of this schedule's targets have a run waiting to be caught up
@@ -2301,6 +2309,11 @@ pub struct ScheduleExportResponse {
     /// is marked failed and auto-disabled.
     #[serde(default = "default_missed_backup_threshold")]
     pub missed_backup_threshold: i32,
+    /// Whether this schedule wakes the hosts it needs, overriding what those
+    /// hosts default to. Defaulted for exports predating the field.
+    #[ts(type = "string")]
+    #[serde(default)]
+    pub wake_override: ScheduleWakeOverride,
     /// Whether a run missed while a target host was unreachable is caught up on
     /// reconnect.
     #[serde(default)]

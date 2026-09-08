@@ -10,6 +10,7 @@ import type {
   HookCommand,
   ScheduleBackupSourcesResponse,
   ScheduleTargetResponse,
+  ScheduleWakeOverride,
   HealthSummaryResponse,
 } from '../types/generated'
 
@@ -49,6 +50,7 @@ export interface CreateScheduleRequest {
   post_backup_commands: HookCommand[]
   hook_timeout_seconds: number
   missed_backup_threshold: number
+  wake_override: ScheduleWakeOverride
   catch_up_missed_runs: boolean
   catch_up_min_lead_minutes: number
   backup_sources: string[]

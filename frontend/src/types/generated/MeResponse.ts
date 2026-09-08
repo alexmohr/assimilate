@@ -33,6 +33,13 @@ export type MeResponse = {
    */
   can_upgrade_agent: boolean;
   /**
+   * Whether the user may see a host's Wake-on-LAN MAC and broadcast
+   * address, which the agent and repo endpoints redact below
+   * operator. The UI needs the answer to tell "no MAC configured" apart
+   * from "not shown to you".
+   */
+  can_view_wake_secrets: boolean;
+  /**
    * Whether TOTP is enabled for the user.
    */
   totp_enabled: boolean;

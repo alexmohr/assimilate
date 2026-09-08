@@ -14,6 +14,7 @@ pub use shared::responses::{
 use shared::{
     crypto::encrypt_passphrase,
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
+    types::ScheduleWakeOverride,
 };
 
 use super::auth::RequireAdmin;
@@ -239,6 +240,7 @@ async fn build_schedule_export(
         post_backup_commands,
         hook_timeout_seconds: sched.hook_timeout_seconds,
         missed_backup_threshold: sched.missed_backup_threshold,
+        wake_override: ScheduleWakeOverride::from_db_value(sched.id, &sched.wake_override),
         catch_up_missed_runs: sched.catch_up_missed_runs,
         catch_up_min_lead_minutes: sched.catch_up_min_lead_minutes,
         repo_name,
@@ -578,6 +580,7 @@ async fn import_schedule(
     let post_backup_commands = clamp_hook_command_timeouts(&sched.post_backup_commands);
 
     let params = ScheduleParams {
+        wake_override: sched.wake_override,
         name: &sched.name,
         schedule_type: &schedule_type_str,
         cron_expression: &sched.cron_expression,

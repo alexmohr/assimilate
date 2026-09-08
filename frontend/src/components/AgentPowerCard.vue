@@ -4,12 +4,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { updateAgentPower } from '../api/agents'
+import { listSchedules } from '../api/schedules'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
+import type { ScheduleRow } from '../types/schedule'
 
 /**
  * Waking an agent's host before a backup, and starting the agent process
@@ -32,6 +34,63 @@ const editing = ref(false)
 const saving = ref(false)
 const error = ref<string | null>(null)
 
+/**
+ * Schedules that wake this host whatever the toggle below says. Without
+ * naming them, switching waking off here would reasonably read as "this host
+ * is never woken" - and be wrong.
+ *
+ * Scoped to what the viewer may see: `GET /schedules` runs every row through
+ * `is_visible_to_user`, so someone else's private schedule is left out even
+ * though it does wake the host. Naming it would leak its existence and its
+ * name, and the note links to each one - so the note under-reports rather
+ * than reporting past the visibility rule. Nothing about a run depends on
+ * this: waking resolves server-side over every schedule. Best-effort in the
+ * same spirit: a failed load leaves the note out rather than failing the
+ * pane, which is about the settings themselves.
+ */
+const overridingSchedules = ref<ScheduleRow[]>([])
+
+onMounted(async () => {
+  try {
+    const rows = await listSchedules()
+    overridingSchedules.value = rows.filter(
+      (s) => s.wake_override === 'enabled' && s.target_hostnames.includes(props.agent.hostname),
+    )
+  } catch {
+    overridingSchedules.value = []
+  }
+})
+
+/**
+ * The wake details stay on screen once a schedule can use them on their own,
+ * so switching the host's own toggle off no longer hides the MAC address a
+ * job still wakes it with. The MAC is redacted for viewers below operator,
+ * hence the third term: a shutdown is only configurable alongside one.
+ */
+const showWakeDetails = computed(
+  () =>
+    props.agent.power.wake.wake_enabled ||
+    props.agent.power.wake.wake_mac_address !== null ||
+    props.agent.power.wake.shutdown_after_backup,
+)
+
+/**
+ * How to render a MAC or broadcast address that is not there.
+ *
+ * `redact_wake_secrets` nulls both for a viewer below operator, which is
+ * indistinguishable from "none configured" by value alone - but not by
+ * context: `agents_wake_requires_mac` and `agents_shutdown_requires_mac`
+ * both guarantee a MAC exists whenever waking or shutting down is on. So a
+ * host that wakes or shuts down while showing no address is showing a
+ * redacted one, and saying "Not set" there would be a lie that reads as a
+ * broken host.
+ */
+const wakeSecretsHidden = computed(
+  () =>
+    props.agent.power.wake.wake_mac_address === null &&
+    (props.agent.power.wake.wake_enabled || props.agent.power.wake.shutdown_after_backup),
+)
+
 const wakeEnabled = ref(false)
 const wakeMac = ref('')
 const wakeBroadcast = ref('')
@@ -43,25 +102,33 @@ const sshHost = ref('')
 const sshPort = ref(22)
 const serviceName = ref('assimilate-agent')
 
-// A dependent toggle's field is only hidden by the parent's v-if, not reset -
-// left stale it would silently resubmit a value the server rejects once the
-// parent that justified it is off, with no way back to the field that fixes it.
-watch(wakeEnabled, (enabled) => {
-  if (!enabled) shutdownAfterBackup.value = false
+// Shutting down needs something that can wake the host, which since
+// per-schedule wake overrides means a MAC address rather than this host's own
+// wake toggle - a host woken only by one job still has to be able to power
+// off afterwards. Mirrors the `agents_shutdown_requires_mac` constraint: left
+// stale, this would resubmit a value the server rejects, with the field that
+// fixes it out of reach.
+watch(wakeMac, (mac) => {
+  if (mac.trim() === '') shutdownAfterBackup.value = false
 })
 watch(startAgentEnabled, (enabled) => {
   if (!enabled) stopAgentAfterBackup.value = false
 })
 
 // Shutting down needs an SSH destination just as much as starting the agent
-// does - a wake-only host (wake + shutdown enabled, agent already running as
-// a persistent service) never sets startAgentEnabled, but still needs
+// does - a wake-only host (shutdown enabled, agent already running as a
+// persistent service) never sets startAgentEnabled, but still needs
 // somewhere to send `shutdown -h now`. The field lives in the "Agent
 // process" section for layout reasons, but its visibility follows both
 // toggles that can need it, not just start-agent.
-const needsSshHost = computed(
-  () => startAgentEnabled.value || (wakeEnabled.value && shutdownAfterBackup.value),
-)
+//
+// This mirrors `update_agent_power`'s own rule exactly - start-agent OR
+// shutdown, independent of this host's wake toggle. Since a shutdown now
+// only requires a MAC address, a host whose own toggle is off can enable one
+// (a schedule's override wakes it), and gating the field on wakeEnabled too
+// would leave the server rejecting the save with the field that fixes it
+// unrendered.
+const needsSshHost = computed(() => startAgentEnabled.value || shutdownAfterBackup.value)
 
 function startEdit(): void {
   const power = props.agent.power
@@ -134,17 +201,51 @@ async function save(): Promise<void> {
         <dl class="info-grid">
           <dt>Wake host before backup</dt>
           <dd>{{ agent.power.wake.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
-          <template v-if="agent.power.wake.wake_enabled">
+          <template v-if="showWakeDetails">
             <dt>MAC address</dt>
-            <dd class="mono">{{ agent.power.wake.wake_mac_address ?? 'Not set' }}</dd>
+            <!--
+              No "Not set" branch here: this block only renders when the host
+              wakes, shuts down, or has an address on file, so a null MAC
+              inside it is always a redacted one. A host with none configured
+              never gets this far - see showWakeDetails. The broadcast address
+              below is different: it is not part of that condition, so it can
+              genuinely be absent.
+            -->
+            <dd class="mono">{{ agent.power.wake.wake_mac_address ?? 'Hidden' }}</dd>
             <dt>Broadcast address</dt>
-            <dd class="mono">{{ agent.power.wake.wake_broadcast_address ?? 'Default' }}</dd>
+            <dd class="mono">
+              {{
+                agent.power.wake.wake_broadcast_address ??
+                (wakeSecretsHidden ? 'Hidden' : 'Default')
+              }}
+            </dd>
             <dt>Wait for host</dt>
             <dd>{{ agent.power.wake.wake_timeout_seconds }} seconds</dd>
             <dt>Shut down host after backup</dt>
             <dd>{{ agent.power.wake.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
           </template>
         </dl>
+        <p class="field-hint">
+          This is the default for jobs that do not set their own. A schedule can override it under
+          its Settings, in Power.
+        </p>
+        <p
+          v-if="overridingSchedules.length > 0"
+          class="field-hint"
+        >
+          {{ overridingSchedules.length }}
+          {{ overridingSchedules.length === 1 ? 'schedule wakes' : 'schedules wake' }} this host
+          whatever the setting above says:
+          <span class="override-links">
+            <RouterLink
+              v-for="s in overridingSchedules"
+              :key="s.id"
+              class="override-link"
+              :to="`/schedules/${s.id}?tab=settings&section=power`"
+              >{{ s.name || `Schedule #${s.id}` }}</RouterLink
+            >
+          </span>
+        </p>
       </section>
 
       <section class="pane-section">
@@ -155,10 +256,7 @@ async function save(): Promise<void> {
           <dt>Start agent before backup</dt>
           <dd>{{ agent.power.start_agent_enabled ? 'Enabled' : 'Disabled' }}</dd>
           <template
-            v-if="
-              agent.power.start_agent_enabled ||
-              (agent.power.wake.wake_enabled && agent.power.wake.shutdown_after_backup)
-            "
+            v-if="agent.power.start_agent_enabled || agent.power.wake.shutdown_after_backup"
           >
             <dt>SSH host</dt>
             <dd class="mono">{{ agent.power.ssh_host ?? 'Not set' }}:{{ agent.power.ssh_port }}</dd>
@@ -187,73 +285,76 @@ async function save(): Promise<void> {
             <p class="field-title">Wake host before backup</p>
             <p class="field-hint">
               Checked before every backup - the Wake-on-LAN packet below is only sent if the agent
-              doesn't already respond.
+              doesn't already respond. This is the default for jobs that do not set their own; a
+              schedule can override it either way.
             </p>
           </div>
           <ToggleSwitch v-model="wakeEnabled" />
         </div>
 
-        <template v-if="wakeEnabled">
-          <div class="field">
-            <label
-              class="field-label"
-              for="power-wake-mac"
-              >MAC address</label
-            >
-            <input
-              id="power-wake-mac"
-              v-model="wakeMac"
-              class="input mono"
-              placeholder="3C:97:0E:2B:9A:44"
-            />
-          </div>
+        <div class="field">
+          <label
+            class="field-label"
+            for="power-wake-mac"
+            >MAC address</label
+          >
+          <input
+            id="power-wake-mac"
+            v-model="wakeMac"
+            class="input mono"
+            placeholder="3C:97:0E:2B:9A:44"
+          />
+          <span class="field-hint"
+            >Used whenever this host is woken - by the setting above, or by a schedule that asks for
+            it under its own Power settings.</span
+          >
+        </div>
 
-          <div class="field">
-            <label
-              class="field-label"
-              for="power-wake-broadcast"
-              >Broadcast address</label
-            >
-            <input
-              id="power-wake-broadcast"
-              v-model="wakeBroadcast"
-              class="input mono"
-              placeholder="192.168.1.255"
-            />
-            <span class="field-hint"
-              >Optional - defaults to the global broadcast address when unset.</span
-            >
-          </div>
+        <div class="field">
+          <label
+            class="field-label"
+            for="power-wake-broadcast"
+            >Broadcast address</label
+          >
+          <input
+            id="power-wake-broadcast"
+            v-model="wakeBroadcast"
+            class="input mono"
+            placeholder="192.168.1.255"
+          />
+          <span class="field-hint"
+            >Optional - defaults to the global broadcast address when unset.</span
+          >
+        </div>
 
-          <div class="field">
-            <label
-              class="field-label"
-              for="power-wake-timeout"
-              >Wait for host (seconds)</label
-            >
-            <input
-              id="power-wake-timeout"
-              v-model.number="wakeTimeout"
-              type="number"
-              min="1"
-              class="input"
-            />
-            <span class="field-hint"
-              >How long to wait for the agent to reconnect before the backup is marked failed.</span
-            >
-          </div>
+        <div class="field">
+          <label
+            class="field-label"
+            for="power-wake-timeout"
+            >Wait for host (seconds)</label
+          >
+          <input
+            id="power-wake-timeout"
+            v-model.number="wakeTimeout"
+            type="number"
+            min="1"
+            class="input"
+          />
+          <span class="field-hint"
+            >How long to wait for the agent to reconnect before the backup is marked failed.</span
+          >
+        </div>
 
-          <div class="field field-inline">
-            <div class="field-body">
-              <p class="field-title">Shut down host after backup</p>
-              <p class="field-hint">
-                Only if this run woke it - a host that was already on when the backup started is
-                left running.
-              </p>
-            </div>
-            <ToggleSwitch v-model="shutdownAfterBackup" />
+        <div class="field field-inline">
+          <div class="field-body">
+            <p class="field-title">Shut down host after backup</p>
+            <p class="field-hint">
+              Only if this run woke it - a host that was already on when the backup started is left
+              running.
+            </p>
           </div>
-        </template>
+          <ToggleSwitch v-model="shutdownAfterBackup" />
+        </div>
       </section>
 
       <section class="pane-section">

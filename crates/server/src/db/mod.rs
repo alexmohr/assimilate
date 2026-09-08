@@ -24,7 +24,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared::{
     hooks::HookCommand,
-    types::{AcknowledgedFilter, BackupStatus, ScheduleType, SystemEventSeverity, SystemEventType},
+    types::{
+        AcknowledgedFilter, BackupStatus, ScheduleType, ScheduleWakeOverride, SystemEventSeverity,
+        SystemEventType,
+    },
 };
 use sqlx::PgPool;
 
@@ -520,6 +523,11 @@ pub struct ScheduleRow {
     pub owner_id: Option<i64>,
     /// Visibility scope.
     pub visibility: String,
+    /// Whether this schedule wakes the hosts it needs, overriding what those
+    /// hosts default to. One of `host_default`, `enabled`, `disabled` -
+    /// parsed into [`shared::types::ScheduleWakeOverride`] at the point of
+    /// use.
+    pub wake_override: String,
     /// Hostnames of target agents, resolved at query time.
     #[serde(default)]
     #[sqlx(default)]
@@ -2405,11 +2413,12 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
          HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
          s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, \
          s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY(SELECT a.hostname FROM \
-         schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id \
-         ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\", (SELECT COUNT(*) FROM \
-         schedule_targets stc WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT \
-         NULL) AS \"catch_up_pending_count!\" FROM schedules s ORDER BY s.id",
+         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY(SELECT \
+         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
+         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\", \
+         (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id = s.id AND \
+         stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM schedules s \
+         ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -2472,6 +2481,9 @@ pub struct ScheduleParams<'a> {
     pub on_failure: &'a str,
     /// Raw file-change detection pattern text.
     pub file_change_patterns_raw: &'a str,
+    /// Whether this schedule wakes the hosts it needs, overriding the hosts'
+    /// own defaults.
+    pub wake_override: ScheduleWakeOverride,
 }
 
 /// # Errors
@@ -2490,18 +2502,19 @@ pub async fn insert_schedule(
          keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
          rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, \
          owner_id, hook_timeout_seconds, missed_backup_threshold, vm_snapshot_enabled, \
-         catch_up_missed_runs, catch_up_min_lead_minutes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-         $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, $21, $22, $23, \
-         $24, $25) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, \
-         canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
-         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands AS \
-         \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
-         HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_missed_runs, \
-         catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
+         catch_up_missed_runs, catch_up_min_lead_minutes, wake_override) VALUES ($1, $2, $3, $4, \
+         $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sequential', $19, $20, \
+         $21, $22, $23, $24, $25, $26) RETURNING id, repo_id, name, schedule_type, \
+         cron_expression, enabled, canary_enabled, vm_snapshot_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands AS \"pre_backup_commands: HookCommands\", post_backup_commands AS \
+         \"post_backup_commands: HookCommands\", hook_timeout_seconds, missed_backup_threshold, \
+         catch_up_missed_runs, catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, \
+         visibility, wake_override, consecutive_failures, auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -2527,6 +2540,7 @@ pub async fn insert_schedule(
         params.vm_snapshot_enabled,
         params.catch_up_missed_runs,
         params.catch_up_min_lead_minutes,
+        params.wake_override.to_string(),
     )
     .fetch_one(pool)
     .await
@@ -2561,7 +2575,7 @@ pub async fn update_schedule(
          $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, \
          post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18, \
          hook_timeout_seconds = $19, missed_backup_threshold = $20, vm_snapshot_enabled = $21, \
-         catch_up_missed_runs = $22, catch_up_min_lead_minutes = $23, \
+         catch_up_missed_runs = $22, catch_up_min_lead_minutes = $23, wake_override = $24, \
          auto_disabled_agent_unreachable = CASE WHEN enabled IS DISTINCT FROM $4 THEN false ELSE \
          auto_disabled_agent_unreachable END, auto_disabled_by_agent_id = CASE WHEN enabled IS \
          DISTINCT FROM $4 THEN NULL ELSE auto_disabled_by_agent_id END, consecutive_failures = \
@@ -2575,7 +2589,7 @@ pub async fn update_schedule(
          HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \
          hook_timeout_seconds, missed_backup_threshold, catch_up_missed_runs, \
          catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
          \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
          = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\"",
         id,
@@ -2601,6 +2615,7 @@ pub async fn update_schedule(
         params.vm_snapshot_enabled,
         params.catch_up_missed_runs,
         params.catch_up_min_lead_minutes,
+        params.wake_override.to_string(),
     )
     .fetch_one(pool)
     .await
@@ -3298,7 +3313,7 @@ pub async fn get_schedule_for_repo(
          \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
          HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_missed_runs, \
          catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
          \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
          = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" \
          FROM schedules WHERE repo_id = $1",
@@ -3334,12 +3349,12 @@ pub async fn get_schedule_for_hostname_repo(
          HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
          s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, \
          s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON \
-         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 \
-         LIMIT 1",
+         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id \
+         = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
+         s.schedule_type = $3 LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -3366,12 +3381,12 @@ pub async fn list_schedules_for_repo(
          HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
          s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, \
          s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, COALESCE(ARRAY(SELECT \
-         a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE \
-         st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM \
-         schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
+         COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = \
+         st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), \
+         ARRAY[]::TEXT[]) AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -3413,11 +3428,11 @@ pub async fn list_schedules_for_agent(
          HookCommands\", s.post_backup_commands AS \"post_backup_commands: HookCommands\", \
          s.hook_timeout_seconds, s.missed_backup_threshold, s.catch_up_missed_runs, \
          s.catch_up_min_lead_minutes, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         s.consecutive_failures, s.auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
-         \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
-         = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 \
-         ORDER by s.id",
+         s.wake_override, s.consecutive_failures, s.auto_disabled_agent_unreachable, \
+         ARRAY[]::TEXT[] AS \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc \
+         WHERE stc.schedule_id = s.id AND stc.catch_up_pending_for IS NOT NULL) AS \
+         \"catch_up_pending_count!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id \
+         = s.id WHERE st.agent_id = $1 ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3452,6 +3467,10 @@ pub struct DueScheduleRow {
     /// Whether this schedule catches up a run missed because the target host was
     /// unreachable, once that host reconnects.
     pub catch_up_missed_runs: bool,
+    /// Whether this schedule wakes the hosts it needs, overriding what those
+    /// hosts default to - parsed into
+    /// [`shared::types::ScheduleWakeOverride`] by the scheduler.
+    pub wake_override: String,
     /// The occurrence this tick is running: the `next_run_at` that came due. Recorded
     /// as the target's pending catch-up when the host turns out to be unreachable.
     pub due_at: DateTime<Utc>,
@@ -3468,11 +3487,11 @@ pub async fn list_due_schedules(
         DueScheduleRow,
         "SELECT s.id AS schedule_id, s.name AS schedule_name, s.repo_id AS \"repo_id!\", \
          st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, \
-         st.execution_order, s.missed_backup_threshold, s.catch_up_missed_runs, s.next_run_at AS \
-         \"due_at!\" FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st \
-         ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND \
-         r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at \
-         <= $1 ORDER BY s.id, st.execution_order",
+         st.execution_order, s.missed_backup_threshold, s.catch_up_missed_runs, s.wake_override, \
+         s.next_run_at AS \"due_at!\" FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN \
+         schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE \
+         s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT \
+         NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
         now,
     )
     .fetch_all(pool)
@@ -3850,7 +3869,7 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
          \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
          HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_missed_runs, \
          catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
          \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
          = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" \
          FROM schedules WHERE id = $1",
@@ -7689,6 +7708,78 @@ pub struct RoleRow {
     pub created_at: DateTime<Utc>,
 }
 
+#[cfg(test)]
+mod wake_secret_permission_tests {
+    use chrono::Utc;
+
+    use super::RoleRow;
+
+    /// A role holding no permissions at all.
+    fn none() -> RoleRow {
+        RoleRow {
+            id: 0,
+            name: String::from("effective"),
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+            can_upgrade_agent: false,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn a_plain_viewer_may_not_see_wake_secrets() {
+        assert!(!none().can_view_wake_secrets());
+    }
+
+    #[test]
+    fn an_admin_may_see_wake_secrets() {
+        let role = RoleRow {
+            can_delete_repo: true,
+            ..none()
+        };
+        assert!(role.can_view_wake_secrets());
+    }
+
+    /// The operator tier: no repo deletion, but sight of every repo. It sees
+    /// the addresses too, which is why the frontend must not gate the wake
+    /// read-out on the admin role alone.
+    #[test]
+    fn an_operator_may_see_wake_secrets() {
+        let role = RoleRow {
+            can_view_all_repos: true,
+            ..none()
+        };
+        assert!(role.can_view_wake_secrets());
+    }
+}
+
+impl RoleRow {
+    /// Whether these permissions may see a host's Wake-on-LAN MAC and
+    /// broadcast address.
+    ///
+    /// The addresses let anyone holding them power the host on remotely, so
+    /// they are gated to operators and admins rather than embedded for every
+    /// viewer who can merely see the host. Encoded here once because three
+    /// endpoints ask the same question: the agent and repo listings redact
+    /// the fields, and `/auth/me` reports the answer so the frontend knows
+    /// whether an absent address means "none configured" or "not shown to
+    /// you".
+    #[must_use]
+    pub const fn can_view_wake_secrets(&self) -> bool {
+        self.can_delete_repo || self.can_view_all_repos
+    }
+}
+
 /// A row from the `user_groups` join table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct UserGroupRow {
@@ -8667,7 +8758,7 @@ pub async fn get_enabled_schedules_for_calendar(
          \"pre_backup_commands: HookCommands\", post_backup_commands AS \"post_backup_commands: \
          HookCommands\", hook_timeout_seconds, missed_backup_threshold, catch_up_missed_runs, \
          catch_up_min_lead_minutes, execution_mode, on_failure, owner_id, visibility, \
-         consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
+         wake_override, consecutive_failures, auto_disabled_agent_unreachable, ARRAY[]::TEXT[] AS \
          \"target_hostnames!\", (SELECT COUNT(*) FROM schedule_targets stc WHERE stc.schedule_id \
          = schedules.id AND stc.catch_up_pending_for IS NOT NULL) AS \"catch_up_pending_count!\" \
          FROM schedules WHERE enabled = true",

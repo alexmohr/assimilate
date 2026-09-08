@@ -250,7 +250,8 @@ fn test_app_repo_routes() -> Router<server::AppState> {
         )
         .route(
             "/api/schedules",
-            get(server::api::schedules::list_schedules),
+            get(server::api::schedules::list_schedules)
+                .post(server::api::schedules::create_schedule),
         )
         .route(
             "/api/schedules/{id}",
@@ -975,9 +976,13 @@ async fn test_update_agent_power_rejects_malformed_broadcast_address() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// Shutting down requires a MAC address rather than the host's own wake
+/// toggle: a schedule's `wake_override` can wake a host whose toggle is off,
+/// and that host still has to be allowed a shutdown afterwards. A host with
+/// no MAC address has nothing that could ever wake it, so it stays rejected.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
-async fn test_update_agent_power_rejects_shutdown_without_wake() {
+async fn test_update_agent_power_rejects_shutdown_without_a_mac_address() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
@@ -1393,6 +1398,42 @@ async fn test_update_repo_power_rejects_malformed_mac_even_with_wake_disabled() 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// The repository-host counterpart to
+/// `test_update_agent_power_allows_shutdown_with_a_mac_but_wake_off`: a
+/// shutdown keys off having a MAC address rather than off the host's own
+/// wake toggle, since a schedule's override can wake a host the toggle
+/// leaves alone. `update_repo_power` shares `validate_host_wake` with the
+/// agent endpoint, and this pins that the shared relaxation is actually
+/// reached through the repo route rather than only at the DB layer.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_repo_power_allows_shutdown_with_a_mac_but_wake_off() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "power-repo-shutdown-no-wake").await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/repos/{repo_id}/power"),
+        Some(json!({
+            "wake_enabled": false,
+            "wake_mac_address": "9C:B6:D0:1A:44:7F",
+            "wake_broadcast_address": null,
+            "shutdown_after_backup": true
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    let status = resp.status();
+    let body = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let power = body.get("power").unwrap();
+    assert_eq!(power.get("wake_enabled").unwrap(), false);
+    assert_eq!(power.get("shutdown_after_backup").unwrap(), true);
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_update_repo_power_rejects_malformed_broadcast_address() {
@@ -1460,6 +1501,15 @@ async fn test_update_repo_power_persists_and_returns_settings() {
 /// agent/repo but isn't an operator/admin.
 #[cfg(test)]
 async fn insert_viewer_only_session(pool: &PgPool, label: &str) -> String {
+    insert_session_with_role(pool, label, false).await
+}
+
+/// Inserts a user holding one custom role and an active session for them,
+/// returning the session cookie value. `can_view_all_repos` is the operator
+/// tier's distinguishing permission: it grants sight of the wake
+/// MAC/broadcast address without granting the admin's `can_delete_repo`.
+#[cfg(test)]
+async fn insert_session_with_role(pool: &PgPool, label: &str, can_view_all_repos: bool) -> String {
     let user = server::db::insert_user(pool, &format!("{label}-user"), "hash")
         .await
         .unwrap();
@@ -1474,10 +1524,11 @@ async fn insert_viewer_only_session(pool: &PgPool, label: &str) -> String {
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
          can_manage_tunnels, can_upgrade_agent) VALUES ($1, false, false, false, false, false, \
-         false, false, false, false, false, false, false, false) ON CONFLICT (name) DO UPDATE SET \
-         name = EXCLUDED.name RETURNING id",
+         false, false, false, false, false, $2, false, false) ON CONFLICT (name) DO UPDATE SET \
+         can_view_all_repos = EXCLUDED.can_view_all_repos RETURNING id",
     )
     .bind(format!("{label}-role"))
+    .bind(can_view_all_repos)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -1673,6 +1724,45 @@ async fn test_repo_responses_redact_wake_secrets_for_non_privileged_viewer() {
             .unwrap()
             .is_null(),
         "list_repos_with_stats must also redact the MAC address for a non-privileged viewer"
+    );
+}
+
+/// The schedule's Power read-out tells "this host has no MAC address" apart
+/// from "the address was redacted for you" using `/auth/me`'s
+/// `can_view_wake_secrets`. It must follow the same rule the redaction
+/// itself does - `can_delete_repo` OR `can_view_all_repos` - and not the
+/// admin role, or an operator would be told a host cannot be woken purely
+/// because the UI assumed it had been redacted.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_auth_me_reports_wake_secret_visibility_per_permission() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let viewer = insert_session_with_role(&pool, "me-wake-viewer", false).await;
+    let resp = oneshot(&mut app, get_request_as("/api/auth/me", &viewer)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("can_view_wake_secrets").unwrap(),
+        false,
+        "a viewer whose wake addresses are redacted must be told so: {body}"
+    );
+
+    let operator = insert_session_with_role(&pool, "me-wake-operator", true).await;
+    let resp = oneshot(&mut app, get_request_as("/api/auth/me", &operator)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("can_view_wake_secrets").unwrap(),
+        true,
+        "can_view_all_repos alone grants sight of the wake addresses: {body}"
+    );
+    assert_eq!(
+        body.get("role").unwrap(),
+        "me-wake-operator-role",
+        "this must be an operator, not an admin: {body}"
     );
 }
 
@@ -8973,4 +9063,126 @@ async fn test_agent_vms_unknown_host_is_not_found() {
 
     let response = oneshot(&mut app, get_request("/api/agents/no-such-host/vms")).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_agent_power_allows_shutdown_with_a_mac_but_wake_off() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent = server::db::insert_agent(&pool, "power-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    // Shutting down goes over SSH, so the endpoint requires the key to have
+    // been deployed to the host at least once already.
+    server::db::update_last_ssh_user(&pool, agent.id, "borg")
+        .await
+        .unwrap();
+
+    let req = json_request(
+        "PUT",
+        "/api/agents/power-host/power",
+        Some(json!({
+            "wake": {
+                "wake_enabled": false,
+                "wake_mac_address": "9C:B6:D0:1A:44:7F",
+                "wake_broadcast_address": null,
+                "shutdown_after_backup": true
+            },
+            "start_agent_enabled": false,
+            "stop_agent_after_backup": false,
+            "ssh_host": "power-host"
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    let status = resp.status();
+    let body = body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+}
+
+/// Omitting `wake_override` on an update leaves the stored value alone -
+/// every other field the form does not send behaves the same way, and a
+/// silent reset to the host default would quietly undo the setting.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_leaves_wake_override_alone_when_omitted(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('wake-keep-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "wake-keep-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let set = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "wake_override": "disabled",
+        })),
+    );
+    assert_eq!(oneshot(&mut app, set).await.status(), StatusCode::OK);
+
+    let untouched = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 4 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+        })),
+    );
+    let resp = oneshot(&mut app, untouched).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("wake_override").unwrap(), "disabled");
+}
+
+/// An unknown value is a deserialization failure, not a silently stored
+/// string the scheduler would later have to guess at.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_update_rejects_an_unknown_wake_override(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('wake-bogus-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "wake-bogus-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "PUT",
+        &format!("/api/schedules/{schedule_id}"),
+        Some(json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+            "wake_override": "sometimes",
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    let status = resp.status();
+    let body = body_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body:?}");
+    assert!(
+        body.get("error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|e| e.contains("wake_override")),
+        "the rejection must name the offending field: {body:?}"
+    );
 }

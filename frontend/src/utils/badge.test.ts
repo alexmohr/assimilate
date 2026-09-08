@@ -111,12 +111,17 @@ describe('agentPowerPhase', () => {
     },
   )
 
-  it.each(['agent_connected', 'host_offline', 'agent_stopped'] as RunEventType[])(
-    'maps %s to null, ending the transient phase',
-    (eventType) => {
-      expect(agentPowerPhase(eventType)).toBeNull()
-    },
-  )
+  // `wake_unavailable` ends the phase for a different reason than the rest:
+  // nothing was done to the host at all, because the schedule asked for a
+  // wake it has no MAC address for.
+  it.each([
+    'agent_connected',
+    'host_offline',
+    'agent_stopped',
+    'wake_unavailable',
+  ] as RunEventType[])('maps %s to null, ending the transient phase', (eventType) => {
+    expect(agentPowerPhase(eventType)).toBeNull()
+  })
 })
 
 describe('systemEventTone', () => {

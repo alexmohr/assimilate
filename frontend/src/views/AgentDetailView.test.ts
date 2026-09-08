@@ -381,6 +381,35 @@ describe('AgentDetailView — logs tab', () => {
     expect(wrapper.text()).toContain('No backup reports available.')
   })
 
+  // Regression test: a run dispatched elsewhere (a cron firing, another
+  // session's Run now) never touches this page directly - the server's
+  // DataChanged broadcast (sent on every backup start and completion, see
+  // run_dispatch.rs/ws/handler.rs) is the only signal it gets. DataChanged
+  // routes through fetchAgent() -> loadTabData() -> reportsPager.load(), so a
+  // fourth report appearing server-side must show up here without any user
+  // action, not just on the next full page load.
+  it('picks up a new report from a DataChanged event without user action', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openLogsTab(wrapper)
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
+
+    const withNewReport = [
+      ...mockReports,
+      { ...mockReports[0], id: 4, archive_name: 'test-host-2026-06-04T10:00:00' },
+    ]
+    setupApi(withNewReport)
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(4)
+  })
+
   it('highlights the report matching the archive query param', async () => {
     setupApi()
     const wrapper = renderWithPlugins(AgentDetailView, {

@@ -1622,6 +1622,47 @@ describe('ScheduleDetailView - Backups tab', () => {
     expect(after).toBe(before + 2)
   })
 
+  // Regression test: a run dispatched elsewhere (a cron firing, another
+  // session's Run now) never touches this page directly - the server's
+  // DataChanged broadcast (sent on every backup start and completion) is the
+  // only signal it gets, and it must reach the Logs tab too, not just the
+  // Backups/Archives tab this describe block otherwise exercises.
+  it('picks up a new report on the Logs tab from a DataChanged event without user action', async () => {
+    const report = {
+      id: 1,
+      status: 'success',
+      archive_name: 'test-archive-2026-06-01',
+      started_at: '2026-06-01T02:00:00Z',
+      finished_at: '2026-06-01T02:05:00Z',
+      original_size: 500,
+      agent_id: 10,
+      hostname: 'web-server-01',
+    }
+    const wrapper = await createBackupsWrapper([report])
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text().startsWith('Logs'))!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(1)
+
+    const withNewReport = [
+      report,
+      {
+        ...report,
+        id: 2,
+        archive_name: 'test-archive-2026-06-02',
+        started_at: '2026-06-02T02:00:00Z',
+      },
+    ]
+    setupBackupWithReports(withNewReport)
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
+  })
+
   // The count backs a menu badge, not the page itself - a failure fetching
   // it during a refresh must not break the report list refresh alongside it
   // (regression: it used to sit inside the same Promise.all as the report

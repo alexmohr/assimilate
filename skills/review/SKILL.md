@@ -429,7 +429,11 @@ status itself.
 **Auto-merge never lands a change to `.github/`.** Before merging,
 `autoMergeIfApproved` lists the PR's files and bails if any of them (or any
 `previous_filename`, so a rename out of the directory can't launder one) sits
-under `.github/`. That directory holds every gate this automation trusts —
+under `.github/` — or if the list came back at GitHub's 3000-file cap, where
+it is silently truncated and a `.github/` change past the cut simply would not
+appear. An unprovable list counts as protected rather than as clean, since a
+bulk or generated diff hiding a rail edit is the shape this guard exists to
+catch. That directory holds every gate this automation trusts —
 the coverage-diff analyzer, the duplicate-code check, the workflows, and
 `sync-pr-labels.js` itself, which decides what `ready to merge` means. A PR
 editing the rails is exactly the PR that must not merge on the automation's

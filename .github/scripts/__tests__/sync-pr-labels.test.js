@@ -12,7 +12,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
+  autoMergeBlockedReason,
   autoMergeIfApproved,
+  LISTED_FILES_CAP,
   parseAutoMergeEnabled,
   resolveAutoMerge,
   touchesProtectedPaths,
@@ -249,4 +251,27 @@ test("auto_merge_leaves_a_fork_branch_alone", async () => {
 
   assert.equal(calls.merged.length, 1);
   assert.deepEqual(calls.deletedRefs, [], "this token can't delete a fork's branch");
+});
+
+test("a_truncated_file_list_counts_as_protected", () => {
+  // `pulls.listFiles` stops at LISTED_FILES_CAP files even when paginated, so
+  // beyond it the list is silently short. A `.github/` change past the cut
+  // simply isn't in `files`, and answering "no protected paths" would be
+  // answering a question the data can't support - exactly for the bulk or
+  // generated diff this guard is meant to catch.
+  const ordinary = (n) => Array.from({ length: n }, (_, i) => ({ filename: `src/f${i}.rs` }));
+
+  assert.equal(autoMergeBlockedReason(ordinary(LISTED_FILES_CAP - 1)), null);
+
+  const capped = autoMergeBlockedReason(ordinary(LISTED_FILES_CAP));
+  assert.match(capped, /file cap/);
+  assert.match(capped, /cannot be shown not to change \.github\//);
+});
+
+test("blocked_reason_names_the_protected_path_case_separately", () => {
+  assert.equal(autoMergeBlockedReason([{ filename: "docs/backups.md" }]), null);
+  assert.match(
+    autoMergeBlockedReason([{ filename: ".github/workflows/ci.yml" }]),
+    /it changes \.github\//,
+  );
 });

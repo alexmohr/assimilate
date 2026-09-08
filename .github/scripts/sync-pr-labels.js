@@ -403,6 +403,10 @@ function resolveAutoMerge({ autoMergeEnabled = false, autoMergeEnabledRaw, core 
 // otherwise merge unattended on the automation's own approval.
 const AUTO_MERGE_PROTECTED_PREFIX = ".github/";
 
+// GitHub's `pulls.listFiles` returns at most this many files for a PR, even
+// paginated. Past it the list is silently truncated rather than an error.
+const LISTED_FILES_CAP = 3000;
+
 // Whether `files` (as returned by `pulls.listFiles`) touches anything
 // auto-merge must not land unattended. Both the current and previous path are
 // checked so a rename *out of* `.github/` can't launder a change through.
@@ -412,6 +416,25 @@ function touchesProtectedPaths(files) {
       file.filename?.startsWith(AUTO_MERGE_PROTECTED_PREFIX) ||
       file.previous_filename?.startsWith(AUTO_MERGE_PROTECTED_PREFIX),
   );
+}
+
+// Why auto-merge must leave this PR alone, or null if it may proceed.
+//
+// A file list at the cap is treated as protected even when nothing in it
+// matches: past 3000 files the list is truncated, so a `.github/` change
+// sitting beyond the cut simply isn't in `files` and `touchesProtectedPaths`
+// would answer "no" to a question it couldn't actually see. A bulk or
+// generated diff hiding a rail edit is precisely the shape this guard exists
+// to stop, so an unprovable list counts as protected rather than as clean.
+function autoMergeBlockedReason(files) {
+  if (files.length >= LISTED_FILES_CAP) {
+    return (
+      `its file list hit GitHub's ${LISTED_FILES_CAP}-file cap, so it cannot be shown not to ` +
+      `change ${AUTO_MERGE_PROTECTED_PREFIX}`
+    );
+  }
+  if (touchesProtectedPaths(files)) return `it changes ${AUTO_MERGE_PROTECTED_PREFIX}`;
+  return null;
 }
 
 // Squash-merges `pr` and deletes its branch (same-repo PRs only - a fork's
@@ -432,11 +455,12 @@ async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr) {
     pull_number: prNumber,
     per_page: 100,
   });
-  if (touchesProtectedPaths(files)) {
+  const blockedReason = autoMergeBlockedReason(files);
+  if (blockedReason) {
     core.info(
-      `PR #${prNumber}: ready to merge, but it changes ${AUTO_MERGE_PROTECTED_PREFIX} - ` +
-        "auto-merge deliberately does not land changes to CI, the coverage gate or this " +
-        "script itself. Merge it by hand once a person has read the diff.",
+      `PR #${prNumber}: ready to merge, but ${blockedReason} - auto-merge deliberately does ` +
+        "not land changes to CI, the coverage gate or this script itself. Merge it by hand " +
+        "once a person has read the diff.",
     );
     return;
   }
@@ -955,6 +979,8 @@ module.exports.resolveAutoMerge = resolveAutoMerge;
 // scripts are not lcov-instrumented, so `node --test` is the only net.
 module.exports.autoMergeIfApproved = autoMergeIfApproved;
 module.exports.AUTO_MERGE_PROTECTED_PREFIX = AUTO_MERGE_PROTECTED_PREFIX;
+module.exports.autoMergeBlockedReason = autoMergeBlockedReason;
+module.exports.LISTED_FILES_CAP = LISTED_FILES_CAP;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,
 // circular check run (its conclusion depends on the review having already
 // happened) from the "wait for every other check on this commit" gate.

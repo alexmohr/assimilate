@@ -8,8 +8,12 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const {
   parseAutoMergeEnabled,
+  resolveAutoMerge,
   touchesProtectedPaths,
   AUTO_MERGE_PROTECTED_PREFIX,
 } = require("../sync-pr-labels.js");
@@ -116,4 +120,51 @@ test("auto_merge_guard_sees_a_rename_out_of_the_protected_path", () => {
 test("auto_merge_guard_is_not_fooled_by_a_lookalike_path", () => {
   assert.equal(touchesProtectedPaths([{ filename: "docs/.github/notes.md" }]), false);
   assert.equal(touchesProtectedPaths([{ filename: "vendor/x.github/thing.yml" }]), false);
+});
+
+test("raw_variable_wins_over_the_boolean_when_the_caller_passes_one", () => {
+  const { core, warnings } = recordingCore();
+
+  // The workflows hand over AUTO_MERGE_ENABLED's text; this module parses it.
+  assert.equal(resolveAutoMerge({ autoMergeEnabled: false, autoMergeEnabledRaw: "", core }), true);
+  assert.equal(
+    resolveAutoMerge({ autoMergeEnabled: true, autoMergeEnabledRaw: "false", core }),
+    false,
+  );
+  assert.deepEqual(warnings, []);
+});
+
+test("boolean_stands_when_no_raw_variable_is_passed", () => {
+  const { core } = recordingCore();
+
+  // pre-review-checks.js's call site: pinned off, no variable involved.
+  assert.equal(resolveAutoMerge({ autoMergeEnabled: false, core }), false);
+  assert.equal(resolveAutoMerge({ autoMergeEnabled: true, core }), true);
+  // A caller that passes neither must get a decision, not `undefined` - and
+  // that decision is "do not merge".
+  assert.equal(resolveAutoMerge({ core }), false);
+});
+
+test("workflows_pass_the_variable_rather_than_calling_across_the_version_seam", () => {
+  // Regression test for a real CI failure on this PR: `sync-pr-labels.js` is
+  // always checked out from the default branch, but on a
+  // `pull_request_review` event the workflow file comes from the PR's head.
+  // A workflow body calling `sync.parseAutoMergeEnabled(...)` therefore died
+  // with "sync.parseAutoMergeEnabled is not a function" until the PR adding
+  // that export reached the default branch. Passing data across that seam
+  // survives the skew; calling a function does not.
+  const workflows = path.join(__dirname, "..", "..", "workflows");
+
+  for (const file of ["pr-status-labels.yml", "claude-review.yml"]) {
+    const body = fs.readFileSync(path.join(workflows, file), "utf8");
+
+    assert.ok(
+      !body.includes("sync.parseAutoMergeEnabled"),
+      `${file} must not call parseAutoMergeEnabled - the script it loads may predate it`,
+    );
+    assert.ok(
+      body.includes("autoMergeEnabledRaw: process.env.AUTO_MERGE_ENABLED"),
+      `${file} should hand the raw variable to sync-pr-labels.js instead`,
+    );
+  }
 });

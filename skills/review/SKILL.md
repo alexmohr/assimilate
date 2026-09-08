@@ -389,10 +389,22 @@ happens — every gate below (ready to merge, a genuine approval, the
 label-provenance check) runs and logs its decision either way, so flipping it
 is purely a config change; no code change needed.
 
-`sync-pr-labels.js` exports `parseAutoMergeEnabled`, and both workflow call
-sites (`pr-status-labels.yml`'s sync and `claude-review.yml`'s post-review
-re-sync) read the variable through it, out of the step environment rather
-than interpolated into the `script:` body. `pre-review-checks.js`'s own sync
+Both workflow call sites (`pr-status-labels.yml`'s sync and
+`claude-review.yml`'s post-review re-sync) read the variable out of the step
+environment rather than interpolating it into the `script:` body, and hand
+the raw string to `sync-pr-labels.js` as `autoMergeEnabledRaw` — the module
+parses it with `parseAutoMergeEnabled`.
+
+Handing over data rather than calling into the script matters because the two
+can come from different commits. `sync-pr-labels.js` is always checked out
+from the default branch (`sparse-checkout .github/scripts`, `ref:
+default_branch`), but on a `pull_request_review` event the *workflow file*
+comes from the PR's head. A workflow body calling
+`sync.parseAutoMergeEnabled(...)` therefore fails with "not a function" on
+every PR that adds it, until that PR reaches the default branch — which is
+exactly what happened while this was being built. An older script simply
+ignores an unknown key and keeps its own default (off), so the skew degrades
+to "no auto-merge" rather than to a broken label-sync job. `pre-review-checks.js`'s own sync
 call pins auto-merge off explicitly: it runs *before* the review it gates, so
 it must never be the thing that merges.
 

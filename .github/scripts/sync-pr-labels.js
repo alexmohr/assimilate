@@ -381,6 +381,18 @@ function parseAutoMergeEnabled(rawValue, core) {
   return false;
 }
 
+// Which of the two ways a caller can express "auto-merge is allowed" wins.
+// The raw variable does when the caller passed one - that's the workflows,
+// which hand over AUTO_MERGE_ENABLED's text and let this module parse it. The
+// boolean stands otherwise, for pre-review-checks.js, which pins it off.
+// `autoMergeEnabled` defaults here too, not just in syncLabels' signature: a
+// caller that passes neither input must not end up with `undefined` standing
+// in for a decision about whether to merge code unattended.
+function resolveAutoMerge({ autoMergeEnabled = false, autoMergeEnabledRaw, core }) {
+  if (autoMergeEnabledRaw === undefined) return autoMergeEnabled;
+  return parseAutoMergeEnabled(autoMergeEnabledRaw, core);
+}
+
 // Path prefix whose contents auto-merge will never land on its own.
 // `.github/` holds every gate this automation trusts - the coverage-diff
 // analyzer, the duplicate-code check, the workflows, and this script, which
@@ -512,11 +524,25 @@ module.exports = async ({
   // unattended. Same reasoning as the kill switch itself: the ambiguous case
   // resolves in the direction that doesn't merge.
   //
-  // A boolean, never the raw variable: both workflow call sites pass
-  // parseAutoMergeEnabled(process.env.AUTO_MERGE_ENABLED, core), which is
-  // where the repo/environment variable is turned into this. See the
-  // "Auto-merge" section in skills/review/SKILL.md.
+  // A boolean. pre-review-checks.js passes it directly (pinned off); the
+  // workflows instead pass `autoMergeEnabledRaw` below and let this module
+  // do the parsing. See the "Auto-merge" section in skills/review/SKILL.md.
   autoMergeEnabled = false,
+  // The raw AUTO_MERGE_ENABLED variable, straight out of the workflow's step
+  // env. When present it decides `autoMergeEnabled` via
+  // parseAutoMergeEnabled; when absent the boolean above stands.
+  //
+  // The workflows pass the *string* rather than calling the parser
+  // themselves because the two can come from different commits: this script
+  // is always checked out from the default branch (`sparse-checkout
+  // .github/scripts`, `ref: default_branch`), while on a `pull_request_review`
+  // event the workflow file itself comes from the PR's head. A workflow body
+  // calling `sync.parseAutoMergeEnabled(...)` therefore crashes with
+  // "not a function" on any PR that adds it, until that PR reaches the
+  // default branch. Passing data instead of calling across that seam means an
+  // older script simply ignores this key and keeps its own default - off,
+  // which is the safe direction to be wrong in.
+  autoMergeEnabledRaw,
   // Off by default - only pr-status-labels.yml's own call site turns this
   // on. See the "notify claude-review.yml" comment below for why this can't
   // just always be on: claude-review.yml calls this same function on itself
@@ -892,7 +918,7 @@ module.exports = async ({
   // above and skills/review/SKILL.md) - reaching this branch already
   // implies `approved`, nothing left to re-derive here.
   if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
-    if (!autoMergeEnabled) {
+    if (!resolveAutoMerge({ autoMergeEnabled, autoMergeEnabledRaw, core })) {
       core.info(
         `PR #${prNumber}: ready to merge with a genuine approval, but auto-merge is switched off - leaving it for a human to merge.`,
       );
@@ -921,6 +947,8 @@ module.exports.parseAutoMergeEnabled = parseAutoMergeEnabled;
 // Exported for the tests that pin the guard: auto-merge must never land a
 // change to `.github/`, which is where every gate it trusts lives.
 module.exports.touchesProtectedPaths = touchesProtectedPaths;
+// Exported for the tests that pin which of the two auto-merge inputs wins.
+module.exports.resolveAutoMerge = resolveAutoMerge;
 module.exports.AUTO_MERGE_PROTECTED_PREFIX = AUTO_MERGE_PROTECTED_PREFIX;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,
 // circular check run (its conclusion depends on the review having already

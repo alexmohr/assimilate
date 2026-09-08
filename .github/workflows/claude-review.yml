@@ -795,9 +795,11 @@ jobs:
               core,
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
               selfCheckNames: ["Check if a review is actually needed", "Review PR"],
-              // Same variable and the same parser pr-status-labels.yml's own
-              // sync call uses - one off switch for the whole auto-merge
-              // feature, read identically regardless of which trigger
-              // re-syncs first. See skills/review/SKILL.md's "Auto-merge".
-              autoMergeEnabled: sync.parseAutoMergeEnabled(process.env.AUTO_MERGE_ENABLED, core),
+              // Same variable pr-status-labels.yml's own sync call passes,
+              // parsed by the same code inside sync-pr-labels.js - one off
+              // switch for the whole auto-merge feature, read identically
+              // regardless of which trigger re-syncs first. Handed over as
+              // the raw string for the version-skew reason documented on
+              // that parameter. See skills/review/SKILL.md's "Auto-merge".
+              autoMergeEnabledRaw: process.env.AUTO_MERGE_ENABLED,
             });

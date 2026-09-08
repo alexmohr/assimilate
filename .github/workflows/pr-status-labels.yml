@@ -88,8 +88,9 @@ jobs:
           # Read through the environment rather than interpolated into the
           # script body: `"${{ vars.X }}"` would splice the variable's text
           # straight into JS source, so a value containing a quote could
-          # break (or rewrite) this step. parseAutoMergeEnabled turns it
-          # into the boolean - see skills/review/SKILL.md's "Auto-merge".
+          # break (or rewrite) this step. sync-pr-labels.js turns the raw
+          # value into the boolean - see skills/review/SKILL.md's
+          # "Auto-merge".
           AUTO_MERGE_ENABLED: ${{ vars.AUTO_MERGE_ENABLED }}
         with:
           script: |
@@ -108,8 +109,12 @@ jobs:
               // On unless the variable is explicitly set to an off value
               // (Settings -> Secrets and variables -> Actions -> Variables
               // -> AUTO_MERGE_ENABLED = "false"); anything set but
-              // unrecognised is treated as off, with a warning.
-              autoMergeEnabled: sync.parseAutoMergeEnabled(process.env.AUTO_MERGE_ENABLED, core),
+              // unrecognised is treated as off, with a warning. The raw
+              // string is handed over rather than parsed here: this workflow
+              // file can come from a PR's head while the script above is
+              // always the default branch's, so calling a function this
+              // script may not have yet would break the job outright.
+              autoMergeEnabledRaw: process.env.AUTO_MERGE_ENABLED,
               // This is the one call site allowed to notify claude-review.yml
               // (see the comment on sync-pr-labels.js's dispatchOnNeedsReview
               // param) - this workflow only ever runs in response to a real,

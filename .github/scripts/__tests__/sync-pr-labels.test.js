@@ -12,6 +12,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
+  autoMergeIfApproved,
   parseAutoMergeEnabled,
   resolveAutoMerge,
   touchesProtectedPaths,
@@ -167,4 +168,85 @@ test("workflows_pass_the_variable_rather_than_calling_across_the_version_seam", 
       `${file} should hand the raw variable to sync-pr-labels.js instead`,
     );
   }
+});
+
+// `touchesProtectedPaths` above is the predicate; these drive the enforcement
+// point itself. An inverted condition or a dropped `return` in
+// `autoMergeIfApproved` would merge exactly the changes the guard exists to
+// hold back, and no unit test of the predicate would notice. These scripts
+// aren't lcov-instrumented either, so the coverage gate can't see this wiring
+// - `node --test` is the only net under it.
+function fakeGithub(files) {
+  const calls = { merged: [], deletedRefs: [] };
+  const github = {
+    paginate: async () => files,
+    rest: {
+      pulls: {
+        listFiles: {},
+        merge: async (args) => {
+          calls.merged.push(args);
+        },
+      },
+      git: {
+        deleteRef: async (args) => {
+          calls.deletedRefs.push(args);
+          return {};
+        },
+      },
+    },
+  };
+  return { github, calls };
+}
+
+// Same-repo PR, so the branch-delete path is exercised too.
+const samePrRepo = { head: { ref: "feature", repo: { id: 1 } }, base: { repo: { id: 1 } } };
+
+test("auto_merge_skips_a_pr_that_touches_the_rails", async () => {
+  const { github, calls } = fakeGithub([
+    { filename: "crates/server/src/lib.rs" },
+    { filename: ".github/scripts/analyze-coverage-diff.js" },
+  ]);
+  const messages = [];
+
+  await autoMergeIfApproved(
+    github,
+    { info: (m) => messages.push(m) },
+    "o",
+    "r",
+    7,
+    samePrRepo,
+  );
+
+  assert.deepEqual(calls.merged, [], "a PR changing .github/ must not be merged");
+  assert.deepEqual(calls.deletedRefs, [], "and its branch must survive");
+  assert.match(messages.join("\n"), /auto-merge deliberately does not land changes/);
+});
+
+test("auto_merge_proceeds_for_an_ordinary_pr", async () => {
+  const { github, calls } = fakeGithub([
+    { filename: "crates/server/src/lib.rs" },
+    { filename: "docs/backups.md" },
+  ]);
+
+  await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, samePrRepo);
+
+  assert.equal(calls.merged.length, 1, "an ordinary PR still merges");
+  assert.deepEqual(calls.merged[0], {
+    owner: "o",
+    repo: "r",
+    pull_number: 7,
+    merge_method: "squash",
+  });
+  assert.equal(calls.deletedRefs.length, 1, "and its same-repo branch is deleted");
+  assert.equal(calls.deletedRefs[0].ref, "heads/feature");
+});
+
+test("auto_merge_leaves_a_fork_branch_alone", async () => {
+  const { github, calls } = fakeGithub([{ filename: "docs/backups.md" }]);
+  const forkPr = { head: { ref: "feature", repo: { id: 2 } }, base: { repo: { id: 1 } } };
+
+  await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, forkPr);
+
+  assert.equal(calls.merged.length, 1);
+  assert.deepEqual(calls.deletedRefs, [], "this token can't delete a fork's branch");
 });

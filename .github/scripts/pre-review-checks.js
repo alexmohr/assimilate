@@ -66,9 +66,8 @@ module.exports = async ({ github, context, core, prNumber, headSha, force }) => 
   //
   // autoMergeEnabled is pinned off explicitly rather than left to the
   // parameter's own fail-closed default (see sync-pr-labels.js): this call
-  // exists
-  // only to refresh the labels this gate is about to read, and merging from
-  // inside the pre-review gate would mean merging *before* the review it
+  // exists only to refresh the labels this gate is about to read, and merging
+  // from inside the pre-review gate would mean merging *before* the review it
   // gates has run. Not passing it happens to be safe today only because the
   // "Review PR" job's own check run is still pending here, which keeps the
   // completeness check false and so keeps `ready to merge` unreachable

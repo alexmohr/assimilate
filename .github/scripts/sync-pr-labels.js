@@ -949,6 +949,11 @@ module.exports.parseAutoMergeEnabled = parseAutoMergeEnabled;
 module.exports.touchesProtectedPaths = touchesProtectedPaths;
 // Exported for the tests that pin which of the two auto-merge inputs wins.
 module.exports.resolveAutoMerge = resolveAutoMerge;
+// Exported so a test can drive the enforcement point itself, not just the
+// predicate it consults: an inverted condition or a dropped `return` here
+// would merge exactly the changes the guard exists to hold back, and these
+// scripts are not lcov-instrumented, so `node --test` is the only net.
+module.exports.autoMergeIfApproved = autoMergeIfApproved;
 module.exports.AUTO_MERGE_PROTECTED_PREFIX = AUTO_MERGE_PROTECTED_PREFIX;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,
 // circular check run (its conclusion depends on the review having already

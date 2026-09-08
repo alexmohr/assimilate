@@ -22,10 +22,26 @@ function recordingCore() {
 test("kill_switch_defaults_to_enabled_when_unset", () => {
   const { core, warnings } = recordingCore();
 
+  // A workflow expression renders a never-set variable as the empty string,
+  // so these are the shapes "unset" actually arrives in.
   assert.equal(parseAutoMergeEnabled(undefined, core), true);
+  assert.equal(parseAutoMergeEnabled(null, core), true);
   assert.equal(parseAutoMergeEnabled("", core), true);
-  assert.equal(parseAutoMergeEnabled("   ", core), true);
   assert.deepEqual(warnings, [], "the documented default is not worth warning about");
+});
+
+test("kill_switch_treats_a_blank_but_present_value_as_a_mistake", () => {
+  const { core, warnings } = recordingCore();
+
+  // Filling the variable in with blanks is a typo, not a request for the
+  // default, so it fails closed and says so - otherwise it reads as "unset"
+  // and silently keeps merging.
+  assert.equal(parseAutoMergeEnabled(" ", core), false);
+  assert.equal(parseAutoMergeEnabled("\t", core), false);
+  assert.equal(warnings.length, 2);
+  // The raw value, not the trimmed one: `""` in the log would read exactly
+  // like the unset case this deliberately is not.
+  assert.match(warnings[0], /unrecognised value \(" "\)/);
 });
 
 test("kill_switch_recognises_both_value_sets", () => {

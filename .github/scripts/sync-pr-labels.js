@@ -351,7 +351,10 @@ const AUTO_MERGE_OFF_VALUES = new Set(["false", "0", "no", "off", "disabled"]);
 //
 // Unset is the normal case and means on: a workflow expression renders a
 // variable that was never set as the empty string, and auto-merge is the
-// documented default (see skills/review/SKILL.md).
+// documented default (see skills/review/SKILL.md). Only a genuinely absent
+// or empty raw value counts as unset - a variable someone actually filled in
+// with blanks is treated as set-but-unrecognised below, since that is a
+// mistake rather than a request for the default.
 //
 // Anything set but unrecognised fails *closed*, with a warning. A bare
 // `!== "false"` would instead fail open: an operator reaching for the
@@ -361,15 +364,19 @@ const AUTO_MERGE_OFF_VALUES = new Set(["false", "0", "no", "off", "disabled"]);
 // lower-casing means the near-misses above are simply understood; the
 // warning is for whatever is left.
 function parseAutoMergeEnabled(rawValue, core) {
-  const value = String(rawValue ?? "")
-    .trim()
-    .toLowerCase();
-  if (value === "") return true;
+  const raw = String(rawValue ?? "");
+  if (raw === "") return true;
+
+  const value = raw.trim().toLowerCase();
   if (AUTO_MERGE_ON_VALUES.has(value)) return true;
   if (AUTO_MERGE_OFF_VALUES.has(value)) return false;
+  // `raw`, not the trimmed value: a whitespace-only variable would otherwise
+  // report itself as `""`, which reads exactly like the unset case it is
+  // deliberately not being treated as.
   core.warning(
-    `AUTO_MERGE_ENABLED is set to an unrecognised value ("${value}") - treating it as off. ` +
-      `Set it to "false" to disable auto-merge, or unset it to use the default (enabled).`,
+    `AUTO_MERGE_ENABLED is set to an unrecognised value (${JSON.stringify(raw)}) - treating ` +
+      `it as off. Set it to "false" to disable auto-merge, or unset it to use the default ` +
+      `(enabled).`,
   );
   return false;
 }

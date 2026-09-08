@@ -16,6 +16,11 @@ jobs:
       # The repository's own agent account may author commits on PRs opened
       # by the repository owner.
       AGENT_LOGIN: 'alexmohr-agent'
+      # Automation accounts that legitimately author commits (dependency-bump
+      # PRs) and aren't AI coding tools - the `\[bot\]` half of
+      # AI_AUTHOR_PATTERN below exists to catch AI tools disguised as bot
+      # accounts, not routine bots like this one.
+      ALLOWED_BOT_LOGINS: 'dependabot\[bot\]'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,7 +54,7 @@ jobs:
           echo "No AI banners found in commits."
       - name: Check commit authors for AI tools
         run: |
-          AUTHOR_INFO=$(git log "${{ steps.range.outputs.range }}" --format='%an|%ae')
+          AUTHOR_INFO=$(git log "${{ steps.range.outputs.range }}" --format='%an|%ae' | grep -viE "$ALLOWED_BOT_LOGINS" || true)
           AI_AUTHOR_PATTERN="$AI_TOOLS|\[bot\]|noreply@anthropic\.com|github-copilot"
           if echo "$AUTHOR_INFO" | grep -iEq "$AI_AUTHOR_PATTERN"; then
             echo "AI tool detected as commit author:"

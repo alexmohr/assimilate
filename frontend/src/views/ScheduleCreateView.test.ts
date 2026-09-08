@@ -167,6 +167,44 @@ describe('ScheduleCreateView', () => {
     expect(railLabels(wrapper)).toContain('Power')
   })
 
+  it("shows the wake control on the Power step, over this schedule's hosts", async () => {
+    const wrapper = await open()
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    await continueTo(wrapper, 'Power')
+
+    const power = wrapper.findComponent({ name: 'SchedulePowerTab' })
+    expect(power.exists()).toBe(true)
+    // It reports over the hosts and targets chosen in the steps before it, so
+    // the read-out matches the schedule being created rather than everything.
+    expect(power.props('selectedAgentIds')).toEqual([10])
+    expect(power.props('selectedRepoIds')).toEqual([20])
+    expect(power.props('wakeOverride')).toBe('host_default')
+  })
+
+  /** The whole point of the step: a wake override chosen during creation has
+      to reach the POST, not just render. */
+  it('sends a wake override chosen on the Power step with the new schedule', async () => {
+    const wrapper = await open()
+    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    await continueTo(wrapper, 'Power')
+    await wrapper
+      .findComponent({ name: 'SchedulePowerTab' })
+      .vm.$emit('update:wakeOverride', 'enabled')
+
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    await button(wrapper, 'Create schedule')!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      '/schedules',
+      expect.objectContaining({ wake_override: 'enabled' }),
+    )
+  })
+
   it('drops Retention and Advanced for a schedule type that has no archives', async () => {
     const wrapper = await open()
     await wrapper.find('#schedule-type').setValue('check')

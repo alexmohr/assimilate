@@ -1079,8 +1079,37 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     wsHandlers['BackupCompleted']?.({
       hostname: 'web-server-01',
       target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
+      report: { schedule_id: 1 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  // A repo can be shared by more than one schedule (e.g. two daily jobs
+  // against the same target), so a sibling schedule's own completion must
+  // not clear this page's still-running state - see the BackupStarted
+  // schedule_id tests above for the same reasoning on the started side.
+  it('BackupCompleted with non-matching schedule_id does not hide the live progress card', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      report: { schedule_id: 999 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+  })
+
+  it('BackupCompleted with null schedule_id and matching repo name hides the live progress card', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      report: { schedule_id: null },
     })
     await nextTick()
 

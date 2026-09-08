@@ -430,6 +430,24 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.text()).toContain('Saved')
   })
 
+  /** The banner is on a three-second timer, so a save that just succeeded and
+      one that finished a while ago have to stop looking alike - otherwise a
+      stale "Saved" sits over unsaved edits. */
+  it('clears the saved banner once its timeout elapses', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const wrapper = await renderEditModeAndSave()
+      expect(wrapper.find('.save-success').exists()).toBe(true)
+
+      vi.advanceTimersByTime(3000)
+      await nextTick()
+
+      expect(wrapper.find('.save-success').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   /** The API refuses a target list with nothing required; saying so here beats
       a round trip that comes back 400. */
   it('refuses to save a schedule left with no required repository', async () => {

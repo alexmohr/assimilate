@@ -1467,9 +1467,11 @@ async fn push_pre_run_config(
 }
 
 /// Computes the schedule's next cron occurrence from `ctx`, logging and returning
-/// `None` on an invalid cron expression - shared by [`mark_schedule_triggered_once`]
-/// and [`record_schedule_failure_once`], which both need this same "advance
-/// `next_run_at`" starting point.
+/// `None` on an invalid cron expression - used by [`record_schedule_failure_once`]
+/// to fall back to a fixed backoff when the cron itself can't be evaluated.
+/// [`mark_schedule_triggered_once`] needs this same starting point too, but gets
+/// it via [`db::advance_schedule_run`], which both it and the manual/catch-up
+/// dispatch path in `run_dispatch.rs` now share.
 fn calculate_next_run_or_log(ctx: &SequentialTargetCtx<'_>) -> Option<DateTime<Utc>> {
     calculate_next_run(ctx.cron, ctx.now, ctx.tz)
         .inspect_err(|e| {

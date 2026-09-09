@@ -1214,18 +1214,34 @@ pub async fn system_events(
     Ok(Json(rows))
 }
 
+/// Query parameters for the backup health summary.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct HealthQuery {
+    /// Restrict the summary to a single schedule's targets.
+    pub schedule_id: Option<i64>,
+}
+
 #[utoipa::path(
     get,
     path = "/api/stats/health",
     tag = "Statistics",
     operation_id = "getHealthSummary",
+    params(
+        ("schedule_id" = Option<i64>, Query, description = "Restrict to one schedule"),
+    ),
     responses(
         (status = 200, description = "Health summary",
             body = Vec<shared::responses::HealthSummaryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
-/// Get backup health summary for all schedules.
+/// Get backup health summary for all schedules, or for one schedule when
+/// `schedule_id` is given.
+///
+/// A page that only shows one schedule's hosts pays for the whole
+/// installation's health otherwise: the underlying query does two per-target
+/// lookups into `backup_reports`, and the cron expression behind `is_overdue`
+/// is parsed once per row.
 ///
 /// # Errors
 ///
@@ -1233,8 +1249,9 @@ pub async fn system_events(
 pub async fn health(
     State(state): State<AppState>,
     _auth: AuthUser,
+    Query(query): Query<HealthQuery>,
 ) -> Result<Json<Vec<HealthResponse>>, ApiError> {
-    let rows = db::get_health_summary(&state.pool).await?;
+    let rows = db::get_health_summary(&state.pool, query.schedule_id).await?;
     let tz = db::get_schedule_timezone(&state.pool).await?;
     let response = rows
         .into_iter()

@@ -321,37 +321,55 @@ function populateForm(s: ScheduleRow): void {
   onFailure.value = s.on_failure
 }
 
+/**
+ * Incremented per load so a response that outlives the schedule it was asked
+ * for cannot overwrite the current one. The secondary fetches below settle
+ * after `loadData` has already returned, so switching schedules mid-flight
+ * would otherwise let the old page's health or reports land on the new one.
+ */
+let loadGeneration = 0
+
+/**
+ * Only the schedule itself, its hosts, its repositories and its sources decide
+ * what the page renders; health, the recent-report list and the failed-report
+ * count fill in badges and the "backup running" banner afterwards. They all
+ * start together, but the loading spinner waits on the first group alone -
+ * awaiting the whole set held the Settings tab behind data it never reads.
+ */
 async function loadData(): Promise<void> {
+  const generation = ++loadGeneration
+  const scheduleId = props.id
+  const isCurrent = (): boolean => generation === loadGeneration
+
+  countFailedScheduleReports(scheduleId)
+    .then((count) => {
+      if (isCurrent()) failedReportCount.value = count
+    })
+    .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
+
+  // Scoped to this schedule: the unfiltered summary covers every schedule
+  // target in the installation, and this page shows one schedule's.
+  getScheduleHealth({ scheduleId })
+    .then((healthRows) => {
+      if (isCurrent()) health.value = healthRows
+    })
+    .catch((e: unknown) => logger.error('getScheduleHealth failed', e))
+
+  // Started here but applied after the await below, so `agentMap` is populated
+  // by the time the running-backup banner looks a hostname up.
+  const recentReportsPromise = listScheduleReports(scheduleId, 20)
+
   await run(async () => {
     {
-      // Fetched independently of the Promise.all below: it backs a menu
-      // badge, not the page itself, so a failure here must not take down
-      // the rest of the schedule's data with it.
-      countFailedScheduleReports(props.id)
-        .then((count) => {
-          failedReportCount.value = count
-        })
-        .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
-
-      const [
-        scheduleRow,
-        agentRows,
-        repoRows,
-        targetRows,
-        repoTargetRows,
-        sourcesResponse,
-        recentReports,
-        healthRows,
-      ] = await Promise.all([
-        getSchedule(props.id),
-        listAgents(),
-        listRepos(),
-        listScheduleTargets(props.id),
-        listScheduleRepos(props.id),
-        getScheduleBackupSources(props.id),
-        listScheduleReports(props.id, 20),
-        getScheduleHealth(),
-      ])
+      const [scheduleRow, agentRows, repoRows, targetRows, repoTargetRows, sourcesResponse] =
+        await Promise.all([
+          getSchedule(scheduleId),
+          listAgents(),
+          listRepos(),
+          listScheduleTargets(scheduleId),
+          listScheduleRepos(scheduleId),
+          getScheduleBackupSources(scheduleId),
+        ])
       schedule.value = scheduleRow
       agents.value = agentRows
       repos.value = repoRows
@@ -360,18 +378,6 @@ async function loadData(): Promise<void> {
         repo_id: t.repo_id,
         required: t.required,
       }))
-      reports.value = recentReports
-      health.value = healthRows
-      const runningReport = recentReports.find((r) => {
-        const status = normalizeBackupStatus(r.status)
-        return status === 'pending' || status === 'started'
-      })
-      backupRunning.value = runningReport !== undefined
-      if (runningReport) {
-        const agent = agentMap.value.get(runningReport.agent_id ?? 0)
-        backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
-        backupStartedAt.value = new Date(runningReport.started_at).getTime()
-      }
       const sorted = [...targetRows].sort((a, b) => a.execution_order - b.execution_order)
       selectedAgentIds.value = sorted.map((t) => t.agent_id)
       populateForm(scheduleRow)
@@ -419,6 +425,23 @@ async function loadData(): Promise<void> {
       }
     }
   })
+
+  await recentReportsPromise
+    .then((recentReports) => {
+      if (!isCurrent() || schedule.value == null) return
+      reports.value = recentReports
+      const runningReport = recentReports.find((r) => {
+        const status = normalizeBackupStatus(r.status)
+        return status === 'pending' || status === 'started'
+      })
+      backupRunning.value = runningReport !== undefined
+      if (runningReport) {
+        const agent = agentMap.value.get(runningReport.agent_id ?? 0)
+        backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
+        backupStartedAt.value = new Date(runningReport.started_at).getTime()
+      }
+    })
+    .catch((e: unknown) => logger.error('listScheduleReports failed', e))
 }
 
 async function save(): Promise<void> {

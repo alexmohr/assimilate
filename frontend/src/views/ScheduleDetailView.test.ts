@@ -2037,3 +2037,108 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     expect(payload.commands_per_agent).toBeUndefined()
   })
 })
+
+describe('ScheduleDetailView - load ordering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('asks for this schedule health only, not the whole installation', async () => {
+    await createEditWrapper()
+
+    const healthCall = mockApiClient.get.mock.calls.find(
+      (call: unknown[]) => call[0] === '/stats/health',
+    )
+    expect(healthCall).toBeDefined()
+    const config = healthCall![1] as { params?: { schedule_id?: string } }
+    expect(config.params?.schedule_id).toBe('1')
+  })
+
+  it('renders the settings form before health and the report list arrive', async () => {
+    // The two deferred requests never settle here, so anything the page shows
+    // is proof it did not wait on them.
+    let releaseHealth: (() => void) | undefined
+    let releaseReports: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return new Promise((resolve) => {
+          releaseHealth = (): void => resolve({ data: [] })
+        })
+      if (url === '/schedules/1/reports')
+        return new Promise((resolve) => {
+          releaseReports = (): void => resolve({ data: [] })
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.find('.base-spinner').exists()).toBe(false)
+    await goToSettings(wrapper)
+    expect(wrapper.find('.cron-builder-stub').exists()).toBe(true)
+
+    releaseHealth?.()
+    releaseReports?.()
+    await flushPromises()
+  })
+
+  it('drops a slow response for a schedule the user has navigated away from', async () => {
+    let releaseFirstCount: ((count: number) => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/2') return Promise.resolve({ data: mockCheckSchedule })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/schedules/1/reports/failed/count')
+        return new Promise((resolve) => {
+          releaseFirstCount = (count: number): void => resolve({ data: { count } })
+        })
+      if (url === '/schedules/2/reports/failed/count')
+        return Promise.resolve({ data: { count: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await wrapper.setProps({ id: '2' })
+    await flushPromises()
+
+    // Schedule 1's count finally lands. Schedule 2 is on screen and has
+    // nothing failed, so its menu must not offer to clean up seven runs.
+    releaseFirstCount?.(7)
+    await flushPromises()
+
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+})

@@ -2304,6 +2304,60 @@ describe('ScheduleDetailView - load ordering', () => {
     expect(wrapper.text()).not.toContain('1 target overdue')
   })
 
+  // Two schedules can target the same host, and `healthForAgent` matches on
+  // hostname alone. Until the new schedule's own health lands there must be
+  // nothing to match against, or its page inherits the old one's verdict.
+  it('does not show the previous schedule health while the new one loads', async () => {
+    const overdueRow = {
+      repo_id: 20,
+      schedule_id: 1,
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      is_overdue: true,
+      schedule_enabled: true,
+      consecutive_missed_backups: 0,
+      missed_backup_threshold: 3,
+    }
+    let releaseSecondHealth: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string, config?: { params?: unknown }) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health') {
+        const params = config?.params as { schedule_id?: string } | undefined
+        if (params?.schedule_id === '1') return Promise.resolve({ data: [overdueRow] })
+        // Schedule 4's own health stays in flight, which is the window under test.
+        return new Promise((resolve) => {
+          releaseSecondHealth = (): void => resolve({ data: [] })
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    // Without this the assertion below could pass on a page that never showed
+    // the badge at all.
+    expect(wrapper.text()).toContain('1 target overdue')
+
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('1 target overdue')
+
+    releaseSecondHealth?.()
+    await flushPromises()
+  })
+
   it('drops a slow report list for a schedule the user has navigated away from', async () => {
     let releaseFirstReports: ((rows: unknown[]) => void) | undefined
     mockApiClient.get.mockImplementation((url: string) => {

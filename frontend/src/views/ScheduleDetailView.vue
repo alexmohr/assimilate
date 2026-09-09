@@ -336,10 +336,32 @@ let loadGeneration = 0
  * start together, but the loading spinner waits on the first group alone -
  * awaiting the whole set held the Settings tab behind data it never reads.
  */
+/**
+ * Everything below describes one schedule's runs, and since the load was split
+ * none of it is written in the same tick as the schedule itself any more.
+ * Clearing it up front keeps the page self-consistent while the new schedule's
+ * health, reports and counts are still in flight: two schedules that share a
+ * target host would otherwise show the old one's health row - `healthForAgent`
+ * matches on hostname alone - and its running-backup banner, under the new
+ * one's name. The load generation counter cannot cover this; it only stops a
+ * late response overwriting a newer one, never the value already on screen.
+ */
+function clearRunState(): void {
+  health.value = []
+  reports.value = []
+  failedReportCount.value = 0
+  backupRunning.value = false
+  backupHostname.value = null
+  backupArchiveName.value = null
+  backupStartedAt.value = null
+  archiveProgress.value = null
+}
+
 async function loadData(): Promise<void> {
   const generation = ++loadGeneration
   const scheduleId = props.id
   const isCurrent = (): boolean => generation === loadGeneration
+  clearRunState()
 
   countFailedScheduleReports(scheduleId)
     .then((count) => {

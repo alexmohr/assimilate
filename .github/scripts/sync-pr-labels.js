@@ -393,47 +393,102 @@ function resolveAutoMerge({ autoMergeEnabled = false, autoMergeEnabledRaw, core 
   return parseAutoMergeEnabled(autoMergeEnabledRaw, core);
 }
 
-// Path prefix whose contents auto-merge will never land on its own.
-// `.github/` holds every gate this automation trusts - the coverage-diff
-// analyzer, the duplicate-code check, the workflows, and this script, which
-// decides what "ready to merge" even means. A PR editing any of them is a PR
-// editing the rails, and the rails must not be able to widen themselves
-// without a person: a one-line epsilon in analyze-coverage-diff.js would turn
-// the "aggregate coverage must not drop" gate into a suggestion, and would
-// otherwise merge unattended on the automation's own approval.
-const AUTO_MERGE_PROTECTED_PREFIX = ".github/";
+// Paths whose contents auto-merge will never land on its own.
+//
+// These are the rails: the files that define or suppress the gates this
+// automation trusts. Every one of them is read from the PR's *own head*, so a
+// PR editing one takes effect on the very CI run that decides whether that PR
+// may merge - which is exactly why a person has to read such a diff. A
+// one-line epsilon in analyze-coverage-diff.js turns "aggregate coverage must
+// not drop" into a suggestion; an advisory id in deny.toml silences
+// deps-audit; `unwrap_used = "allow"` in the root Cargo.toml defangs clippy
+// workspace-wide. Each of those merges green, unattended, on the automation's
+// own approval unless the rails are fenced off.
+//
+// Directories, matched by prefix:
+//
+// - `.github/` - the workflows, the coverage-diff analyzer, the duplicate-code
+//   analyzer, and this script, which decides what "ready to merge" even means.
+// - `lints/` - the dylint library behind AGENTS.md's no-string-control-flow
+//   rule; ci.yml builds it from the PR's own checkout and runs it with
+//   `-D no_string_control_flow`.
+// - `scripts/` - the entry points for the repo's local pre-commit hooks
+//   (check-no-raw-sqlx-queries.sh, no-typography-in-comments.py).
+const AUTO_MERGE_PROTECTED_PREFIXES = [".github/", "lints/", "scripts/"];
+
+// The same rule for individual files, matched exactly rather than by prefix so
+// that unrelated neighbours in the same directory stay auto-mergeable.
+//
+// - `Cargo.toml` (root) - `[workspace.lints.clippy]` is the entire clippy deny
+//   list every crate inherits via `[lints] workspace = true`, and
+//   `[workspace.metadata.dylint]` is what registers the lint above. Blocking it
+//   costs nothing new: `[workspace.dependencies]` is the other thing it holds,
+//   and AGENTS.md already requires a person to clear any new dependency.
+// - `deny.toml` - `[advisories].ignore`, named outright by AGENTS.md's "no
+//   self-authorized suppressions" rule; cargo-deny reads it in `deps-audit`.
+// - `.jscpd.json` - the duplicate-code gate's ignore list and thresholds;
+//   duplicate-code-check.yml runs jscpd against the PR's copy of it in pr-src.
+// - `.pre-commit-config.yaml` - defines the pre-commit gate itself, gitleaks
+//   secret scanning and the raw-sqlx-query check included.
+// - `frontend/.npm-audit-allowlist.json` - the other suppression list AGENTS.md
+//   names; the frontend job reads it from the PR's checkout for both `npm
+//   audit` and the deprecated-package check.
+const AUTO_MERGE_PROTECTED_FILES = [
+  "Cargo.toml",
+  "deny.toml",
+  ".jscpd.json",
+  ".pre-commit-config.yaml",
+  "frontend/.npm-audit-allowlist.json",
+];
 
 // GitHub's `pulls.listFiles` returns at most this many files for a PR, even
 // paginated. Past it the list is silently truncated rather than an error.
 const LISTED_FILES_CAP = 3000;
 
-// Whether `files` (as returned by `pulls.listFiles`) touches anything
-// auto-merge must not land unattended. Both the current and previous path are
-// checked so a rename *out of* `.github/` can't launder a change through.
-function touchesProtectedPaths(files) {
-  return files.some(
-    (file) =>
-      file.filename?.startsWith(AUTO_MERGE_PROTECTED_PREFIX) ||
-      file.previous_filename?.startsWith(AUTO_MERGE_PROTECTED_PREFIX),
+// Whether `path` is one of the rails above. A non-string (an absent
+// `previous_filename`) is not.
+function isProtectedPath(path) {
+  if (typeof path !== "string" || path === "") return false;
+  return (
+    AUTO_MERGE_PROTECTED_FILES.includes(path) ||
+    AUTO_MERGE_PROTECTED_PREFIXES.some((prefix) => path.startsWith(prefix))
   );
+}
+
+// The first protected path `files` (as returned by `pulls.listFiles`) touches,
+// or null. Both the current and the previous path are checked, so a rename
+// *out of* a protected location can't launder a change through.
+function protectedPathIn(files) {
+  for (const file of files) {
+    for (const path of [file.filename, file.previous_filename]) {
+      if (isProtectedPath(path)) return path;
+    }
+  }
+  return null;
+}
+
+// Whether `files` touches anything auto-merge must not land unattended.
+function touchesProtectedPaths(files) {
+  return protectedPathIn(files) !== null;
 }
 
 // Why auto-merge must leave this PR alone, or null if it may proceed.
 //
 // A file list at the cap is treated as protected even when nothing in it
-// matches: past 3000 files the list is truncated, so a `.github/` change
-// sitting beyond the cut simply isn't in `files` and `touchesProtectedPaths`
-// would answer "no" to a question it couldn't actually see. A bulk or
-// generated diff hiding a rail edit is precisely the shape this guard exists
-// to stop, so an unprovable list counts as protected rather than as clean.
+// matches: past 3000 files the list is truncated, so a rail edit sitting
+// beyond the cut simply isn't in `files` and `protectedPathIn` would answer
+// "no" to a question it couldn't actually see. A bulk or generated diff hiding
+// a rail edit is precisely the shape this guard exists to stop, so an
+// unprovable list counts as protected rather than as clean.
 function autoMergeBlockedReason(files) {
   if (files.length >= LISTED_FILES_CAP) {
     return (
       `its file list hit GitHub's ${LISTED_FILES_CAP}-file cap, so it cannot be shown not to ` +
-      `change ${AUTO_MERGE_PROTECTED_PREFIX}`
+      "change a gate CI reads from this PR's own head"
     );
   }
-  if (touchesProtectedPaths(files)) return `it changes ${AUTO_MERGE_PROTECTED_PREFIX}`;
+  const protectedPath = protectedPathIn(files);
+  if (protectedPath) return `it changes ${protectedPath}`;
   return null;
 }
 
@@ -459,8 +514,9 @@ async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr) {
   if (blockedReason) {
     core.info(
       `PR #${prNumber}: ready to merge, but ${blockedReason} - auto-merge deliberately does ` +
-        "not land changes to CI, the coverage gate or this script itself. Merge it by hand " +
-        "once a person has read the diff.",
+        "not land changes to the gates it trusts (CI, the coverage and duplication analyzers, " +
+        "the lint and suppression configs, or this script itself). Merge it by hand once a " +
+        "person has read the diff.",
     );
     return;
   }
@@ -978,7 +1034,8 @@ module.exports.resolveAutoMerge = resolveAutoMerge;
 // would merge exactly the changes the guard exists to hold back, and these
 // scripts are not lcov-instrumented, so `node --test` is the only net.
 module.exports.autoMergeIfApproved = autoMergeIfApproved;
-module.exports.AUTO_MERGE_PROTECTED_PREFIX = AUTO_MERGE_PROTECTED_PREFIX;
+module.exports.AUTO_MERGE_PROTECTED_PREFIXES = AUTO_MERGE_PROTECTED_PREFIXES;
+module.exports.AUTO_MERGE_PROTECTED_FILES = AUTO_MERGE_PROTECTED_FILES;
 module.exports.autoMergeBlockedReason = autoMergeBlockedReason;
 module.exports.LISTED_FILES_CAP = LISTED_FILES_CAP;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,

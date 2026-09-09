@@ -18,7 +18,8 @@ const {
   parseAutoMergeEnabled,
   resolveAutoMerge,
   touchesProtectedPaths,
-  AUTO_MERGE_PROTECTED_PREFIX,
+  AUTO_MERGE_PROTECTED_PREFIXES,
+  AUTO_MERGE_PROTECTED_FILES,
 } = require("../sync-pr-labels.js");
 
 function recordingCore() {
@@ -74,19 +75,43 @@ test("kill_switch_fails_closed_on_an_unrecognised_value", () => {
 });
 
 test("auto_merge_refuses_to_land_changes_to_the_rails", () => {
-  // Every gate this automation trusts lives under .github/ - the coverage
-  // analyzer, the duplicate-code check, the workflows, and the script that
-  // decides what "ready to merge" means. A PR editing any of them must wait
-  // for a person, or the rails could widen themselves on the automation's
-  // own approval.
-  assert.equal(AUTO_MERGE_PROTECTED_PREFIX, ".github/");
+  // The rails are every file that defines or suppresses a CI gate, and each is
+  // read from the PR's own head - so editing one takes effect on the very run
+  // that decides whether that PR may merge. A PR editing any of them must wait
+  // for a person, or the rails could widen themselves on the automation's own
+  // approval. The two lists are asserted whole: a path silently dropped from
+  // one is a gate that quietly becomes auto-mergeable again.
+  assert.deepEqual(AUTO_MERGE_PROTECTED_PREFIXES, [".github/", "lints/", "scripts/"]);
+  assert.deepEqual(AUTO_MERGE_PROTECTED_FILES, [
+    "Cargo.toml",
+    "deny.toml",
+    ".jscpd.json",
+    ".pre-commit-config.yaml",
+    "frontend/.npm-audit-allowlist.json",
+  ]);
 
   for (const filename of [
+    // .github/ - the analyzers, the workflows, and this script.
     ".github/scripts/analyze-coverage-diff.js",
     ".github/scripts/lib/lcov.js",
     ".github/scripts/sync-pr-labels.js",
     ".github/workflows/ci.yml",
     ".github/workflows/coverage-diff-check.yml",
+    // lints/ - the dylint library ci.yml builds from the PR's own checkout and
+    // runs with -D no_string_control_flow.
+    "lints/no_string_control_flow/src/lib.rs",
+    "lints/no_string_control_flow/Cargo.toml",
+    // scripts/ - the entry points for the repo's local pre-commit hooks.
+    "scripts/check-no-raw-sqlx-queries.sh",
+    "scripts/no-typography-in-comments.py",
+    // The suppression and gate-config files, matched exactly. Each is read
+    // from the PR's head by the gate it configures, so loosening one lands
+    // green on the same run that loosened it.
+    "Cargo.toml",
+    "deny.toml",
+    ".jscpd.json",
+    ".pre-commit-config.yaml",
+    "frontend/.npm-audit-allowlist.json",
   ]) {
     assert.equal(
       touchesProtectedPaths([{ filename: "src/unrelated.rs" }, { filename }]),
@@ -114,7 +139,10 @@ test("auto_merge_guard_sees_a_rename_out_of_the_protected_path", () => {
   // otherwise leave only an innocent-looking destination path.
   assert.equal(
     touchesProtectedPaths([
-      { filename: "scripts/analyze-coverage-diff.js", previous_filename: ".github/scripts/analyze-coverage-diff.js" },
+      {
+        filename: "tools/analyze-coverage-diff.js",
+        previous_filename: ".github/scripts/analyze-coverage-diff.js",
+      },
     ]),
     true,
   );
@@ -123,6 +151,30 @@ test("auto_merge_guard_sees_a_rename_out_of_the_protected_path", () => {
 test("auto_merge_guard_is_not_fooled_by_a_lookalike_path", () => {
   assert.equal(touchesProtectedPaths([{ filename: "docs/.github/notes.md" }]), false);
   assert.equal(touchesProtectedPaths([{ filename: "vendor/x.github/thing.yml" }]), false);
+  assert.equal(touchesProtectedPaths([{ filename: "frontend/scripts/build.ts" }]), false);
+  assert.equal(touchesProtectedPaths([{ filename: "crates/agent/lints/notes.md" }]), false);
+});
+
+test("only_the_named_files_are_protected_not_their_namesakes", () => {
+  // The file list is matched exactly, not by suffix or basename: a crate's own
+  // Cargo.toml inherits its lint levels from the root one via
+  // `[lints] workspace = true` and carries no suppressions of its own, so
+  // adding a dependency to a crate stays auto-mergeable. Only the root file,
+  // which holds [workspace.lints.clippy] and [workspace.metadata.dylint], is a
+  // rail.
+  for (const filename of [
+    "crates/server/Cargo.toml",
+    "crates/agent/Cargo.toml",
+    "docs/deny.toml",
+    "frontend/.jscpd.json",
+    "examples/.pre-commit-config.yaml",
+  ]) {
+    assert.equal(
+      touchesProtectedPaths([{ filename }]),
+      false,
+      `${filename} is not the rail it resembles and must stay auto-mergeable`,
+    );
+  }
 });
 
 test("raw_variable_wins_over_the_boolean_when_the_caller_passes_one", () => {
@@ -265,13 +317,20 @@ test("a_truncated_file_list_counts_as_protected", () => {
 
   const capped = autoMergeBlockedReason(ordinary(LISTED_FILES_CAP));
   assert.match(capped, /file cap/);
-  assert.match(capped, /cannot be shown not to change \.github\//);
+  assert.match(capped, /cannot be shown not to change a gate/);
 });
 
 test("blocked_reason_names_the_protected_path_case_separately", () => {
   assert.equal(autoMergeBlockedReason([{ filename: "docs/backups.md" }]), null);
-  assert.match(
+
+  // The reason names the offending file itself, so the log line says which
+  // rail the PR touched rather than only that it touched one.
+  assert.equal(
     autoMergeBlockedReason([{ filename: ".github/workflows/ci.yml" }]),
-    /it changes \.github\//,
+    "it changes .github/workflows/ci.yml",
+  );
+  assert.equal(
+    autoMergeBlockedReason([{ filename: "crates/server/src/main.rs" }, { filename: "deny.toml" }]),
+    "it changes deny.toml",
   );
 });

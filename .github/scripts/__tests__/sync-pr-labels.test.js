@@ -177,6 +177,22 @@ test("auto_merge_guard_is_not_fooled_by_a_lookalike_path", () => {
   assert.equal(touchesProtectedPaths([{ filename: "frontend/src/scripts/x.ts" }]), false);
 });
 
+test("every_immediate_child_of_a_config_dir_is_protected_not_just_the_gate_files", () => {
+  // The rule covers the whole level, not a list of files that configure a gate
+  // today - that list is the enumeration this replaced, and the next config
+  // file added at either level would land outside it. So ordinary root files
+  // block auto-merge too. That over-breadth is the design: it costs a person
+  // one click, where an under-broad rule costs the gate. Narrowing the rule
+  // back to "known gate files" must fail here rather than pass quietly.
+  for (const filename of ["README.md", "LICENSE", "AGENTS.md", "Cargo.lock", "frontend/index.html"]) {
+    assert.equal(
+      touchesProtectedPaths([{ filename }]),
+      true,
+      `${filename} is an immediate child of a config directory and must block auto-merge`,
+    );
+  }
+});
+
 test("config_protection_stops_at_the_directory_it_names", () => {
   // The config-directory rule covers immediate children only, so ordinary work
   // under a subdirectory of one stays auto-mergeable. Without this the guard

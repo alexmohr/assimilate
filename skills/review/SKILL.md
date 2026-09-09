@@ -452,16 +452,27 @@ them with three structural rules rather than a list of known files:
 | `scripts/` | Entry points for the repo's local pre-commit hooks (`check-no-raw-sqlx-queries.sh`, `no-typography-in-comments.py`) |
 
 **2. `AUTO_MERGE_PROTECTED_CONFIG_DIRS` — immediate children only.** The two
-places this repo keeps gate configuration: the **repository root**
-(`Cargo.toml`, `deny.toml`, `.jscpd.json`, `.pre-commit-config.yaml`,
-`clippy.toml`, `.rustfmt.toml`, `ruff.toml`, `.markdownlint.yaml`, `.yamlfmt`,
-`REUSE.toml`, `mkdocs.yml`) and **`frontend/`** (`package.json`, whose `lint`,
-`build`, `test` and `format:check` scripts are what `ci.yml` actually invokes;
-`package-lock.json`; `eslint.config.js`; the tsconfigs `vue-tsc -b` enforces;
-`playwright.config.ts`; `vite.config.ts`; `.prettierrc`;
-`.npm-audit-allowlist.json`). Subdirectories are *not* covered — `crates/`,
-`docs/`, `skills/`, `frontend/src/` and `frontend/e2e/` all stay
-auto-mergeable, which is what keeps auto-merge useful at all.
+places this repo keeps gate configuration: the **repository root** and
+**`frontend/`**.
+
+**Every** immediate child of those two directories is protected, not only the
+files that happen to configure a gate today. `README.md`, `LICENSE`,
+`AGENTS.md`, `Cargo.lock` and `Dockerfile.agent` all block auto-merge exactly
+as `deny.toml` does. That is the point of the rule rather than a side effect:
+listing only the known gate files is the enumeration this replaced, and the
+next config file added at either level would land outside it. The gate configs
+this currently covers, as examples and not as the list — root: `Cargo.toml`,
+`deny.toml`, `.jscpd.json`, `.pre-commit-config.yaml`, `clippy.toml`,
+`.rustfmt.toml`, `ruff.toml`, `.markdownlint.yaml`, `.yamlfmt`, `REUSE.toml`,
+`mkdocs.yml`; `frontend/`: `package.json` (whose `lint`, `build`, `test` and
+`format:check` scripts are what `ci.yml` actually invokes),
+`package-lock.json`, `eslint.config.js`, the tsconfigs `vue-tsc -b` enforces,
+`playwright.config.ts`, `vite.config.ts`, `.prettierrc`,
+`.npm-audit-allowlist.json`.
+
+Subdirectories are *not* covered — `crates/`, `docs/`, `skills/`,
+`frontend/src/` and `frontend/e2e/` all stay auto-mergeable, which is what
+keeps auto-merge useful at all.
 
 **3. `AUTO_MERGE_PROTECTED_BASENAMES` — filenames anywhere in the tree.**
 Currently just `Cargo.toml`. A member crate's copy carries

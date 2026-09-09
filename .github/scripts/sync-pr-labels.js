@@ -433,7 +433,13 @@ const AUTO_MERGE_PROTECTED_PREFIXES = [
 // 2. Directories whose *immediate* children are protected, but whose
 // subdirectories are not. These are the two places this repo keeps gate
 // configuration, and treating the whole level as protected is what stops the
-// next config file added there from being an unguarded rail:
+// next config file added there from being an unguarded rail.
+//
+// Note this protects EVERY immediate child, not only the files that configure
+// a gate today: README.md, LICENSE, AGENTS.md, Cargo.lock and Dockerfile.agent
+// block auto-merge exactly as deny.toml does. That is deliberate - listing
+// only the known gate files is the enumeration this replaced. The files below
+// are what it currently covers, as examples rather than as the list.
 //
 // - `""` (the repository root) - Cargo.toml, deny.toml, .jscpd.json,
 //   .pre-commit-config.yaml, clippy.toml, .rustfmt.toml, ruff.toml,

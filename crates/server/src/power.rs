@@ -723,9 +723,14 @@ pub async fn teardown_agent_power(ctx: PowerCtx<'_>, agent: &AgentRow, repo_id: 
         repo_id,
     };
 
-    // The early guard above already ensures woke || started_agent, so
-    // shutdown eligibility here reduces to shutdown_after_backup alone.
-    if agent.shutdown_after_backup {
+    // Shutting the whole host down requires this run to have woken it.
+    // `started_agent` alone doesn't qualify: `start_agent_process` runs its
+    // command over SSH, which only ever succeeds against a host that's
+    // already reachable -- so it proves the agent process was started, never
+    // that this run brought the host itself up. Without this check, a host
+    // that was already on the whole time (only its agent process needed a
+    // kick) would get shut down out from under whatever else was using it.
+    if woke && agent.shutdown_after_backup {
         record_event(
             ctx,
             run_id,
@@ -1326,16 +1331,16 @@ mod tests {
         assert_eq!(event_types, vec!["agent_stop_sent"]);
     }
 
-    /// Regression test: a host that isn't a persistent boot service needs
-    /// both `wake_enabled` (to power the machine on) and `start_agent_enabled`
-    /// (to bring the agent process up over SSH once it is) -- the WOL wait in
-    /// `ensure_agent_online` times out for exactly this host shape, since the
-    /// agent never reconnects on its own, so `woke` stays `false` even though
-    /// this run is what brought the host up. Shutdown must still fire off the
-    /// `started_agent` flag alone, not require `woke` too.
+    /// Regression test: `start_agent_process` runs its command over SSH,
+    /// which only ever succeeds against a host that's already reachable --
+    /// so `started_agent` alone never means this run turned the host on,
+    /// only that it kicked an already-running host's agent process back up.
+    /// A host in that shape (already on, agent process needed a restart)
+    /// must be left running even with `shutdown_after_backup` enabled --
+    /// only `woke` earns a shutdown.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
-    async fn teardown_agent_power_attempts_shutdown_when_this_run_only_started_the_agent(
+    async fn teardown_agent_power_does_not_shut_down_when_this_run_only_started_the_agent(
         pool: sqlx::PgPool,
     ) {
         let repo = test_repo(&pool).await;
@@ -1360,8 +1365,8 @@ mod tests {
         let registry = AgentRegistry::new();
         let sessions = PowerSessionTracker::default();
         let bus = UiBroadcast::new();
-        // The WOL wait timed out (host came up too slowly to reconnect on its
-        // own) but the SSH start succeeded, matching the scenario above.
+        // This run started the agent process over SSH but never sent a
+        // wake -- the host was already on the whole time.
         sessions
             .begin(PowerHostKey::Agent(agent.id), false, true)
             .await;
@@ -1374,14 +1379,12 @@ mod tests {
         )
         .await;
 
-        // Shutdown must be attempted -- not the stop-agent branch -- even
-        // though `woke` is false, because `started_agent` alone means this
-        // run is responsible for the host being up.
+        // Neither branch fires: shutdown requires `woke`, and the
+        // stop-agent branch requires `stop_agent_after_backup` (off here).
         let events = db::run_events::list_run_events(&pool, "run-1", agent.id, repo.id)
             .await
             .unwrap();
-        let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
-        assert_eq!(event_types, vec!["shutdown_sent"]);
+        assert!(events.is_empty());
     }
 
     #[ignore = "requires DATABASE_URL"]

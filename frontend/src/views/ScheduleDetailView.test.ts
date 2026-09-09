@@ -2222,6 +2222,88 @@ describe('ScheduleDetailView - load ordering', () => {
     expect(wrapper.text()).toContain('1 target overdue')
   })
 
+  // A running backup's ETA is extrapolated from the last settled run's size.
+  // Nothing exercised that arithmetic, so the whole computation was dead
+  // weight as far as the tests were concerned.
+  it('estimates the remaining time of a running backup from the last run', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      started_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      original_size: 1000,
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+      started_at: new Date().toISOString(),
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: 1,
+      repo_id: 20,
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 10,
+        original_size: 500,
+        path: '/srv/data',
+      }),
+    })
+    await nextTick()
+
+    expect(wrapper.text()).toContain('Est. remaining')
+  })
+
+  // A target whose agent is not in the agent list - hidden, or deleted out
+  // from under the schedule - has no hostname to match health on, so the
+  // lookup has to bail rather than mis-key on another host's row.
+  it('handles a target whose agent is missing from the agent list', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: 99, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return Promise.resolve({
+          data: [
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              is_overdue: true,
+              schedule_enabled: true,
+              consecutive_missed_backups: 0,
+              missed_backup_threshold: 3,
+            },
+          ],
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('#99')
+    // web-server-01's row is overdue, but agent 99 is not that host, so the
+    // count must not borrow it.
+    expect(wrapper.text()).not.toContain('1 target overdue')
+  })
+
   it('drops a slow report list for a schedule the user has navigated away from', async () => {
     let releaseFirstReports: ((rows: unknown[]) => void) | undefined
     mockApiClient.get.mockImplementation((url: string) => {

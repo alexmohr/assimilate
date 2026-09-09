@@ -621,3 +621,50 @@ test("the_two_approval_forms_are_not_interchangeable", async () => {
   ]);
   assert.equal(await approvalCoversThisHead(botReviewedHead, "o", "r", 7, "head", true), false);
 });
+
+test("the_newest_bot_review_decides_which_commit_the_label_is_about", async () => {
+  // Every other case here has exactly one bot review, so "most recent" was
+  // never actually exercised - the check could have been picking any element
+  // and still passed. These are deliberately out of submission order in the
+  // array, because ordering must come from `submitted_at` and not from the
+  // position `listReviews` happens to return: this is the check standing
+  // between a stale verdict and an unattended merge, and it should not rest
+  // on an ordering guarantee the API does not make.
+  const newestReviewedHead = fakeReviews([
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-02",
+    },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "older",
+      submitted_at: "2026-01-01",
+    },
+  ]);
+  assert.equal(await claudeVerdictCoversHead(newestReviewedHead, "o", "r", 7, "head"), true);
+
+  // Same two reviews, opposite verdict order: the newest run reviewed the
+  // superseded commit, so the standing label is about that one.
+  const newestReviewedOlder = fakeReviews([
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-01",
+    },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "older",
+      submitted_at: "2026-01-02",
+    },
+  ]);
+  assert.equal(
+    await claudeVerdictCoversHead(newestReviewedOlder, "o", "r", 7, "head"),
+    false,
+    "an older run finishing last is exactly the race this check exists for",
+  );
+});

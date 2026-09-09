@@ -419,7 +419,12 @@ repository (or environment) Actions variable: set it to the literal string
 `false` (Settings → Secrets and variables → Actions → Variables) to stop
 merging. The value is trimmed and compared case-insensitively, so `False`,
 `FALSE`, `no`, `off` and `0` all disable it too, and an unset variable means
-on. Anything else that is set — including a value that is only whitespace,
+on. `true`, `1`, `yes`, `on` and `enabled` are also recognised, and explicitly
+mean **on** rather than being rejected as unrecognised — the variable used to
+be an opt-in whose only accepted value was `true`, so a repo that had already
+set it that way keeps meaning what it meant instead of silently flipping to
+off when the polarity changed. Anything else that is set — including a value
+that is only whitespace,
 which is a typo rather than a request for the default — is treated as **off**,
 with a warning in the job log naming the raw value. A kill switch that failed
 *open* on a typo would keep merging code unattended, which is the one

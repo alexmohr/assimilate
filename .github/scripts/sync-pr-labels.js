@@ -291,15 +291,34 @@ async function resolveReviewDecision(github, owner, repo, prNumber) {
 // callers below to find either way.
 const VERDICT_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 
-// Each reviewer's most recent *verdict*, mirroring how GitHub itself computes
-// reviewDecision - only the latest one per user counts.
-async function latestVerdictPerUser(github, owner, repo, prNumber) {
-  const reviews = await github.paginate(github.rest.pulls.listReviews, {
+// Every review on the PR. Shared so the two currency checks below can't
+// diverge in how they fetch, only in how they filter.
+async function fetchReviews(github, owner, repo, prNumber) {
+  return github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,
     pull_number: prNumber,
     per_page: 100,
   });
+}
+
+// The most recently submitted of `reviews`, or null. Ordering is decided by
+// `submitted_at` rather than by array position: `listReviews` does return
+// submission order today, but these two callers are the checks standing
+// between a stale verdict and an unattended merge, and neither should rest on
+// an ordering guarantee the API does not actually make.
+function mostRecentlySubmitted(reviews) {
+  let latest = null;
+  for (const r of reviews) {
+    if (!latest || new Date(r.submitted_at) > new Date(latest.submitted_at)) latest = r;
+  }
+  return latest;
+}
+
+// Each reviewer's most recent *verdict*, mirroring how GitHub itself computes
+// reviewDecision - only the latest one per user counts.
+async function latestVerdictPerUser(github, owner, repo, prNumber) {
+  const reviews = await fetchReviews(github, owner, repo, prNumber);
   const latestByUser = new Map();
   for (const r of reviews) {
     if (!r.user) continue;
@@ -356,15 +375,11 @@ async function approvalIsCurrent(github, owner, repo, prNumber, headSha) {
 // marked `claude review failed`). So the bot's most recent review names the
 // commit the standing label is about.
 async function claudeVerdictCoversHead(github, owner, repo, prNumber, headSha) {
-  const reviews = await github.paginate(github.rest.pulls.listReviews, {
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100,
-  });
+  const reviews = await fetchReviews(github, owner, repo, prNumber);
   const botReviews = reviews.filter((r) => r.user && r.user.login === TRUSTED_AUTOMATION_LOGIN);
-  if (botReviews.length === 0) return false;
-  return botReviews[botReviews.length - 1].commit_id === headSha;
+  const latest = mostRecentlySubmitted(botReviews);
+  if (!latest) return false;
+  return latest.commit_id === headSha;
 }
 
 // A genuine other-account review always wins. Otherwise, fall back to the
@@ -1222,6 +1237,7 @@ module.exports.autoMergeIfApproved = autoMergeIfApproved;
 module.exports.approvalIsCurrent = approvalIsCurrent;
 module.exports.claudeVerdictCoversHead = claudeVerdictCoversHead;
 module.exports.approvalCoversThisHead = approvalCoversThisHead;
+module.exports.mostRecentlySubmitted = mostRecentlySubmitted;
 module.exports.AUTO_MERGE_PROTECTED_PREFIXES = AUTO_MERGE_PROTECTED_PREFIXES;
 module.exports.AUTO_MERGE_PROTECTED_CONFIG_DIRS = AUTO_MERGE_PROTECTED_CONFIG_DIRS;
 module.exports.AUTO_MERGE_PROTECTED_BASENAMES = AUTO_MERGE_PROTECTED_BASENAMES;

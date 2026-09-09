@@ -376,7 +376,28 @@ protection themselves.
 **On by default.** A PR that reaches `ready to merge` has already cleared
 every deterministic gate the pipeline computes *and* carries a genuine,
 provenance-checked approval, so it is squash-merged without waiting for a
-human to click the button. The kill switch is the `AUTO_MERGE_ENABLED`
+human to click the button.
+
+**The approval must cover the commit being merged.** A native `APPROVED`
+review is provenance-safe — GitHub guarantees a real, distinct reviewer and
+rejects self-approval — but it says nothing about *what* was approved. GitHub
+dismisses an approval when a new commit lands only if the branch's protection
+rules say to, and `sync-pr-labels.js` cannot see whether that setting is on,
+so it does not assume it. Without this check, a reviewer who approved commit
+A still reads as `APPROVED` after an unreviewed commit B, and once CI goes
+green on B the automation would merge code no reviewer has looked at —
+`changesRequestedIsCurrent` already re-checks the opposite verdict against
+`pr.head.sha` for exactly this reason.
+
+So `approvalIsCurrent` requires an `APPROVED` review submitted against the
+current head (latest review per user, mirroring how GitHub computes
+`reviewDecision`). It gates **auto-merge, not the `ready to merge` status**:
+a human pressing the button is looking at the PR and that is their call,
+whereas the unattended path is the whole question. Same shape as the
+protected-path guard — the status stands, the button is not pressed, the
+reason is logged. The `claude-approved` path needs no equivalent check: the
+label is only trusted when this repo's own automation applied it, and a push
+re-runs the review that applies it. The kill switch is the `AUTO_MERGE_ENABLED`
 repository (or environment) Actions variable: set it to the literal string
 `false` (Settings → Secrets and variables → Actions → Variables) to stop
 merging. The value is trimmed and compared case-insensitively, so `False`,

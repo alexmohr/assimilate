@@ -14,6 +14,7 @@ const path = require("node:path");
 const {
   autoMergeBlockedReason,
   autoMergeIfApproved,
+  approvalIsCurrent,
   LISTED_FILES_CAP,
   parseAutoMergeEnabled,
   resolveAutoMerge,
@@ -217,7 +218,7 @@ test("a_root_dot_directory_added_by_the_pr_itself_is_protected", async () => {
   ]);
   const messages = [];
 
-  await autoMergeIfApproved(github, { info: (m) => messages.push(m) }, "o", "r", 7, samePrRepo);
+  await autoMergeIfApproved(github, { info: (m) => messages.push(m) }, "o", "r", 7, samePrRepo, true);
 
   assert.deepEqual(calls.merged, [], "a PR adding .cargo/config.toml must not be merged");
   assert.deepEqual(calls.deletedRefs, [], "and its branch must survive");
@@ -342,6 +343,7 @@ test("auto_merge_skips_a_pr_that_touches_the_rails", async () => {
     "r",
     7,
     samePrRepo,
+    true,
   );
 
   assert.deepEqual(calls.merged, [], "a PR changing .github/ must not be merged");
@@ -355,7 +357,7 @@ test("auto_merge_proceeds_for_an_ordinary_pr", async () => {
     { filename: "docs/backups.md" },
   ]);
 
-  await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, samePrRepo);
+  await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, samePrRepo, true);
 
   assert.equal(calls.merged.length, 1, "an ordinary PR still merges");
   assert.deepEqual(calls.merged[0], {
@@ -378,7 +380,7 @@ test("auto_merge_leaves_a_fork_branch_alone", async () => {
     base: { repo: { id: 1 } },
   };
 
-  await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, forkPr);
+  await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, forkPr, true);
 
   assert.equal(calls.merged.length, 1);
   assert.deepEqual(calls.deletedRefs, [], "this token can't delete a fork's branch");
@@ -397,7 +399,7 @@ test("a_head_that_moved_after_the_guard_ran_is_not_merged", async () => {
   });
   const messages = [];
 
-  await autoMergeIfApproved(github, { info: (m) => messages.push(m) }, "o", "r", 7, samePrRepo);
+  await autoMergeIfApproved(github, { info: (m) => messages.push(m) }, "o", "r", 7, samePrRepo, true);
 
   assert.equal(calls.merged.length, 1, "the merge was attempted");
   assert.equal(calls.merged[0].sha, "headsha1", "and pinned to the certified head");
@@ -437,4 +439,69 @@ test("blocked_reason_names_the_protected_path_case_separately", () => {
     autoMergeBlockedReason([{ filename: "frontend/package.json" }]),
     "it changes frontend/package.json",
   );
+});
+
+function fakeReviews(reviews) {
+  return { paginate: async () => reviews, rest: { pulls: { listReviews: {} } } };
+}
+
+test("an_approval_only_counts_for_the_commit_it_was_submitted_against", async () => {
+  // The mirror of changesRequestedIsCurrent, and for the same reason: GitHub
+  // dismisses an approval on a new commit only when branch protection says
+  // to, and this script cannot see that setting. Without this check a review
+  // of commit A still reads as APPROVED after an unreviewed commit B.
+  const approvedHead = fakeReviews([
+    { user: { login: "human" }, state: "APPROVED", commit_id: "head", submitted_at: "2026-01-02" },
+  ]);
+  assert.equal(await approvalIsCurrent(approvedHead, "o", "r", 7, "head"), true);
+
+  const approvedOlder = fakeReviews([
+    { user: { login: "human" }, state: "APPROVED", commit_id: "older", submitted_at: "2026-01-02" },
+  ]);
+  assert.equal(await approvalIsCurrent(approvedOlder, "o", "r", 7, "head"), false);
+});
+
+test("only_a_reviewers_latest_review_counts_towards_currency", async () => {
+  // Mirrors how GitHub computes reviewDecision. A reviewer who approved this
+  // exact head and then came back asking for changes has not approved it.
+  const github = fakeReviews([
+    { user: { login: "human" }, state: "APPROVED", commit_id: "head", submitted_at: "2026-01-01" },
+    {
+      user: { login: "human" },
+      state: "CHANGES_REQUESTED",
+      commit_id: "head",
+      submitted_at: "2026-01-02",
+    },
+  ]);
+  assert.equal(await approvalIsCurrent(github, "o", "r", 7, "head"), false);
+});
+
+test("auto_merge_refuses_when_the_approval_does_not_cover_the_head", async () => {
+  const { github, calls } = fakeGithub([{ filename: "docs/backups.md" }]);
+  const messages = [];
+
+  await autoMergeIfApproved(
+    github,
+    { info: (m) => messages.push(m) },
+    "o",
+    "r",
+    7,
+    samePrRepo,
+    false,
+  );
+
+  assert.deepEqual(calls.merged, [], "a stale approval must not merge unattended");
+  assert.deepEqual(calls.deletedRefs, [], "and the branch must survive");
+  assert.match(messages.join("\n"), /no approving review was submitted against this exact commit/);
+});
+
+test("auto_merge_refuses_when_a_caller_forgets_to_say_whether_the_approval_is_current", async () => {
+  // `!== true` rather than a falsy check with a default: the approval is the
+  // one input that cannot be re-derived from the PR here, so a caller that
+  // omits it must get a refusal rather than a merge.
+  const { github, calls } = fakeGithub([{ filename: "docs/backups.md" }]);
+
+  await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, samePrRepo);
+
+  assert.deepEqual(calls.merged, [], "a missing answer must mean no");
 });

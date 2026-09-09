@@ -274,15 +274,15 @@ async function resolveReviewDecision(github, owner, repo, prNumber) {
 // was actually submitted against the PR's current head commit - i.e. a real
 // reviewer has seen this exact code and still wants changes, as opposed to
 // an old review of a commit that's since moved on.
-async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha) {
+// Each reviewer's most recent submission, mirroring how GitHub itself
+// computes reviewDecision - only the latest review per user counts.
+async function latestReviewPerUser(github, owner, repo, prNumber) {
   const reviews = await github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,
     pull_number: prNumber,
     per_page: 100,
   });
-  // Latest review per user, mirroring how GitHub itself computes
-  // reviewDecision (only each reviewer's most recent submission counts).
   const latestByUser = new Map();
   for (const r of reviews) {
     if (!r.user) continue;
@@ -291,9 +291,31 @@ async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha)
       latestByUser.set(r.user.login, r);
     }
   }
-  return [...latestByUser.values()].some(
-    (r) => r.state === "CHANGES_REQUESTED" && r.commit_id === headSha,
-  );
+  return [...latestByUser.values()];
+}
+
+async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha) {
+  const latest = await latestReviewPerUser(github, owner, repo, prNumber);
+  return latest.some((r) => r.state === "CHANGES_REQUESTED" && r.commit_id === headSha);
+}
+
+// The mirror of the above for approvals, and for the same reason: a review
+// verdict does not go stale on its own.
+//
+// GitHub dismisses an approval when a new commit lands only if the branch's
+// protection rules say to, and this script cannot see whether that setting is
+// on - so it must not assume it. Without it, a reviewer who approved commit A
+// still reads as APPROVED after an unreviewed commit B, and once CI goes green
+// on B the automation would merge code no reviewer has ever looked at.
+//
+// For a human pressing the merge button that is their call - they are looking
+// at the PR. For the unattended path it is the whole question, which is why
+// this gates auto-merge rather than the `ready to merge` status: same shape as
+// the protected-path guard, which also lets the status stand and declines to
+// press the button.
+async function approvalIsCurrent(github, owner, repo, prNumber, headSha) {
+  const latest = await latestReviewPerUser(github, owner, repo, prNumber);
+  return latest.some((r) => r.state === "APPROVED" && r.commit_id === headSha);
 }
 
 // A genuine other-account review always wins. Otherwise, fall back to the
@@ -551,7 +573,20 @@ function autoMergeBlockedReason(files) {
 // concurrent push, a race with another trigger) as a no-op rather than
 // failing the whole label-sync job over it - the next sync will simply
 // re-evaluate from scratch.
-async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr) {
+async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr, approvalCoversHead) {
+  // Deliberately `!== true` rather than a falsy check with a default: a future
+  // caller that forgets this argument passes `undefined` and gets a refusal,
+  // not a merge. An approval is the one input here that cannot be re-derived
+  // from the PR alone, so a missing answer has to mean no.
+  if (approvalCoversHead !== true) {
+    core.info(
+      `PR #${prNumber}: ready to merge, but no approving review was submitted against this ` +
+        "exact commit - auto-merge does not land code a reviewer has not seen. Merge it by " +
+        "hand, or re-approve the current head.",
+    );
+    return;
+  }
+
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner,
     repo,
@@ -1066,7 +1101,16 @@ module.exports = async ({
         `PR #${prNumber}: ready to merge with a genuine approval, but auto-merge is switched off - leaving it for a human to merge.`,
       );
     } else {
-      await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);
+      // A native APPROVED decision says a real, distinct reviewer signed off,
+      // but not *what* they signed off on - see approvalIsCurrent. The
+      // `claude-approved` path needs no such check: the label is only trusted
+      // when this repo's own automation applied it, and a push re-runs the
+      // review that applies it, so it cannot be older than the head that
+      // reached `ready to merge`.
+      const approvalCoversHead = isNativeApproval
+        ? await approvalIsCurrent(github, owner, repo, prNumber, pr.head.sha)
+        : true;
+      await autoMergeIfApproved(github, core, owner, repo, prNumber, pr, approvalCoversHead);
     }
   }
 };
@@ -1097,6 +1141,7 @@ module.exports.resolveAutoMerge = resolveAutoMerge;
 // would merge exactly the changes the guard exists to hold back, and these
 // scripts are not lcov-instrumented, so `node --test` is the only net.
 module.exports.autoMergeIfApproved = autoMergeIfApproved;
+module.exports.approvalIsCurrent = approvalIsCurrent;
 module.exports.AUTO_MERGE_PROTECTED_PREFIXES = AUTO_MERGE_PROTECTED_PREFIXES;
 module.exports.AUTO_MERGE_PROTECTED_CONFIG_DIRS = AUTO_MERGE_PROTECTED_CONFIG_DIRS;
 module.exports.AUTO_MERGE_PROTECTED_BASENAMES = AUTO_MERGE_PROTECTED_BASENAMES;

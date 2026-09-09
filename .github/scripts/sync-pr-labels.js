@@ -336,6 +336,37 @@ async function approvalIsCurrent(github, owner, repo, prNumber, headSha) {
   return latest.some((r) => r.state === "APPROVED" && r.commit_id === headSha);
 }
 
+// Whether the standing `claude-approved` label is about the commit being
+// merged, rather than about an older one.
+//
+// Provenance (claudeApprovedIsGenuine) is not currency, the same distinction
+// the native path needs approvalIsCurrent for. The label is cleared on every
+// push, which is why it looked exempt - but that clearing happens *at push
+// time*, and a review run pinned to the previous commit can still be in
+// flight and apply its verdict afterwards. claude-review.yml captures the
+// head sha once when the run starts and reviews that commit; a run that began
+// on C1 records its verdict even if the head has since moved to C2, and
+// nothing clears it again until the *next* push. That is not hypothetical:
+// it is how a `claude-changes-requested` from a superseded run comes to sit
+// on a newer head.
+//
+// The verdict's commit is recoverable because claude-review.yml only counts a
+// run as having produced a verdict when this bot posted a review against that
+// run's own head sha (its `postedThisCommit` check; otherwise the run is
+// marked `claude review failed`). So the bot's most recent review names the
+// commit the standing label is about.
+async function claudeVerdictCoversHead(github, owner, repo, prNumber, headSha) {
+  const reviews = await github.paginate(github.rest.pulls.listReviews, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  const botReviews = reviews.filter((r) => r.user && r.user.login === TRUSTED_AUTOMATION_LOGIN);
+  if (botReviews.length === 0) return false;
+  return botReviews[botReviews.length - 1].commit_id === headSha;
+}
+
 // A genuine other-account review always wins. Otherwise, fall back to the
 // claude-approved / claude-changes-requested labels (see REVIEW_VERDICT_LABELS)
 // for the same-account case where GitHub can't record a native verdict.
@@ -578,6 +609,27 @@ function autoMergeBlockedReason(files) {
   const protectedPath = protectedPathIn(files);
   if (protectedPath) return `it changes ${protectedPath}`;
   return null;
+}
+
+// Whether the approval that got this PR to `ready to merge` is about the
+// commit that would be merged.
+//
+// Neither approval form says *what* was approved on its own, so both are
+// checked against this head. A native APPROVED review carries its own commit
+// id (approvalIsCurrent). The `claude-approved` label does not, so the commit
+// is recovered from the review posted by the run that set it
+// (claudeVerdictCoversHead).
+//
+// The label path is deliberately not exempt, though it is cleared on every
+// push and so looks like it cannot be stale. That clearing happens at push
+// time; a review run pinned to the previous commit can still be in flight and
+// apply its verdict afterwards, and nothing clears it again until the next
+// push. Kept as one function so the two paths cannot drift apart, and so the
+// choice between them is testable rather than buried in a call site.
+async function approvalCoversThisHead(github, owner, repo, prNumber, headSha, isNativeApproval) {
+  return isNativeApproval
+    ? approvalIsCurrent(github, owner, repo, prNumber, headSha)
+    : claudeVerdictCoversHead(github, owner, repo, prNumber, headSha);
 }
 
 // Squash-merges `pr` and deletes its branch (same-repo PRs only - a fork's
@@ -1128,16 +1180,14 @@ module.exports = async ({
         `PR #${prNumber}: ready to merge with a genuine approval, but auto-merge is switched off - leaving it for a human to merge.`,
       );
     } else {
-      // A native APPROVED decision says a real, distinct reviewer signed off,
-      // but not *what* they signed off on - see approvalIsCurrent. The
-      // `claude-approved` path needs no such check for a stronger reason: the
-      // synchronize handler above deletes that label outright on every push,
-      // so it cannot survive from an earlier commit at all. (It is also only
-      // trusted when this repo's own automation applied it - see
-      // claudeApprovedIsGenuine - but the clearing is what makes it current.)
-      const approvalCoversHead = isNativeApproval
-        ? await approvalIsCurrent(github, owner, repo, prNumber, pr.head.sha)
-        : true;
+      const approvalCoversHead = await approvalCoversThisHead(
+        github,
+        owner,
+        repo,
+        prNumber,
+        pr.head.sha,
+        isNativeApproval,
+      );
       await autoMergeIfApproved(github, core, owner, repo, prNumber, pr, approvalCoversHead);
     }
   }
@@ -1170,6 +1220,8 @@ module.exports.resolveAutoMerge = resolveAutoMerge;
 // scripts are not lcov-instrumented, so `node --test` is the only net.
 module.exports.autoMergeIfApproved = autoMergeIfApproved;
 module.exports.approvalIsCurrent = approvalIsCurrent;
+module.exports.claudeVerdictCoversHead = claudeVerdictCoversHead;
+module.exports.approvalCoversThisHead = approvalCoversThisHead;
 module.exports.AUTO_MERGE_PROTECTED_PREFIXES = AUTO_MERGE_PROTECTED_PREFIXES;
 module.exports.AUTO_MERGE_PROTECTED_CONFIG_DIRS = AUTO_MERGE_PROTECTED_CONFIG_DIRS;
 module.exports.AUTO_MERGE_PROTECTED_BASENAMES = AUTO_MERGE_PROTECTED_BASENAMES;

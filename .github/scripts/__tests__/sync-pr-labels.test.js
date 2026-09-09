@@ -15,6 +15,8 @@ const {
   autoMergeBlockedReason,
   autoMergeIfApproved,
   approvalIsCurrent,
+  claudeVerdictCoversHead,
+  approvalCoversThisHead,
   LISTED_FILES_CAP,
   parseAutoMergeEnabled,
   resolveAutoMerge,
@@ -531,4 +533,91 @@ test("auto_merge_refuses_when_a_caller_forgets_to_say_whether_the_approval_is_cu
   await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, samePrRepo);
 
   assert.deepEqual(calls.merged, [], "a missing answer must mean no");
+});
+
+test("the_claude_approved_label_is_checked_against_the_head_too", async () => {
+  // The label is cleared on every push, which made it look exempt from the
+  // currency check. But that clearing happens *at push time*: a review run
+  // pinned to the previous commit can still be in flight and apply its
+  // verdict afterwards, and nothing clears it again until the next push.
+  // claude-review.yml captures the head sha once when the run starts, so a
+  // run that began on C1 records its verdict even when the head is now C2.
+  //
+  // The commit is recoverable because that workflow only counts a run as
+  // having produced a verdict when this bot posted a review against the run's
+  // own head sha - so the bot's most recent review names the commit the
+  // standing label is about.
+  const reviewedHead = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "head" },
+  ]);
+  assert.equal(await claudeVerdictCoversHead(reviewedHead, "o", "r", 7, "head"), true);
+
+  const reviewedOlder = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "older" },
+  ]);
+  assert.equal(await claudeVerdictCoversHead(reviewedOlder, "o", "r", 7, "head"), false);
+});
+
+test("a_human_review_of_the_head_does_not_vouch_for_the_bots_label", async () => {
+  // Only this repo's automation posts the review that backs the label, so a
+  // human reviewing the head says nothing about which commit the bot's
+  // verdict was about. Without the login filter a human's review would stand
+  // in for the bot's and re-open the same gap.
+  const github = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "older" },
+    { user: { login: "human" }, state: "COMMENTED", commit_id: "head" },
+  ]);
+  assert.equal(await claudeVerdictCoversHead(github, "o", "r", 7, "head"), false);
+});
+
+test("no_bot_review_at_all_is_not_a_covered_verdict", async () => {
+  // Fail closed: nothing to recover the verdict's commit from.
+  assert.equal(await claudeVerdictCoversHead(fakeReviews([]), "o", "r", 7, "head"), false);
+});
+
+test("neither_approval_form_is_exempt_from_the_head_check", async () => {
+  // The wiring, not just the two predicates: whichever approval form got the
+  // PR to `ready to merge`, the answer handed to autoMergeIfApproved has to
+  // come from checking that form against this head. An earlier version passed
+  // a literal `true` for the label path, on the reasoning that a push clears
+  // the label - which is true but happens at push time, so a run pinned to
+  // the previous commit can still land its verdict afterwards.
+  const staleNative = fakeReviews([
+    { user: { login: "human" }, state: "APPROVED", commit_id: "older", submitted_at: "2026-01-01" },
+  ]);
+  assert.equal(await approvalCoversThisHead(staleNative, "o", "r", 7, "head", true), false);
+
+  const currentNative = fakeReviews([
+    { user: { login: "human" }, state: "APPROVED", commit_id: "head", submitted_at: "2026-01-01" },
+  ]);
+  assert.equal(await approvalCoversThisHead(currentNative, "o", "r", 7, "head", true), true);
+
+  const staleLabel = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "older" },
+  ]);
+  assert.equal(
+    await approvalCoversThisHead(staleLabel, "o", "r", 7, "head", false),
+    false,
+    "a claude-approved label from a run pinned to an older commit must not count",
+  );
+
+  const currentLabel = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "head" },
+  ]);
+  assert.equal(await approvalCoversThisHead(currentLabel, "o", "r", 7, "head", false), true);
+});
+
+test("the_two_approval_forms_are_not_interchangeable", async () => {
+  // A human's APPROVED of this head does not make the bot's label current,
+  // and a bot review of this head is not itself an approval - so neither
+  // branch may answer for the other.
+  const humanApprovedHead = fakeReviews([
+    { user: { login: "human" }, state: "APPROVED", commit_id: "head", submitted_at: "2026-01-01" },
+  ]);
+  assert.equal(await approvalCoversThisHead(humanApprovedHead, "o", "r", 7, "head", false), false);
+
+  const botReviewedHead = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "head" },
+  ]);
+  assert.equal(await approvalCoversThisHead(botReviewedHead, "o", "r", 7, "head", true), false);
 });

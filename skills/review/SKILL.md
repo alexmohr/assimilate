@@ -395,11 +395,21 @@ current head (latest review per user, mirroring how GitHub computes
 a human pressing the button is looking at the PR and that is their call,
 whereas the unattended path is the whole question. Same shape as the
 protected-path guard — the status stands, the button is not pressed, the
-reason is logged. The `claude-approved` path needs no equivalent check, for a
-stronger reason: `sync-pr-labels.js` deletes that label outright on every
-`synchronize` event, so it cannot survive from an earlier commit at all. (It
-is also only trusted when this repo's own automation applied it — see
-`claudeApprovedIsGenuine` — but the clearing is what makes it current.)
+reason is logged. The `claude-approved` path is checked too, by
+`claudeVerdictCoversHead`. It looks exempt, because `sync-pr-labels.js`
+deletes that label on every `synchronize` event — but that clearing happens
+**at push time**, and `claude-review.yml` captures the head sha once when a
+run starts. A run pinned to the previous commit can still be in flight and
+apply its verdict afterwards, and nothing clears it again until the next push.
+The verdict's commit is recoverable because that workflow only counts a run as
+having produced a verdict when the bot posted a review against the run's own
+head sha (otherwise it sets `claude review failed`), so the bot's most recent
+review names the commit the standing label is about.
+
+`approvalCoversThisHead` picks between the two checks, so the paths cannot
+drift apart and the choice itself is testable rather than buried in a call
+site. Provenance (`claudeApprovedIsGenuine`) and currency are separate
+questions and both are asked.
 
 Neither verdict self-invalidates, which is the point both currency checks
 exist to handle: a `CHANGES_REQUESTED` review keeps blocking forever, and an

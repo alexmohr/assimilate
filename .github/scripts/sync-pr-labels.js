@@ -310,6 +310,14 @@ async function fetchReviews(github, owner, repo, prNumber) {
 function mostRecentlySubmitted(reviews) {
   let latest = null;
   for (const r of reviews) {
+    // An unsubmitted (PENDING) review has no `submitted_at`, and comparing
+    // against one poisons every later comparison: `new Date(undefined)` is
+    // Invalid Date, so `>` is NaN-false forever and `latest` sticks on it -
+    // reintroducing the array-order dependence this function exists to
+    // remove. It is also not evidence of anything: nobody has submitted it.
+    // claude-review.yml can leave one behind, since creating an inline
+    // comment opens a review that an interrupted run never submits.
+    if (!r.submitted_at) continue;
     if (!latest || new Date(r.submitted_at) > new Date(latest.submitted_at)) latest = r;
   }
   return latest;

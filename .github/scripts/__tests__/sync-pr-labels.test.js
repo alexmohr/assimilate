@@ -535,6 +535,12 @@ test("auto_merge_refuses_when_a_caller_forgets_to_say_whether_the_approval_is_cu
   assert.deepEqual(calls.merged, [], "a missing answer must mean no");
 });
 
+// Fixtures for *submitted* reviews carry `submitted_at`, because a submitted
+// review always has one. That is not decoration: an earlier version of these
+// cases omitted it, which meant every review looked equally undated, the
+// running "latest" never advanced past the first element, and the NaN-poisoning
+// bug in mostRecentlySubmitted could not show up here. Only the deliberate
+// PENDING fixtures below omit it.
 test("the_claude_approved_label_is_checked_against_the_head_too", async () => {
   // The label is cleared on every push, which made it look exempt from the
   // currency check. But that clearing happens *at push time*: a review run
@@ -548,12 +554,22 @@ test("the_claude_approved_label_is_checked_against_the_head_too", async () => {
   // own head sha - so the bot's most recent review names the commit the
   // standing label is about.
   const reviewedHead = fakeReviews([
-    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "head" },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-01",
+    },
   ]);
   assert.equal(await claudeVerdictCoversHead(reviewedHead, "o", "r", 7, "head"), true);
 
   const reviewedOlder = fakeReviews([
-    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "older" },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "older",
+      submitted_at: "2026-01-01",
+    },
   ]);
   assert.equal(await claudeVerdictCoversHead(reviewedOlder, "o", "r", 7, "head"), false);
 });
@@ -564,8 +580,18 @@ test("a_human_review_of_the_head_does_not_vouch_for_the_bots_label", async () =>
   // verdict was about. Without the login filter a human's review would stand
   // in for the bot's and re-open the same gap.
   const github = fakeReviews([
-    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "older" },
-    { user: { login: "human" }, state: "COMMENTED", commit_id: "head" },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "older",
+      submitted_at: "2026-01-01",
+    },
+    {
+      user: { login: "human" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-02",
+    },
   ]);
   assert.equal(await claudeVerdictCoversHead(github, "o", "r", 7, "head"), false);
 });
@@ -593,7 +619,12 @@ test("neither_approval_form_is_exempt_from_the_head_check", async () => {
   assert.equal(await approvalCoversThisHead(currentNative, "o", "r", 7, "head", true), true);
 
   const staleLabel = fakeReviews([
-    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "older" },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "older",
+      submitted_at: "2026-01-01",
+    },
   ]);
   assert.equal(
     await approvalCoversThisHead(staleLabel, "o", "r", 7, "head", false),
@@ -602,7 +633,12 @@ test("neither_approval_form_is_exempt_from_the_head_check", async () => {
   );
 
   const currentLabel = fakeReviews([
-    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "head" },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-01",
+    },
   ]);
   assert.equal(await approvalCoversThisHead(currentLabel, "o", "r", 7, "head", false), true);
 });
@@ -617,7 +653,12 @@ test("the_two_approval_forms_are_not_interchangeable", async () => {
   assert.equal(await approvalCoversThisHead(humanApprovedHead, "o", "r", 7, "head", false), false);
 
   const botReviewedHead = fakeReviews([
-    { user: { login: "github-actions[bot]" }, state: "COMMENTED", commit_id: "head" },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-01",
+    },
   ]);
   assert.equal(await approvalCoversThisHead(botReviewedHead, "o", "r", 7, "head", true), false);
 });
@@ -667,4 +708,48 @@ test("the_newest_bot_review_decides_which_commit_the_label_is_about", async () =
     false,
     "an older run finishing last is exactly the race this check exists for",
   );
+});
+
+test("an_unsubmitted_review_cannot_stand_in_for_a_submitted_one", async () => {
+  // A PENDING review has no `submitted_at`. Comparing against one poisons
+  // every later comparison - `new Date(undefined)` is Invalid Date, so `>` is
+  // NaN-false forever and the running "latest" sticks on it. That reintroduces
+  // exactly the array-order dependence mostRecentlySubmitted exists to remove,
+  // so both orderings are asserted: the bug only shows when the unsubmitted
+  // review comes first.
+  //
+  // Reachable rather than theoretical: claude-review.yml's allowed tools
+  // include creating an inline comment, which opens a review that an
+  // interrupted run never submits.
+  const pendingFirst = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "PENDING", commit_id: "older" },
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-02",
+    },
+  ]);
+  assert.equal(
+    await claudeVerdictCoversHead(pendingFirst, "o", "r", 7, "head"),
+    true,
+    "an unsubmitted review must not mask the real one behind it",
+  );
+
+  const pendingLast = fakeReviews([
+    {
+      user: { login: "github-actions[bot]" },
+      state: "COMMENTED",
+      commit_id: "head",
+      submitted_at: "2026-01-02",
+    },
+    { user: { login: "github-actions[bot]" }, state: "PENDING", commit_id: "older" },
+  ]);
+  assert.equal(await claudeVerdictCoversHead(pendingLast, "o", "r", 7, "head"), true);
+
+  // And it is not itself evidence: a PENDING review alone covers nothing.
+  const onlyPending = fakeReviews([
+    { user: { login: "github-actions[bot]" }, state: "PENDING", commit_id: "head" },
+  ]);
+  assert.equal(await claudeVerdictCoversHead(onlyPending, "o", "r", 7, "head"), false);
 });

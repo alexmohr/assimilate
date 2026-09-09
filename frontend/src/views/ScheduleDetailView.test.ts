@@ -994,6 +994,25 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect((wrapper.find('.cron-builder-stub').element as HTMLInputElement).value).toBe('0 9 * * *')
   })
 
+  it('logs and leaves the page working when the background schedule refresh fails', async () => {
+    const wrapper = await createEditWrapper()
+
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.reject(new Error('boom'))
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'background schedule refresh failed',
+      expect.any(Error),
+    )
+    // The last-good schedule stays on screen rather than the page blanking out.
+    expect(wrapper.text()).toContain('human(0 2 * * *)')
+  })
+
   async function createActiveBackupWrapper(): Promise<ReturnType<typeof renderWithPlugins>> {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })

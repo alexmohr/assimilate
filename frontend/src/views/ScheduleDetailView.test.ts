@@ -2182,6 +2182,46 @@ describe('ScheduleDetailView - load ordering', () => {
     })
   }
 
+  // The rows now arrive already scoped to this schedule, so the only match
+  // left is the target host. The Overview tab's badge covers the same lookup;
+  // this pins the header's count, which reads it through `overdueTargetCount`.
+  it('marks a target overdue from the scoped health rows', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return Promise.resolve({
+          data: [
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              is_overdue: true,
+              schedule_enabled: true,
+              consecutive_missed_backups: 0,
+              missed_backup_threshold: 3,
+            },
+          ],
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1 target overdue')
+  })
+
   it('drops a slow report list for a schedule the user has navigated away from', async () => {
     let releaseFirstReports: ((rows: unknown[]) => void) | undefined
     mockApiClient.get.mockImplementation((url: string) => {

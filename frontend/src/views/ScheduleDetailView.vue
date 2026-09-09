@@ -266,16 +266,16 @@ function agentLabel(id: number): string {
   return c ? (c.display_name ?? c.hostname) : `#${id}`
 }
 
-const scheduleHealth = computed<HealthSummaryResponse[]>(() => {
-  const scheduleId = schedule.value?.id
-  if (scheduleId == null) return []
-  return health.value.filter((h) => h.schedule_id === scheduleId)
-})
-
+/**
+ * `loadData` asks for this schedule's health alone, so the rows already belong
+ * to it and only the target host is left to match on. `health` has no other
+ * writer - no WebSocket handler touches it - so a second filter by
+ * `schedule_id` here would never remove anything.
+ */
 function healthForAgent(agentId: number): HealthSummaryResponse | null {
   const hostname = agentMap.value.get(agentId)?.hostname
   if (!hostname) return null
-  return scheduleHealth.value.find((h) => h.hostname === hostname) ?? null
+  return health.value.find((h) => h.hostname === hostname) ?? null
 }
 
 const overdueTargetCount = computed(

@@ -612,6 +612,13 @@ onMessage('BackupCompleted', (payload) => {
   backupArchiveName.value = null
 })
 
+// Every other page with its own detail view (Repos, Hosts, ...) refreshes on
+// DataChanged; this one didn't, so a manual or catch-up run's last_run_at/
+// next_run_at bump - sent as its own DataChanged right after BackupCompleted,
+// see ws/handler.rs's finalize_backup_completion - never showed up here
+// without a manual page reload.
+onMessage('DataChanged', () => loadData().catch(logger.error))
+
 onMessage('BackupLog', (payload) => {
   // Prefer schedule_id matching so progress arrives even before loadData()
   // resolves the target list; fall back to repo_id when schedule_id is absent.

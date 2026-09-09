@@ -538,10 +538,25 @@ async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr) {
     return;
   }
 
+  // `sha` pins the merge to the head the guard above was computed against.
+  // Without it GitHub merges whatever the head is *now*, so a commit landing
+  // between the file listing and this call would be merged without ever having
+  // been checked - the one race that could defeat the protected-path guard by
+  // going around it. With it, a moved head is a 409 and the sync simply does
+  // nothing; the next one re-evaluates from scratch against the new head.
   try {
-    await github.rest.pulls.merge({ owner, repo, pull_number: prNumber, merge_method: "squash" });
+    await github.rest.pulls.merge({
+      owner,
+      repo,
+      pull_number: prNumber,
+      merge_method: "squash",
+      sha: pr.head.sha,
+    });
     core.info(`PR #${prNumber}: auto-merged (squash) - ready to merge with a genuine approval.`);
   } catch (err) {
+    // 405: not mergeable right now. 409: the head moved since `sha` was read,
+    // or a concurrent trigger got there first. Both are no-ops rather than job
+    // failures - the next sync re-evaluates every gate from scratch.
     if (err.status === 405 || err.status === 409) {
       core.info(`PR #${prNumber}: auto-merge attempt skipped (${err.status}): ${err.message}`);
       return;

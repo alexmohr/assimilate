@@ -249,7 +249,7 @@ test("workflows_pass_the_variable_rather_than_calling_across_the_version_seam", 
 // hold back, and no unit test of the predicate would notice. These scripts
 // aren't lcov-instrumented either, so the coverage gate can't see this wiring
 // - `node --test` is the only net under it.
-function fakeGithub(files) {
+function fakeGithub(files, { mergeError } = {}) {
   const calls = { merged: [], deletedRefs: [] };
   const github = {
     paginate: async () => files,
@@ -258,6 +258,7 @@ function fakeGithub(files) {
         listFiles: {},
         merge: async (args) => {
           calls.merged.push(args);
+          if (mergeError) throw mergeError;
         },
       },
       git: {
@@ -272,7 +273,10 @@ function fakeGithub(files) {
 }
 
 // Same-repo PR, so the branch-delete path is exercised too.
-const samePrRepo = { head: { ref: "feature", repo: { id: 1 } }, base: { repo: { id: 1 } } };
+const samePrRepo = {
+  head: { ref: "feature", sha: "headsha1", repo: { id: 1 } },
+  base: { repo: { id: 1 } },
+};
 
 test("auto_merge_skips_a_pr_that_touches_the_rails", async () => {
   const { github, calls } = fakeGithub([
@@ -309,6 +313,9 @@ test("auto_merge_proceeds_for_an_ordinary_pr", async () => {
     repo: "r",
     pull_number: 7,
     merge_method: "squash",
+    // Pinned to the head the guard above was computed against - see the
+    // head-moved test below for why this is load-bearing rather than cosmetic.
+    sha: "headsha1",
   });
   assert.equal(calls.deletedRefs.length, 1, "and its same-repo branch is deleted");
   assert.equal(calls.deletedRefs[0].ref, "heads/feature");
@@ -316,12 +323,36 @@ test("auto_merge_proceeds_for_an_ordinary_pr", async () => {
 
 test("auto_merge_leaves_a_fork_branch_alone", async () => {
   const { github, calls } = fakeGithub([{ filename: "docs/backups.md" }]);
-  const forkPr = { head: { ref: "feature", repo: { id: 2 } }, base: { repo: { id: 1 } } };
+  const forkPr = {
+    head: { ref: "feature", sha: "headsha1", repo: { id: 2 } },
+    base: { repo: { id: 1 } },
+  };
 
   await autoMergeIfApproved(github, { info: () => {} }, "o", "r", 7, forkPr);
 
   assert.equal(calls.merged.length, 1);
   assert.deepEqual(calls.deletedRefs, [], "this token can't delete a fork's branch");
+});
+
+test("a_head_that_moved_after_the_guard_ran_is_not_merged", async () => {
+  // The guard reads the PR's file list, then merges. Without `sha` GitHub
+  // would merge whatever the head is at merge time, so a commit landing in
+  // between would be merged having never been checked against the protected
+  // paths - going around the guard rather than through it. Pinning the sha
+  // turns that into a 409, which is a no-op: nothing merged, branch intact,
+  // no job failure, and the next sync re-evaluates against the new head.
+  const conflict = Object.assign(new Error("Head branch was modified"), { status: 409 });
+  const { github, calls } = fakeGithub([{ filename: "docs/backups.md" }], {
+    mergeError: conflict,
+  });
+  const messages = [];
+
+  await autoMergeIfApproved(github, { info: (m) => messages.push(m) }, "o", "r", 7, samePrRepo);
+
+  assert.equal(calls.merged.length, 1, "the merge was attempted");
+  assert.equal(calls.merged[0].sha, "headsha1", "and pinned to the certified head");
+  assert.deepEqual(calls.deletedRefs, [], "but nothing merged, so the branch must survive");
+  assert.match(messages.join("\n"), /auto-merge attempt skipped \(409\)/);
 });
 
 test("a_truncated_file_list_counts_as_protected", () => {

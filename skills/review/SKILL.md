@@ -482,6 +482,14 @@ being under-broad costs the gate.
 `skills/review/SKILL.md` from the `pull_request_target` **base** checkout, not
 the PR head, so it is not in this class.
 
+The merge call itself pins `sha: pr.head.sha`, so it can only ever land the
+head the guard was computed against. Without it GitHub merges whatever the
+head is at merge time, and a commit landing between the file listing and the
+merge would go in having never been checked — around the guard rather than
+through it. A moved head is then a 409, which is a no-op: nothing merges, the
+branch survives, the job stays green, and the next sync re-evaluates every
+gate against the new head.
+
 A one-line epsilon in `analyze-coverage-diff.js` would turn "aggregate
 coverage must not drop" into a suggestion; an advisory id in `deny.toml`
 silences `deps-audit`; `unwrap_used = "allow"` in the root `Cargo.toml`

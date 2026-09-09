@@ -1560,6 +1560,20 @@ async fn record_schedule_failure_once(
     .await
     {
         Ok(outcome) => {
+            // Fired for every connectivity miss, including the one that goes on to
+            // auto-disable the schedule below: that notification is about the
+            // schedule's overall state, not about this specific run, so it doesn't
+            // stand in for telling the user this backup itself didn't start.
+            if agent_unreachable {
+                dispatch_backup_skipped_agent_offline_notification(
+                    ctx,
+                    agent_id,
+                    repo_id,
+                    hostname,
+                    schedule_id,
+                )
+                .await;
+            }
             if outcome.auto_disabled {
                 tracing::error!(
                     schedule_id,
@@ -1668,6 +1682,67 @@ async fn dispatch_schedule_auto_disabled_notification(
             schedule_id,
             error = %e,
             "sequential: failed to dispatch schedule-auto-disabled notification"
+        );
+    }
+}
+
+/// Records a [`SystemEventType::BackupSkippedAgentOffline`] system event and
+/// dispatches the matching [`notifications::EventType::BackupSkippedAgentOffline`]
+/// so a configured channel (email/webhook/push) - and the Activity Log - can
+/// surface this run's target being unreachable, without waiting for the
+/// schedule to cross `missed_backup_threshold` and auto-disable. Only called
+/// for a genuine connectivity miss (`agent_unreachable`), never for a
+/// local/data failure such as a config-assembly error - see the doc comment
+/// on [`record_schedule_failure_once`].
+async fn dispatch_backup_skipped_agent_offline_notification(
+    ctx: &SequentialTargetCtx<'_>,
+    agent_id: i64,
+    repo_id: i64,
+    hostname: &str,
+    schedule_id: i64,
+) {
+    let msg = format!(
+        "Backup for schedule '{}' could not be started: agent '{hostname}' is offline",
+        ctx.schedule_name
+    );
+    if let Err(e) = db::insert_system_event(
+        ctx.pool,
+        SystemEventType::BackupSkippedAgentOffline,
+        Some(hostname),
+        &msg,
+    )
+    .await
+    {
+        tracing::error!(
+            schedule_id,
+            error = %e,
+            "sequential: failed to record backup-skipped-agent-offline system event"
+        );
+    }
+
+    let repo_name = db::get_repo_name(ctx.pool, repo_id)
+        .await
+        .unwrap_or_default();
+    let event = crate::notifications::NotificationEvent {
+        event_type: crate::notifications::EventType::BackupSkippedAgentOffline,
+        hostname: hostname.to_owned(),
+        repo_name,
+        status: "skipped".to_owned(),
+        error_message: Some(format!("agent '{hostname}' is offline")),
+        timestamp: ctx.now,
+        repo_id: Some(repo_id),
+        agent_id: Some(agent_id),
+        schedule_id: Some(schedule_id),
+        schedule_name: Some(ctx.schedule_name.to_owned()),
+        archive_name: None,
+    };
+    if let Err(e) =
+        crate::notifications::dispatch(ctx.notification_service, event, ctx.task_registry).await
+    {
+        tracing::error!(
+            schedule_id,
+            error = %e,
+            "sequential: failed to dispatch backup-skipped-agent-offline notification"
         );
     }
 }
@@ -2474,6 +2549,104 @@ esac
         assert_eq!(consecutive_failures, 1, "one failure must be recorded");
         assert!(enabled, "a single failure must not disable the schedule");
         assert!(!auto_disabled);
+    }
+
+    /// A backup that can't even be started because its agent is offline must not be
+    /// silent until the schedule crosses `missed_backup_threshold` and auto-disables -
+    /// each individual miss should record a system event and dispatch a
+    /// `backup_skipped_agent_offline` notification, well before that threshold.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_dispatches_backup_skipped_agent_offline_notification_on_each_miss(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_skipped_agent_offline', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let notification_service = crate::notifications::NotificationService::new(pool.clone());
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &notification_service,
+            task_registry: &task_registry,
+        })
+        .await
+        .unwrap();
+
+        let outstanding = task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+        assert_eq!(
+            outstanding, 0,
+            "task_registry.shutdown must join the notification delivery task"
+        );
+
+        let (consecutive_failures, enabled, auto_disabled) =
+            schedule_failure_state(&pool, schedule_id).await;
+        assert_eq!(
+            consecutive_failures, 1,
+            "a single miss must not yet cross missed_backup_threshold"
+        );
+        assert!(enabled);
+        assert!(!auto_disabled);
+
+        let delivery_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            delivery_event_types,
+            vec!["backup_skipped_agent_offline".to_owned()],
+            "a backup that couldn't be started because its agent is offline must dispatch a \
+             backup_skipped_agent_offline notification"
+        );
+
+        let system_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM system_events WHERE event_type = \
+             'backup_skipped_agent_offline'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            system_event_types.len(),
+            1,
+            "the miss must also be recorded as a system event for the Activity Log"
+        );
     }
 
     /// The occurrence the next tick will run, i.e. the `next_run_at` that came due.

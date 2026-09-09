@@ -392,7 +392,7 @@ describe('NotificationsView', () => {
       dialogButton('Next').click()
       await flushPromises()
 
-      expect(document.body.querySelectorAll('.event-item')).toHaveLength(8)
+      expect(document.body.querySelectorAll('.event-item')).toHaveLength(9)
     })
 
     it('labels the schedule-auto-disabled event type in plain words', async () => {

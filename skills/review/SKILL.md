@@ -395,9 +395,16 @@ current head (latest review per user, mirroring how GitHub computes
 a human pressing the button is looking at the PR and that is their call,
 whereas the unattended path is the whole question. Same shape as the
 protected-path guard — the status stands, the button is not pressed, the
-reason is logged. The `claude-approved` path needs no equivalent check: the
-label is only trusted when this repo's own automation applied it, and a push
-re-runs the review that applies it. The kill switch is the `AUTO_MERGE_ENABLED`
+reason is logged. The `claude-approved` path needs no equivalent check, for a
+stronger reason: `sync-pr-labels.js` deletes that label outright on every
+`synchronize` event, so it cannot survive from an earlier commit at all. (It
+is also only trusted when this repo's own automation applied it — see
+`claudeApprovedIsGenuine` — but the clearing is what makes it current.)
+
+Neither verdict self-invalidates, which is the point both currency checks
+exist to handle: a `CHANGES_REQUESTED` review keeps blocking forever, and an
+`APPROVED` review keeps approving, until someone submits a new one or branch
+protection dismisses it. The kill switch is the `AUTO_MERGE_ENABLED`
 repository (or environment) Actions variable: set it to the literal string
 `false` (Settings → Secrets and variables → Actions → Variables) to stop
 merging. The value is trimmed and compared case-insensitively, so `False`,

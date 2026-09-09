@@ -746,9 +746,18 @@ module.exports = async ({
   let existingLabels = pr.labels.map((l) => l.name);
 
   // New commits invalidate any prior verdict recorded via the fallback
-  // labels, mirroring GitHub's own stale-review-dismissal behavior. Native
-  // GitHub reviews already go stale/pending on their own; these labels don't,
-  // so they must be cleared explicitly.
+  // labels, so they are cleared here explicitly.
+  //
+  // An earlier version of this comment said native GitHub reviews "already go
+  // stale/pending on their own" and that only these labels needed clearing.
+  // That is wrong in both directions and the mistake was load-bearing: a
+  // CHANGES_REQUESTED review keeps blocking forever (hence
+  // changesRequestedIsCurrent), and an APPROVED review keeps approving unless
+  // the branch's protection rules dismiss it - which is how a stale approval
+  // could once have auto-merged an unreviewed commit (hence approvalIsCurrent).
+  // Neither verdict self-invalidates. This clearing is what makes the
+  // `claude-approved` path safe without a currency check of its own; do not
+  // read it as evidence that the native path has one for free.
   if (eventAction === "synchronize") {
     // claude-approved / claude-changes-requested are set against a specific
     // commit; a new push makes them stale. precheck failed needs no special
@@ -1103,10 +1112,11 @@ module.exports = async ({
     } else {
       // A native APPROVED decision says a real, distinct reviewer signed off,
       // but not *what* they signed off on - see approvalIsCurrent. The
-      // `claude-approved` path needs no such check: the label is only trusted
-      // when this repo's own automation applied it, and a push re-runs the
-      // review that applies it, so it cannot be older than the head that
-      // reached `ready to merge`.
+      // `claude-approved` path needs no such check for a stronger reason: the
+      // synchronize handler above deletes that label outright on every push,
+      // so it cannot survive from an earlier commit at all. (It is also only
+      // trusted when this repo's own automation applied it - see
+      // claudeApprovedIsGenuine - but the clearing is what makes it current.)
       const approvalCoversHead = isNativeApproval
         ? await approvalIsCurrent(github, owner, repo, prNumber, pr.head.sha)
         : true;

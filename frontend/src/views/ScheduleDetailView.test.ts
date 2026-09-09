@@ -2141,4 +2141,55 @@ describe('ScheduleDetailView - load ordering', () => {
       wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
     ).toBe(false)
   })
+
+  // Same guard on the report list, which the Backups tab renders directly: a
+  // run belonging to the schedule the user left must not show up under the
+  // one they are on.
+  it('drops a slow report list for a schedule the user has navigated away from', async () => {
+    let releaseFirstReports: ((rows: unknown[]) => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/schedules/1/reports')
+        return new Promise((resolve) => {
+          releaseFirstReports = (rows: unknown[]): void => resolve({ data: rows })
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    releaseFirstReports?.([
+      {
+        id: 99,
+        repo_id: 20,
+        agent_id: 10,
+        status: 'started',
+        started_at: '2026-06-01T02:00:00Z',
+        archive_name: 'stale-run-from-schedule-one',
+      },
+    ])
+    await flushPromises()
+
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text() === 'Backups')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('stale-run-from-schedule-one')
+  })
 })

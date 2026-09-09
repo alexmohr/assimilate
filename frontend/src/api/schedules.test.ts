@@ -185,4 +185,17 @@ describe('schedules api', () => {
 
     expect(apiClient.get).toHaveBeenCalledWith('/stats/health', { timeout: undefined })
   })
+
+  // Unfiltered, the endpoint walks every schedule target on the server, so a
+  // caller that renders one schedule's hosts narrows it server-side.
+  it('scopes schedule health to one schedule', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: [{ hostname: 'web-01' }] })
+
+    await expect(getScheduleHealth({ scheduleId: 7 })).resolves.toEqual([{ hostname: 'web-01' }])
+
+    expect(apiClient.get).toHaveBeenCalledWith('/stats/health', {
+      timeout: undefined,
+      params: { schedule_id: 7 },
+    })
+  })
 })

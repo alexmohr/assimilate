@@ -461,6 +461,33 @@ test("an_approval_only_counts_for_the_commit_it_was_submitted_against", async ()
   assert.equal(await approvalIsCurrent(approvedOlder, "o", "r", 7, "head"), false);
 });
 
+test("a_later_comment_does_not_retract_a_standing_approval", async () => {
+  // A COMMENTED review is a separate review object with its own submitted_at,
+  // and leaving one does not retract a verdict - "LGTM, one nit for a
+  // follow-up" after approving is an ordinary workflow, and GitHub still
+  // reports reviewDecision APPROVED. If COMMENTED could be someone's "latest",
+  // it would mask their approval and auto-merge would refuse a genuine,
+  // current one: a false negative that breaks the feature rather than merely
+  // being conservative.
+  const github = fakeReviews([
+    { user: { login: "human" }, state: "APPROVED", commit_id: "head", submitted_at: "2026-01-01" },
+    { user: { login: "human" }, state: "COMMENTED", commit_id: "head", submitted_at: "2026-01-02" },
+  ]);
+  assert.equal(await approvalIsCurrent(github, "o", "r", 7, "head"), true);
+});
+
+test("a_dismissed_review_is_not_an_approval", async () => {
+  // Worth pinning on its own, but note what it does *not* prove: because
+  // dismissal mutates a review's state in place, an approval that was
+  // dismissed is no longer an APPROVED object at all, so this passes whether
+  // or not DISMISSED is in VERDICT_REVIEW_STATES. Excluding it there is
+  // tidiness, not the load-bearing part - that is the COMMENTED case above.
+  const github = fakeReviews([
+    { user: { login: "human" }, state: "DISMISSED", commit_id: "head", submitted_at: "2026-01-01" },
+  ]);
+  assert.equal(await approvalIsCurrent(github, "o", "r", 7, "head"), false);
+});
+
 test("only_a_reviewers_latest_review_counts_towards_currency", async () => {
   // Mirrors how GitHub computes reviewDecision. A reviewer who approved this
   // exact head and then came back asking for changes has not approved it.

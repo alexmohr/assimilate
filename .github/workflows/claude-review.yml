@@ -798,8 +798,16 @@ jobs:
               // Same variable pr-status-labels.yml's own sync call passes,
               // parsed by the same code inside sync-pr-labels.js - one off
               // switch for the whole auto-merge feature, read identically
-              // regardless of which trigger re-syncs first. Handed over as
-              // the raw string for the version-skew reason documented on
-              // that parameter. See skills/review/SKILL.md's "Auto-merge".
+              // regardless of which trigger re-syncs first.
+              //
+              // Handed over as the raw string, like that call, though the
+              // version-skew reason for it does not apply here: this
+              // workflow's triggers are all ones that source the workflow
+              // file from the default branch, so it can never run a PR head's
+              // copy of itself against main's copy of the script. It is
+              // pr-status-labels.yml's `pull_request_review` trigger that is
+              // exposed to that. Passing data rather than calling across the
+              // seam is right for both, so both do it the same way.
+              // See skills/review/SKILL.md's "Auto-merge".
               autoMergeEnabledRaw: process.env.AUTO_MERGE_ENABLED,
             });

@@ -274,9 +274,26 @@ async function resolveReviewDecision(github, owner, repo, prNumber) {
 // was actually submitted against the PR's current head commit - i.e. a real
 // reviewer has seen this exact code and still wants changes, as opposed to
 // an old review of a commit that's since moved on.
-// Each reviewer's most recent submission, mirroring how GitHub itself
-// computes reviewDecision - only the latest review per user counts.
-async function latestReviewPerUser(github, owner, repo, prNumber) {
+// The review states that actually carry a verdict.
+//
+// A COMMENTED review is a separate review object with its own `submitted_at`,
+// and leaving one does not retract a standing verdict: "LGTM, one nit for a
+// follow-up" after approving is an ordinary workflow, and GitHub still reports
+// reviewDecision APPROVED. So a COMMENTED review must never displace someone's
+// standing verdict - if it could, it would mask their approval and auto-merge
+// would refuse a genuine, current one, which breaks the feature rather than
+// merely being conservative.
+//
+// DISMISSED and PENDING are excluded too - a dismissed verdict is retracted
+// and a pending one was never submitted - though neither exclusion is
+// load-bearing the way COMMENTED's is: dismissal mutates a review's state in
+// place, so a dismissed approval is no longer an APPROVED object for the
+// callers below to find either way.
+const VERDICT_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED"]);
+
+// Each reviewer's most recent *verdict*, mirroring how GitHub itself computes
+// reviewDecision - only the latest one per user counts.
+async function latestVerdictPerUser(github, owner, repo, prNumber) {
   const reviews = await github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,
@@ -286,6 +303,7 @@ async function latestReviewPerUser(github, owner, repo, prNumber) {
   const latestByUser = new Map();
   for (const r of reviews) {
     if (!r.user) continue;
+    if (!VERDICT_REVIEW_STATES.has(r.state)) continue;
     const existing = latestByUser.get(r.user.login);
     if (!existing || new Date(r.submitted_at) > new Date(existing.submitted_at)) {
       latestByUser.set(r.user.login, r);
@@ -295,7 +313,7 @@ async function latestReviewPerUser(github, owner, repo, prNumber) {
 }
 
 async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha) {
-  const latest = await latestReviewPerUser(github, owner, repo, prNumber);
+  const latest = await latestVerdictPerUser(github, owner, repo, prNumber);
   return latest.some((r) => r.state === "CHANGES_REQUESTED" && r.commit_id === headSha);
 }
 
@@ -314,7 +332,7 @@ async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha)
 // the protected-path guard, which also lets the status stand and declines to
 // press the button.
 async function approvalIsCurrent(github, owner, repo, prNumber, headSha) {
-  const latest = await latestReviewPerUser(github, owner, repo, prNumber);
+  const latest = await latestVerdictPerUser(github, owner, repo, prNumber);
   return latest.some((r) => r.state === "APPROVED" && r.commit_id === headSha);
 }
 

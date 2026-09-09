@@ -1433,6 +1433,57 @@ async fn schedule_due_and_trigger(pool: PgPool) {
     assert_eq!(due.len(), 0);
 }
 
+/// `advance_schedule_run` is the helper both the scheduler's own tick and a
+/// manual/catch-up dispatch call to record a successful run - this is its
+/// happy path.
+#[sqlx::test(migrations = "./migrations")]
+async fn advance_schedule_run_updates_last_and_next_run(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+
+    let advanced =
+        db::advance_schedule_run(&pool, schedule.id, &schedule.cron_expression, Tz::UTC, now).await;
+    assert!(advanced, "a valid cron expression must advance the run");
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        fetched.last_run_at.map(|t| t.timestamp()),
+        Some(now.timestamp()),
+        "last_run_at must advance to the moment the run was asked for"
+    );
+    assert!(
+        fetched.next_run_at.is_some_and(|next| next > now),
+        "next_run_at must advance past this run"
+    );
+}
+
+/// Regression test for a review finding on the manual/catch-up dispatch path:
+/// an unevaluatable cron must report failure rather than silently doing
+/// nothing while a caller assumes success - a caller mustn't count this run as
+/// "triggered" when the bookkeeping it depends on never actually ran.
+#[sqlx::test(migrations = "./migrations")]
+async fn advance_schedule_run_reports_failure_for_an_invalid_cron(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+
+    let advanced =
+        db::advance_schedule_run(&pool, schedule.id, "not a cron expression", Tz::UTC, now).await;
+    assert!(
+        !advanced,
+        "an invalid cron expression must not report success"
+    );
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        fetched.last_run_at, schedule.last_run_at,
+        "a failed advance must leave last_run_at untouched"
+    );
+    assert_eq!(
+        fetched.next_run_at, schedule.next_run_at,
+        "a failed advance must leave next_run_at untouched"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_agent_hostname(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;

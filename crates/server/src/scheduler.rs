@@ -1484,17 +1484,7 @@ fn calculate_next_run_or_log(ctx: &SequentialTargetCtx<'_>) -> Option<DateTime<U
 }
 
 async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_triggered: &mut bool) {
-    let Some(next) = calculate_next_run_or_log(ctx) else {
-        return;
-    };
-    let schedule_id = ctx.schedule_id;
-    if let Err(e) = db::mark_schedule_triggered(ctx.pool, schedule_id, ctx.now, next).await {
-        tracing::error!(
-            schedule_id,
-            error = %e,
-            "sequential: failed to mark schedule triggered"
-        );
-    } else {
+    if db::advance_schedule_run(ctx.pool, ctx.schedule_id, ctx.cron, ctx.tz, ctx.now).await {
         *marked_triggered = true;
     }
 }

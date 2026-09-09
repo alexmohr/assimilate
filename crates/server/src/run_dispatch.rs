@@ -13,7 +13,6 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
-    schedule::calculate_next_run,
     types::{RepoId, ScheduleType},
 };
 
@@ -124,8 +123,7 @@ async fn run_target(
     // waiting for the whole run to finish - the schedule's `last_run_at`/
     // `next_run_at` must not still read as it did before this run started
     // just because the backup itself is still in flight.
-    if command_sent && !*marked_triggered {
-        record_schedule_triggered(state, request).await;
+    if command_sent && !*marked_triggered && record_schedule_triggered(state, request).await {
         *marked_triggered = true;
     }
 
@@ -182,13 +180,17 @@ async fn run_target(
 }
 
 /// Advances the schedule's `last_run_at` to `request.now` and `next_run_at` to
-/// the next cron occurrence from it, the same bookkeeping
-/// `scheduler::mark_schedule_triggered_once` does for a scheduled tick's own
-/// successful dispatch. Without this, a manual "Run now" or a caught-up run
-/// left the schedule looking exactly as overdue as before it ran: the
-/// Overview page's "Last run" never moved, and a later scheduled tick could
-/// re-trigger the very occurrence this run just covered.
-async fn record_schedule_triggered(state: &AppState, request: &RunRequest) {
+/// the next cron occurrence from it, via the same [`db::advance_schedule_run`]
+/// helper `scheduler::mark_schedule_triggered_once` uses for a scheduled
+/// tick's own successful dispatch. Without this, a manual "Run now" or a
+/// caught-up run left the schedule looking exactly as overdue as before it
+/// ran: the Overview page's "Last run" never moved, and a later scheduled
+/// tick could re-trigger the very occurrence this run just covered.
+///
+/// Returns whether the bookkeeping actually landed, so the caller only counts
+/// this run as having triggered the schedule once it truly has - the same
+/// contract [`db::advance_schedule_run`] gives the scheduler.
+async fn record_schedule_triggered(state: &AppState, request: &RunRequest) -> bool {
     let schedule_id = request.schedule_id;
     let tz = match db::get_schedule_timezone(&state.pool).await {
         Ok(tz) => tz,
@@ -198,24 +200,17 @@ async fn record_schedule_triggered(state: &AppState, request: &RunRequest) {
                 error = %e,
                 "failed to load timezone, not marking schedule triggered"
             );
-            return;
+            return false;
         }
     };
-    let next = match calculate_next_run(&request.cron_expression, request.now, tz) {
-        Ok(next) => next,
-        Err(e) => {
-            tracing::error!(
-                schedule_id,
-                cron = %request.cron_expression,
-                error = %e,
-                "invalid cron expression, not marking schedule triggered"
-            );
-            return;
-        }
-    };
-    if let Err(e) = db::mark_schedule_triggered(&state.pool, schedule_id, request.now, next).await {
-        tracing::error!(schedule_id, error = %e, "failed to mark schedule triggered");
-    }
+    db::advance_schedule_run(
+        &state.pool,
+        schedule_id,
+        &request.cron_expression,
+        tz,
+        request.now,
+    )
+    .await
 }
 
 /// Releases this run's `PowerSessionTracker` reservations, tearing down
@@ -681,6 +676,69 @@ mod tests {
         assert!(
             updated.last_run_at.is_some(),
             "a manual run that reached the agent must advance last_run_at"
+        );
+    }
+
+    /// Regression test for a review finding on this same bug fix: reaching the
+    /// agent is not the same as the bookkeeping succeeding. An unevaluatable
+    /// cron means `record_schedule_triggered` reports failure, and `run_target`
+    /// must not set `marked_triggered` on a failure - doing so anyway would
+    /// permanently foreclose a later target in the same run from getting
+    /// another chance to record it, silently reproducing the staleness bug
+    /// this fix exists for.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_target_does_not_mark_triggered_when_the_bookkeeping_fails(pool: sqlx::PgPool) {
+        let (agent, repo, schedule) =
+            insert_schedule_with_target(&pool, "run-target-bad-cron-host", "not a cron").await;
+        let state = test_app_state(pool.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        state.registry.register(agent.id, tx, false, None).await;
+
+        let target = db::ScheduleRunTarget {
+            agent_id: agent.id,
+            hostname: agent.hostname.clone(),
+        };
+        let now = Utc::now();
+        let request = RunRequest {
+            repo_ids: vec![RepoId(repo.id)],
+            schedule_type: ScheduleType::Backup,
+            schedule_id: schedule.id,
+            cron_expression: schedule.cron_expression.clone(),
+            now,
+            run_id: "run-target-bad-cron".to_owned(),
+            origin: RunOrigin::Manual,
+        };
+        let mut marked_triggered = false;
+
+        tokio::join!(
+            run_target(
+                &state,
+                &target,
+                &request,
+                RepoId(repo.id),
+                &mut marked_triggered
+            ),
+            async {
+                state
+                    .completion_bus
+                    .publish(completion_bus::OperationOutcome {
+                        agent_id: agent.id,
+                        repo_id: repo.id,
+                        success: true,
+                    });
+            }
+        );
+
+        assert!(
+            !marked_triggered,
+            "a bookkeeping failure must not be reported as the schedule having been marked \
+             triggered"
+        );
+        let updated = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+        assert_eq!(
+            updated.last_run_at, schedule.last_run_at,
+            "a failed advance must leave last_run_at untouched"
         );
     }
 

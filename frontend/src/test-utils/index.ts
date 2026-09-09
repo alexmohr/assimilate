@@ -145,14 +145,18 @@ export async function clickButtonWithText(
 
 /**
  * Opens an `EditableSection`-backed card's edit form via its one Edit
- * button - always the card's first button in view mode. Shared by every
- * card built on that component (`AgentDefaultsCard`, `AgentPowerCard`,
- * `RepoPowerCard`, ...), whose view/edit/save shell is otherwise identical.
+ * button, found by its exact label rather than by position - a view mode
+ * can carry other buttons before it, e.g. a `HelpHint` disclosure on a field
+ * the view slot displays. Shared by every card built on that component
+ * (`AgentDefaultsCard`, `AgentPowerCard`, `RepoPowerCard`, ...), whose
+ * view/edit/save shell is otherwise identical.
  */
 export async function startEditingSection(
   wrapper: VueWrapper<ComponentPublicInstance>,
 ): Promise<void> {
-  await wrapper.find('button').trigger('click')
+  const button = wrapper.findAll('button').find((b) => b.text().trim() === 'Edit')
+  if (!button) throw new Error('no "Edit" button on the card')
+  await button.trigger('click')
 }
 
 /**

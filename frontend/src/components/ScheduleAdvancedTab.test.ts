@@ -82,7 +82,12 @@ describe('ScheduleAdvancedTab', () => {
     const options = mount().findAll('.pane-section')[0].findAll('.pane-row')
     const described = options.map((row) => ({
       title: row.find('.field-title').text(),
-      hint: row.find('.field-body > .field-hint').exists(),
+      // Most explanations now sit behind a `HelpHint`, disclosed on click
+      // rather than printed permanently under the name; the rate limit row
+      // keeps a visible `.field-hint` too, for the "set to 0" value itself.
+      hint:
+        row.find('.field-body .help-hint').exists() ||
+        row.find('.field-body > .field-hint').exists(),
     }))
     expect(described).toEqual([
       { title: 'Canary verification', hint: true },
@@ -210,9 +215,14 @@ describe('ScheduleAdvancedTab', () => {
       expect(wrapper.text()).toContain('host-02')
     })
 
-    it('shows the shared hint only in shared mode, so it cannot contradict the fields', () => {
-      expect(mount().text()).toContain('Leave empty to use only global')
+    it('shows the shared hint only in shared mode, so it cannot contradict the fields', async () => {
+      const shared = mount()
+      expect(shared.find('[aria-label="Help: exclude patterns"]').exists()).toBe(true)
+      await shared.find('[aria-label="Help: exclude patterns"]').trigger('click')
+      expect(shared.text()).toContain('Leave empty to use only global')
+
       const perAgent = mount({ overrides: agentOverrides({ usePerHostExcludes: true }) })
+      expect(perAgent.find('[aria-label="Help: exclude patterns"]').exists()).toBe(false)
       expect(perAgent.text()).toContain('Leave an agent empty')
     })
 

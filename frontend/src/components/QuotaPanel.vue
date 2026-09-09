@@ -13,6 +13,7 @@ import type { QuotaAction } from '../types/generated'
 import type { QuotaData } from '../api/repos'
 import ToggleSwitch from './ToggleSwitch.vue'
 import EditFormActions from './EditFormActions.vue'
+import HelpHint from './HelpHint.vue'
 
 type QuotaStatus = 'ok' | 'warning' | 'critical'
 
@@ -135,9 +136,9 @@ onMounted(loadQuota)
 <template>
   <div>
     <div class="pane-head">
-      <p class="pane-lede">
+      <HelpHint label="quota">
         How much space this repository may use, and what Assimilate does as it fills up.
-      </p>
+      </HelpHint>
       <div class="panel-actions">
         <span
           v-if="quota && quota.enabled"

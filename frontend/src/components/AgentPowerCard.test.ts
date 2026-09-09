@@ -86,7 +86,8 @@ describe('AgentPowerCard', () => {
   })
 
   it('hides the Edit button for an imported host', () => {
-    expect(mount({ canEdit: false }).findAll('button')).toHaveLength(0)
+    const buttons = mount({ canEdit: false }).findAll('button')
+    expect(buttons.map((b) => b.text().trim())).not.toContain('Edit')
   })
 
   it('seeds every field from the current value when editing starts', async () => {

@@ -8,6 +8,7 @@ import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
 import { domainParams } from '../utils/agent'
 import EntityTags from './EntityTags.vue'
+import HelpHint from './HelpHint.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
@@ -79,7 +80,9 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
   >
     <template v-if="currentSection === 'identity'">
       <div class="pane-head">
-        <p class="pane-lede">How this host names itself, and what the server knows about it.</p>
+        <HelpHint label="identity">
+          How this host names itself, and what the server knows about it.
+        </HelpHint>
         <button
           v-if="!isImported"
           class="btn btn-sm"
@@ -115,7 +118,13 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
         class="pane-section"
       >
         <div class="pane-section-head">
-          <span class="group-label">Connection</span>
+          <div class="field-label-row field-label-row--tight">
+            <span class="group-label">Connection</span>
+            <HelpHint label="regenerate token">
+              Regenerating invalidates the current token immediately. The agent stays disconnected
+              until it is restarted with the new one.
+            </HelpHint>
+          </div>
           <button
             class="btn btn-sm"
             type="button"
@@ -125,10 +134,6 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
             {{ regenLoading ? 'Regenerating...' : 'Regenerate token' }}
           </button>
         </div>
-        <p class="field-hint">
-          Regenerating invalidates the current token immediately. The agent stays disconnected until
-          it is restarted with the new one.
-        </p>
       </section>
     </template>
 

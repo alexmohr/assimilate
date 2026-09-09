@@ -94,6 +94,8 @@ async function save(): Promise<void> {
   <EditableSection
     lede="What a schedule uses for this host when it does not set its own paths, patterns or
       commands."
+    lede-label="backup defaults"
+    hint-label="command inheritance"
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"

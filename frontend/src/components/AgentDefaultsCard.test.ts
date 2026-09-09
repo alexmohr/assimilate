@@ -47,10 +47,13 @@ describe('AgentDefaultsCard', () => {
   // saving can no longer write a stale copy of a sibling field. The settings
   // rail names the pane, so the pane itself carries a lede rather than a
   // heading repeating that name.
-  it('renders a single pane holding every group of defaults', () => {
+  it('renders a single pane holding every group of defaults', async () => {
     const wrapper = mount()
     expect(wrapper.findAll('.pane-head')).toHaveLength(1)
-    expect(wrapper.find('.pane-lede').text()).toContain('What a schedule uses for this host')
+
+    await wrapper.find('[aria-label="Help: backup defaults"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('What a schedule uses for this host')
+
     expect(wrapper.findAll('.group-label').map((l) => l.text())).toEqual([
       'Backup paths',
       'Exclude patterns',
@@ -131,7 +134,8 @@ describe('AgentDefaultsCard', () => {
   })
 
   it('hides the Edit button for an imported host', () => {
-    expect(mount({ canEdit: false }).findAll('button')).toHaveLength(0)
+    const buttons = mount({ canEdit: false }).findAll('button')
+    expect(buttons.map((b) => b.text().trim())).not.toContain('Edit')
   })
 
   // Older/imported agent rows may have never had these fields set, unlike

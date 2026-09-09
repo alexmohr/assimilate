@@ -215,7 +215,9 @@ test.describe('Agent detail', () => {
     // The four defaults cards became one card with five sections and one save.
     await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
     await expect(page).toHaveURL(/section=defaults/)
-    await expect(page.locator('.settings-pane .pane-lede')).toBeVisible()
+    await expect(
+      page.locator('.settings-pane').getByRole('button', { name: 'Help: backup defaults' }),
+    ).toBeVisible()
     await expect(page.locator('.group-label')).toHaveText([
       'Backup paths',
       'Exclude patterns',

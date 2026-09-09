@@ -18,6 +18,7 @@ import { useToast } from '../composables/useToast'
 import { cronToHuman } from '../utils/cron'
 import { repoOpLabel } from '../utils/repoOp'
 import BaseModal from './BaseModal.vue'
+import HelpHint from './HelpHint.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import EditFormActions from './EditFormActions.vue'
 import CronBuilder from './CronBuilder.vue'
@@ -233,7 +234,9 @@ onMounted(checkHostKeyMismatch)
 <template>
   <div>
     <div class="pane-head">
-      <p class="pane-lede">Where this repository lives and how borg writes to it.</p>
+      <HelpHint label="repository overview">
+        Where this repository lives and how borg writes to it.
+      </HelpHint>
       <div
         v-if="isAdmin && !isEditing"
         class="panel-actions"

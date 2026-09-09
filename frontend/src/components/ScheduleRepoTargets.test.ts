@@ -200,11 +200,13 @@ describe('ScheduleRepoTargets', () => {
     ])
   })
 
-  it('locks every control while a save is in flight', () => {
+  it('locks every editing control while a save is in flight', () => {
     const wrapper = mount([{ repo_id: 20, required: true }], { disabled: true })
     expect(wrapper.find('select').attributes('disabled')).toBeDefined()
-    expect(wrapper.findAll('button').every((b) => b.attributes('disabled') !== undefined)).toBe(
-      true,
-    )
+    // The `HelpHint` disclosure is not a data-mutating control, so it stays
+    // clickable even while the rest of the editor is locked.
+    const editingButtons = wrapper.findAll('button').filter((b) => !b.classes('help-hint-btn'))
+    expect(editingButtons.length).toBeGreaterThan(0)
+    expect(editingButtons.every((b) => b.attributes('disabled') !== undefined)).toBe(true)
   })
 })

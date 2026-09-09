@@ -16,9 +16,18 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
  * pane head rather than in a footer under the body, so it stays put as the
  * body grows.
  */
+import HelpHint from './HelpHint.vue'
+
 defineProps<{
-  /** The sentence that says what the section is for. */
+  /** The sentence that says what the section is for, disclosed behind a `HelpHint`. */
   lede?: string
+  /** Accessible name for that `HelpHint`, e.g. "host power". Required whenever `lede` is set. */
+  ledeLabel?: string
+  /**
+   * Accessible name for the `#hint` slot's `HelpHint`, e.g. "command
+   * inheritance". Required whenever that slot is filled.
+   */
+  hintLabel?: string
   /** Whether the edit form is showing. Owned by the parent. */
   editing: boolean
   /** Hides the Edit button entirely, e.g. for read-only imported hosts. */
@@ -39,12 +48,12 @@ const emit = defineEmits<{
     v-if="lede || (canEdit && !editing)"
     class="pane-head"
   >
-    <p
+    <HelpHint
       v-if="lede"
-      class="pane-lede"
+      :label="ledeLabel ?? 'this section'"
     >
       {{ lede }}
-    </p>
+    </HelpHint>
     <button
       v-if="canEdit && !editing"
       class="btn btn-sm btn-ghost"
@@ -56,12 +65,12 @@ const emit = defineEmits<{
   </div>
   <template v-if="!editing">
     <slot name="view" />
-    <span
+    <HelpHint
       v-if="$slots.hint"
-      class="field-hint"
+      :label="hintLabel ?? 'this section'"
     >
       <slot name="hint" />
-    </span>
+    </HelpHint>
   </template>
   <template v-else>
     <slot name="edit" />

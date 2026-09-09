@@ -88,7 +88,8 @@ describe('RepoPowerCard', () => {
   })
 
   it('hides the Edit button for a non-admin', () => {
-    expect(mount({ isAdmin: false }).findAll('button')).toHaveLength(0)
+    const buttons = mount({ isAdmin: false }).findAll('button')
+    expect(buttons.map((b) => b.text().trim())).not.toContain('Edit')
   })
 
   it('seeds every field from the current value when editing starts', async () => {

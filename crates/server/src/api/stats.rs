@@ -1716,8 +1716,21 @@ mod tests {
 
     use super::{
         BulkAcknowledgeQuery, CalendarEventStatus, CalendarEventType, DashboardQuotaStatus,
-        MAX_ACKNOWLEDGE_WINDOW_DAYS,
+        HealthQuery, MAX_ACKNOWLEDGE_WINDOW_DAYS,
     };
+
+    /// The schedule detail page narrows the health summary to one schedule
+    /// while the dashboard, the hosts grid and the schedules list still ask for
+    /// all of it, so both shapes of the query have to parse.
+    #[test]
+    fn health_query_parses_with_and_without_a_schedule_id() {
+        let scoped: HealthQuery = serde_json::from_str(r#"{"schedule_id":7}"#).unwrap();
+        assert_eq!(scoped.schedule_id, Some(7));
+        assert!(format!("{scoped:?}").contains('7'));
+
+        let unscoped: HealthQuery = serde_json::from_str("{}").unwrap();
+        assert_eq!(unscoped.schedule_id, None);
+    }
 
     /// An unfiltered bulk acknowledge is the Activity Log's "clear everything",
     /// so it keeps reaching system events; naming any slice of the feed makes

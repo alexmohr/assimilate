@@ -2145,6 +2145,43 @@ describe('ScheduleDetailView - load ordering', () => {
   // Same guard on the report list, which the Backups tab renders directly: a
   // run belonging to the schedule the user left must not show up under the
   // one they are on.
+  // The whole point of moving these three off the critical path is that the
+  // page no longer depends on them. Each one failing must leave the schedule
+  // rendered and readable, with the failure logged rather than surfaced.
+  const deferredRequests = [
+    { label: 'health', url: '/stats/health' },
+    { label: 'the report list', url: '/schedules/1/reports' },
+    { label: 'the failed-report count', url: '/schedules/1/reports/failed/count' },
+  ] as const
+
+  for (const { label, url } of deferredRequests) {
+    it(`still renders the schedule when ${label} fails`, async () => {
+      mockApiClient.get.mockImplementation((requested: string) => {
+        if (requested === url) return Promise.reject(new Error('boom'))
+        if (requested === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+        if (requested === '/schedules/1/repos')
+          return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+        if (requested === '/schedules/1/targets')
+          return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+        if (requested === '/schedules/1/sources')
+          return Promise.resolve({
+            data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+          })
+        if (requested === '/agents') return Promise.resolve({ data: mockAgents })
+        if (requested === '/repos') return Promise.resolve({ data: mockRepos })
+        return Promise.resolve({ data: [] })
+      })
+
+      const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+      await flushPromises()
+
+      expect(wrapper.find('.error-banner').exists()).toBe(false)
+      await goToSettings(wrapper)
+      expect(wrapper.find('.cron-builder-stub').exists()).toBe(true)
+      expect(logger.error).toHaveBeenCalled()
+    })
+  }
+
   it('drops a slow report list for a schedule the user has navigated away from', async () => {
     let releaseFirstReports: ((rows: unknown[]) => void) | undefined
     mockApiClient.get.mockImplementation((url: string) => {

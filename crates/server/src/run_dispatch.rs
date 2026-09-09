@@ -615,20 +615,23 @@ mod tests {
         );
     }
 
-    /// Regression test for the same bug, one level up: `run_target` - what a
-    /// manual "Run now" and a caught-up run both dispatch through - must
-    /// itself call `record_schedule_triggered` once it actually reaches the
-    /// agent, not just when the whole run finishes. The agent's completion is
-    /// published concurrently with `run_target` rather than awaited
-    /// afterwards, since `run_target` doesn't return until the run completes
-    /// and nothing here ever reports one back on its own.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn run_target_marks_the_schedule_triggered_once_dispatch_reaches_the_agent(
-        pool: sqlx::PgPool,
-    ) {
+    /// Dispatches `run_target` against a freshly registered (but otherwise
+    /// silent) agent for a one-target schedule with the given
+    /// `cron_expression`, publishing a successful completion concurrently so
+    /// the wait inside `run_target` resolves immediately instead of idling on
+    /// the connectivity-poll interval - see `wait_for_completion`'s own
+    /// `poll_interval`. Returns whether the schedule was marked triggered and
+    /// the schedule row re-fetched afterwards, so the success- and
+    /// failure-path tests below can share this setup instead of each
+    /// repeating it.
+    async fn dispatch_against_live_agent(
+        pool: &sqlx::PgPool,
+        hostname: &str,
+        cron_expression: &str,
+        run_id: &str,
+    ) -> (bool, db::ScheduleRow) {
         let (agent, repo, schedule) =
-            insert_schedule_with_target(&pool, "run-target-triggers-host", "0 2 * * *").await;
+            insert_schedule_with_target(pool, hostname, cron_expression).await;
         let state = test_app_state(pool.clone());
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         state.registry.register(agent.id, tx, false, None).await;
@@ -637,14 +640,13 @@ mod tests {
             agent_id: agent.id,
             hostname: agent.hostname.clone(),
         };
-        let now = Utc::now();
         let request = RunRequest {
             repo_ids: vec![RepoId(repo.id)],
             schedule_type: ScheduleType::Backup,
             schedule_id: schedule.id,
             cron_expression: schedule.cron_expression.clone(),
-            now,
-            run_id: "run-target-triggers".to_owned(),
+            now: Utc::now(),
+            run_id: run_id.to_owned(),
             origin: RunOrigin::Manual,
         };
         let mut marked_triggered = false;
@@ -668,11 +670,31 @@ mod tests {
             }
         );
 
+        let updated = db::get_schedule_by_id(pool, schedule.id).await.unwrap();
+        (marked_triggered, updated)
+    }
+
+    /// Regression test for the same bug, one level up: `run_target` - what a
+    /// manual "Run now" and a caught-up run both dispatch through - must
+    /// itself call `record_schedule_triggered` once it actually reaches the
+    /// agent, not just when the whole run finishes.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_target_marks_the_schedule_triggered_once_dispatch_reaches_the_agent(
+        pool: sqlx::PgPool,
+    ) {
+        let (marked_triggered, updated) = dispatch_against_live_agent(
+            &pool,
+            "run-target-triggers-host",
+            "0 2 * * *",
+            "run-target-triggers",
+        )
+        .await;
+
         assert!(
             marked_triggered,
             "run_target must mark the schedule triggered once it reaches the agent"
         );
-        let updated = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
         assert!(
             updated.last_run_at.is_some(),
             "a manual run that reached the agent must advance last_run_at"
@@ -689,55 +711,21 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn run_target_does_not_mark_triggered_when_the_bookkeeping_fails(pool: sqlx::PgPool) {
-        let (agent, repo, schedule) =
-            insert_schedule_with_target(&pool, "run-target-bad-cron-host", "not a cron").await;
-        let state = test_app_state(pool.clone());
-        let (tx, _rx) = tokio::sync::mpsc::channel(32);
-        state.registry.register(agent.id, tx, false, None).await;
-
-        let target = db::ScheduleRunTarget {
-            agent_id: agent.id,
-            hostname: agent.hostname.clone(),
-        };
-        let now = Utc::now();
-        let request = RunRequest {
-            repo_ids: vec![RepoId(repo.id)],
-            schedule_type: ScheduleType::Backup,
-            schedule_id: schedule.id,
-            cron_expression: schedule.cron_expression.clone(),
-            now,
-            run_id: "run-target-bad-cron".to_owned(),
-            origin: RunOrigin::Manual,
-        };
-        let mut marked_triggered = false;
-
-        tokio::join!(
-            run_target(
-                &state,
-                &target,
-                &request,
-                RepoId(repo.id),
-                &mut marked_triggered
-            ),
-            async {
-                state
-                    .completion_bus
-                    .publish(completion_bus::OperationOutcome {
-                        agent_id: agent.id,
-                        repo_id: repo.id,
-                        success: true,
-                    });
-            }
-        );
+        let (marked_triggered, updated) = dispatch_against_live_agent(
+            &pool,
+            "run-target-bad-cron-host",
+            "not a cron",
+            "run-target-bad-cron",
+        )
+        .await;
 
         assert!(
             !marked_triggered,
             "a bookkeeping failure must not be reported as the schedule having been marked \
              triggered"
         );
-        let updated = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
-        assert_eq!(
-            updated.last_run_at, schedule.last_run_at,
+        assert!(
+            updated.last_run_at.is_none(),
             "a failed advance must leave last_run_at untouched"
         );
     }

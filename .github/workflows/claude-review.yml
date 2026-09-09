@@ -775,6 +775,10 @@ jobs:
       - name: Re-sync labels after Claude review
         if: steps.precheck.outputs.run_claude == 'true'
         uses: actions/github-script@v7
+        env:
+          # Through the environment, not interpolated into the script body -
+          # same reasoning as pr-status-labels.yml's own sync step.
+          AUTO_MERGE_ENABLED: ${{ vars.AUTO_MERGE_ENABLED }}
         with:
           script: |
             const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
@@ -791,9 +795,19 @@ jobs:
               core,
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
               selfCheckNames: ["Check if a review is actually needed", "Review PR"],
-              // Same repo/environment variable pr-status-labels.yml's own
-              // sync call reads - one on/off switch for the whole
-              // auto-merge feature regardless of which trigger re-syncs
-              // first. See skills/review/SKILL.md's "Auto-merge" section.
-              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" === "true",
+              // Same variable pr-status-labels.yml's own sync call passes,
+              // parsed by the same code inside sync-pr-labels.js - one off
+              // switch for the whole auto-merge feature, read identically
+              // regardless of which trigger re-syncs first.
+              //
+              // Handed over as the raw string, like that call, though the
+              // version-skew reason for it does not apply here: this
+              // workflow's triggers are all ones that source the workflow
+              // file from the default branch, so it can never run a PR head's
+              // copy of itself against main's copy of the script. It is
+              // pr-status-labels.yml's `pull_request_review` trigger that is
+              // exposed to that. Passing data rather than calling across the
+              // seam is right for both, so both do it the same way.
+              // See skills/review/SKILL.md's "Auto-merge".
+              autoMergeEnabledRaw: process.env.AUTO_MERGE_ENABLED,
             });

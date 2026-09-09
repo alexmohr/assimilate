@@ -373,17 +373,90 @@ protection themselves.
 
 ### Auto-merge (deterministic, not agent-driven)
 
-**Currently disabled by default**, gated behind the `AUTO_MERGE_ENABLED`
-repository (or environment) Actions variable — set it to the literal
-string `true` (Settings → Secrets and variables → Actions → Variables) to
-turn it on. It defaults off because merging code with no human clicking a
-button deserves the pipeline having actually earned that trust first, not
-because the mechanism itself is provisional — every gate described below
-(ready to merge, a genuine approval, the label-provenance check) runs and
-logs its decision regardless of the flag; turning it on later is purely a
-config change; no code change needed. See
-[#390](https://github.com/alexmohr/assimilate/issues/390) for what should
-be true before flipping it.
+**On by default.** A PR that reaches `ready to merge` has already cleared
+every deterministic gate the pipeline computes *and* carries a genuine,
+provenance-checked approval, so it is squash-merged without waiting for a
+human to click the button.
+
+**The approval must cover the commit being merged.** A native `APPROVED`
+review is provenance-safe — GitHub guarantees a real, distinct reviewer and
+rejects self-approval — but it says nothing about *what* was approved. GitHub
+dismisses an approval when a new commit lands only if the branch's protection
+rules say to, and `sync-pr-labels.js` cannot see whether that setting is on,
+so it does not assume it. Without this check, a reviewer who approved commit
+A still reads as `APPROVED` after an unreviewed commit B, and once CI goes
+green on B the automation would merge code no reviewer has looked at —
+`changesRequestedIsCurrent` already re-checks the opposite verdict against
+`pr.head.sha` for exactly this reason.
+
+So `approvalIsCurrent` requires an `APPROVED` review submitted against the
+current head (latest review per user, mirroring how GitHub computes
+`reviewDecision`). It gates **auto-merge, not the `ready to merge` status**:
+a human pressing the button is looking at the PR and that is their call,
+whereas the unattended path is the whole question. Same shape as the
+protected-path guard — the status stands, the button is not pressed, the
+reason is logged. The `claude-approved` path is checked too, by
+`claudeVerdictCoversHead`. It looks exempt, because `sync-pr-labels.js`
+deletes that label on every `synchronize` event — but that clearing happens
+**at push time**, and `claude-review.yml` captures the head sha once when a
+run starts. A run pinned to the previous commit can still be in flight and
+apply its verdict afterwards, and nothing clears it again until the next push.
+The verdict's commit is recoverable because that workflow only counts a run as
+having produced a verdict when the bot posted a review against the run's own
+head sha (otherwise it sets `claude review failed`), so the bot's most recent
+review names the commit the standing label is about.
+
+`approvalCoversThisHead` picks between the two checks, so the paths cannot
+drift apart and the choice itself is testable rather than buried in a call
+site. Provenance (`claudeApprovedIsGenuine`) and currency are separate
+questions and both are asked.
+
+Neither verdict self-invalidates, which is the point both currency checks
+exist to handle: a `CHANGES_REQUESTED` review keeps blocking forever, and an
+`APPROVED` review keeps approving, until someone submits a new one or branch
+protection dismisses it. The kill switch is the `AUTO_MERGE_ENABLED`
+repository (or environment) Actions variable: set it to the literal string
+`false` (Settings → Secrets and variables → Actions → Variables) to stop
+merging. The value is trimmed and compared case-insensitively, so `False`,
+`FALSE`, `no`, `off` and `0` all disable it too, and an unset variable means
+on. `true`, `1`, `yes`, `on` and `enabled` are also recognised, and explicitly
+mean **on** rather than being rejected as unrecognised — the variable used to
+be an opt-in whose only accepted value was `true`, so a repo that had already
+set it that way keeps meaning what it meant instead of silently flipping to
+off when the polarity changed. Anything else that is set — including a value
+that is only whitespace,
+which is a typo rather than a request for the default — is treated as **off**,
+with a warning in the job log naming the raw value. A kill switch that failed
+*open* on a typo would keep merging code unattended, which is the one
+direction not worth guessing in. The switch only decides whether the merge
+call happens — every gate below (ready to merge, a genuine approval, the
+label-provenance check) runs and logs its decision either way, so flipping it
+is purely a config change; no code change needed.
+
+Both workflow call sites (`pr-status-labels.yml`'s sync and
+`claude-review.yml`'s post-review re-sync) read the variable out of the step
+environment rather than interpolating it into the `script:` body, and hand
+the raw string to `sync-pr-labels.js` as `autoMergeEnabledRaw` — the module
+parses it with `parseAutoMergeEnabled`.
+
+Handing over data rather than calling into the script matters because the two
+can come from different commits. `sync-pr-labels.js` is always checked out
+from the default branch (`sparse-checkout .github/scripts`, `ref:
+default_branch`), but on a `pull_request_review` event the *workflow file*
+comes from the PR's head. A workflow body calling
+`sync.parseAutoMergeEnabled(...)` therefore fails with "not a function" on
+every PR that adds it, until that PR reaches the default branch — which is
+exactly what happened while this was being built. An older script simply
+ignores an unknown key and keeps its own default (off), so the skew degrades
+to "no auto-merge" rather than to a broken label-sync job. `pre-review-checks.js`'s own sync
+call pins auto-merge off explicitly: it runs *before* the review it gates, so
+it must never be the thing that merges.
+
+Note where "on by default" actually lives: in `parseAutoMergeEnabled`, not in
+`syncLabels`. The `autoMergeEnabled` *parameter* defaults to **off**, and all
+three call sites pass it explicitly, so that default is only ever reached by
+a future caller that forgot to — and a forgotten argument must not be able to
+merge code unattended.
 
 The same `sync-pr-labels.js` run that computes `ready to merge` also
 squash-merges the PR itself (`--delete-branch` for same-repo branches) the
@@ -395,6 +468,120 @@ below), so nothing further is checked independently before merging — CI
 green, no merge conflict, no `coverage failed`/`duplicate code`, no active
 `changes requested` verdict, and a genuine approval are all required for the
 status itself.
+
+**Auto-merge never lands a change to the rails.** Before merging,
+`autoMergeIfApproved` lists the PR's files and bails if any of them — or any
+`previous_filename`, so a rename out of a protected location can't launder one
+— is one of the paths below, or if the list came back at GitHub's 3000-file
+cap, where it is silently truncated and a rail edit past the cut simply would
+not appear. An unprovable list counts as protected rather than as clean, since
+a bulk or generated diff hiding a rail edit is the shape this guard exists to
+catch.
+
+The rails are everything that **defines or suppresses a gate**, as opposed to
+the code the gates run over. The reason they are fenced off is that CI reads
+every one of them from the PR's *own head*: a PR editing one takes effect on
+the very run that decides whether that PR may merge, so it goes green because
+it loosened the thing that would have failed it. `sync-pr-labels.js` matches
+them with three structural rules rather than a list of known files:
+
+**1. `AUTO_MERGE_PROTECTED_PREFIXES` — whole directory trees.**
+
+| Prefix | Gate it controls |
+|---|---|
+| `.github/` | The workflows, the coverage-diff and duplicate-code analyzers, and `sync-pr-labels.js` itself, which decides what `ready to merge` means |
+| `lints/` | The dylint library behind `AGENTS.md`'s no-string-control-flow rule; `ci.yml` builds it from the PR's checkout and runs it with `-D no_string_control_flow` |
+| `frontend/eslint-rules/` | The frontend's mirror of that same rule, `no-string-literal-control-flow` |
+| `scripts/` | Entry points for the repo's local pre-commit hooks (`check-no-raw-sqlx-queries.sh`, `no-typography-in-comments.py`) |
+
+**2. `AUTO_MERGE_PROTECTED_CONFIG_DIRS` — immediate children only.** The two
+places this repo keeps gate configuration: the **repository root** and
+**`frontend/`**.
+
+**Every** immediate child of those two directories is protected, not only the
+files that happen to configure a gate today. `README.md`, `LICENSE`,
+`AGENTS.md`, `Cargo.lock` and `Dockerfile.agent` all block auto-merge exactly
+as `deny.toml` does. That is the point of the rule rather than a side effect:
+listing only the known gate files is the enumeration this replaced, and the
+next config file added at either level would land outside it. The gate configs
+this currently covers, as examples and not as the list — root: `Cargo.toml`,
+`deny.toml`, `.jscpd.json`, `.pre-commit-config.yaml`, `clippy.toml`,
+`.rustfmt.toml`, `ruff.toml`, `.markdownlint.yaml`, `.yamlfmt`, `REUSE.toml`,
+`mkdocs.yml`; `frontend/`: `package.json` (whose `lint`, `build`, `test` and
+`format:check` scripts are what `ci.yml` actually invokes),
+`package-lock.json`, `eslint.config.js`, the tsconfigs `vue-tsc -b` enforces,
+`playwright.config.ts`, `vite.config.ts`, `.prettierrc`,
+`.npm-audit-allowlist.json`.
+
+Subdirectories are *not* covered — `crates/`, `docs/`, `skills/`,
+`frontend/src/` and `frontend/e2e/` all stay auto-mergeable, which is what
+keeps auto-merge useful at all.
+
+**3. Any path whose top-level segment starts with a dot.** At a repository
+root a dot-directory is tool configuration by convention, and every one this
+repo has is a gate: `.github/` (the workflows and analyzers), `.sqlx/` (the
+offline query cache sqlx's macros compile against, so an entry added there
+makes a query build that the database would reject), `.reuse/` (the REUSE
+hook's templates).
+
+The two that matter most **don't exist yet**, which is exactly why this is
+structural rather than another pair of names — the move is to *add* them.
+`.cargo/config.toml`'s `[build] rustflags = ["--cap-lints=allow"]` caps every
+lint level rustc-wide, silently defanging `cargo clippy --workspace -- -D
+warnings` on the very run that adds it, and its `[target.*.runner]` can
+replace the test harness outright; `.config/nextest.toml` is the same shape
+for the test job. Rule 2 does not reach either — they sit one level below the
+root, not as immediate children. The rule is top-level only, so a `.vscode/`
+nested under `crates/` is not covered.
+
+**4. `AUTO_MERGE_PROTECTED_BASENAMES` — filenames anywhere in the tree.**
+Currently just `Cargo.toml`. A member crate's copy carries
+`[lints] workspace = true`, the only thing applying the root's
+`[workspace.lints.clippy]` deny list to that crate; deleting those two lines
+drops every clippy deny for it and CI stays green, because the
+`validate-cargo-lints` hook compares the *root* file against the shared
+baseline and never checks that members opt in.
+
+These are structural on purpose. An enumerated list has to be extended every
+time a config file is added, and a rail nobody remembered to enumerate is a
+rail that silently becomes auto-mergeable — which is how `deny.toml`,
+`.jscpd.json` and `frontend/eslint.config.js` were missed when this guard
+covered only `.github/`. Being a little over-broad costs a person one click;
+being under-broad costs the gate.
+
+`skills/` is deliberately not protected: `claude-review.yml` reads
+`skills/review/SKILL.md` from the `pull_request_target` **base** checkout, not
+the PR head, so it is not in this class.
+
+The merge call itself pins `sha: pr.head.sha`, so it can only ever land the
+head the guard was computed against. Without it GitHub merges whatever the
+head is at merge time, and a commit landing between the file listing and the
+merge would go in having never been checked — around the guard rather than
+through it. A moved head is then a 409, which is a no-op: nothing merges, the
+branch survives, the job stays green, and the next sync re-evaluates every
+gate against the new head.
+
+A one-line epsilon in `analyze-coverage-diff.js` would turn "aggregate
+coverage must not drop" into a suggestion; an advisory id in `deny.toml`
+silences `deps-audit`; `unwrap_used = "allow"` in the root `Cargo.toml`
+defangs clippy workspace-wide; a `"lint"` script rewritten to `true` in
+`frontend/package.json` defangs eslint. All the same move. Such a PR still
+reaches `ready to merge` and still gets its labels; it just waits for a person
+to press the button, with the offending path logged in the job.
+
+**The aggregate coverage gate is zero tolerance, and pinned as such.** Any
+decrease fails, however small — the comparison is on raw floats, not on the
+two decimals the finding prints. Coverage that moves between runs of
+identical source is a determinism bug in the tests (#489 removed the last
+known source of it by tracking fire-and-forget spawns), never a reason to
+widen the gate. `.github/scripts/__tests__/analyze-coverage-diff.test.js`
+holds that line: `sub_precision_decrease_is_still_a_regression` fails if
+anyone adds an epsilon or rounds before comparing, so widening the gate means
+visibly editing a test — which `AGENTS.md` forbids without human approval —
+rather than quietly editing one comparison. The `CI Scripts (node --test)`
+job runs those tests, plus the auto-merge guard and kill-switch cases, using
+node's built-in runner (no dependency, no `package.json` outside
+`frontend/`).
 
 This is deliberately **not** something the reviewing agent does itself
 anymore — `claude-review.yml`'s prompt explicitly tells Claude never to run

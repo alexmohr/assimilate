@@ -435,34 +435,60 @@ not appear. An unprovable list counts as protected rather than as clean, since
 a bulk or generated diff hiding a rail edit is the shape this guard exists to
 catch.
 
-The rails are the files that **define or suppress a CI gate**, and the reason
-they are fenced off is that CI reads every one of them from the PR's *own
-head*: a PR editing one takes effect on the very run that decides whether that
-PR may merge, so it would merge green, unattended, on the automation's own
-approval. `AUTO_MERGE_PROTECTED_PREFIXES` and `AUTO_MERGE_PROTECTED_FILES` in
-`sync-pr-labels.js` hold the list:
+The rails are everything that **defines or suppresses a gate**, as opposed to
+the code the gates run over. The reason they are fenced off is that CI reads
+every one of them from the PR's *own head*: a PR editing one takes effect on
+the very run that decides whether that PR may merge, so it goes green because
+it loosened the thing that would have failed it. `sync-pr-labels.js` matches
+them with three structural rules rather than a list of known files:
 
-| Path | Gate it controls |
+**1. `AUTO_MERGE_PROTECTED_PREFIXES` — whole directory trees.**
+
+| Prefix | Gate it controls |
 |---|---|
-| `.github/` (prefix) | The workflows, the coverage-diff and duplicate-code analyzers, and `sync-pr-labels.js` itself, which decides what `ready to merge` means |
-| `lints/` (prefix) | The dylint library behind `AGENTS.md`'s no-string-control-flow rule; `ci.yml` builds it from the PR's checkout and runs it with `-D no_string_control_flow` |
-| `scripts/` (prefix) | Entry points for the repo's local pre-commit hooks (`check-no-raw-sqlx-queries.sh`, `no-typography-in-comments.py`) |
-| `Cargo.toml` (root, exact) | `[workspace.lints.clippy]` — the whole deny list every crate inherits via `[lints] workspace = true` — and `[workspace.metadata.dylint]`, which registers the lint above |
-| `deny.toml` (exact) | `[advisories].ignore`, named outright by `AGENTS.md`'s "no self-authorized suppressions" rule; read by cargo-deny in `deps-audit` |
-| `.jscpd.json` (exact) | The duplicate-code gate's ignore list and thresholds; `duplicate-code-check.yml` runs jscpd against the PR's copy in `pr-src` |
-| `.pre-commit-config.yaml` (exact) | The pre-commit gate itself, gitleaks secret scanning and the raw-sqlx-query check included |
-| `frontend/.npm-audit-allowlist.json` (exact) | The other suppression list `AGENTS.md` names; the frontend job reads it for both `npm audit` and the deprecated-package check |
+| `.github/` | The workflows, the coverage-diff and duplicate-code analyzers, and `sync-pr-labels.js` itself, which decides what `ready to merge` means |
+| `lints/` | The dylint library behind `AGENTS.md`'s no-string-control-flow rule; `ci.yml` builds it from the PR's checkout and runs it with `-D no_string_control_flow` |
+| `frontend/eslint-rules/` | The frontend's mirror of that same rule, `no-string-literal-control-flow` |
+| `scripts/` | Entry points for the repo's local pre-commit hooks (`check-no-raw-sqlx-queries.sh`, `no-typography-in-comments.py`) |
 
-The named files are matched **exactly**, not by basename, so a crate's own
-`Cargo.toml` — which carries no suppressions and inherits its lint levels from
-the root — stays auto-mergeable.
+**2. `AUTO_MERGE_PROTECTED_CONFIG_DIRS` — immediate children only.** The two
+places this repo keeps gate configuration: the **repository root**
+(`Cargo.toml`, `deny.toml`, `.jscpd.json`, `.pre-commit-config.yaml`,
+`clippy.toml`, `.rustfmt.toml`, `ruff.toml`, `.markdownlint.yaml`, `.yamlfmt`,
+`REUSE.toml`, `mkdocs.yml`) and **`frontend/`** (`package.json`, whose `lint`,
+`build`, `test` and `format:check` scripts are what `ci.yml` actually invokes;
+`package-lock.json`; `eslint.config.js`; the tsconfigs `vue-tsc -b` enforces;
+`playwright.config.ts`; `vite.config.ts`; `.prettierrc`;
+`.npm-audit-allowlist.json`). Subdirectories are *not* covered — `crates/`,
+`docs/`, `skills/`, `frontend/src/` and `frontend/e2e/` all stay
+auto-mergeable, which is what keeps auto-merge useful at all.
+
+**3. `AUTO_MERGE_PROTECTED_BASENAMES` — filenames anywhere in the tree.**
+Currently just `Cargo.toml`. A member crate's copy carries
+`[lints] workspace = true`, the only thing applying the root's
+`[workspace.lints.clippy]` deny list to that crate; deleting those two lines
+drops every clippy deny for it and CI stays green, because the
+`validate-cargo-lints` hook compares the *root* file against the shared
+baseline and never checks that members opt in.
+
+These are structural on purpose. An enumerated list has to be extended every
+time a config file is added, and a rail nobody remembered to enumerate is a
+rail that silently becomes auto-mergeable — which is how `deny.toml`,
+`.jscpd.json` and `frontend/eslint.config.js` were missed when this guard
+covered only `.github/`. Being a little over-broad costs a person one click;
+being under-broad costs the gate.
+
+`skills/` is deliberately not protected: `claude-review.yml` reads
+`skills/review/SKILL.md` from the `pull_request_target` **base** checkout, not
+the PR head, so it is not in this class.
 
 A one-line epsilon in `analyze-coverage-diff.js` would turn "aggregate
 coverage must not drop" into a suggestion; an advisory id in `deny.toml`
 silences `deps-audit`; `unwrap_used = "allow"` in the root `Cargo.toml`
-defangs clippy workspace-wide. Such a PR still reaches `ready to merge` and
-still gets its labels; it just waits for a person to press the button, with
-the offending path logged in the job.
+defangs clippy workspace-wide; a `"lint"` script rewritten to `true` in
+`frontend/package.json` defangs eslint. All the same move. Such a PR still
+reaches `ready to merge` and still gets its labels; it just waits for a person
+to press the button, with the offending path logged in the job.
 
 **The aggregate coverage gate is zero tolerance, and pinned as such.** Any
 decrease fails, however small — the comparison is on raw floats, not on the

@@ -395,51 +395,65 @@ function resolveAutoMerge({ autoMergeEnabled = false, autoMergeEnabledRaw, core 
 
 // Paths whose contents auto-merge will never land on its own.
 //
-// These are the rails: the files that define or suppress the gates this
-// automation trusts. Every one of them is read from the PR's *own head*, so a
-// PR editing one takes effect on the very CI run that decides whether that PR
-// may merge - which is exactly why a person has to read such a diff. A
-// one-line epsilon in analyze-coverage-diff.js turns "aggregate coverage must
-// not drop" into a suggestion; an advisory id in deny.toml silences
-// deps-audit; `unwrap_used = "allow"` in the root Cargo.toml defangs clippy
-// workspace-wide. Each of those merges green, unattended, on the automation's
-// own approval unless the rails are fenced off.
+// These are the rails: everything that defines or suppresses a gate, as
+// opposed to the code the gates run over. CI reads every one of them from the
+// PR's *own head*, so a PR editing one takes effect on the very run that
+// decides whether that PR may merge - it goes green because it loosened the
+// thing that would have failed it, then merges unattended on the automation's
+// own approval. A one-line epsilon in analyze-coverage-diff.js, an advisory id
+// in deny.toml, `unwrap_used = "allow"` in the root Cargo.toml, a `"lint"`
+// script rewritten to `true` in frontend/package.json: all the same move.
 //
-// Directories, matched by prefix:
+// The three rules below are structural rather than a list of known files, on
+// purpose. An enumerated list has to be extended every time a config file is
+// added, and a rail nobody remembered to enumerate is a rail that silently
+// becomes auto-mergeable - which is exactly how `deny.toml`, `.jscpd.json` and
+// `frontend/eslint.config.js` were missed when this guard covered only
+// `.github/`. Being a little over-broad costs a person one click; being
+// under-broad costs the gate.
+
+// 1. Whole directory trees, matched by prefix.
 //
-// - `.github/` - the workflows, the coverage-diff analyzer, the duplicate-code
-//   analyzer, and this script, which decides what "ready to merge" even means.
+// - `.github/` - the workflows, the coverage-diff and duplicate-code
+//   analyzers, and this script, which decides what "ready to merge" even means.
 // - `lints/` - the dylint library behind AGENTS.md's no-string-control-flow
 //   rule; ci.yml builds it from the PR's own checkout and runs it with
 //   `-D no_string_control_flow`.
+// - `frontend/eslint-rules/` - the frontend's mirror of that same rule,
+//   `no-string-literal-control-flow`, wired up in frontend/eslint.config.js.
 // - `scripts/` - the entry points for the repo's local pre-commit hooks
 //   (check-no-raw-sqlx-queries.sh, no-typography-in-comments.py).
-const AUTO_MERGE_PROTECTED_PREFIXES = [".github/", "lints/", "scripts/"];
-
-// The same rule for individual files, matched exactly rather than by prefix so
-// that unrelated neighbours in the same directory stay auto-mergeable.
-//
-// - `Cargo.toml` (root) - `[workspace.lints.clippy]` is the entire clippy deny
-//   list every crate inherits via `[lints] workspace = true`, and
-//   `[workspace.metadata.dylint]` is what registers the lint above. Blocking it
-//   costs nothing new: `[workspace.dependencies]` is the other thing it holds,
-//   and AGENTS.md already requires a person to clear any new dependency.
-// - `deny.toml` - `[advisories].ignore`, named outright by AGENTS.md's "no
-//   self-authorized suppressions" rule; cargo-deny reads it in `deps-audit`.
-// - `.jscpd.json` - the duplicate-code gate's ignore list and thresholds;
-//   duplicate-code-check.yml runs jscpd against the PR's copy of it in pr-src.
-// - `.pre-commit-config.yaml` - defines the pre-commit gate itself, gitleaks
-//   secret scanning and the raw-sqlx-query check included.
-// - `frontend/.npm-audit-allowlist.json` - the other suppression list AGENTS.md
-//   names; the frontend job reads it from the PR's checkout for both `npm
-//   audit` and the deprecated-package check.
-const AUTO_MERGE_PROTECTED_FILES = [
-  "Cargo.toml",
-  "deny.toml",
-  ".jscpd.json",
-  ".pre-commit-config.yaml",
-  "frontend/.npm-audit-allowlist.json",
+const AUTO_MERGE_PROTECTED_PREFIXES = [
+  ".github/",
+  "lints/",
+  "frontend/eslint-rules/",
+  "scripts/",
 ];
+
+// 2. Directories whose *immediate* children are protected, but whose
+// subdirectories are not. These are the two places this repo keeps gate
+// configuration, and treating the whole level as protected is what stops the
+// next config file added there from being an unguarded rail:
+//
+// - `""` (the repository root) - Cargo.toml, deny.toml, .jscpd.json,
+//   .pre-commit-config.yaml, clippy.toml, .rustfmt.toml, ruff.toml,
+//   .markdownlint.yaml, .yamlfmt, REUSE.toml, mkdocs.yml. `crates/`, `docs/`
+//   and `skills/` are subdirectories and stay auto-mergeable.
+// - `frontend/` - package.json (whose `lint`, `build`, `test` and
+//   `format:check` scripts are what `ci.yml` actually invokes), package-lock,
+//   eslint.config.js, the tsconfigs vue-tsc reads, playwright.config.ts,
+//   vite.config.ts, .prettierrc, .npm-audit-allowlist.json. `frontend/src/`
+//   and `frontend/e2e/` are subdirectories and stay auto-mergeable.
+const AUTO_MERGE_PROTECTED_CONFIG_DIRS = ["", "frontend/"];
+
+// 3. Filenames protected wherever in the tree they appear.
+//
+// A member crate's Cargo.toml carries `[lints] workspace = true`, which is the
+// only thing applying the root's `[workspace.lints.clippy]` deny list to that
+// crate. Deleting those two lines drops every clippy deny for the crate and CI
+// stays green: the `validate-cargo-lints` hook compares the *root* Cargo.toml
+// against the shared baseline and never checks that members opt in.
+const AUTO_MERGE_PROTECTED_BASENAMES = ["Cargo.toml"];
 
 // GitHub's `pulls.listFiles` returns at most this many files for a PR, even
 // paginated. Past it the list is silently truncated rather than an error.
@@ -449,9 +463,12 @@ const LISTED_FILES_CAP = 3000;
 // `previous_filename`) is not.
 function isProtectedPath(path) {
   if (typeof path !== "string" || path === "") return false;
-  return (
-    AUTO_MERGE_PROTECTED_FILES.includes(path) ||
-    AUTO_MERGE_PROTECTED_PREFIXES.some((prefix) => path.startsWith(prefix))
+  if (AUTO_MERGE_PROTECTED_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
+  if (AUTO_MERGE_PROTECTED_BASENAMES.includes(path.split("/").pop())) return true;
+  // An immediate child of a config directory: inside it, with nothing left to
+  // descend through afterwards.
+  return AUTO_MERGE_PROTECTED_CONFIG_DIRS.some(
+    (dir) => path.startsWith(dir) && !path.slice(dir.length).includes("/"),
   );
 }
 
@@ -1035,7 +1052,8 @@ module.exports.resolveAutoMerge = resolveAutoMerge;
 // scripts are not lcov-instrumented, so `node --test` is the only net.
 module.exports.autoMergeIfApproved = autoMergeIfApproved;
 module.exports.AUTO_MERGE_PROTECTED_PREFIXES = AUTO_MERGE_PROTECTED_PREFIXES;
-module.exports.AUTO_MERGE_PROTECTED_FILES = AUTO_MERGE_PROTECTED_FILES;
+module.exports.AUTO_MERGE_PROTECTED_CONFIG_DIRS = AUTO_MERGE_PROTECTED_CONFIG_DIRS;
+module.exports.AUTO_MERGE_PROTECTED_BASENAMES = AUTO_MERGE_PROTECTED_BASENAMES;
 module.exports.autoMergeBlockedReason = autoMergeBlockedReason;
 module.exports.LISTED_FILES_CAP = LISTED_FILES_CAP;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,

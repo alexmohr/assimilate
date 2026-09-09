@@ -19,7 +19,8 @@ const {
   resolveAutoMerge,
   touchesProtectedPaths,
   AUTO_MERGE_PROTECTED_PREFIXES,
-  AUTO_MERGE_PROTECTED_FILES,
+  AUTO_MERGE_PROTECTED_CONFIG_DIRS,
+  AUTO_MERGE_PROTECTED_BASENAMES,
 } = require("../sync-pr-labels.js");
 
 function recordingCore() {
@@ -81,14 +82,14 @@ test("auto_merge_refuses_to_land_changes_to_the_rails", () => {
   // for a person, or the rails could widen themselves on the automation's own
   // approval. The two lists are asserted whole: a path silently dropped from
   // one is a gate that quietly becomes auto-mergeable again.
-  assert.deepEqual(AUTO_MERGE_PROTECTED_PREFIXES, [".github/", "lints/", "scripts/"]);
-  assert.deepEqual(AUTO_MERGE_PROTECTED_FILES, [
-    "Cargo.toml",
-    "deny.toml",
-    ".jscpd.json",
-    ".pre-commit-config.yaml",
-    "frontend/.npm-audit-allowlist.json",
+  assert.deepEqual(AUTO_MERGE_PROTECTED_PREFIXES, [
+    ".github/",
+    "lints/",
+    "frontend/eslint-rules/",
+    "scripts/",
   ]);
+  assert.deepEqual(AUTO_MERGE_PROTECTED_CONFIG_DIRS, ["", "frontend/"]);
+  assert.deepEqual(AUTO_MERGE_PROTECTED_BASENAMES, ["Cargo.toml"]);
 
   for (const filename of [
     // .github/ - the analyzers, the workflows, and this script.
@@ -97,21 +98,39 @@ test("auto_merge_refuses_to_land_changes_to_the_rails", () => {
     ".github/scripts/sync-pr-labels.js",
     ".github/workflows/ci.yml",
     ".github/workflows/coverage-diff-check.yml",
-    // lints/ - the dylint library ci.yml builds from the PR's own checkout and
-    // runs with -D no_string_control_flow.
+    // lints/ and frontend/eslint-rules/ - the same no-string-control-flow rule
+    // on each side, both built from the PR's own checkout.
     "lints/no_string_control_flow/src/lib.rs",
-    "lints/no_string_control_flow/Cargo.toml",
+    "frontend/eslint-rules/no-string-literal-control-flow.js",
     // scripts/ - the entry points for the repo's local pre-commit hooks.
     "scripts/check-no-raw-sqlx-queries.sh",
     "scripts/no-typography-in-comments.py",
-    // The suppression and gate-config files, matched exactly. Each is read
-    // from the PR's head by the gate it configures, so loosening one lands
-    // green on the same run that loosened it.
+    // Repository-root config: every gate whose settings live at the top level
+    // reads them from the PR's head, so loosening one lands green on the same
+    // run that loosened it.
     "Cargo.toml",
     "deny.toml",
     ".jscpd.json",
     ".pre-commit-config.yaml",
+    "clippy.toml",
+    ".rustfmt.toml",
+    "mkdocs.yml",
+    // frontend/ top-level config: package.json holds the `lint` and `build`
+    // scripts ci.yml actually invokes, eslint.config.js wires up the frontend
+    // half of the no-string-control-flow rule, and the tsconfigs are what
+    // `vue-tsc -b` enforces.
+    "frontend/package.json",
+    "frontend/package-lock.json",
+    "frontend/eslint.config.js",
+    "frontend/tsconfig.app.json",
+    "frontend/playwright.config.ts",
     "frontend/.npm-audit-allowlist.json",
+    // A member crate's Cargo.toml carries `[lints] workspace = true`, the only
+    // thing applying the root deny list to that crate. validate-cargo-lints
+    // checks the root file against the shared baseline and never checks that
+    // members opt in, so dropping those two lines goes green.
+    "crates/server/Cargo.toml",
+    "crates/agent/Cargo.toml",
   ]) {
     assert.equal(
       touchesProtectedPaths([{ filename: "src/unrelated.rs" }, { filename }]),
@@ -153,26 +172,26 @@ test("auto_merge_guard_is_not_fooled_by_a_lookalike_path", () => {
   assert.equal(touchesProtectedPaths([{ filename: "vendor/x.github/thing.yml" }]), false);
   assert.equal(touchesProtectedPaths([{ filename: "frontend/scripts/build.ts" }]), false);
   assert.equal(touchesProtectedPaths([{ filename: "crates/agent/lints/notes.md" }]), false);
+  // A prefix rule matches from the start of the path, so a nested directory of
+  // the same name is not the protected one.
+  assert.equal(touchesProtectedPaths([{ filename: "frontend/src/scripts/x.ts" }]), false);
 });
 
-test("only_the_named_files_are_protected_not_their_namesakes", () => {
-  // The file list is matched exactly, not by suffix or basename: a crate's own
-  // Cargo.toml inherits its lint levels from the root one via
-  // `[lints] workspace = true` and carries no suppressions of its own, so
-  // adding a dependency to a crate stays auto-mergeable. Only the root file,
-  // which holds [workspace.lints.clippy] and [workspace.metadata.dylint], is a
-  // rail.
+test("config_protection_stops_at_the_directory_it_names", () => {
+  // The config-directory rule covers immediate children only, so ordinary work
+  // under a subdirectory of one stays auto-mergeable. Without this the guard
+  // would swallow the whole repository and auto-merge would never fire at all.
   for (const filename of [
-    "crates/server/Cargo.toml",
-    "crates/agent/Cargo.toml",
-    "docs/deny.toml",
-    "frontend/.jscpd.json",
-    "examples/.pre-commit-config.yaml",
+    "crates/server/src/api/repos.rs",
+    "frontend/src/views/ReposView.vue",
+    "frontend/e2e/repos.spec.ts",
+    "docs/backups.md",
+    "skills/review/SKILL.md",
   ]) {
     assert.equal(
       touchesProtectedPaths([{ filename }]),
       false,
-      `${filename} is not the rail it resembles and must stay auto-mergeable`,
+      `${filename} is ordinary work and must stay auto-mergeable`,
     );
   }
 });
@@ -332,5 +351,9 @@ test("blocked_reason_names_the_protected_path_case_separately", () => {
   assert.equal(
     autoMergeBlockedReason([{ filename: "crates/server/src/main.rs" }, { filename: "deny.toml" }]),
     "it changes deny.toml",
+  );
+  assert.equal(
+    autoMergeBlockedReason([{ filename: "frontend/package.json" }]),
+    "it changes frontend/package.json",
   );
 });

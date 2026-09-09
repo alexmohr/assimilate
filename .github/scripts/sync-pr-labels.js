@@ -452,7 +452,28 @@ const AUTO_MERGE_PROTECTED_PREFIXES = [
 //   and `frontend/e2e/` are subdirectories and stay auto-mergeable.
 const AUTO_MERGE_PROTECTED_CONFIG_DIRS = ["", "frontend/"];
 
-// 3. Filenames protected wherever in the tree they appear.
+// 3. Anything whose top-level path segment starts with a dot.
+//
+// At a repository root a dot-directory is tool configuration by convention,
+// and every one this repo has is a gate: `.github/` (the workflows and
+// analyzers), `.sqlx/` (the offline query cache sqlx's macros compile
+// against, so an entry added there makes a query build that the database
+// would reject), `.reuse/` (the REUSE hook's templates).
+//
+// The two that matter most do not exist yet, which is exactly why this rule
+// is structural rather than another pair of names - the move is to *add*
+// them. `.cargo/config.toml`'s `[build] rustflags = ["--cap-lints=allow"]`
+// caps every lint level rustc-wide, silently defanging
+// `cargo clippy --workspace -- -D warnings` on the very run that adds it, and
+// its `[target.*.runner]` can replace the test harness outright.
+// `.config/nextest.toml` is the same shape for the test job. Rule 2 does not
+// reach either: they are one level below the root, not immediate children.
+//
+// This subsumes the `.github/` prefix in rule 1, which is kept there anyway -
+// it is the rail a reader most needs to see named.
+const AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL = true;
+
+// 4. Filenames protected wherever in the tree they appear.
 //
 // A member crate's Cargo.toml carries `[lints] workspace = true`, which is the
 // only thing applying the root's `[workspace.lints.clippy]` deny list to that
@@ -470,6 +491,10 @@ const LISTED_FILES_CAP = 3000;
 function isProtectedPath(path) {
   if (typeof path !== "string" || path === "") return false;
   if (AUTO_MERGE_PROTECTED_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
+  // Rule 3: a top-level segment beginning with a dot. Only the root level -
+  // `frontend/.prettierrc` is reached by rule 2, and a nested `.vscode/`
+  // somewhere under `crates/` is not configuration this repo's CI reads.
+  if (AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL && path.startsWith(".")) return true;
   if (AUTO_MERGE_PROTECTED_BASENAMES.includes(path.split("/").pop())) return true;
   // An immediate child of a config directory: inside it, with nothing left to
   // descend through afterwards.
@@ -1075,6 +1100,7 @@ module.exports.autoMergeIfApproved = autoMergeIfApproved;
 module.exports.AUTO_MERGE_PROTECTED_PREFIXES = AUTO_MERGE_PROTECTED_PREFIXES;
 module.exports.AUTO_MERGE_PROTECTED_CONFIG_DIRS = AUTO_MERGE_PROTECTED_CONFIG_DIRS;
 module.exports.AUTO_MERGE_PROTECTED_BASENAMES = AUTO_MERGE_PROTECTED_BASENAMES;
+module.exports.AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL = AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL;
 module.exports.autoMergeBlockedReason = autoMergeBlockedReason;
 module.exports.LISTED_FILES_CAP = LISTED_FILES_CAP;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,

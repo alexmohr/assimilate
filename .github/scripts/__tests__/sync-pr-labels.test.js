@@ -21,6 +21,7 @@ const {
   AUTO_MERGE_PROTECTED_PREFIXES,
   AUTO_MERGE_PROTECTED_CONFIG_DIRS,
   AUTO_MERGE_PROTECTED_BASENAMES,
+  AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL,
 } = require("../sync-pr-labels.js");
 
 function recordingCore() {
@@ -89,6 +90,7 @@ test("auto_merge_refuses_to_land_changes_to_the_rails", () => {
     "scripts/",
   ]);
   assert.deepEqual(AUTO_MERGE_PROTECTED_CONFIG_DIRS, ["", "frontend/"]);
+  assert.equal(AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL, true);
   assert.deepEqual(AUTO_MERGE_PROTECTED_BASENAMES, ["Cargo.toml"]);
 
   for (const filename of [
@@ -131,6 +133,16 @@ test("auto_merge_refuses_to_land_changes_to_the_rails", () => {
     // members opt in, so dropping those two lines goes green.
     "crates/server/Cargo.toml",
     "crates/agent/Cargo.toml",
+    // Root dot-directories. .sqlx is the offline query cache sqlx's macros
+    // compile against; .reuse holds the REUSE hook's templates. The two that
+    // matter most do not exist yet, because the move is to ADD them:
+    // .cargo/config.toml's `[build] rustflags = ["--cap-lints=allow"]` caps
+    // every lint rustc-wide and defangs `clippy -- -D warnings` on the run
+    // that adds it, and .config/nextest.toml is the same for the test job.
+    ".cargo/config.toml",
+    ".config/nextest.toml",
+    ".sqlx/query-abc.json",
+    ".reuse/templates/assimilate.jinja2",
   ]) {
     assert.equal(
       touchesProtectedPaths([{ filename: "src/unrelated.rs" }, { filename }]),
@@ -193,6 +205,25 @@ test("every_immediate_child_of_a_config_dir_is_protected_not_just_the_gate_files
   }
 });
 
+test("a_root_dot_directory_added_by_the_pr_itself_is_protected", async () => {
+  // The whole point of matching the dot structurally rather than naming
+  // directories: neither .cargo/ nor .config/ exists in this repo, so a list
+  // of known config directories could not have covered them. Driven through
+  // the enforcement point, not just the predicate, because this is the case a
+  // PR would actually construct.
+  const { github, calls } = fakeGithub([
+    { filename: "crates/server/src/lib.rs" },
+    { filename: ".cargo/config.toml" },
+  ]);
+  const messages = [];
+
+  await autoMergeIfApproved(github, { info: (m) => messages.push(m) }, "o", "r", 7, samePrRepo);
+
+  assert.deepEqual(calls.merged, [], "a PR adding .cargo/config.toml must not be merged");
+  assert.deepEqual(calls.deletedRefs, [], "and its branch must survive");
+  assert.match(messages.join("\n"), /it changes \.cargo\/config\.toml/);
+});
+
 test("config_protection_stops_at_the_directory_it_names", () => {
   // The config-directory rule covers immediate children only, so ordinary work
   // under a subdirectory of one stays auto-mergeable. Without this the guard
@@ -203,6 +234,9 @@ test("config_protection_stops_at_the_directory_it_names", () => {
     "frontend/e2e/repos.spec.ts",
     "docs/backups.md",
     "skills/review/SKILL.md",
+    // The dot rule is top-level only: a dot-directory nested under source is
+    // not configuration this repo's CI reads.
+    "crates/server/.vscode/settings.json",
   ]) {
     assert.equal(
       touchesProtectedPaths([{ filename }]),

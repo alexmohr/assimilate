@@ -474,7 +474,24 @@ Subdirectories are *not* covered — `crates/`, `docs/`, `skills/`,
 `frontend/src/` and `frontend/e2e/` all stay auto-mergeable, which is what
 keeps auto-merge useful at all.
 
-**3. `AUTO_MERGE_PROTECTED_BASENAMES` — filenames anywhere in the tree.**
+**3. Any path whose top-level segment starts with a dot.** At a repository
+root a dot-directory is tool configuration by convention, and every one this
+repo has is a gate: `.github/` (the workflows and analyzers), `.sqlx/` (the
+offline query cache sqlx's macros compile against, so an entry added there
+makes a query build that the database would reject), `.reuse/` (the REUSE
+hook's templates).
+
+The two that matter most **don't exist yet**, which is exactly why this is
+structural rather than another pair of names — the move is to *add* them.
+`.cargo/config.toml`'s `[build] rustflags = ["--cap-lints=allow"]` caps every
+lint level rustc-wide, silently defanging `cargo clippy --workspace -- -D
+warnings` on the very run that adds it, and its `[target.*.runner]` can
+replace the test harness outright; `.config/nextest.toml` is the same shape
+for the test job. Rule 2 does not reach either — they sit one level below the
+root, not as immediate children. The rule is top-level only, so a `.vscode/`
+nested under `crates/` is not covered.
+
+**4. `AUTO_MERGE_PROTECTED_BASENAMES` — filenames anywhere in the tree.**
 Currently just `Cargo.toml`. A member crate's copy carries
 `[lints] workspace = true`, the only thing applying the root's
 `[workspace.lints.clippy]` deny list to that crate; deleting those two lines

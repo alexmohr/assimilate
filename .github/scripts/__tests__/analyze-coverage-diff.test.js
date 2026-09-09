@@ -18,7 +18,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { test } = require("node:test");
+const { after, test } = require("node:test");
 
 const { analyzeDiff } = require("../analyze-coverage-diff.js");
 
@@ -32,8 +32,17 @@ function lcov(covered, total) {
   return lines.join("\n");
 }
 
+// One directory for the whole suite, removed when it finishes, so repeated
+// local runs don't leave a trail of coverage-gate-* directories behind.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "coverage-gate-"));
+after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+let caseCount = 0;
+
 function writeLcovPair(baseCounts, prCounts) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coverage-gate-"));
+  caseCount += 1;
+  const dir = path.join(tmpRoot, `case-${caseCount}`);
+  fs.mkdirSync(dir);
   const basePath = path.join(dir, "base.info");
   const prPath = path.join(dir, "pr.info");
   fs.writeFileSync(basePath, lcov(...baseCounts));

@@ -1381,6 +1381,8 @@ pub async fn run_schedule_now(
             repo_ids,
             schedule_type,
             schedule_id: id,
+            cron_expression: schedule.cron_expression.clone(),
+            now,
             run_id,
             origin: run_dispatch::RunOrigin::Manual,
         },

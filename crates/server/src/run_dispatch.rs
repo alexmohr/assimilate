@@ -10,8 +10,10 @@
 
 use std::fmt;
 
+use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
+    schedule::calculate_next_run,
     types::{RepoId, ScheduleType},
 };
 
@@ -48,6 +50,13 @@ pub struct RunRequest {
     pub schedule_type: ScheduleType,
     /// Schedule the run belongs to.
     pub schedule_id: i64,
+    /// The schedule's cron expression, needed to advance `next_run_at` past
+    /// this run the same way a scheduled tick does.
+    pub cron_expression: String,
+    /// When this run was asked for, recorded as the schedule's `last_run_at`
+    /// once dispatch reaches a target - the moment the request was made, not
+    /// whenever that target's backup happens to finish.
+    pub now: DateTime<Utc>,
     /// Correlates this run's `backup_reports` rows and run events.
     pub run_id: String,
     /// What asked for the run.
@@ -66,9 +75,10 @@ pub async fn run_targets_sequential(
     request: RunRequest,
 ) -> usize {
     let mut dispatched: usize = 0;
+    let mut marked_triggered = false;
     for target in &targets {
         for repo_id in &request.repo_ids {
-            if run_target(&state, target, &request, *repo_id).await {
+            if run_target(&state, target, &request, *repo_id, &mut marked_triggered).await {
                 dispatched = dispatched.saturating_add(1);
             }
         }
@@ -82,6 +92,7 @@ async fn run_target(
     target: &db::ScheduleRunTarget,
     request: &RunRequest,
     repo_id: RepoId,
+    marked_triggered: &mut bool,
 ) -> bool {
     let schedule_id = request.schedule_id;
     let origin = request.origin;
@@ -107,6 +118,16 @@ async fn run_target(
     let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
 
     let command_sent = push_config_and_trigger_target(state, target, request, repo_id).await;
+
+    // Reaching the first target of the run is what a scheduled tick's own
+    // success path counts as "triggered", so this mirrors it here rather than
+    // waiting for the whole run to finish - the schedule's `last_run_at`/
+    // `next_run_at` must not still read as it did before this run started
+    // just because the backup itself is still in flight.
+    if command_sent && !*marked_triggered {
+        record_schedule_triggered(state, request).await;
+        *marked_triggered = true;
+    }
 
     // For backup schedules, broadcast BackupStarted even when the agent is
     // offline so the UI can immediately show the "Cancel Backup" button. The
@@ -158,6 +179,43 @@ async fn run_target(
 
     release_target_power(state, target.agent_id, repo_id.0, request, &target.hostname).await;
     command_sent
+}
+
+/// Advances the schedule's `last_run_at` to `request.now` and `next_run_at` to
+/// the next cron occurrence from it, the same bookkeeping
+/// `scheduler::mark_schedule_triggered_once` does for a scheduled tick's own
+/// successful dispatch. Without this, a manual "Run now" or a caught-up run
+/// left the schedule looking exactly as overdue as before it ran: the
+/// Overview page's "Last run" never moved, and a later scheduled tick could
+/// re-trigger the very occurrence this run just covered.
+async fn record_schedule_triggered(state: &AppState, request: &RunRequest) {
+    let schedule_id = request.schedule_id;
+    let tz = match db::get_schedule_timezone(&state.pool).await {
+        Ok(tz) => tz,
+        Err(e) => {
+            tracing::error!(
+                schedule_id,
+                error = %e,
+                "failed to load timezone, not marking schedule triggered"
+            );
+            return;
+        }
+    };
+    let next = match calculate_next_run(&request.cron_expression, request.now, tz) {
+        Ok(next) => next,
+        Err(e) => {
+            tracing::error!(
+                schedule_id,
+                cron = %request.cron_expression,
+                error = %e,
+                "invalid cron expression, not marking schedule triggered"
+            );
+            return;
+        }
+    };
+    if let Err(e) = db::mark_schedule_triggered(&state.pool, schedule_id, request.now, next).await {
+        tracing::error!(schedule_id, error = %e, "failed to mark schedule triggered");
+    }
 }
 
 /// Releases this run's `PowerSessionTracker` reservations, tearing down
@@ -369,6 +427,8 @@ mod tests {
                 repo_ids: vec![RepoId(repo_id)],
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
+                cron_expression: "0 2 * * *".to_owned(),
+                now: Utc::now(),
                 run_id: run_id.to_owned(),
                 origin: RunOrigin::Manual,
             },
@@ -441,6 +501,187 @@ mod tests {
         .unwrap();
 
         (agent, repo)
+    }
+
+    /// An agent, a repository `assemble_config` can actually build a config
+    /// for (passphrase encrypted with this module's own `TEST_KEY_MATERIAL`,
+    /// matching `test_app_state`'s encryption key, and an SSH host key set -
+    /// mirroring `scheduler.rs`'s own `setup_due_schedule`), and a schedule
+    /// with one target on that agent.
+    async fn insert_schedule_with_target(
+        pool: &sqlx::PgPool,
+        hostname: &str,
+        cron_expression: &str,
+    ) -> (db::AgentRow, db::RepoRow, db::ScheduleRow) {
+        let agent = db::insert_agent(pool, hostname, None, "hash", None, None)
+            .await
+            .unwrap();
+        let passphrase_encrypted = shared::crypto::encrypt_passphrase(
+            "test-pass",
+            &shared::crypto::derive_key(TEST_KEY_MATERIAL).unwrap(),
+        )
+        .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name: &format!("{hostname}-repo"),
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::update_repo_ssh_host_key(pool, repo.id, "ssh-ed25519 AAAATEST")
+            .await
+            .unwrap();
+        let schedule = db::insert_schedule(
+            pool,
+            repo.id,
+            &db::ScheduleParams {
+                wake_override: shared::types::ScheduleWakeOverride::HostDefault,
+                name: "run-dispatch-test-schedule",
+                schedule_type: "backup",
+                cron_expression,
+                enabled: true,
+                canary_enabled: false,
+                vm_snapshot_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 0,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: &[],
+                post_backup_commands: &[],
+                hook_timeout_seconds: 60,
+                missed_backup_threshold: 3,
+                catch_up_missed_runs: false,
+                catch_up_min_lead_minutes: 120,
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .unwrap();
+        (agent, repo, schedule)
+    }
+
+    /// Regression test for the "manual runs don't update the schedule's last
+    /// run" bug: `record_schedule_triggered` is the piece `run_target` calls
+    /// once dispatch reaches a target, and on its own must advance both
+    /// `last_run_at` (to the moment the run was asked for) and `next_run_at`
+    /// (to the next cron occurrence from it) - exactly what
+    /// `scheduler::mark_schedule_triggered_once` does for a scheduled tick.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn record_schedule_triggered_advances_last_run_and_next_run_at(pool: sqlx::PgPool) {
+        let (_agent, _repo, schedule) =
+            insert_schedule_with_target(&pool, "record-triggered-host", "0 2 * * *").await;
+        let state = test_app_state(pool.clone());
+        let now = Utc::now();
+
+        record_schedule_triggered(
+            &state,
+            &RunRequest {
+                repo_ids: vec![],
+                schedule_type: ScheduleType::Backup,
+                schedule_id: schedule.id,
+                cron_expression: schedule.cron_expression.clone(),
+                now,
+                run_id: "run-record-triggered".to_owned(),
+                origin: RunOrigin::Manual,
+            },
+        )
+        .await;
+
+        let updated = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+        assert_eq!(
+            updated.last_run_at.map(|t| t.timestamp()),
+            Some(now.timestamp()),
+            "last_run_at must advance to the moment the run was asked for"
+        );
+        assert!(
+            updated.next_run_at.is_some_and(|next| next > now),
+            "next_run_at must advance past this run, not stay at whatever it was before"
+        );
+    }
+
+    /// Regression test for the same bug, one level up: `run_target` - what a
+    /// manual "Run now" and a caught-up run both dispatch through - must
+    /// itself call `record_schedule_triggered` once it actually reaches the
+    /// agent, not just when the whole run finishes. The agent's completion is
+    /// published concurrently with `run_target` rather than awaited
+    /// afterwards, since `run_target` doesn't return until the run completes
+    /// and nothing here ever reports one back on its own.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_target_marks_the_schedule_triggered_once_dispatch_reaches_the_agent(
+        pool: sqlx::PgPool,
+    ) {
+        let (agent, repo, schedule) =
+            insert_schedule_with_target(&pool, "run-target-triggers-host", "0 2 * * *").await;
+        let state = test_app_state(pool.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        state.registry.register(agent.id, tx, false, None).await;
+
+        let target = db::ScheduleRunTarget {
+            agent_id: agent.id,
+            hostname: agent.hostname.clone(),
+        };
+        let now = Utc::now();
+        let request = RunRequest {
+            repo_ids: vec![RepoId(repo.id)],
+            schedule_type: ScheduleType::Backup,
+            schedule_id: schedule.id,
+            cron_expression: schedule.cron_expression.clone(),
+            now,
+            run_id: "run-target-triggers".to_owned(),
+            origin: RunOrigin::Manual,
+        };
+        let mut marked_triggered = false;
+
+        tokio::join!(
+            run_target(
+                &state,
+                &target,
+                &request,
+                RepoId(repo.id),
+                &mut marked_triggered
+            ),
+            async {
+                state
+                    .completion_bus
+                    .publish(completion_bus::OperationOutcome {
+                        agent_id: agent.id,
+                        repo_id: repo.id,
+                        success: true,
+                    });
+            }
+        );
+
+        assert!(
+            marked_triggered,
+            "run_target must mark the schedule triggered once it reaches the agent"
+        );
+        let updated = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+        assert!(
+            updated.last_run_at.is_some(),
+            "a manual run that reached the agent must advance last_run_at"
+        );
     }
 
     /// Regression test for the "Run Now doesn't participate in
@@ -526,6 +767,8 @@ mod tests {
                 repo_ids: vec![RepoId(repo_id)],
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
+                cron_expression: "0 2 * * *".to_owned(),
+                now: Utc::now(),
                 run_id: "run-manual-leak".to_owned(),
                 origin: RunOrigin::Manual,
             },
@@ -587,6 +830,8 @@ mod tests {
                 repo_ids: vec![RepoId(888_888)],
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 777_777,
+                cron_expression: "0 2 * * *".to_owned(),
+                now: Utc::now(),
                 run_id: "run-manual-config-assembly-failure".to_owned(),
                 origin: RunOrigin::Manual,
             },

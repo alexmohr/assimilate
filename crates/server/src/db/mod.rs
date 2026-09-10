@@ -3687,6 +3687,46 @@ pub async fn mark_schedule_triggered(
     Ok(())
 }
 
+/// Advances `schedule_id`'s `last_run_at` to `now` and `next_run_at` to the
+/// next cron occurrence from it - the bookkeeping a successful dispatch
+/// performs, whether it came from a scheduled tick, a manual "Run now", or a
+/// caught-up run. The single implementation both `scheduler::mark_schedule_triggered_once`
+/// and `run_dispatch`'s manual/catch-up dispatch call, so the two paths can't
+/// drift out of sync with each other.
+///
+/// Returns whether the write actually landed, so a caller that only wants to
+/// count a run as "triggered" once this bookkeeping truly succeeded can gate
+/// that decision on it, rather than assuming success: an invalid cron
+/// expression or a transient database error must not be silently treated as
+/// "done".
+pub async fn advance_schedule_run(
+    pool: &PgPool,
+    schedule_id: i64,
+    cron_expression: &str,
+    tz: chrono_tz::Tz,
+    now: DateTime<Utc>,
+) -> bool {
+    let next = match shared::schedule::calculate_next_run(cron_expression, now, tz) {
+        Ok(next) => next,
+        Err(e) => {
+            tracing::error!(
+                schedule_id,
+                cron = %cron_expression,
+                error = %e,
+                "invalid cron expression, not advancing schedule run"
+            );
+            return false;
+        }
+    };
+    match mark_schedule_triggered(pool, schedule_id, now, next).await {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!(schedule_id, error = %e, "failed to advance schedule run");
+            false
+        }
+    }
+}
+
 /// Resets a schedule's consecutive-failure count once a tick completes having
 /// recorded no failure for any of its targets - the only place `consecutive_failures`
 /// goes back to 0 (deliberately *not* folded into [`mark_schedule_triggered`], which

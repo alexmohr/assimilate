@@ -504,6 +504,22 @@ async function loadData(): Promise<void> {
     .catch((e: unknown) => logger.error('listScheduleReports failed', e))
 }
 
+/**
+ * Re-fetches just the schedule row in the background (DataChanged), without
+ * touching `form` or anything else `loadData()` populates - see `refreshAgent`
+ * in AgentDetailView.vue and `refreshRepo` in RepoDetailView.vue for the same
+ * pattern, and why: overwriting `form` here would discard an in-progress,
+ * unsaved edit on the Settings tab every time an unrelated DataChanged fires
+ * elsewhere in the app.
+ */
+async function refreshSchedule(): Promise<void> {
+  try {
+    schedule.value = await getSchedule(props.id)
+  } catch (e: unknown) {
+    logger.error('background schedule refresh failed', e)
+  }
+}
+
 async function save(): Promise<void> {
   saving.value = true
   saveError.value = null
@@ -694,6 +710,21 @@ onMessage('BackupCompleted', (payload) => {
   backupHostname.value = null
   backupArchiveName.value = null
 })
+
+// Every other page with its own detail view (Repos, Hosts, ...) refreshes on
+// DataChanged; this one didn't, so a manual or catch-up run's last_run_at/
+// next_run_at bump - sent as its own DataChanged right after BackupCompleted,
+// see ws/handler.rs's finalize_backup_completion - never showed up here
+// without a manual page reload.
+//
+// Only `schedule` is re-fetched, not the full loadData() - that also calls
+// populateForm(), which overwrites the Settings tab's form ref outright.
+// DataChanged fires from 30+ unrelated call sites across the app, so doing
+// that here would silently discard an in-progress, unsaved edit whenever any
+// of them fired while this page happened to be open on the Settings tab -
+// the same failure mode AgentDetailView's refreshAgent() and
+// RepoDetailView's refreshRepo() already guard against for the same reason.
+onMessage('DataChanged', () => refreshSchedule().catch(logger.error))
 
 onMessage('BackupLog', (payload) => {
   // Prefer schedule_id matching so progress arrives even before loadData()

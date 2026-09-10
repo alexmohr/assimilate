@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, s.schedule_type, st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = true AND s.enabled = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) ORDER BY s.id",
+  "query": "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, s.schedule_type, s.cron_expression, st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = true AND s.enabled = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) ORDER BY s.id",
   "describe": {
     "columns": [
       {
@@ -30,16 +30,21 @@
       },
       {
         "ordinal": 5,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
         "name": "pending_for!",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "next_run_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "min_lead_minutes",
         "type_info": "Int4"
       }
@@ -55,10 +60,11 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       false
     ]
   },
-  "hash": "8f8f396f252a559d8b8e89edc357d444cc32c5e0d0f5b2463a7f6a93b0e10c6b"
+  "hash": "6ea05d761e59195254d75a16ae2318dc37ccfa740e9b14ac107d41f3bd67b7d5"
 }

@@ -330,13 +330,6 @@ function populateForm(s: ScheduleRow): void {
 let loadGeneration = 0
 
 /**
- * Only the schedule itself, its hosts, its repositories and its sources decide
- * what the page renders; health, the recent-report list and the failed-report
- * count fill in badges and the "backup running" banner afterwards. They all
- * start together, but the loading spinner waits on the first group alone -
- * awaiting the whole set held the Settings tab behind data it never reads.
- */
-/**
  * Everything below describes one schedule's runs, and since the load was split
  * none of it is written in the same tick as the schedule itself any more.
  * Clearing it up front keeps the page self-consistent while the new schedule's
@@ -357,6 +350,13 @@ function clearRunState(): void {
   archiveProgress.value = null
 }
 
+/**
+ * Only the schedule itself, its hosts, its repositories and its sources decide
+ * what the page renders; health, the recent-report list and the failed-report
+ * count fill in badges and the "backup running" banner afterwards. They all
+ * start together, but the loading spinner waits on the first group alone -
+ * awaiting the whole set held the Settings tab behind data it never reads.
+ */
 async function loadData(): Promise<void> {
   const generation = ++loadGeneration
   const scheduleId = props.id

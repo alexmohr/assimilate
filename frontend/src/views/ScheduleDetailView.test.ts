@@ -2400,6 +2400,136 @@ describe('ScheduleDetailView - load ordering', () => {
     expect(wrapper.text()).not.toContain('Schedule Alpha')
   })
 
+  // Two loads overlap whenever the user switches mid-flight, and the abandoned
+  // one usually settles FIRST because its requests went out first. Its spinner
+  // and its errors must not speak for the schedule now on screen.
+  it('keeps the spinner up when the abandoned load settles before the current one', async () => {
+    let releaseFirst: (() => void) | undefined
+    let releaseSecond: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1')
+        return new Promise((resolve) => {
+          releaseFirst = (): void => resolve({ data: mockSchedule })
+        })
+      if (url === '/schedules/4')
+        return new Promise((resolve) => {
+          releaseSecond = (): void => resolve({ data: { ...mockSchedule, id: 4 } })
+        })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    // Schedule 1's core lands after the user has moved on, and before 4's own.
+    releaseFirst?.()
+    await flushPromises()
+
+    expect(wrapper.find('.base-spinner').exists()).toBe(true)
+
+    releaseSecond?.()
+    await flushPromises()
+    expect(wrapper.find('.base-spinner').exists()).toBe(false)
+  })
+
+  it("does not raise the abandoned load's error over the current schedule", async () => {
+    let failFirst: (() => void) | undefined
+    let releaseSecond: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1')
+        return new Promise((_resolve, reject) => {
+          failFirst = (): void => reject(new Error('schedule one is gone'))
+        })
+      if (url === '/schedules/4')
+        return new Promise((resolve) => {
+          releaseSecond = (): void => resolve({ data: { ...mockSchedule, id: 4 } })
+        })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    failFirst?.()
+    await flushPromises()
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+
+    releaseSecond?.()
+    await flushPromises()
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.find('.base-spinner').exists()).toBe(false)
+  })
+
+  // Per-host mode is only ever switched ON by a load, so without a reset the
+  // previous schedule's paths ride along and the next save writes them onto a
+  // schedule that never had them.
+  it('does not carry per-host sources across to the next schedule', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      // Schedule 1 stores its sources per host; schedule 4 shares one list.
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: {
+            backup_sources: [],
+            backup_sources_per_agent: [{ agent_id: 10, paths: ['/only/on/schedule-one'] }],
+          },
+        })
+      if (url === '/schedules/4/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/shared'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    await goToSettings(wrapper)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save changes')!
+      .trigger('click')
+    await flushPromises()
+
+    const payload = mockApiClient.put.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.backup_sources_per_agent).toBeUndefined()
+    expect(payload.backup_sources).toEqual(['/shared'])
+  })
+
   it('drops a slow report list for a schedule the user has navigated away from', async () => {
     let releaseFirstReports: ((rows: unknown[]) => void) | undefined
     mockApiClient.get.mockImplementation((url: string) => {

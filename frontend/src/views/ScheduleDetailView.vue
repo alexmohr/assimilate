@@ -26,9 +26,8 @@ import {
 import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
-import { extractError } from '../utils/error'
+import { extractBlobError, extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
@@ -79,7 +78,8 @@ const repos = ref<Repo[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === primaryRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTargetResponse[]>([])
 const health = ref<HealthSummaryResponse[]>([])
-const { loading, error, run } = useAsyncAction('Failed to load schedule')
+const loading = ref(false)
+const error = ref<string | null>(null)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
@@ -110,15 +110,19 @@ const perHostSources = ref<Record<number, string>>({})
 
 // The Advanced section's per-agent overrides, grouped so the tab component
 // takes one v-model instead of seven.
-const agentOverrides = ref<ScheduleAgentOverrides>({
-  usePerHostExcludes: false,
-  perHostExcludes: {},
-  usePerHostFileChangePatterns: false,
-  perHostFileChangePatterns: {},
-  usePerAgentCmds: false,
-  perAgentPreCmds: {},
-  perAgentPostCmds: {},
-})
+function emptyAgentOverrides(): ScheduleAgentOverrides {
+  return {
+    usePerHostExcludes: false,
+    perHostExcludes: {},
+    usePerHostFileChangePatterns: false,
+    perHostFileChangePatterns: {},
+    usePerAgentCmds: false,
+    perAgentPreCmds: {},
+    perAgentPostCmds: {},
+  }
+}
+
+const agentOverrides = ref<ScheduleAgentOverrides>(emptyAgentOverrides())
 
 interface ArchiveProgressData {
   hostname: string
@@ -345,6 +349,13 @@ let loadGeneration = 0
  */
 function clearScheduleState(): void {
   schedule.value = null
+  // Each of these is only ever switched *on* by a load - a schedule with no
+  // per-host data leaves them untouched - so without a reset here the previous
+  // schedule's per-host paths and override toggles survive the switch and a
+  // save would write them onto the schedule now on screen.
+  usePerHostPaths.value = false
+  perHostSources.value = {}
+  agentOverrides.value = emptyAgentOverrides()
   health.value = []
   reports.value = []
   failedReportCount.value = 0
@@ -386,78 +397,94 @@ async function loadData(): Promise<void> {
   // by the time the running-backup banner looks a hostname up.
   const recentReportsPromise = listScheduleReports(scheduleId, 20)
 
-  await run(async () => {
-    {
-      const [scheduleRow, agentRows, repoRows, targetRows, repoTargetRows, sourcesResponse] =
-        await Promise.all([
-          getSchedule(scheduleId),
-          listAgents(),
-          listRepos(),
-          listScheduleTargets(scheduleId),
-          listScheduleRepos(scheduleId),
-          getScheduleBackupSources(scheduleId),
-        ])
-      // The deferred fetches below are guarded one by one; this group needs the
-      // same check. Without it a slow load for the schedule the user has left
-      // still lands, putting its name and targets back on screen beside the
-      // schedule they actually navigated to - whose health and reports are
-      // guarded, so they stay.
-      if (!isCurrent()) return
-      schedule.value = scheduleRow
-      agents.value = agentRows
-      repos.value = repoRows
-      scheduleTargets.value = targetRows
-      repoTargets.value = repoTargetRows.map((t) => ({
-        repo_id: t.repo_id,
-        required: t.required,
-      }))
-      const sorted = [...targetRows].sort((a, b) => a.execution_order - b.execution_order)
-      selectedAgentIds.value = sorted.map((t) => t.agent_id)
-      populateForm(scheduleRow)
+  loading.value = true
+  error.value = null
 
-      const sources = sourcesResponse
-      form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
-      const perHost = sources.backup_sources_per_agent ?? []
-      if (perHost.length > 0) {
-        usePerHostPaths.value = true
-        const map: Record<number, string> = {}
-        for (const entry of perHost) {
-          map[Number(entry.agent_id)] = entry.paths.join('\n')
-        }
-        perHostSources.value = map
+  // The writes, the spinner and the error banner are all gated on the same
+  // generation check. `useAsyncAction` could not do that: it clears its
+  // loading flag in a `finally` that knows nothing about which load it
+  // belongs to, so the abandoned load settling first would drop the spinner
+  // while the current schedule was still on its way - leaving neither
+  // spinner nor page - and a late failure of its own would raise an error
+  // banner for the schedule the user has already left.
+  const applyCoreLoad = async (): Promise<void> => {
+    const [scheduleRow, agentRows, repoRows, targetRows, repoTargetRows, sourcesResponse] =
+      await Promise.all([
+        getSchedule(scheduleId),
+        listAgents(),
+        listRepos(),
+        listScheduleTargets(scheduleId),
+        listScheduleRepos(scheduleId),
+        getScheduleBackupSources(scheduleId),
+      ])
+    // The deferred fetches below are guarded one by one; this group needs the
+    // same check. Without it a slow load for the schedule the user has left
+    // still lands, putting its name and targets back on screen beside the
+    // schedule they actually navigated to - whose health and reports are
+    // guarded, so they stay.
+    if (!isCurrent()) return
+    schedule.value = scheduleRow
+    agents.value = agentRows
+    repos.value = repoRows
+    scheduleTargets.value = targetRows
+    repoTargets.value = repoTargetRows.map((t) => ({
+      repo_id: t.repo_id,
+      required: t.required,
+    }))
+    const sorted = [...targetRows].sort((a, b) => a.execution_order - b.execution_order)
+    selectedAgentIds.value = sorted.map((t) => t.agent_id)
+    populateForm(scheduleRow)
+
+    const sources = sourcesResponse
+    form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
+    const perHost = sources.backup_sources_per_agent ?? []
+    if (perHost.length > 0) {
+      usePerHostPaths.value = true
+      const map: Record<number, string> = {}
+      for (const entry of perHost) {
+        map[Number(entry.agent_id)] = entry.paths.join('\n')
       }
-      const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
-      if (perHostExcludeEntries.length > 0) {
-        agentOverrides.value.usePerHostExcludes = true
-        const map: Record<number, string> = {}
-        for (const entry of perHostExcludeEntries) {
-          map[Number(entry.agent_id)] = entry.raw_text
-        }
-        agentOverrides.value.perHostExcludes = map
-      }
-      const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
-      if (perHostFileChangePatternsEntries.length > 0) {
-        agentOverrides.value.usePerHostFileChangePatterns = true
-        const map: Record<number, string> = {}
-        for (const entry of perHostFileChangePatternsEntries) {
-          map[Number(entry.agent_id)] = entry.raw_text
-        }
-        agentOverrides.value.perHostFileChangePatterns = map
-      }
-      const perAgentCmdEntries = sources.commands_per_agent ?? []
-      if (perAgentCmdEntries.length > 0) {
-        agentOverrides.value.usePerAgentCmds = true
-        const preMap: Record<number, HookCommand[]> = {}
-        const postMap: Record<number, HookCommand[]> = {}
-        for (const entry of perAgentCmdEntries) {
-          preMap[Number(entry.agent_id)] = entry.pre_backup_commands
-          postMap[Number(entry.agent_id)] = entry.post_backup_commands
-        }
-        agentOverrides.value.perAgentPreCmds = preMap
-        agentOverrides.value.perAgentPostCmds = postMap
-      }
+      perHostSources.value = map
     }
-  })
+    const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
+    if (perHostExcludeEntries.length > 0) {
+      agentOverrides.value.usePerHostExcludes = true
+      const map: Record<number, string> = {}
+      for (const entry of perHostExcludeEntries) {
+        map[Number(entry.agent_id)] = entry.raw_text
+      }
+      agentOverrides.value.perHostExcludes = map
+    }
+    const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
+    if (perHostFileChangePatternsEntries.length > 0) {
+      agentOverrides.value.usePerHostFileChangePatterns = true
+      const map: Record<number, string> = {}
+      for (const entry of perHostFileChangePatternsEntries) {
+        map[Number(entry.agent_id)] = entry.raw_text
+      }
+      agentOverrides.value.perHostFileChangePatterns = map
+    }
+    const perAgentCmdEntries = sources.commands_per_agent ?? []
+    if (perAgentCmdEntries.length > 0) {
+      agentOverrides.value.usePerAgentCmds = true
+      const preMap: Record<number, HookCommand[]> = {}
+      const postMap: Record<number, HookCommand[]> = {}
+      for (const entry of perAgentCmdEntries) {
+        preMap[Number(entry.agent_id)] = entry.pre_backup_commands
+        postMap[Number(entry.agent_id)] = entry.post_backup_commands
+      }
+      agentOverrides.value.perAgentPreCmds = preMap
+      agentOverrides.value.perAgentPostCmds = postMap
+    }
+  }
+
+  try {
+    await applyCoreLoad()
+  } catch (e) {
+    if (isCurrent()) error.value = await extractBlobError(e, 'Failed to load schedule')
+  } finally {
+    if (isCurrent()) loading.value = false
+  }
 
   await recentReportsPromise
     .then((recentReports) => {

@@ -330,16 +330,21 @@ function populateForm(s: ScheduleRow): void {
 let loadGeneration = 0
 
 /**
- * Everything below describes one schedule's runs, and since the load was split
- * none of it is written in the same tick as the schedule itself any more.
+ * Everything below describes one schedule, and since the load was split none of
+ * it is written in the same tick as the rest any more.
  * Clearing it up front keeps the page self-consistent while the new schedule's
  * health, reports and counts are still in flight: two schedules that share a
  * target host would otherwise show the old one's health row - `healthForAgent`
  * matches on hostname alone - and its running-backup banner, under the new
  * one's name. The load generation counter cannot cover this; it only stops a
  * late response overwriting a newer one, never the value already on screen.
+ *
+ * `schedule` goes too, so the page renders nothing rather than the previous
+ * schedule's name over the incoming one's badges - which is what a core load
+ * that fails, or simply has not landed yet, would otherwise leave on screen.
  */
-function clearRunState(): void {
+function clearScheduleState(): void {
+  schedule.value = null
   health.value = []
   reports.value = []
   failedReportCount.value = 0
@@ -361,7 +366,7 @@ async function loadData(): Promise<void> {
   const generation = ++loadGeneration
   const scheduleId = props.id
   const isCurrent = (): boolean => generation === loadGeneration
-  clearRunState()
+  clearScheduleState()
 
   countFailedScheduleReports(scheduleId)
     .then((count) => {
@@ -392,6 +397,12 @@ async function loadData(): Promise<void> {
           listScheduleRepos(scheduleId),
           getScheduleBackupSources(scheduleId),
         ])
+      // The deferred fetches below are guarded one by one; this group needs the
+      // same check. Without it a slow load for the schedule the user has left
+      // still lands, putting its name and targets back on screen beside the
+      // schedule they actually navigated to - whose health and reports are
+      // guarded, so they stay.
+      if (!isCurrent()) return
       schedule.value = scheduleRow
       agents.value = agentRows
       repos.value = repoRows

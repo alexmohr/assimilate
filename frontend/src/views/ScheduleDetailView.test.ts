@@ -2358,6 +2358,48 @@ describe('ScheduleDetailView - load ordering', () => {
     await flushPromises()
   })
 
+  // The mirror of the health case: the core group sets the schedule's own
+  // identity, so a slow one landing late puts the abandoned schedule's name and
+  // targets back beside the current schedule's badges.
+  it('drops a slow core load for a schedule the user has navigated away from', async () => {
+    let releaseFirstSchedule: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1')
+        return new Promise((resolve) => {
+          releaseFirstSchedule = (): void =>
+            resolve({ data: { ...mockSchedule, name: 'Schedule Alpha' } })
+        })
+      if (url === '/schedules/4')
+        return Promise.resolve({ data: { ...mockSchedule, id: 4, name: 'Schedule Beta' } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+    // Precondition: schedule 4 really is on screen, so the assertion below is
+    // about the late arrival rather than a page that never rendered.
+    expect(wrapper.text()).toContain('Schedule Beta')
+
+    releaseFirstSchedule?.()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Schedule Beta')
+    expect(wrapper.text()).not.toContain('Schedule Alpha')
+  })
+
   it('drops a slow report list for a schedule the user has navigated away from', async () => {
     let releaseFirstReports: ((rows: unknown[]) => void) | undefined
     mockApiClient.get.mockImplementation((url: string) => {

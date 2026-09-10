@@ -73,6 +73,10 @@ pub struct BackupTarget {
     pub hook_timeout_seconds: u32,
     pub skip_targets: Vec<String>,
     pub exclude_patterns: Vec<String>,
+    /// Patterns rescued from `exclude_patterns` - checked first, so a path
+    /// matching one is backed up even if a broader exclude would otherwise
+    /// skip it.
+    pub include_patterns: Vec<String>,
     pub rate_limit_kbps: Option<u32>,
     pub ssh_auth_sock: Option<PathBuf>,
     pub canary_enabled: bool,
@@ -107,6 +111,7 @@ impl Default for BackupTarget {
             hook_timeout_seconds: 60,
             skip_targets: Vec::new(),
             exclude_patterns: Vec::new(),
+            include_patterns: Vec::new(),
             rate_limit_kbps: None,
             ssh_auth_sock: None,
             canary_enabled: false,
@@ -234,9 +239,16 @@ impl BackupEngine {
         }
 
         let exclude_file = Self::write_exclude_file(&target.exclude_patterns)?;
+        let include_file = Self::write_include_patterns_file(&target.include_patterns)?;
 
         let create_result = self
-            .run_borg_create(target, &target.backup_sources, exclude_file.path(), log_tx)
+            .run_borg_create(
+                target,
+                &target.backup_sources,
+                exclude_file.path(),
+                include_file.as_ref().map(tempfile::NamedTempFile::path),
+                log_tx,
+            )
             .await?;
 
         let canary_result = if let Some(canary) = canary {
@@ -364,6 +376,25 @@ impl BackupEngine {
         Ok(file)
     }
 
+    /// Writes a borg patterns file rescuing `patterns` from the exclude list -
+    /// each line is prefixed `+` (include), so it is checked, in order,
+    /// before `--exclude-from`'s patterns and wins first-match-wins. Returns
+    /// `None` when there is nothing to rescue, so a schedule with no include
+    /// patterns runs the exact command it always has.
+    fn write_include_patterns_file(
+        patterns: &[String],
+    ) -> Result<Option<tempfile::NamedTempFile>, BackupError> {
+        if patterns.is_empty() {
+            return Ok(None);
+        }
+        let mut file = tempfile::NamedTempFile::new()?;
+        for pattern in patterns {
+            writeln!(file, "+ {pattern}")?;
+        }
+        file.flush()?;
+        Ok(Some(file))
+    }
+
     fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
         let repo_url = build_repo_url(
             &target.ssh_user,
@@ -407,12 +438,19 @@ impl BackupEngine {
         target: &BackupTarget,
         backup_sources: &[String],
         exclude_file: &Path,
+        include_file: Option<&Path>,
         log_tx: Option<mpsc::Sender<String>>,
     ) -> Result<CreateResult, BackupError> {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
         let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
 
-        let args = Self::borg_create_args(target, backup_sources, exclude_file, &archive_name);
+        let args = Self::borg_create_args(
+            target,
+            backup_sources,
+            exclude_file,
+            include_file,
+            &archive_name,
+        );
         let borg_command = Self::format_command_string(target, &args);
 
         let env_vars = Self::borg_env(target);
@@ -527,15 +565,19 @@ impl BackupEngine {
     }
 
     /// Build a preview of the borg create command that will be run, using a
-    /// placeholder for the transient exclude-from temp file path.
+    /// placeholder for the transient exclude-from (and, when the target has
+    /// include patterns, patterns-from) temp file path.
     pub fn preview_create_command(target: &BackupTarget) -> String {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
         let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
         let exclude_placeholder = std::path::Path::new("<exclude-file>");
+        let include_placeholder = std::path::Path::new("<include-file>");
+        let include_file = (!target.include_patterns.is_empty()).then_some(include_placeholder);
         let args = Self::borg_create_args(
             target,
             &target.backup_sources,
             exclude_placeholder,
+            include_file,
             &archive_name,
         );
         Self::format_command_string(target, &args)
@@ -573,6 +615,7 @@ impl BackupEngine {
         target: &BackupTarget,
         backup_sources: &[String],
         exclude_file: &Path,
+        include_file: Option<&Path>,
         archive_name: &str,
     ) -> Vec<String> {
         let mut flags: Vec<String> = vec![
@@ -590,9 +633,18 @@ impl BackupEngine {
             "--exclude-caches".to_owned(),
             "--exclude-if-present".to_owned(),
             ".nobackup".to_owned(),
-            "--exclude-from".to_owned(),
-            exclude_file.to_string_lossy().into_owned(),
         ];
+
+        // Listed before --exclude-from: borg tests patterns in the order they
+        // are given on the command line, first match wins, so an include here
+        // rescues a path a later, broader exclude would otherwise drop.
+        if let Some(include_file) = include_file {
+            flags.push("--patterns-from".to_owned());
+            flags.push(include_file.to_string_lossy().into_owned());
+        }
+
+        flags.push("--exclude-from".to_owned());
+        flags.push(exclude_file.to_string_lossy().into_owned());
 
         if let Some(rate_limit_kbps) = target.rate_limit_kbps.filter(|&kbps| kbps > 0) {
             flags.push("--upload-ratelimit".to_owned());
@@ -1337,6 +1389,7 @@ mod tests {
             hook_timeout_seconds: 60,
             skip_targets: Vec::new(),
             exclude_patterns: vec!["*.tmp".to_owned(), "/proc/*".to_owned()],
+            include_patterns: Vec::new(),
             rate_limit_kbps: None,
             ssh_auth_sock: None,
             canary_enabled: false,
@@ -1354,6 +1407,7 @@ mod tests {
             &target,
             &target.backup_sources,
             Path::new("/tmp/excludes"),
+            None,
             "archive-name",
         );
 
@@ -1370,6 +1424,7 @@ mod tests {
             &target,
             &target.backup_sources,
             Path::new("/tmp/excludes"),
+            None,
             "archive-name",
         );
 
@@ -1383,6 +1438,7 @@ mod tests {
             &target,
             &target.backup_sources,
             Path::new("/tmp/excludes"),
+            None,
             "archive-name",
         );
         let archive_spec_pos = args.iter().position(|a| a.starts_with("::"));
@@ -1405,6 +1461,7 @@ mod tests {
             &target,
             &target.backup_sources,
             Path::new("/tmp/excludes"),
+            None,
             "archive-name",
         );
         assert!(!args.iter().any(|a| a == "--"));
@@ -1418,10 +1475,86 @@ mod tests {
             &target,
             &target.backup_sources,
             Path::new("/tmp/excludes"),
+            None,
             "archive-name",
         );
 
         assert!(!args.iter().any(|arg| arg == "--upload-ratelimit"));
+    }
+
+    #[test]
+    fn borg_create_args_omits_patterns_from_without_include_patterns() {
+        let target = test_target();
+
+        let args = BackupEngine::borg_create_args(
+            &target,
+            &target.backup_sources,
+            Path::new("/tmp/excludes"),
+            None,
+            "archive-name",
+        );
+
+        assert!(!args.iter().any(|a| a == "--patterns-from"));
+    }
+
+    #[test]
+    fn borg_create_args_includes_patterns_from_before_exclude_from() {
+        let target = test_target();
+
+        let args = BackupEngine::borg_create_args(
+            &target,
+            &target.backup_sources,
+            Path::new("/tmp/excludes"),
+            Some(Path::new("/tmp/includes")),
+            "archive-name",
+        );
+
+        let patterns_from_pos = args.iter().position(|a| a == "--patterns-from").unwrap();
+        assert_eq!(args[patterns_from_pos + 1], "/tmp/includes");
+        let exclude_from_pos = args.iter().position(|a| a == "--exclude-from").unwrap();
+        assert_eq!(args[exclude_from_pos + 1], "/tmp/excludes");
+        assert!(
+            patterns_from_pos < exclude_from_pos,
+            "include patterns must be checked before excludes so they can rescue a path"
+        );
+    }
+
+    #[test]
+    fn write_include_patterns_file_returns_none_when_empty() {
+        assert!(
+            BackupEngine::write_include_patterns_file(&[])
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn write_include_patterns_file_prefixes_each_pattern_with_plus() {
+        let file = BackupEngine::write_include_patterns_file(&[
+            "/home/keep".to_owned(),
+            "pp:/var/keep".to_owned(),
+        ])
+        .unwrap()
+        .unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert_eq!(content, "+ /home/keep\n+ pp:/var/keep\n");
+    }
+
+    #[test]
+    fn preview_create_command_includes_patterns_from_when_target_has_include_patterns() {
+        let target = BackupTarget {
+            include_patterns: vec!["/home/keep".to_owned()],
+            ..test_target()
+        };
+        let command = BackupEngine::preview_create_command(&target);
+        assert!(command.contains("--patterns-from <include-file>"));
+    }
+
+    #[test]
+    fn preview_create_command_omits_patterns_from_without_include_patterns() {
+        let target = test_target();
+        let command = BackupEngine::preview_create_command(&target);
+        assert!(!command.contains("--patterns-from"));
     }
 
     #[test]

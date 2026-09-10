@@ -3,6 +3,7 @@ import type { PerAgentBackupSourcesResponse } from "./PerAgentBackupSourcesRespo
 import type { PerAgentCommandsResponse } from "./PerAgentCommandsResponse";
 import type { PerAgentExcludePatternsResponse } from "./PerAgentExcludePatternsResponse";
 import type { PerAgentFileChangePatternsResponse } from "./PerAgentFileChangePatternsResponse";
+import type { PerAgentIncludePatternsResponse } from "./PerAgentIncludePatternsResponse";
 
 /**
  * Response containing schedule backup sources.
@@ -20,6 +21,10 @@ export type ScheduleBackupSourcesResponse = {
    * Exclude patterns per agent.
    */
   exclude_patterns_per_agent: Array<PerAgentExcludePatternsResponse>;
+  /**
+   * Include patterns per agent.
+   */
+  include_patterns_per_agent: Array<PerAgentIncludePatternsResponse>;
   /**
    * Commands per agent.
    */

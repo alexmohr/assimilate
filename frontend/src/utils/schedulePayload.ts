@@ -25,6 +25,7 @@ export function scheduleFormPayload(form: ScheduleFormState): ScheduleFormPayloa
     canary_enabled: form.canary_enabled,
     vm_snapshot_enabled: form.vm_snapshot_enabled,
     exclude_patterns_raw: form.exclude_patterns,
+    include_patterns_raw: form.include_patterns,
     file_change_patterns_raw: form.file_change_patterns,
     ignore_global_excludes: form.ignore_global_excludes,
     keep_hourly: form.keep_hourly,
@@ -68,6 +69,14 @@ export function agentOverridePayload(
     payload.exclude_patterns_per_agent = agentIds.map((agent_id) => ({
       agent_id,
       raw_text: overrides.perHostExcludes[agent_id] ?? '',
+    }))
+  }
+
+  if (overrides.usePerHostIncludes) {
+    payload.include_patterns_raw = ''
+    payload.include_patterns_per_agent = agentIds.map((agent_id) => ({
+      agent_id,
+      raw_text: overrides.perHostIncludes[agent_id] ?? '',
     }))
   }
 

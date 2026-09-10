@@ -13,8 +13,8 @@ use shared::{
     responses::{
         DeleteFailedReportsResponse, FailedReportCountResponse, PerAgentBackupSourcesResponse,
         PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
-        PerAgentFileChangePatternsResponse, ScheduleBackupSourcesResponse, ScheduleRepoResponse,
-        ScheduleTargetResponse,
+        PerAgentFileChangePatternsResponse, PerAgentIncludePatternsResponse,
+        ScheduleBackupSourcesResponse, ScheduleRepoResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
@@ -55,6 +55,15 @@ impl From<db::PerAgentExcludePatterns> for PerAgentExcludePatternsResponse {
         Self {
             agent_id: e.agent_id,
             raw_text: e.raw_text,
+        }
+    }
+}
+
+impl From<db::PerAgentIncludePatterns> for PerAgentIncludePatternsResponse {
+    fn from(i: db::PerAgentIncludePatterns) -> Self {
+        Self {
+            agent_id: i.agent_id,
+            raw_text: i.raw_text,
         }
     }
 }
@@ -106,6 +115,15 @@ pub struct AgentExcludePatterns {
     /// The agent's ID.
     pub agent_id: i64,
     /// Raw exclude pattern text.
+    pub raw_text: String,
+}
+
+/// Per-agent include patterns for a schedule target.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct AgentIncludePatterns {
+    /// The agent's ID.
+    pub agent_id: i64,
+    /// Raw include pattern text.
     pub raw_text: String,
 }
 
@@ -167,6 +185,8 @@ pub struct CreateScheduleRequest {
     pub vm_snapshot_enabled: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
+    /// Raw include pattern text, rescuing paths from a broader exclude.
+    pub include_patterns_raw: Option<String>,
     /// Whether to ignore global excludes.
     pub ignore_global_excludes: Option<bool>,
     /// Number of hourly backups to keep.
@@ -204,6 +224,8 @@ pub struct CreateScheduleRequest {
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
     /// Per-agent exclude patterns.
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
+    /// Per-agent include patterns.
+    pub include_patterns_per_agent: Option<Vec<AgentIncludePatterns>>,
     /// Per-agent pre/post commands.
     pub commands_per_agent: Option<Vec<AgentCommands>>,
     /// Raw file change detection pattern text (schedule-level).
@@ -241,6 +263,8 @@ pub struct UpdateScheduleRequest {
     pub vm_snapshot_enabled: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
+    /// Raw include pattern text, rescuing paths from a broader exclude.
+    pub include_patterns_raw: Option<String>,
     /// Whether to ignore global excludes.
     pub ignore_global_excludes: Option<bool>,
     /// Number of hourly backups to keep.
@@ -278,6 +302,8 @@ pub struct UpdateScheduleRequest {
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
     /// Per-agent exclude patterns (replaces all).
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
+    /// Per-agent include patterns (replaces all).
+    pub include_patterns_per_agent: Option<Vec<AgentIncludePatterns>>,
     /// Per-agent pre/post commands (replaces all).
     pub commands_per_agent: Option<Vec<AgentCommands>>,
     /// Raw file change pattern text (schedule-level).
@@ -300,6 +326,75 @@ pub struct UpdateScheduleRequest {
 /// than failing the request, matching how the scheduler treats `on_failure`.
 fn stored_wake_override(schedule: &db::ScheduleRow) -> ScheduleWakeOverride {
     ScheduleWakeOverride::from_db_value(schedule.id, &schedule.wake_override)
+}
+
+/// An update's raw pattern text for a field, falling back to what the
+/// schedule already has when the request omits it.
+fn effective_raw(requested: Option<&String>, existing: &str) -> String {
+    requested.cloned().unwrap_or_else(|| existing.to_owned())
+}
+
+/// The values an update actually applies once every field's `Option` is
+/// resolved against what the schedule already has, and validated.
+struct EffectiveScheduleValues {
+    name: String,
+    exclude_patterns_raw: String,
+    include_patterns_raw: String,
+    pre_backup_commands: Vec<HookCommand>,
+    post_backup_commands: Vec<HookCommand>,
+    hook_timeout_seconds: i32,
+    missed_backup_threshold: i32,
+    catch_up_missed_runs: bool,
+    catch_up_min_lead_minutes: i32,
+    on_failure: String,
+}
+
+fn resolve_effective_schedule_values(
+    req: &UpdateScheduleRequest,
+    existing: &db::ScheduleRow,
+) -> Result<EffectiveScheduleValues, ApiError> {
+    let pre_backup_commands = req
+        .pre_backup_commands
+        .clone()
+        .unwrap_or_else(|| existing.pre_backup_commands.0.clone());
+    let post_backup_commands = req
+        .post_backup_commands
+        .clone()
+        .unwrap_or_else(|| existing.post_backup_commands.0.clone());
+    validate_hook_commands(&pre_backup_commands)?;
+    validate_hook_commands(&post_backup_commands)?;
+
+    Ok(EffectiveScheduleValues {
+        name: req.name.clone().unwrap_or_else(|| existing.name.clone()),
+        exclude_patterns_raw: effective_raw(
+            req.exclude_patterns_raw.as_ref(),
+            &existing.exclude_patterns_raw,
+        ),
+        include_patterns_raw: effective_raw(
+            req.include_patterns_raw.as_ref(),
+            &existing.include_patterns_raw,
+        ),
+        pre_backup_commands,
+        post_backup_commands,
+        hook_timeout_seconds: validate_hook_timeout_seconds(
+            req.hook_timeout_seconds
+                .unwrap_or(existing.hook_timeout_seconds),
+        )?,
+        missed_backup_threshold: validate_missed_backup_threshold(
+            req.missed_backup_threshold
+                .unwrap_or(existing.missed_backup_threshold),
+        )?,
+        catch_up_missed_runs: req
+            .catch_up_missed_runs
+            .unwrap_or(existing.catch_up_missed_runs),
+        catch_up_min_lead_minutes: validate_catch_up_min_lead_minutes(
+            req.catch_up_min_lead_minutes
+                .unwrap_or(existing.catch_up_min_lead_minutes),
+        )?,
+        on_failure: req
+            .on_failure
+            .map_or_else(|| existing.on_failure.clone(), |f| f.to_string()),
+    })
 }
 
 #[utoipa::path(
@@ -473,7 +568,8 @@ pub async fn create_schedule(
     // moved and unborrowable.
     ensure_backup_sources_available(&state, &req, schedule_type_enum).await?;
 
-    let exclude_patterns_raw = req.exclude_patterns_raw.unwrap_or_default();
+    let exclude_patterns_raw = req.exclude_patterns_raw.clone().unwrap_or_default();
+    let include_patterns_raw = req.include_patterns_raw.clone().unwrap_or_default();
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
         for (repo_id, _) in &repo_targets {
@@ -483,8 +579,8 @@ pub async fn create_schedule(
 
     let on_failure = req.on_failure.unwrap_or_default();
     let on_failure_str = on_failure.to_string();
-    let pre_backup_commands = req.pre_backup_commands.unwrap_or_default();
-    let post_backup_commands = req.post_backup_commands.unwrap_or_default();
+    let pre_backup_commands = req.pre_backup_commands.clone().unwrap_or_default();
+    let post_backup_commands = req.post_backup_commands.clone().unwrap_or_default();
     validate_hook_commands(&pre_backup_commands)?;
     validate_hook_commands(&post_backup_commands)?;
     let hook_timeout_seconds =
@@ -503,6 +599,7 @@ pub async fn create_schedule(
         canary_enabled: req.canary_enabled.unwrap_or(true),
         vm_snapshot_enabled: req.vm_snapshot_enabled.unwrap_or(false),
         exclude_patterns_raw: &exclude_patterns_raw,
+        include_patterns_raw: &include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
         keep_hourly: req.keep_hourly.unwrap_or(24),
         keep_daily: req.keep_daily.unwrap_or(7),
@@ -548,25 +645,7 @@ pub async fn create_schedule(
         .collect();
     db::insert_schedule_targets(&state.pool, schedule.id, &targets).await?;
 
-    if let Some(sources) = &req.backup_sources {
-        insert_schedule_sources(&state.pool, schedule.id, sources).await?;
-    }
-
-    if let Some(per_agent) = &req.backup_sources_per_agent {
-        insert_per_agent_sources(&state.pool, schedule.id, per_agent).await?;
-    }
-
-    if let Some(per_agent) = &req.exclude_patterns_per_agent {
-        insert_per_agent_excludes(&state.pool, schedule.id, per_agent).await?;
-    }
-
-    if let Some(per_agent) = &req.commands_per_agent {
-        insert_per_agent_commands(&state.pool, schedule.id, per_agent).await?;
-    }
-
-    if let Some(per_agent) = &req.file_change_patterns_per_agent {
-        insert_per_agent_file_change_patterns(&state.pool, schedule.id, per_agent).await?;
-    }
+    insert_create_schedule_overrides(&state.pool, schedule.id, &req).await?;
 
     if enabled {
         refresh_next_run(&state.pool, schedule.id, &req.cron_expression).await?;
@@ -763,52 +842,17 @@ pub async fn update_schedule(
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
-    let exclude_patterns_raw = req
-        .exclude_patterns_raw
-        .clone()
-        .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
+    let values = resolve_effective_schedule_values(&req, &existing)?;
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
         check_targets_reachable(&state.pool, &target_plan, existing.repo_id).await?;
     }
 
-    let pre_backup_commands = req
-        .pre_backup_commands
-        .clone()
-        .unwrap_or_else(|| existing.pre_backup_commands.0.clone());
-    let post_backup_commands = req
-        .post_backup_commands
-        .clone()
-        .unwrap_or_else(|| existing.post_backup_commands.0.clone());
-    validate_hook_commands(&pre_backup_commands)?;
-    validate_hook_commands(&post_backup_commands)?;
-    let hook_timeout_seconds = validate_hook_timeout_seconds(
-        req.hook_timeout_seconds
-            .unwrap_or(existing.hook_timeout_seconds),
-    )?;
-    let missed_backup_threshold = validate_missed_backup_threshold(
-        req.missed_backup_threshold
-            .unwrap_or(existing.missed_backup_threshold),
-    )?;
-    let catch_up_missed_runs = req
-        .catch_up_missed_runs
-        .unwrap_or(existing.catch_up_missed_runs);
-    let catch_up_min_lead_minutes = validate_catch_up_min_lead_minutes(
-        req.catch_up_min_lead_minutes
-            .unwrap_or(existing.catch_up_min_lead_minutes),
-    )?;
-
-    let on_failure = req
-        .on_failure
-        .map_or_else(|| existing.on_failure.clone(), |f| f.to_string());
-
-    let name = req.name.clone().unwrap_or_else(|| existing.name.clone());
-
     let params = ScheduleParams {
         wake_override: req
             .wake_override
             .unwrap_or_else(|| stored_wake_override(&existing)),
-        name: &name,
+        name: &values.name,
         schedule_type: &existing.schedule_type,
         cron_expression: &req.cron_expression,
         enabled,
@@ -816,7 +860,8 @@ pub async fn update_schedule(
         vm_snapshot_enabled: req
             .vm_snapshot_enabled
             .unwrap_or(existing.vm_snapshot_enabled),
-        exclude_patterns_raw: &exclude_patterns_raw,
+        exclude_patterns_raw: &values.exclude_patterns_raw,
+        include_patterns_raw: &values.include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
         keep_hourly: req.keep_hourly.unwrap_or(existing.keep_hourly),
         keep_daily: req.keep_daily.unwrap_or(existing.keep_daily),
@@ -829,13 +874,13 @@ pub async fn update_schedule(
             None => existing.rate_limit_kbps,
         },
         file_change_patterns_raw: req.file_change_patterns_raw.as_deref().unwrap_or(""),
-        pre_backup_commands: &pre_backup_commands,
-        post_backup_commands: &post_backup_commands,
-        hook_timeout_seconds,
-        missed_backup_threshold,
-        catch_up_missed_runs,
-        catch_up_min_lead_minutes,
-        on_failure: &on_failure,
+        pre_backup_commands: &values.pre_backup_commands,
+        post_backup_commands: &values.post_backup_commands,
+        hook_timeout_seconds: values.hook_timeout_seconds,
+        missed_backup_threshold: values.missed_backup_threshold,
+        catch_up_missed_runs: values.catch_up_missed_runs,
+        catch_up_min_lead_minutes: values.catch_up_min_lead_minutes,
+        on_failure: &values.on_failure,
     };
 
     match &target_plan.requested {
@@ -852,7 +897,7 @@ pub async fn update_schedule(
 
     // A miss recorded while catch-up was on must not run days later because
     // somebody switched the setting back on in the meantime.
-    if !catch_up_missed_runs {
+    if !values.catch_up_missed_runs {
         db::catch_up::clear_catch_up_pending_for_schedule(&state.pool, schedule.id).await?;
     }
 
@@ -953,6 +998,11 @@ async fn apply_schedule_target_overrides(
     if let Some(per_agent) = &req.exclude_patterns_per_agent {
         db::delete_per_agent_excludes_for_schedule(pool, schedule_id).await?;
         insert_per_agent_excludes(pool, schedule_id, per_agent).await?;
+    }
+
+    if let Some(per_agent) = &req.include_patterns_per_agent {
+        db::delete_per_agent_includes_for_schedule(pool, schedule_id).await?;
+        insert_per_agent_includes(pool, schedule_id, per_agent).await?;
     }
 
     if let Some(per_agent) = &req.commands_per_agent {
@@ -1174,6 +1224,47 @@ async fn insert_per_agent_excludes(
     for entry in per_agent {
         db::upsert_per_agent_excludes_raw(pool, schedule_id, entry.agent_id, &entry.raw_text)
             .await?;
+    }
+    Ok(())
+}
+
+async fn insert_per_agent_includes(
+    pool: &PgPool,
+    schedule_id: i64,
+    per_agent: &[AgentIncludePatterns],
+) -> Result<(), ApiError> {
+    for entry in per_agent {
+        db::upsert_per_agent_includes_raw(pool, schedule_id, entry.agent_id, &entry.raw_text)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Inserts every optional schedule-level and per-agent override a create
+/// request may carry (backup sources, exclude/include patterns, commands,
+/// file-change patterns).
+async fn insert_create_schedule_overrides(
+    pool: &PgPool,
+    schedule_id: i64,
+    req: &CreateScheduleRequest,
+) -> Result<(), ApiError> {
+    if let Some(sources) = &req.backup_sources {
+        insert_schedule_sources(pool, schedule_id, sources).await?;
+    }
+    if let Some(per_agent) = &req.backup_sources_per_agent {
+        insert_per_agent_sources(pool, schedule_id, per_agent).await?;
+    }
+    if let Some(per_agent) = &req.exclude_patterns_per_agent {
+        insert_per_agent_excludes(pool, schedule_id, per_agent).await?;
+    }
+    if let Some(per_agent) = &req.include_patterns_per_agent {
+        insert_per_agent_includes(pool, schedule_id, per_agent).await?;
+    }
+    if let Some(per_agent) = &req.commands_per_agent {
+        insert_per_agent_commands(pool, schedule_id, per_agent).await?;
+    }
+    if let Some(per_agent) = &req.file_change_patterns_per_agent {
+        insert_per_agent_file_change_patterns(pool, schedule_id, per_agent).await?;
     }
     Ok(())
 }
@@ -1680,6 +1771,12 @@ pub async fn list_schedule_backup_sources(
             .into_iter()
             .map(Into::into)
             .collect();
+    let include_patterns_per_agent: Vec<PerAgentIncludePatternsResponse> =
+        db::list_all_per_agent_includes_for_schedule(&state.pool, id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
     let commands_per_agent: Vec<PerAgentCommandsResponse> =
         db::list_all_per_agent_commands_for_schedule(&state.pool, id)
             .await?
@@ -1696,6 +1793,7 @@ pub async fn list_schedule_backup_sources(
         backup_sources,
         backup_sources_per_agent,
         exclude_patterns_per_agent,
+        include_patterns_per_agent,
         commands_per_agent,
         file_change_patterns_per_agent,
     }))

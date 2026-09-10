@@ -28,6 +28,7 @@ const CREATE_REQUEST: CreateScheduleRequest = {
   enabled: true,
   canary_enabled: true,
   exclude_patterns_raw: '',
+  include_patterns_raw: '',
   file_change_patterns_raw: '',
   ignore_global_excludes: false,
   keep_hourly: 24,

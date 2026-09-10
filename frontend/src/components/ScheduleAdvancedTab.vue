@@ -204,6 +204,75 @@ const refOpen = ref(false)
     </section>
 
     <section class="pane-section">
+      <span class="group-label group-label--lg">Include patterns</span>
+      <div class="pane-rows">
+        <div
+          v-if="agentIds.length > 1"
+          class="pane-row"
+        >
+          <div class="field-body">
+            <p class="field-title">Configure per agent</p>
+            <p class="field-hint">
+              Give each host its own patterns instead of one list for the schedule.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <ToggleSwitch
+              v-model="overrides.usePerHostIncludes"
+              label="Configure per agent (include patterns)"
+            />
+          </div>
+        </div>
+        <div class="pane-row pane-row--stack">
+          <div class="field-body">
+            <p class="field-title">Patterns</p>
+            <p
+              v-if="!overrides.usePerHostIncludes"
+              class="field-hint"
+            >
+              Rescues paths from the exclude patterns above - checked first, so a path matching one
+              of these is backed up even if a broader exclude would otherwise skip it. Leave empty
+              to exclude everything the exclude patterns cover.
+            </p>
+          </div>
+          <div class="pane-row-control">
+            <textarea
+              v-if="!overrides.usePerHostIncludes"
+              v-model="form.include_patterns"
+              class="input area-input"
+              aria-label="Include patterns"
+              placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. /home/keep&#10;pp:/var/keep"
+              spellcheck="false"
+            />
+            <PerAgentFields
+              v-else
+              :agent-ids="agentIds"
+              :agent-label="agentLabel"
+            >
+              <template #default="{ agentId }">
+                <textarea
+                  :value="overrides.perHostIncludes[agentId] ?? ''"
+                  class="input area-input area-input-sm"
+                  placeholder="Include patterns, one per line"
+                  spellcheck="false"
+                  @input="
+                    ($event) =>
+                      (overrides.perHostIncludes[agentId] = (
+                        $event.target as HTMLTextAreaElement
+                      ).value)
+                  "
+                />
+              </template>
+              <template #hint>
+                Leave an agent empty to exclude everything its exclude patterns cover.
+              </template>
+            </PerAgentFields>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="pane-section">
       <span class="group-label group-label--lg">File change patterns</span>
       <div class="pane-rows">
         <div

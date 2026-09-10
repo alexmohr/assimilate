@@ -727,6 +727,9 @@ pub struct ScheduleResponse {
     pub next_run_at: Option<DateTime<Utc>>,
     /// Raw exclude patterns.
     pub exclude_patterns_raw: String,
+    /// Raw include patterns, rescuing paths from a broader exclude.
+    #[serde(default)]
+    pub include_patterns_raw: String,
     /// Raw file change detection patterns.
     pub file_change_patterns_raw: String,
     /// Whether global exclude patterns are ignored.
@@ -840,6 +843,8 @@ pub struct ScheduleBackupSourcesResponse {
     pub backup_sources_per_agent: Vec<PerAgentBackupSourcesResponse>,
     /// Exclude patterns per agent.
     pub exclude_patterns_per_agent: Vec<PerAgentExcludePatternsResponse>,
+    /// Include patterns per agent.
+    pub include_patterns_per_agent: Vec<PerAgentIncludePatternsResponse>,
     /// Commands per agent.
     pub commands_per_agent: Vec<PerAgentCommandsResponse>,
     /// File change patterns per agent.
@@ -861,6 +866,17 @@ pub struct PerAgentBackupSourcesResponse {
 #[ts(export)]
 /// Response containing per agent exclude patterns.
 pub struct PerAgentExcludePatternsResponse {
+    #[ts(type = "number")]
+    /// Identifier of the associated agent.
+    pub agent_id: i64,
+    /// Raw text content.
+    pub raw_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing per agent include patterns.
+pub struct PerAgentIncludePatternsResponse {
     #[ts(type = "number")]
     /// Identifier of the associated agent.
     pub agent_id: i64,
@@ -2273,6 +2289,9 @@ pub struct ScheduleTargetExportResponse {
     pub backup_sources: Vec<String>,
     /// Exclude patterns for the target.
     pub exclude_patterns: String,
+    /// Include patterns for the target.
+    #[serde(default)]
+    pub include_patterns: String,
     /// File change detection patterns.
     #[serde(default)]
     pub file_change_patterns: String,
@@ -2311,6 +2330,9 @@ pub struct ScheduleExportResponse {
     pub on_failure: OnFailure,
     /// Raw exclude patterns.
     pub exclude_patterns_raw: String,
+    /// Raw include patterns, rescuing paths from a broader exclude.
+    #[serde(default)]
+    pub include_patterns_raw: String,
     /// Raw file change detection patterns.
     #[serde(default)]
     pub file_change_patterns_raw: String,

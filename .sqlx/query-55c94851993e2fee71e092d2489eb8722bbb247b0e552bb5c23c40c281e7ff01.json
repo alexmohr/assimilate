@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE repos SET enabled = false WHERE id = $1",
+  "query": "DELETE FROM per_agent_includes WHERE schedule_id = $1",
   "describe": {
     "columns": [],
     "parameters": {
@@ -10,5 +10,5 @@
     },
     "nullable": []
   },
-  "hash": "c5ad325e06c27d5efaf6d27223903a05d6a020444d45bf046d0897fb4c1639f2"
+  "hash": "55c94851993e2fee71e092d2489eb8722bbb247b0e552bb5c23c40c281e7ff01"
 }

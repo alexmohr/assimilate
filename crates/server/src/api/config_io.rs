@@ -181,52 +181,8 @@ async fn build_schedule_export(
         })
         .collect();
 
-    let target_rows = db::list_schedule_targets(pool, sched.id).await?;
     let backup_sources = db::list_backup_sources_for_schedule(pool, sched.id).await?;
-    let per_agent_sources =
-        db::list_all_per_agent_backup_sources_for_schedule(pool, sched.id).await?;
-    let per_agent_excludes = db::list_all_per_agent_excludes_for_schedule(pool, sched.id).await?;
-
-    let per_agent_sources_map: HashMap<i64, &Vec<String>> = per_agent_sources
-        .iter()
-        .map(|s| (s.agent_id, &s.paths))
-        .collect();
-    let per_agent_excludes_map: HashMap<i64, &str> = per_agent_excludes
-        .iter()
-        .map(|e| (e.agent_id, e.raw_text.as_str()))
-        .collect();
-    let per_agent_file_change_patterns =
-        db::list_all_per_agent_file_change_patterns_for_schedule(pool, sched.id).await?;
-    let per_agent_file_change_patterns_map: HashMap<i64, &str> = per_agent_file_change_patterns
-        .iter()
-        .map(|f| (f.agent_id, f.raw_text.as_str()))
-        .collect();
-
-    let targets = target_rows
-        .iter()
-        .filter_map(|t| {
-            let (hostname, domain) = agent_id_to_hostname.get(&t.agent_id).copied()?;
-            Some(ScheduleTargetExport {
-                hostname: hostname.to_owned(),
-                domain: domain.map(str::to_owned),
-                execution_order: t.execution_order,
-                backup_sources: per_agent_sources_map
-                    .get(&t.agent_id)
-                    .map(|v| (*v).clone())
-                    .unwrap_or_default(),
-                exclude_patterns: per_agent_excludes_map
-                    .get(&t.agent_id)
-                    .copied()
-                    .unwrap_or("")
-                    .to_owned(),
-                file_change_patterns: per_agent_file_change_patterns_map
-                    .get(&t.agent_id)
-                    .copied()
-                    .unwrap_or("")
-                    .to_owned(),
-            })
-        })
-        .collect();
+    let targets = build_schedule_targets_export(pool, sched.id, agent_id_to_hostname).await?;
 
     let pre_backup_commands = sched.pre_backup_commands.0.clone();
     let post_backup_commands = sched.post_backup_commands.0.clone();
@@ -241,6 +197,7 @@ async fn build_schedule_export(
         execution_mode: sched.execution_mode.parse().unwrap_or_default(),
         on_failure: sched.on_failure.parse().unwrap_or_default(),
         exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
+        include_patterns_raw: sched.include_patterns_raw.clone(),
         file_change_patterns_raw: sched.file_change_patterns_raw.clone(),
         ignore_global_excludes: sched.ignore_global_excludes,
         keep_hourly: sched.keep_hourly,
@@ -262,6 +219,73 @@ async fn build_schedule_export(
         backup_sources,
         targets,
     })
+}
+
+/// Builds each target's per-agent overrides (backup sources, exclude/include/
+/// file-change patterns), skipping any target whose agent no longer resolves
+/// to a hostname.
+async fn build_schedule_targets_export(
+    pool: &sqlx::PgPool,
+    schedule_id: i64,
+    agent_id_to_hostname: &HashMap<i64, (&str, Option<&str>)>,
+) -> Result<Vec<ScheduleTargetExport>, ApiError> {
+    let target_rows = db::list_schedule_targets(pool, schedule_id).await?;
+    let per_agent_sources =
+        db::list_all_per_agent_backup_sources_for_schedule(pool, schedule_id).await?;
+    let per_agent_excludes =
+        db::list_all_per_agent_excludes_for_schedule(pool, schedule_id).await?;
+    let per_agent_includes =
+        db::list_all_per_agent_includes_for_schedule(pool, schedule_id).await?;
+    let per_agent_file_change_patterns =
+        db::list_all_per_agent_file_change_patterns_for_schedule(pool, schedule_id).await?;
+
+    let per_agent_sources_map: HashMap<i64, &Vec<String>> = per_agent_sources
+        .iter()
+        .map(|s| (s.agent_id, &s.paths))
+        .collect();
+    let per_agent_excludes_map: HashMap<i64, &str> = per_agent_excludes
+        .iter()
+        .map(|e| (e.agent_id, e.raw_text.as_str()))
+        .collect();
+    let per_agent_includes_map: HashMap<i64, &str> = per_agent_includes
+        .iter()
+        .map(|i| (i.agent_id, i.raw_text.as_str()))
+        .collect();
+    let per_agent_file_change_patterns_map: HashMap<i64, &str> = per_agent_file_change_patterns
+        .iter()
+        .map(|f| (f.agent_id, f.raw_text.as_str()))
+        .collect();
+
+    Ok(target_rows
+        .iter()
+        .filter_map(|t| {
+            let (hostname, domain) = agent_id_to_hostname.get(&t.agent_id).copied()?;
+            Some(ScheduleTargetExport {
+                hostname: hostname.to_owned(),
+                domain: domain.map(str::to_owned),
+                execution_order: t.execution_order,
+                backup_sources: per_agent_sources_map
+                    .get(&t.agent_id)
+                    .map(|v| (*v).clone())
+                    .unwrap_or_default(),
+                exclude_patterns: per_agent_excludes_map
+                    .get(&t.agent_id)
+                    .copied()
+                    .unwrap_or("")
+                    .to_owned(),
+                include_patterns: per_agent_includes_map
+                    .get(&t.agent_id)
+                    .copied()
+                    .unwrap_or("")
+                    .to_owned(),
+                file_change_patterns: per_agent_file_change_patterns_map
+                    .get(&t.agent_id)
+                    .copied()
+                    .unwrap_or("")
+                    .to_owned(),
+            })
+        })
+        .collect())
 }
 
 #[utoipa::path(
@@ -648,6 +672,7 @@ async fn import_schedule(
         canary_enabled: sched.canary_enabled,
         vm_snapshot_enabled: sched.vm_snapshot_enabled,
         exclude_patterns_raw: &sched.exclude_patterns_raw,
+        include_patterns_raw: &sched.include_patterns_raw,
         file_change_patterns_raw: &sched.file_change_patterns_raw,
         ignore_global_excludes: sched.ignore_global_excludes,
         keep_hourly: sched.keep_hourly,
@@ -779,6 +804,15 @@ async fn insert_schedule_target_overrides(
             )
             .await?;
         }
+        if !target.include_patterns.is_empty() {
+            db::upsert_per_agent_includes_raw(
+                pool,
+                new_schedule_id,
+                agent_id,
+                &target.include_patterns,
+            )
+            .await?;
+        }
         if !target.file_change_patterns.is_empty() {
             db::upsert_per_agent_file_change_patterns_raw(
                 pool,
@@ -866,6 +900,7 @@ mod tests {
             execution_mode: ExecutionMode::default(),
             on_failure: OnFailure::default(),
             exclude_patterns_raw: String::new(),
+            include_patterns_raw: String::new(),
             file_change_patterns_raw: String::new(),
             ignore_global_excludes: false,
             keep_hourly: 24,

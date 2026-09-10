@@ -901,6 +901,7 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -1167,6 +1168,7 @@ async fn schedule_update(pool: PgPool) {
             canary_enabled: true,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "*.cache",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: true,
             keep_hourly: 24,
@@ -1311,6 +1313,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 0,
@@ -1349,6 +1352,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 0,
@@ -1583,6 +1587,60 @@ async fn excludes_per_agent_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn includes_per_agent_crud(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+
+    let agent2 = db::insert_agent(&pool, "host-two-inc", None, "hash2inc", None, None)
+        .await
+        .unwrap();
+
+    db::upsert_per_agent_includes_raw(&pool, schedule.id, agent.id, "/home/keep\n/var/keep")
+        .await
+        .unwrap();
+    db::upsert_per_agent_includes_raw(&pool, schedule.id, agent2.id, "/opt/keep")
+        .await
+        .unwrap();
+
+    let all_per_agent = db::list_all_per_agent_includes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all_per_agent.len(), 2);
+    assert_eq!(all_per_agent.first().unwrap().agent_id, agent.id);
+    assert_eq!(
+        all_per_agent.first().unwrap().raw_text,
+        "/home/keep\n/var/keep"
+    );
+    assert_eq!(all_per_agent.get(1).unwrap().agent_id, agent2.id);
+    assert_eq!(all_per_agent.get(1).unwrap().raw_text, "/opt/keep");
+
+    // Upsert updates existing row
+    db::upsert_per_agent_includes_raw(
+        &pool,
+        schedule.id,
+        agent.id,
+        "/home/keep\n/var/keep\n\n# new",
+    )
+    .await
+    .unwrap();
+    let all_per_agent = db::list_all_per_agent_includes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        all_per_agent.first().unwrap().raw_text,
+        "/home/keep\n/var/keep\n\n# new"
+    );
+
+    db::delete_per_agent_includes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let all_per_agent = db::list_all_per_agent_includes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all_per_agent.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn file_change_patterns_per_agent_crud(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
 
@@ -1703,6 +1761,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: raw,
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -1844,6 +1903,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "# logs\n*.log\n\n*.tmp",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -1924,6 +1984,166 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-includes").unwrap();
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+
+    db::update_schedule(
+        &pool,
+        schedule.id,
+        &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
+            name: "test-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            vm_snapshot_enabled: false,
+            exclude_patterns_raw: "/home",
+            include_patterns_raw: "# keep this\n/home/keep\n\n/home/also-keep",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
+            on_failure: "stop",
+        },
+    )
+    .await
+    .unwrap();
+
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query(
+        "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE id = \
+         $3",
+    )
+    .bind(passphrase_encrypted.as_slice())
+    .bind("ssh-ed25519 AAAATEST")
+    .bind(repo.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    let config = server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
+        .await
+        .unwrap();
+
+    let schedule_config = config.repos.first().unwrap().schedules.first().unwrap();
+
+    let include_patterns: Vec<&str> = schedule_config
+        .include_patterns
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    // Comments and blank lines must not appear
+    assert!(!include_patterns.iter().any(|p| p.starts_with('#')));
+    assert!(!include_patterns.iter().any(|p| p.is_empty()));
+    assert_eq!(include_patterns, vec!["/home/keep", "/home/also-keep"]);
+
+    assert!(
+        schedule_config
+            .exclude_patterns
+            .iter()
+            .any(|p| p == "/home")
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
+    let encryption_key =
+        shared::crypto::derive_key(b"test-assembly-key-for-per-agent-includes").unwrap();
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+
+    db::update_schedule(
+        &pool,
+        schedule.id,
+        &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
+            name: "test-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            vm_snapshot_enabled: false,
+            exclude_patterns_raw: "",
+            include_patterns_raw: "/schedule-level-only",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
+            on_failure: "stop",
+        },
+    )
+    .await
+    .unwrap();
+
+    db::upsert_per_agent_includes_raw(&pool, schedule.id, agent.id, "/agent-override-only")
+        .await
+        .unwrap();
+
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query(
+        "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE id = \
+         $3",
+    )
+    .bind(passphrase_encrypted.as_slice())
+    .bind("ssh-ed25519 AAAATEST")
+    .bind(repo.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    let config = server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
+        .await
+        .unwrap();
+
+    let include_patterns = &config
+        .repos
+        .first()
+        .unwrap()
+        .schedules
+        .first()
+        .unwrap()
+        .include_patterns;
+
+    // A per-agent override replaces the schedule-level patterns outright,
+    // matching how per-agent excludes behave.
+    assert_eq!(include_patterns, &vec!["/agent-override-only".to_owned()]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool) {
     let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-file-change").unwrap();
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
@@ -1940,6 +2160,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "*/schedule-specific* ignore",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -3118,6 +3339,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -3407,6 +3629,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -3447,6 +3670,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -6259,6 +6483,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -7540,6 +7765,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -7976,6 +8202,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 0,
@@ -8236,6 +8463,7 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 0,
@@ -9260,6 +9488,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -11546,6 +11775,7 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -12008,6 +12238,7 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
@@ -12057,6 +12288,7 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
             canary_enabled: false,
             vm_snapshot_enabled: false,
             exclude_patterns_raw: "",
+            include_patterns_raw: "",
             file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,

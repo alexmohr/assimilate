@@ -20,7 +20,7 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)), and, once there is more than one host or more than one target, what a failure does to the rest of the run.
 4. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
 5. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
-6. **Advanced** — exclude patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
+6. **Advanced** — exclude and include patterns, file change patterns, pre/post commands, bandwidth limit, and the other options most schedules leave alone.
 7. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
 
 ## Backup targets
@@ -164,6 +164,14 @@ Pruning runs immediately after the backup completes. Only archives created by th
 Each schedule can carry its own list of exclude patterns. These are passed directly to `borg create --exclude` and follow [borg's pattern syntax](https://borgbackup.readthedocs.io/en/stable/usage/help.html#borg-patterns).
 
 Patterns are configured per schedule in the **Exclude patterns** field. If **Ignore global excludes** is unchecked, any repository-level exclude patterns (see [Repositories](repositories.md)) are merged with the schedule's own patterns. Check **Ignore global excludes** to use only the schedule's patterns.
+
+## Include Patterns
+
+Include patterns rescue paths from a broader exclude instead of adding to it — useful when you want to skip a directory in general but keep one thing inside it, e.g. excluding `/home` but still backing up `/home/keep`.
+
+Configure them per schedule in the **Include patterns** field, right below **Exclude patterns**. They are checked before every exclude source (global, repository-level, and the schedule's own), so a path matching one is backed up even if a broader exclude would otherwise skip it. Leave the field empty to exclude everything the exclude patterns cover, same as before this option existed.
+
+Like exclude patterns, include patterns can be overridden per agent on a multi-host schedule by enabling **Configure per agent** in the Include patterns section — a per-agent override replaces the schedule-level list outright for that agent, rather than adding to it.
 
 ## Backup Paths
 

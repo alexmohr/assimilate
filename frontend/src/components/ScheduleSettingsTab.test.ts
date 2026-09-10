@@ -52,6 +52,8 @@ function baseOverrides(): ScheduleAgentOverrides {
   return {
     usePerHostExcludes: false,
     perHostExcludes: {},
+    usePerHostIncludes: false,
+    perHostIncludes: {},
     usePerHostFileChangePatterns: false,
     perHostFileChangePatterns: {},
     usePerAgentCmds: false,

@@ -661,6 +661,29 @@ test.describe('Schedules management', () => {
     await expect(timeoutInput).toHaveValue('7200')
   })
 
+  // Include patterns rescue a path from a broader exclude - the happy path
+  // for the feature covers typing one in and confirming it round-trips
+  // through the save as `include_patterns_raw`, the same way exclude
+  // patterns already do.
+  test('schedule detail Advanced section edits and saves include patterns', async ({ page }) => {
+    await openScheduleAdvanced(page)
+
+    const includeField = page.getByLabel('Include patterns')
+    await expect(includeField).toBeVisible()
+
+    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+      ...responseBody,
+      include_patterns_raw: requestBody.include_patterns_raw,
+    }))
+
+    await includeField.fill('/home/keep')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    const savedBody = await waitForSave()
+    expect(savedBody.include_patterns_raw).toBe('/home/keep')
+    await expect(includeField).toHaveValue('/home/keep')
+  })
+
   test('schedule detail General section edits and saves the missed backup threshold', async ({
     page,
   }) => {

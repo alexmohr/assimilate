@@ -264,7 +264,7 @@ See [Access Control](access-control.md) for roles, groups, and permissions manag
 |--------|------|-------------|
 | `GET` | `/api/stats/summary` | Top-level dashboard summary |
 | `GET` | `/api/stats/dashboard-overview` | Dashboard overview (coverage, success rates, findings) |
-| `GET` | `/api/stats/health` | Aggregate backup health |
+| `GET` | `/api/stats/health` | Aggregate backup health (`?schedule_id=` narrows it to one schedule) |
 | `GET` | `/api/stats/activity` | Backup activity entries (`?acknowledged=all\|unacknowledged\|acknowledged`) |
 | `POST` / `DELETE` | `/api/stats/activity/{id}/acknowledge` | Acknowledge or clear a warning/failed run |
 | `POST` | `/api/stats/activity/acknowledge-all` | Acknowledge every outstanding warning and failure the caller may act on (`?repo_id=&days=` narrows it to one repository and window, and leaves system events alone) |

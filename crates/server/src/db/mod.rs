@@ -5155,7 +5155,10 @@ pub async fn get_activity_feed(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
+pub async fn get_health_summary(
+    pool: &PgPool,
+    schedule_id: Option<i64>,
+) -> Result<Vec<HealthRow>, ApiError> {
     // Two LATERAL joins per (schedule, agent) row: `latest` is the most recent report
     // regardless of status, which is what tells the UI a backup is currently running
     // (status 'pending'/'started'); `completed` is the most recent *settled* report, whose
@@ -5168,6 +5171,11 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
     // failed run as coverage - see HostsView.vue's mostRecentBackupAt - has the real
     // completed-run outcome to gate on, even while a newer run is in flight and `latest`'s
     // own status can't represent that (pending/started isn't a `BackupStatus`).
+    //
+    // `schedule_id` narrows the whole thing to one schedule for a caller that only shows
+    // that schedule's hosts. The filter sits on the base `schedules` scan, so the two
+    // LATERAL lookups run once per target of that schedule instead of once per
+    // (schedule, agent) pair in the installation.
     sqlx::query_as!(
         HealthRow,
         "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
@@ -5182,7 +5190,9 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
          LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
          br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
          NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
-         WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+         WHERE a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, \
+         r.name",
+        schedule_id,
     )
     .fetch_all(pool)
     .await

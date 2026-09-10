@@ -26,9 +26,8 @@ import {
 import { listAgents } from '../api/agents'
 import { listRepos } from '../api/repos'
 import { cronToHuman } from '../utils/cron'
-import { extractError } from '../utils/error'
+import { extractBlobError, extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useElapsedClock } from '../composables/useElapsedTimer'
@@ -79,7 +78,8 @@ const repos = ref<Repo[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === primaryRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTargetResponse[]>([])
 const health = ref<HealthSummaryResponse[]>([])
-const { loading, error, run } = useAsyncAction('Failed to load schedule')
+const loading = ref(false)
+const error = ref<string | null>(null)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
@@ -110,15 +110,19 @@ const perHostSources = ref<Record<number, string>>({})
 
 // The Advanced section's per-agent overrides, grouped so the tab component
 // takes one v-model instead of seven.
-const agentOverrides = ref<ScheduleAgentOverrides>({
-  usePerHostExcludes: false,
-  perHostExcludes: {},
-  usePerHostFileChangePatterns: false,
-  perHostFileChangePatterns: {},
-  usePerAgentCmds: false,
-  perAgentPreCmds: {},
-  perAgentPostCmds: {},
-})
+function emptyAgentOverrides(): ScheduleAgentOverrides {
+  return {
+    usePerHostExcludes: false,
+    perHostExcludes: {},
+    usePerHostFileChangePatterns: false,
+    perHostFileChangePatterns: {},
+    usePerAgentCmds: false,
+    perAgentPreCmds: {},
+    perAgentPostCmds: {},
+  }
+}
+
+const agentOverrides = ref<ScheduleAgentOverrides>(emptyAgentOverrides())
 
 interface ArchiveProgressData {
   hostname: string
@@ -266,16 +270,16 @@ function agentLabel(id: number): string {
   return c ? (c.display_name ?? c.hostname) : `#${id}`
 }
 
-const scheduleHealth = computed<HealthSummaryResponse[]>(() => {
-  const scheduleId = schedule.value?.id
-  if (scheduleId == null) return []
-  return health.value.filter((h) => h.schedule_id === scheduleId)
-})
-
+/**
+ * `loadData` asks for this schedule's health alone, so the rows already belong
+ * to it and only the target host is left to match on. `health` has no other
+ * writer - no WebSocket handler touches it - so a second filter by
+ * `schedule_id` here would never remove anything.
+ */
 function healthForAgent(agentId: number): HealthSummaryResponse | null {
   const hostname = agentMap.value.get(agentId)?.hostname
   if (!hostname) return null
-  return scheduleHealth.value.find((h) => h.hostname === hostname) ?? null
+  return health.value.find((h) => h.hostname === hostname) ?? null
 }
 
 const overdueTargetCount = computed(
@@ -321,47 +325,171 @@ function populateForm(s: ScheduleRow): void {
   onFailure.value = s.on_failure
 }
 
-async function loadData(): Promise<void> {
-  await run(async () => {
-    {
-      // Fetched independently of the Promise.all below: it backs a menu
-      // badge, not the page itself, so a failure here must not take down
-      // the rest of the schedule's data with it.
-      countFailedScheduleReports(props.id)
-        .then((count) => {
-          failedReportCount.value = count
-        })
-        .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
+/**
+ * Incremented per load so a response that outlives the schedule it was asked
+ * for cannot overwrite the current one. The secondary fetches below settle
+ * after `loadData` has already returned, so switching schedules mid-flight
+ * would otherwise let the old page's health or reports land on the new one.
+ */
+let loadGeneration = 0
 
-      const [
-        scheduleRow,
-        agentRows,
-        repoRows,
-        targetRows,
-        repoTargetRows,
-        sourcesResponse,
-        recentReports,
-        healthRows,
-      ] = await Promise.all([
-        getSchedule(props.id),
+/**
+ * Everything below describes one schedule, and since the load was split none of
+ * it is written in the same tick as the rest any more.
+ * Clearing it up front keeps the page self-consistent while the new schedule's
+ * health, reports and counts are still in flight: two schedules that share a
+ * target host would otherwise show the old one's health row - `healthForAgent`
+ * matches on hostname alone - and its running-backup banner, under the new
+ * one's name. The load generation counter cannot cover this; it only stops a
+ * late response overwriting a newer one, never the value already on screen.
+ *
+ * `schedule` goes too, so the page renders nothing rather than the previous
+ * schedule's name over the incoming one's badges - which is what a core load
+ * that fails, or simply has not landed yet, would otherwise leave on screen.
+ */
+function clearScheduleState(): void {
+  schedule.value = null
+  // Each of these is only ever switched *on* by a load - a schedule with no
+  // per-host data leaves them untouched - so without a reset here the previous
+  // schedule's per-host paths and override toggles survive the switch and a
+  // save would write them onto the schedule now on screen.
+  usePerHostPaths.value = false
+  perHostSources.value = {}
+  agentOverrides.value = emptyAgentOverrides()
+  health.value = []
+  reports.value = []
+  failedReportCount.value = 0
+  backupRunning.value = false
+  backupHostname.value = null
+  backupArchiveName.value = null
+  backupStartedAt.value = null
+  archiveProgress.value = null
+}
+
+/**
+ * Only the schedule itself, its hosts, its repositories and its sources decide
+ * what the page renders; health, the recent-report list and the failed-report
+ * count fill in badges and the "backup running" banner afterwards. They all
+ * start together, but the loading spinner waits on the first group alone -
+ * awaiting the whole set held the Settings tab behind data it never reads.
+ */
+async function loadData(): Promise<void> {
+  const generation = ++loadGeneration
+  const scheduleId = props.id
+  const isCurrent = (): boolean => generation === loadGeneration
+  clearScheduleState()
+
+  countFailedScheduleReports(scheduleId)
+    .then((count) => {
+      if (isCurrent()) failedReportCount.value = count
+    })
+    .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
+
+  // Scoped to this schedule: the unfiltered summary covers every schedule
+  // target in the installation, and this page shows one schedule's.
+  getScheduleHealth({ scheduleId })
+    .then((healthRows) => {
+      if (isCurrent()) health.value = healthRows
+    })
+    .catch((e: unknown) => logger.error('getScheduleHealth failed', e))
+
+  // Started here but applied after the await below, so `agentMap` is populated
+  // by the time the running-backup banner looks a hostname up.
+  const recentReportsPromise = listScheduleReports(scheduleId, 20)
+
+  loading.value = true
+  error.value = null
+
+  // The writes, the spinner and the error banner are all gated on the same
+  // generation check. `useAsyncAction` could not do that: it clears its
+  // loading flag in a `finally` that knows nothing about which load it
+  // belongs to, so the abandoned load settling first would drop the spinner
+  // while the current schedule was still on its way - leaving neither
+  // spinner nor page - and a late failure of its own would raise an error
+  // banner for the schedule the user has already left.
+  const applyCoreLoad = async (): Promise<void> => {
+    const [scheduleRow, agentRows, repoRows, targetRows, repoTargetRows, sourcesResponse] =
+      await Promise.all([
+        getSchedule(scheduleId),
         listAgents(),
         listRepos(),
-        listScheduleTargets(props.id),
-        listScheduleRepos(props.id),
-        getScheduleBackupSources(props.id),
-        listScheduleReports(props.id, 20),
-        getScheduleHealth(),
+        listScheduleTargets(scheduleId),
+        listScheduleRepos(scheduleId),
+        getScheduleBackupSources(scheduleId),
       ])
-      schedule.value = scheduleRow
-      agents.value = agentRows
-      repos.value = repoRows
-      scheduleTargets.value = targetRows
-      repoTargets.value = repoTargetRows.map((t) => ({
-        repo_id: t.repo_id,
-        required: t.required,
-      }))
+    // The deferred fetches below are guarded one by one; this group needs the
+    // same check. Without it a slow load for the schedule the user has left
+    // still lands, putting its name and targets back on screen beside the
+    // schedule they actually navigated to - whose health and reports are
+    // guarded, so they stay.
+    if (!isCurrent()) return
+    schedule.value = scheduleRow
+    agents.value = agentRows
+    repos.value = repoRows
+    scheduleTargets.value = targetRows
+    repoTargets.value = repoTargetRows.map((t) => ({
+      repo_id: t.repo_id,
+      required: t.required,
+    }))
+    const sorted = [...targetRows].sort((a, b) => a.execution_order - b.execution_order)
+    selectedAgentIds.value = sorted.map((t) => t.agent_id)
+    populateForm(scheduleRow)
+
+    const sources = sourcesResponse
+    form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
+    const perHost = sources.backup_sources_per_agent ?? []
+    if (perHost.length > 0) {
+      usePerHostPaths.value = true
+      const map: Record<number, string> = {}
+      for (const entry of perHost) {
+        map[Number(entry.agent_id)] = entry.paths.join('\n')
+      }
+      perHostSources.value = map
+    }
+    const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
+    if (perHostExcludeEntries.length > 0) {
+      agentOverrides.value.usePerHostExcludes = true
+      const map: Record<number, string> = {}
+      for (const entry of perHostExcludeEntries) {
+        map[Number(entry.agent_id)] = entry.raw_text
+      }
+      agentOverrides.value.perHostExcludes = map
+    }
+    const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
+    if (perHostFileChangePatternsEntries.length > 0) {
+      agentOverrides.value.usePerHostFileChangePatterns = true
+      const map: Record<number, string> = {}
+      for (const entry of perHostFileChangePatternsEntries) {
+        map[Number(entry.agent_id)] = entry.raw_text
+      }
+      agentOverrides.value.perHostFileChangePatterns = map
+    }
+    const perAgentCmdEntries = sources.commands_per_agent ?? []
+    if (perAgentCmdEntries.length > 0) {
+      agentOverrides.value.usePerAgentCmds = true
+      const preMap: Record<number, HookCommand[]> = {}
+      const postMap: Record<number, HookCommand[]> = {}
+      for (const entry of perAgentCmdEntries) {
+        preMap[Number(entry.agent_id)] = entry.pre_backup_commands
+        postMap[Number(entry.agent_id)] = entry.post_backup_commands
+      }
+      agentOverrides.value.perAgentPreCmds = preMap
+      agentOverrides.value.perAgentPostCmds = postMap
+    }
+  }
+
+  try {
+    await applyCoreLoad()
+  } catch (e) {
+    if (isCurrent()) error.value = await extractBlobError(e, 'Failed to load schedule')
+  } finally {
+    if (isCurrent()) loading.value = false
+  }
+
+  await recentReportsPromise
+    .then((recentReports) => {
+      if (!isCurrent() || schedule.value == null) return
       reports.value = recentReports
-      health.value = healthRows
       const runningReport = recentReports.find((r) => {
         const status = normalizeBackupStatus(r.status)
         return status === 'pending' || status === 'started'
@@ -372,53 +500,8 @@ async function loadData(): Promise<void> {
         backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
         backupStartedAt.value = new Date(runningReport.started_at).getTime()
       }
-      const sorted = [...targetRows].sort((a, b) => a.execution_order - b.execution_order)
-      selectedAgentIds.value = sorted.map((t) => t.agent_id)
-      populateForm(scheduleRow)
-
-      const sources = sourcesResponse
-      form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
-      const perHost = sources.backup_sources_per_agent ?? []
-      if (perHost.length > 0) {
-        usePerHostPaths.value = true
-        const map: Record<number, string> = {}
-        for (const entry of perHost) {
-          map[Number(entry.agent_id)] = entry.paths.join('\n')
-        }
-        perHostSources.value = map
-      }
-      const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
-      if (perHostExcludeEntries.length > 0) {
-        agentOverrides.value.usePerHostExcludes = true
-        const map: Record<number, string> = {}
-        for (const entry of perHostExcludeEntries) {
-          map[Number(entry.agent_id)] = entry.raw_text
-        }
-        agentOverrides.value.perHostExcludes = map
-      }
-      const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
-      if (perHostFileChangePatternsEntries.length > 0) {
-        agentOverrides.value.usePerHostFileChangePatterns = true
-        const map: Record<number, string> = {}
-        for (const entry of perHostFileChangePatternsEntries) {
-          map[Number(entry.agent_id)] = entry.raw_text
-        }
-        agentOverrides.value.perHostFileChangePatterns = map
-      }
-      const perAgentCmdEntries = sources.commands_per_agent ?? []
-      if (perAgentCmdEntries.length > 0) {
-        agentOverrides.value.usePerAgentCmds = true
-        const preMap: Record<number, HookCommand[]> = {}
-        const postMap: Record<number, HookCommand[]> = {}
-        for (const entry of perAgentCmdEntries) {
-          preMap[Number(entry.agent_id)] = entry.pre_backup_commands
-          postMap[Number(entry.agent_id)] = entry.post_backup_commands
-        }
-        agentOverrides.value.perAgentPreCmds = preMap
-        agentOverrides.value.perAgentPostCmds = postMap
-      }
-    }
-  })
+    })
+    .catch((e: unknown) => logger.error('listScheduleReports failed', e))
 }
 
 async function save(): Promise<void> {

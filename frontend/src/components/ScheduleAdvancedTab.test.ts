@@ -59,6 +59,14 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('ScheduleAdvancedTab', () => {
+  it('discloses the pane-head hint describing what the tab covers', async () => {
+    const wrapper = mount()
+    await wrapper.find('[aria-label="Help: bandwidth, patterns and commands"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'Settings most schedules leave alone: bandwidth and verification',
+    )
+  })
+
   it('groups the settings into the four labelled sections', () => {
     const titles = mount()
       .findAll('.pane-section > .group-label')
@@ -108,6 +116,44 @@ describe('ScheduleAdvancedTab', () => {
         .findComponent({ name: 'FileChangePatternsEditor' })
         .element.closest('.pane-row--stack'),
     ).not.toBeNull()
+  })
+
+  describe('option hints', () => {
+    it('discloses the canary hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: catching a silent failure"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'Writes a canary file before the backup',
+      )
+    })
+
+    it('discloses the ignore-global-excludes hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: skipping the server-wide list"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        "Back up using only this schedule's patterns",
+      )
+    })
+
+    it('discloses the compact hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: reclaiming freed space"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'Runs borg compact once pruning is done',
+      )
+    })
+
+    it('discloses the VM snapshot hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: VM snapshots"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain('Snapshots the libvirt domains')
+    })
+
+    it('discloses the rate limit hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: capping upload bandwidth"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe("Caps borg's upload bandwidth.")
+    })
   })
 
   it('renders the schedule-level values it was given', () => {
@@ -232,6 +278,14 @@ describe('ScheduleAdvancedTab', () => {
       await wrapper.findAll('textarea')[1].setValue('/var/tmp')
       expect(overrides.perHostExcludes[2]).toBe('/var/tmp')
     })
+
+    it('discloses the per-agent switch hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: splitting the list by host"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own patterns instead of one list for the schedule.',
+      )
+    })
   })
 
   describe('pattern reference', () => {
@@ -273,9 +327,35 @@ describe('ScheduleAdvancedTab', () => {
       await fields[0].setValue('**/*.sql')
       expect(overrides.perHostFileChangePatterns[1]).toBe('**/*.sql')
     })
+
+    it('discloses the per-agent switch hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper
+        .find('[aria-label="Help: configure file change patterns per agent"]')
+        .trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own patterns instead of one list for the schedule.',
+      )
+    })
   })
 
   describe('commands', () => {
+    it('discloses the per-agent switch hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: configure commands per agent"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'Give each host its own commands instead of one set for the schedule.',
+      )
+    })
+
+    it('discloses the hook timeout hint with its explainer text', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: the default per-command budget"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'The default for every pre- and post-backup command that does not set its own.',
+      )
+    })
+
     it('offers one pre and one post command list editor in shared mode', () => {
       const wrapper = mount()
       expect(wrapper.findAllComponents({ name: 'CommandListEditor' })).toHaveLength(2)

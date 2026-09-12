@@ -27,13 +27,19 @@ export function scheduleRunStatus(
  * - without `last_run_at` ever moving. Reading it back off `last_run_at`
  * then shows "never run" for a schedule the Recent backups list clearly
  * shows has run, which is the contradiction this reads around by trusting
- * the same completed-report evidence that list is built from. ISO 8601
- * timestamps sort correctly as strings, so no `Date` parsing is needed to
- * find the latest one.
+ * the same completed-report evidence that list is built from.
+ *
+ * Compared by parsed value, not as raw strings: `last_backup_at` is a
+ * `chrono::DateTime<Utc>` serialized with its fractional-seconds field
+ * omitted entirely when it is exactly zero, so a whole-second timestamp and
+ * a fractional one landing in the same second do not sort the same way
+ * lexically as they do chronologically.
  */
 export function latestCompletedBackupAt(entries: readonly ScheduleHealthEntry[]): string | null {
   const dates = entries.map((h) => h.last_backup_at).filter((d): d is string => d != null)
-  return dates.length > 0 ? dates.reduce((latest, d) => (d > latest ? d : latest)) : null
+  return dates.length > 0
+    ? dates.reduce((latest, d) => (new Date(d).getTime() > new Date(latest).getTime() ? d : latest))
+    : null
 }
 
 export function navigateToScheduleIssue(

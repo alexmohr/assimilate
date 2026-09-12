@@ -1072,4 +1072,32 @@ test.describe('Schedules management', () => {
     const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
     await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · error')
   })
+
+  // schedule.last_run_at is dispatch bookkeeping, advanced only once a
+  // trigger attempt reaches the agent - a run whose dispatch never got that
+  // far (agent unreachable) can still settle a backup_reports row later
+  // (e.g. abandoned as failed once the agent reconnects), leaving
+  // last_run_at null while a completed backup genuinely exists. The agent's
+  // own Schedules tab must read that completed-backup evidence from health
+  // data instead of trusting last_run_at, and show the cron cadence in
+  // plain English rather than the raw crontab string.
+  test('agent Schedules tab shows real last-run evidence, not "never run", for a schedule with no last_run_at', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOnePatch(page, { last_run_at: null })
+    await mockScheduleOneHealth(page, {
+      last_status: 'success',
+      last_backup_at: '2020-01-01T02:00:00Z',
+    })
+
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+
+    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
+    const stats = row.locator('.agent-row-stats')
+    await expect(stats).toContainText(/last .+ ago/)
+    await expect(stats).not.toContainText('never run')
+    await expect(row.locator('.agent-row-when')).toHaveText('Daily at 02:00')
+  })
 })

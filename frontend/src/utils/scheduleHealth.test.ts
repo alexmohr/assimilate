@@ -252,4 +252,18 @@ describe('latestCompletedBackupAt', () => {
   it('returns null for an empty list', () => {
     expect(latestCompletedBackupAt([])).toBeNull()
   })
+
+  // Regression: chrono serializes a `DateTime<Utc>` with its fractional
+  // seconds omitted entirely when they are exactly zero, so a whole-second
+  // timestamp compares as lexically GREATER than a later, fractional one in
+  // the same second ('...:05Z' > '...:05.482910Z', since 'Z' > '.'). Naive
+  // string comparison would pick the whole-second entry as "latest" even
+  // though the fractional one is chronologically later.
+  it('compares by parsed time, not lexically, across a fractional-second boundary', () => {
+    const entries = [
+      makeEntry({ last_backup_at: '2026-01-01T02:00:05Z' }),
+      makeEntry({ last_backup_at: '2026-01-01T02:00:05.482910Z' }),
+    ]
+    expect(latestCompletedBackupAt(entries)).toBe('2026-01-01T02:00:05.482910Z')
+  })
 })

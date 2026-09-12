@@ -176,7 +176,7 @@ const effects = computed<HostEffect[]>(() => {
 <template>
   <div class="pane-head pane-head--end">
     <HelpHint
-      label="power"
+      label="waking hosts"
       align="end"
     >
       Whether this job wakes the hosts it needs before it runs. Shutting a host down afterwards

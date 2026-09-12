@@ -137,7 +137,7 @@ describe('ScheduleSettingsTab', () => {
     const wrapper = mount({ isBackup: false, section: 'advanced' })
     expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe('General')
 
-    await wrapper.find('[aria-label="Help: the general section"]').trigger('click')
+    await wrapper.find('[aria-label="Help: naming and timing"]').trigger('click')
     expect(wrapper.text()).toContain('What this schedule is called')
   })
 

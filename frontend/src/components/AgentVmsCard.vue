@@ -365,7 +365,7 @@ onMounted(load)
     <EditableSection
       lede="Stage this host's virtual machines into a directory before a backup runs, so borg
           picks them up as ordinary files. Schedules opt in one by one."
-      lede-label="virtual machines"
+      lede-label="VM staging"
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"
@@ -412,7 +412,7 @@ onMounted(load)
             <div class="field-body">
               <p class="field-title">
                 Allow schedules to back up virtual machines
-                <HelpHint label="allow schedules to back up virtual machines">
+                <HelpHint label="allow VM backups">
                   Each schedule decides whether its own runs include them. Blocked here means no
                   schedule backs up this host's virtual machines, whatever the schedule asks for.
                 </HelpHint>

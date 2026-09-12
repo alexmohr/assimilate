@@ -600,7 +600,7 @@ test.describe('Schedules management', () => {
       'aria-current',
       'true',
     )
-    await page.getByRole('button', { name: 'Help: retention' }).click()
+    await page.getByRole('button', { name: 'Help: how long archives are kept' }).click()
     await expect(page.locator('.settings-pane')).toContainText('borg keeps')
     await expect(page.getByText('Daily', { exact: true })).toBeVisible()
     await expect(page.getByText('Weekly', { exact: true })).toBeVisible()

@@ -80,7 +80,7 @@ defineExpose({ reload: load })
 <template>
   <div class="pane-head pane-head--end">
     <HelpHint
-      label="hostname aliases"
+      label="matching archive hostnames"
       align="end"
     >
       Glob patterns that match archive hostnames to this agent during repository import. Only

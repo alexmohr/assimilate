@@ -136,7 +136,7 @@ onMounted(loadQuota)
 <template>
   <div>
     <div class="pane-head">
-      <HelpHint label="quota">
+      <HelpHint label="space limits">
         How much space this repository may use, and what Assimilate does as it fills up.
       </HelpHint>
       <div class="panel-actions">

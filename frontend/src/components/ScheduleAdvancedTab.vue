@@ -39,7 +39,7 @@ const refOpen = ref(false)
   <div class="form-stack">
     <div class="pane-head pane-head--end">
       <HelpHint
-        label="the advanced tab"
+        label="bandwidth, patterns and commands"
         align="end"
       >
         Settings most schedules leave alone: bandwidth and verification, the patterns that decide
@@ -102,7 +102,7 @@ const refOpen = ref(false)
           <div class="field-body">
             <p class="field-title">
               Back up virtual machines
-              <HelpHint label="back up virtual machines">
+              <HelpHint label="VM snapshots">
                 Snapshots the libvirt domains of every host this schedule targets before the backup
                 starts, using each host's own staging settings. Hosts that do not allow it are
                 skipped.

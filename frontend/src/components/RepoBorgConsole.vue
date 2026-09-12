@@ -62,7 +62,7 @@ function exitClass(code: number): string {
   <div>
     <div class="pane-head pane-head--end console-head">
       <HelpHint
-        label="the borg console"
+        label="manual borg commands"
         align="end"
       >
         Execute borg commands directly against this repository. The repository URL and passphrase

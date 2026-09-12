@@ -183,7 +183,7 @@ async function save(): Promise<void> {
   <EditableSection
     lede="Wake this host before a backup runs, and let Assimilate power it back down when it's
       done."
-    lede-label="host power"
+    lede-label="waking this host"
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"

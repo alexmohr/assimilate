@@ -216,7 +216,9 @@ test.describe('Agent detail', () => {
     await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
     await expect(page).toHaveURL(/section=defaults/)
     await expect(
-      page.locator('.settings-pane').getByRole('button', { name: 'Help: backup defaults' }),
+      page
+        .locator('.settings-pane')
+        .getByRole('button', { name: 'Help: default paths, patterns and commands' }),
     ).toBeVisible()
     await expect(page.locator('.group-label')).toHaveText([
       'Backup paths',

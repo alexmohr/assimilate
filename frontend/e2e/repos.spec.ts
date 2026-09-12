@@ -63,7 +63,7 @@ test.describe('Repositories management journey', () => {
     // The rail names each pane, so a pane proves it mounted by its own
     // content rather than by a heading repeating the rail item.
     await rail.getByRole('button', { name: 'Storage quota' }).click()
-    await pane.getByRole('button', { name: 'Help: quota' }).click()
+    await pane.getByRole('button', { name: 'Help: space limits' }).click()
     await expect(pane).toContainText('How much space this repository may use')
     await expect(page).toHaveURL(/section=quota/)
 

@@ -234,7 +234,7 @@ onMounted(checkHostKeyMismatch)
 <template>
   <div>
     <div class="pane-head">
-      <HelpHint label="repository overview">
+      <HelpHint label="connection details">
         Where this repository lives and how borg writes to it.
       </HelpHint>
       <div

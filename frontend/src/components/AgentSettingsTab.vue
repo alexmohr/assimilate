@@ -80,7 +80,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
   >
     <template v-if="currentSection === 'identity'">
       <div class="pane-head">
-        <HelpHint label="identity">
+        <HelpHint label="host naming">
           How this host names itself, and what the server knows about it.
         </HelpHint>
         <button

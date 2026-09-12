@@ -120,7 +120,7 @@ async function save(): Promise<void> {
   <EditableSection
     lede="Wake the machine hosting this repository before a backup writes to it, and power it back
       down when the run is done."
-    lede-label="repository power"
+    lede-label="waking its host"
     :editing="editing"
     :can-edit="isAdmin"
     :saving="saving"

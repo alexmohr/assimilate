@@ -134,7 +134,7 @@ const leadValue = computed<number>({
     <template v-if="currentSection === 'general'">
       <div class="pane-head pane-head--end">
         <HelpHint
-          label="the general section"
+          label="naming and timing"
           align="end"
         >
           What this schedule is called, and when it runs.
@@ -230,7 +230,7 @@ const leadValue = computed<number>({
     <template v-else-if="currentSection === 'targets'">
       <div class="pane-head pane-head--end">
         <HelpHint
-          label="the targets section"
+          label="hosts and destinations"
           align="end"
         >
           Which hosts this schedule runs on, which repositories they write to, and what happens when
@@ -367,7 +367,7 @@ const leadValue = computed<number>({
     <template v-else-if="currentSection === 'retention'">
       <div class="pane-head pane-head--end">
         <HelpHint
-          label="retention"
+          label="how long archives are kept"
           align="end"
         >
           How many archives borg keeps when this schedule prunes. Blank or zero keeps none of that

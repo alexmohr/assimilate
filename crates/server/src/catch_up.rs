@@ -179,6 +179,8 @@ async fn dispatch_catch_up(state: &AppState, candidate: &CatchUpCandidate, now: 
         repo_ids: repo_ids.into_iter().map(RepoId).collect(),
         schedule_type,
         schedule_id: candidate.schedule_id,
+        cron_expression: candidate.cron_expression.clone(),
+        now,
         run_id,
         origin: RunOrigin::CatchUp,
     };
@@ -270,6 +272,7 @@ mod tests {
             agent_id: 1,
             hostname: "lab-ws-02".to_owned(),
             schedule_type: "backup".to_owned(),
+            cron_expression: "0 2 * * *".to_owned(),
             pending_for: Utc.with_ymd_and_hms(2026, 9, 1, 2, 0, 0).unwrap(),
             next_run_at,
             min_lead_minutes,

@@ -5068,6 +5068,53 @@ async fn test_health_summary_exposes_missed_backup_counters(pool: sqlx::PgPool) 
     assert_eq!(entry.get("missed_backup_threshold").unwrap(), 5);
 }
 
+/// `GET /api/stats/health?schedule_id=` must answer for that schedule alone.
+/// The schedule detail page renders one schedule's hosts, and the unfiltered
+/// summary walks every schedule target in the installation to build a response
+/// it then throws almost all of away.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_health_summary_can_be_scoped_to_one_schedule(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('health-scope-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "health-scope-repo").await;
+    let wanted_schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+    let other_schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request("GET", "/api/stats/health", None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let all = body_json(resp).await;
+    let all = all.as_array().unwrap().clone();
+    assert!(
+        all.iter()
+            .any(|e| e.get("schedule_id").unwrap() == other_schedule_id),
+        "an unfiltered summary must still cover every schedule"
+    );
+
+    let req = json_request(
+        "GET",
+        &format!("/api/stats/health?schedule_id={wanted_schedule_id}"),
+        None,
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let scoped = body_json(resp).await;
+    let scoped = scoped.as_array().unwrap();
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(
+        scoped.first().unwrap().get("schedule_id").unwrap(),
+        wanted_schedule_id
+    );
+}
+
 /// Retargeting an auto-disabled schedule away from the agent that caused the disable,
 /// through the actual `PUT /api/schedules/{id}` handler (not just the DB function it
 /// delegates to), must clear the stale auto-disable bookkeeping so the dropped agent

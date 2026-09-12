@@ -191,11 +191,21 @@ export async function listRepoSchedules(repoId: number | string): Promise<Schedu
   return response.data
 }
 
+/**
+ * Backup health per (schedule, target host).
+ *
+ * `scheduleId` narrows it to a single schedule server-side. A page that only
+ * renders one schedule's hosts should always pass it: unfiltered, the endpoint
+ * walks every schedule target in the installation and does two lookups into
+ * the report history for each.
+ */
 export async function getScheduleHealth(options?: {
   timeout?: number
+  scheduleId?: number | string
 }): Promise<HealthSummaryResponse[]> {
   const response = await apiClient.get<HealthSummaryResponse[]>('/stats/health', {
     timeout: options?.timeout,
+    params: options?.scheduleId == null ? undefined : { schedule_id: options.scheduleId },
   })
   return response.data
 }

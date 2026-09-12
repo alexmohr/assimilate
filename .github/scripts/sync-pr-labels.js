@@ -274,26 +274,120 @@ async function resolveReviewDecision(github, owner, repo, prNumber) {
 // was actually submitted against the PR's current head commit - i.e. a real
 // reviewer has seen this exact code and still wants changes, as opposed to
 // an old review of a commit that's since moved on.
-async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha) {
-  const reviews = await github.paginate(github.rest.pulls.listReviews, {
+// The review states that actually carry a verdict.
+//
+// A COMMENTED review is a separate review object with its own `submitted_at`,
+// and leaving one does not retract a standing verdict: "LGTM, one nit for a
+// follow-up" after approving is an ordinary workflow, and GitHub still reports
+// reviewDecision APPROVED. So a COMMENTED review must never displace someone's
+// standing verdict - if it could, it would mask their approval and auto-merge
+// would refuse a genuine, current one, which breaks the feature rather than
+// merely being conservative.
+//
+// DISMISSED and PENDING are excluded too - a dismissed verdict is retracted
+// and a pending one was never submitted - though neither exclusion is
+// load-bearing the way COMMENTED's is: dismissal mutates a review's state in
+// place, so a dismissed approval is no longer an APPROVED object for the
+// callers below to find either way.
+const VERDICT_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED"]);
+
+// Every review on the PR. Shared so the two currency checks below can't
+// diverge in how they fetch, only in how they filter.
+async function fetchReviews(github, owner, repo, prNumber) {
+  return github.paginate(github.rest.pulls.listReviews, {
     owner,
     repo,
     pull_number: prNumber,
     per_page: 100,
   });
-  // Latest review per user, mirroring how GitHub itself computes
-  // reviewDecision (only each reviewer's most recent submission counts).
+}
+
+// The most recently submitted of `reviews`, or null. Ordering is decided by
+// `submitted_at` rather than by array position: `listReviews` does return
+// submission order today, but these two callers are the checks standing
+// between a stale verdict and an unattended merge, and neither should rest on
+// an ordering guarantee the API does not actually make.
+function mostRecentlySubmitted(reviews) {
+  let latest = null;
+  for (const r of reviews) {
+    // An unsubmitted (PENDING) review has no `submitted_at`, and comparing
+    // against one poisons every later comparison: `new Date(undefined)` is
+    // Invalid Date, so `>` is NaN-false forever and `latest` sticks on it -
+    // reintroducing the array-order dependence this function exists to
+    // remove. It is also not evidence of anything: nobody has submitted it.
+    // claude-review.yml can leave one behind, since creating an inline
+    // comment opens a review that an interrupted run never submits.
+    if (!r.submitted_at) continue;
+    if (!latest || new Date(r.submitted_at) > new Date(latest.submitted_at)) latest = r;
+  }
+  return latest;
+}
+
+// Each reviewer's most recent *verdict*, mirroring how GitHub itself computes
+// reviewDecision - only the latest one per user counts.
+async function latestVerdictPerUser(github, owner, repo, prNumber) {
+  const reviews = await fetchReviews(github, owner, repo, prNumber);
   const latestByUser = new Map();
   for (const r of reviews) {
     if (!r.user) continue;
+    if (!VERDICT_REVIEW_STATES.has(r.state)) continue;
     const existing = latestByUser.get(r.user.login);
     if (!existing || new Date(r.submitted_at) > new Date(existing.submitted_at)) {
       latestByUser.set(r.user.login, r);
     }
   }
-  return [...latestByUser.values()].some(
-    (r) => r.state === "CHANGES_REQUESTED" && r.commit_id === headSha,
-  );
+  return [...latestByUser.values()];
+}
+
+async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha) {
+  const latest = await latestVerdictPerUser(github, owner, repo, prNumber);
+  return latest.some((r) => r.state === "CHANGES_REQUESTED" && r.commit_id === headSha);
+}
+
+// The mirror of the above for approvals, and for the same reason: a review
+// verdict does not go stale on its own.
+//
+// GitHub dismisses an approval when a new commit lands only if the branch's
+// protection rules say to, and this script cannot see whether that setting is
+// on - so it must not assume it. Without it, a reviewer who approved commit A
+// still reads as APPROVED after an unreviewed commit B, and once CI goes green
+// on B the automation would merge code no reviewer has ever looked at.
+//
+// For a human pressing the merge button that is their call - they are looking
+// at the PR. For the unattended path it is the whole question, which is why
+// this gates auto-merge rather than the `ready to merge` status: same shape as
+// the protected-path guard, which also lets the status stand and declines to
+// press the button.
+async function approvalIsCurrent(github, owner, repo, prNumber, headSha) {
+  const latest = await latestVerdictPerUser(github, owner, repo, prNumber);
+  return latest.some((r) => r.state === "APPROVED" && r.commit_id === headSha);
+}
+
+// Whether the standing `claude-approved` label is about the commit being
+// merged, rather than about an older one.
+//
+// Provenance (claudeApprovedIsGenuine) is not currency, the same distinction
+// the native path needs approvalIsCurrent for. The label is cleared on every
+// push, which is why it looked exempt - but that clearing happens *at push
+// time*, and a review run pinned to the previous commit can still be in
+// flight and apply its verdict afterwards. claude-review.yml captures the
+// head sha once when the run starts and reviews that commit; a run that began
+// on C1 records its verdict even if the head has since moved to C2, and
+// nothing clears it again until the *next* push. That is not hypothetical:
+// it is how a `claude-changes-requested` from a superseded run comes to sit
+// on a newer head.
+//
+// The verdict's commit is recoverable because claude-review.yml only counts a
+// run as having produced a verdict when this bot posted a review against that
+// run's own head sha (its `postedThisCommit` check; otherwise the run is
+// marked `claude review failed`). So the bot's most recent review names the
+// commit the standing label is about.
+async function claudeVerdictCoversHead(github, owner, repo, prNumber, headSha) {
+  const reviews = await fetchReviews(github, owner, repo, prNumber);
+  const botReviews = reviews.filter((r) => r.user && r.user.login === TRUSTED_AUTOMATION_LOGIN);
+  const latest = mostRecentlySubmitted(botReviews);
+  if (!latest) return false;
+  return latest.commit_id === headSha;
 }
 
 // A genuine other-account review always wins. Otherwise, fall back to the
@@ -337,6 +431,230 @@ async function claudeApprovedIsGenuine(github, owner, repo, prNumber) {
   return Boolean(latest.actor) && latest.actor.login === TRUSTED_AUTOMATION_LOGIN;
 }
 
+// The two sets parseAutoMergeEnabled below recognises. Both are needed: the
+// kill switch is documented as `false`, but the variable's previous meaning
+// was "set me to `true` to turn auto-merge on", so a repo that already set
+// `true` under the old polarity must keep meaning "on" rather than silently
+// flipping to off the moment this lands.
+const AUTO_MERGE_ON_VALUES = new Set(["true", "1", "yes", "on", "enabled"]);
+const AUTO_MERGE_OFF_VALUES = new Set(["false", "0", "no", "off", "disabled"]);
+
+// Parses the AUTO_MERGE_ENABLED repo/environment variable into the boolean
+// `autoMergeEnabled` below - the one place any of this is decided, so the
+// two workflow call sites can't drift apart on it.
+//
+// Unset is the normal case and means on: a workflow expression renders a
+// variable that was never set as the empty string, and auto-merge is the
+// documented default (see skills/review/SKILL.md). Only a genuinely absent
+// or empty raw value counts as unset - a variable someone actually filled in
+// with blanks is treated as set-but-unrecognised below, since that is a
+// mistake rather than a request for the default.
+//
+// Anything set but unrecognised fails *closed*, with a warning. A bare
+// `!== "false"` would instead fail open: an operator reaching for the
+// documented kill switch and typing `False`, `FALSE`, ` false` or `no`
+// would leave auto-merge running with nothing said anywhere - the one
+// direction where guessing wrong merges code unattended. Trimming and
+// lower-casing means the near-misses above are simply understood; the
+// warning is for whatever is left.
+function parseAutoMergeEnabled(rawValue, core) {
+  const raw = String(rawValue ?? "");
+  if (raw === "") return true;
+
+  const value = raw.trim().toLowerCase();
+  if (AUTO_MERGE_ON_VALUES.has(value)) return true;
+  if (AUTO_MERGE_OFF_VALUES.has(value)) return false;
+  // `raw`, not the trimmed value: a whitespace-only variable would otherwise
+  // report itself as `""`, which reads exactly like the unset case it is
+  // deliberately not being treated as.
+  core.warning(
+    `AUTO_MERGE_ENABLED is set to an unrecognised value (${JSON.stringify(raw)}) - treating ` +
+      `it as off. Set it to "false" to disable auto-merge, or unset it to use the default ` +
+      `(enabled).`,
+  );
+  return false;
+}
+
+// Which of the two ways a caller can express "auto-merge is allowed" wins.
+// The raw variable does when the caller passed one - that's the workflows,
+// which hand over AUTO_MERGE_ENABLED's text and let this module parse it. The
+// boolean stands otherwise, for pre-review-checks.js, which pins it off.
+// `autoMergeEnabled` defaults here too, not just in syncLabels' signature: a
+// caller that passes neither input must not end up with `undefined` standing
+// in for a decision about whether to merge code unattended.
+function resolveAutoMerge({ autoMergeEnabled = false, autoMergeEnabledRaw, core }) {
+  if (autoMergeEnabledRaw === undefined) return autoMergeEnabled;
+  return parseAutoMergeEnabled(autoMergeEnabledRaw, core);
+}
+
+// Paths whose contents auto-merge will never land on its own.
+//
+// These are the rails: everything that defines or suppresses a gate, as
+// opposed to the code the gates run over. CI reads every one of them from the
+// PR's *own head*, so a PR editing one takes effect on the very run that
+// decides whether that PR may merge - it goes green because it loosened the
+// thing that would have failed it, then merges unattended on the automation's
+// own approval. A one-line epsilon in analyze-coverage-diff.js, an advisory id
+// in deny.toml, `unwrap_used = "allow"` in the root Cargo.toml, a `"lint"`
+// script rewritten to `true` in frontend/package.json: all the same move.
+//
+// The three rules below are structural rather than a list of known files, on
+// purpose. An enumerated list has to be extended every time a config file is
+// added, and a rail nobody remembered to enumerate is a rail that silently
+// becomes auto-mergeable - which is exactly how `deny.toml`, `.jscpd.json` and
+// `frontend/eslint.config.js` were missed when this guard covered only
+// `.github/`. Being a little over-broad costs a person one click; being
+// under-broad costs the gate.
+
+// 1. Whole directory trees, matched by prefix.
+//
+// - `.github/` - the workflows, the coverage-diff and duplicate-code
+//   analyzers, and this script, which decides what "ready to merge" even means.
+// - `lints/` - the dylint library behind AGENTS.md's no-string-control-flow
+//   rule; ci.yml builds it from the PR's own checkout and runs it with
+//   `-D no_string_control_flow`.
+// - `frontend/eslint-rules/` - the frontend's mirror of that same rule,
+//   `no-string-literal-control-flow`, wired up in frontend/eslint.config.js.
+// - `scripts/` - the entry points for the repo's local pre-commit hooks
+//   (check-no-raw-sqlx-queries.sh, no-typography-in-comments.py).
+const AUTO_MERGE_PROTECTED_PREFIXES = [
+  ".github/",
+  "lints/",
+  "frontend/eslint-rules/",
+  "scripts/",
+];
+
+// 2. Directories whose *immediate* children are protected, but whose
+// subdirectories are not. These are the two places this repo keeps gate
+// configuration, and treating the whole level as protected is what stops the
+// next config file added there from being an unguarded rail.
+//
+// Note this protects EVERY immediate child, not only the files that configure
+// a gate today: README.md, LICENSE, AGENTS.md, Cargo.lock and Dockerfile.agent
+// block auto-merge exactly as deny.toml does. That is deliberate - listing
+// only the known gate files is the enumeration this replaced. The files below
+// are what it currently covers, as examples rather than as the list.
+//
+// - `""` (the repository root) - Cargo.toml, deny.toml, .jscpd.json,
+//   .pre-commit-config.yaml, clippy.toml, .rustfmt.toml, ruff.toml,
+//   .markdownlint.yaml, .yamlfmt, REUSE.toml, mkdocs.yml. `crates/`, `docs/`
+//   and `skills/` are subdirectories and stay auto-mergeable.
+// - `frontend/` - package.json (whose `lint`, `build`, `test` and
+//   `format:check` scripts are what `ci.yml` actually invokes), package-lock,
+//   eslint.config.js, the tsconfigs vue-tsc reads, playwright.config.ts,
+//   vite.config.ts, .prettierrc, .npm-audit-allowlist.json. `frontend/src/`
+//   and `frontend/e2e/` are subdirectories and stay auto-mergeable.
+const AUTO_MERGE_PROTECTED_CONFIG_DIRS = ["", "frontend/"];
+
+// 3. Anything whose top-level path segment starts with a dot.
+//
+// At a repository root a dot-directory is tool configuration by convention,
+// and every one this repo has is a gate: `.github/` (the workflows and
+// analyzers), `.sqlx/` (the offline query cache sqlx's macros compile
+// against, so an entry added there makes a query build that the database
+// would reject), `.reuse/` (the REUSE hook's templates).
+//
+// The two that matter most do not exist yet, which is exactly why this rule
+// is structural rather than another pair of names - the move is to *add*
+// them. `.cargo/config.toml`'s `[build] rustflags = ["--cap-lints=allow"]`
+// caps every lint level rustc-wide, silently defanging
+// `cargo clippy --workspace -- -D warnings` on the very run that adds it, and
+// its `[target.*.runner]` can replace the test harness outright.
+// `.config/nextest.toml` is the same shape for the test job. Rule 2 does not
+// reach either: they are one level below the root, not immediate children.
+//
+// This subsumes the `.github/` prefix in rule 1, which is kept there anyway -
+// it is the rail a reader most needs to see named.
+const AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL = true;
+
+// 4. Filenames protected wherever in the tree they appear.
+//
+// A member crate's Cargo.toml carries `[lints] workspace = true`, which is the
+// only thing applying the root's `[workspace.lints.clippy]` deny list to that
+// crate. Deleting those two lines drops every clippy deny for the crate and CI
+// stays green: the `validate-cargo-lints` hook compares the *root* Cargo.toml
+// against the shared baseline and never checks that members opt in.
+const AUTO_MERGE_PROTECTED_BASENAMES = ["Cargo.toml"];
+
+// GitHub's `pulls.listFiles` returns at most this many files for a PR, even
+// paginated. Past it the list is silently truncated rather than an error.
+const LISTED_FILES_CAP = 3000;
+
+// Whether `path` is one of the rails above. A non-string (an absent
+// `previous_filename`) is not.
+function isProtectedPath(path) {
+  if (typeof path !== "string" || path === "") return false;
+  if (AUTO_MERGE_PROTECTED_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
+  // Rule 3: a top-level segment beginning with a dot. Only the root level -
+  // `frontend/.prettierrc` is reached by rule 2, and a nested `.vscode/`
+  // somewhere under `crates/` is not configuration this repo's CI reads.
+  if (AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL && path.startsWith(".")) return true;
+  if (AUTO_MERGE_PROTECTED_BASENAMES.includes(path.split("/").pop())) return true;
+  // An immediate child of a config directory: inside it, with nothing left to
+  // descend through afterwards.
+  return AUTO_MERGE_PROTECTED_CONFIG_DIRS.some(
+    (dir) => path.startsWith(dir) && !path.slice(dir.length).includes("/"),
+  );
+}
+
+// The first protected path `files` (as returned by `pulls.listFiles`) touches,
+// or null. Both the current and the previous path are checked, so a rename
+// *out of* a protected location can't launder a change through.
+function protectedPathIn(files) {
+  for (const file of files) {
+    for (const path of [file.filename, file.previous_filename]) {
+      if (isProtectedPath(path)) return path;
+    }
+  }
+  return null;
+}
+
+// Whether `files` touches anything auto-merge must not land unattended.
+function touchesProtectedPaths(files) {
+  return protectedPathIn(files) !== null;
+}
+
+// Why auto-merge must leave this PR alone, or null if it may proceed.
+//
+// A file list at the cap is treated as protected even when nothing in it
+// matches: past 3000 files the list is truncated, so a rail edit sitting
+// beyond the cut simply isn't in `files` and `protectedPathIn` would answer
+// "no" to a question it couldn't actually see. A bulk or generated diff hiding
+// a rail edit is precisely the shape this guard exists to stop, so an
+// unprovable list counts as protected rather than as clean.
+function autoMergeBlockedReason(files) {
+  if (files.length >= LISTED_FILES_CAP) {
+    return (
+      `its file list hit GitHub's ${LISTED_FILES_CAP}-file cap, so it cannot be shown not to ` +
+      "change a gate CI reads from this PR's own head"
+    );
+  }
+  const protectedPath = protectedPathIn(files);
+  if (protectedPath) return `it changes ${protectedPath}`;
+  return null;
+}
+
+// Whether the approval that got this PR to `ready to merge` is about the
+// commit that would be merged.
+//
+// Neither approval form says *what* was approved on its own, so both are
+// checked against this head. A native APPROVED review carries its own commit
+// id (approvalIsCurrent). The `claude-approved` label does not, so the commit
+// is recovered from the review posted by the run that set it
+// (claudeVerdictCoversHead).
+//
+// The label path is deliberately not exempt, though it is cleared on every
+// push and so looks like it cannot be stale. That clearing happens at push
+// time; a review run pinned to the previous commit can still be in flight and
+// apply its verdict afterwards, and nothing clears it again until the next
+// push. Kept as one function so the two paths cannot drift apart, and so the
+// choice between them is testable rather than buried in a call site.
+async function approvalCoversThisHead(github, owner, repo, prNumber, headSha, isNativeApproval) {
+  return isNativeApproval
+    ? approvalIsCurrent(github, owner, repo, prNumber, headSha)
+    : claudeVerdictCoversHead(github, owner, repo, prNumber, headSha);
+}
+
 // Squash-merges `pr` and deletes its branch (same-repo PRs only - a fork's
 // branch can't be deleted by this token, mirroring `gh pr merge
 // --delete-branch`'s own behavior). Called only once every deterministic
@@ -348,11 +666,56 @@ async function claudeApprovedIsGenuine(github, owner, repo, prNumber) {
 // concurrent push, a race with another trigger) as a no-op rather than
 // failing the whole label-sync job over it - the next sync will simply
 // re-evaluate from scratch.
-async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr) {
+async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr, approvalCoversHead) {
+  // Deliberately `!== true` rather than a falsy check with a default: a future
+  // caller that forgets this argument passes `undefined` and gets a refusal,
+  // not a merge. An approval is the one input here that cannot be re-derived
+  // from the PR alone, so a missing answer has to mean no.
+  if (approvalCoversHead !== true) {
+    core.info(
+      `PR #${prNumber}: ready to merge, but no approving review was submitted against this ` +
+        "exact commit - auto-merge does not land code a reviewer has not seen. Merge it by " +
+        "hand, or re-approve the current head.",
+    );
+    return;
+  }
+
+  const files = await github.paginate(github.rest.pulls.listFiles, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  const blockedReason = autoMergeBlockedReason(files);
+  if (blockedReason) {
+    core.info(
+      `PR #${prNumber}: ready to merge, but ${blockedReason} - auto-merge deliberately does ` +
+        "not land changes to the gates it trusts (CI, the coverage and duplication analyzers, " +
+        "the lint and suppression configs, or this script itself). Merge it by hand once a " +
+        "person has read the diff.",
+    );
+    return;
+  }
+
+  // `sha` pins the merge to the head the guard above was computed against.
+  // Without it GitHub merges whatever the head is *now*, so a commit landing
+  // between the file listing and this call would be merged without ever having
+  // been checked - the one race that could defeat the protected-path guard by
+  // going around it. With it, a moved head is a 409 and the sync simply does
+  // nothing; the next one re-evaluates from scratch against the new head.
   try {
-    await github.rest.pulls.merge({ owner, repo, pull_number: prNumber, merge_method: "squash" });
+    await github.rest.pulls.merge({
+      owner,
+      repo,
+      pull_number: prNumber,
+      merge_method: "squash",
+      sha: pr.head.sha,
+    });
     core.info(`PR #${prNumber}: auto-merged (squash) - ready to merge with a genuine approval.`);
   } catch (err) {
+    // 405: not mergeable right now. 409: the head moved since `sha` was read,
+    // or a concurrent trigger got there first. Both are no-ops rather than job
+    // failures - the next sync re-evaluates every gate from scratch.
     if (err.status === 405 || err.status === 409) {
       core.info(`PR #${prNumber}: auto-merge attempt skipped (${err.status}): ${err.message}`);
       return;
@@ -415,13 +778,42 @@ module.exports = async ({
   prNumber,
   eventAction,
   selfCheckNames = [],
-  // Off by default - flip the AUTO_MERGE_ENABLED repo/environment variable
-  // to `true` once the pipeline has earned enough trust to merge PRs with
-  // no human clicking the button. Every gate below (ready to merge, a
-  // genuine approval, the label-provenance check) still runs and gets
-  // logged either way, so turning this on later is a config change, not a
-  // code change - see the "Auto-merge" section in skills/review/SKILL.md.
+  // Whether the merge call happens at all. A PR that reaches `ready to merge`
+  // has already cleared every deterministic gate this script computes *and*
+  // carries a genuine, provenance-checked approval (see hasGenuineApproval
+  // below), so there's nothing left for a human to add by clicking the
+  // button. Every gate still runs and gets logged whichever way this lands,
+  // so this only decides whether the merge happens, never how the verdict is
+  // computed.
+  //
+  // The *parameter* defaults to off while the *feature* is on by default:
+  // "on unless AUTO_MERGE_ENABLED says otherwise" is decided by
+  // parseAutoMergeEnabled, and all three call sites pass this explicitly
+  // (both workflows through that parser, pre-review-checks.js pinned off).
+  // So this default is only ever reached by a future caller that forgot to
+  // pass it - and a forgotten argument should not be able to merge code
+  // unattended. Same reasoning as the kill switch itself: the ambiguous case
+  // resolves in the direction that doesn't merge.
+  //
+  // A boolean. pre-review-checks.js passes it directly (pinned off); the
+  // workflows instead pass `autoMergeEnabledRaw` below and let this module
+  // do the parsing. See the "Auto-merge" section in skills/review/SKILL.md.
   autoMergeEnabled = false,
+  // The raw AUTO_MERGE_ENABLED variable, straight out of the workflow's step
+  // env. When present it decides `autoMergeEnabled` via
+  // parseAutoMergeEnabled; when absent the boolean above stands.
+  //
+  // The workflows pass the *string* rather than calling the parser
+  // themselves because the two can come from different commits: this script
+  // is always checked out from the default branch (`sparse-checkout
+  // .github/scripts`, `ref: default_branch`), while on a `pull_request_review`
+  // event the workflow file itself comes from the PR's head. A workflow body
+  // calling `sync.parseAutoMergeEnabled(...)` therefore crashes with
+  // "not a function" on any PR that adds it, until that PR reaches the
+  // default branch. Passing data instead of calling across that seam means an
+  // older script simply ignores this key and keeps its own default - off,
+  // which is the safe direction to be wrong in.
+  autoMergeEnabledRaw,
   // Off by default - only pr-status-labels.yml's own call site turns this
   // on. See the "notify claude-review.yml" comment below for why this can't
   // just always be on: claude-review.yml calls this same function on itself
@@ -447,9 +839,18 @@ module.exports = async ({
   let existingLabels = pr.labels.map((l) => l.name);
 
   // New commits invalidate any prior verdict recorded via the fallback
-  // labels, mirroring GitHub's own stale-review-dismissal behavior. Native
-  // GitHub reviews already go stale/pending on their own; these labels don't,
-  // so they must be cleared explicitly.
+  // labels, so they are cleared here explicitly.
+  //
+  // An earlier version of this comment said native GitHub reviews "already go
+  // stale/pending on their own" and that only these labels needed clearing.
+  // That is wrong in both directions and the mistake was load-bearing: a
+  // CHANGES_REQUESTED review keeps blocking forever (hence
+  // changesRequestedIsCurrent), and an APPROVED review keeps approving unless
+  // the branch's protection rules dismiss it - which is how a stale approval
+  // could once have auto-merged an unreviewed commit (hence approvalIsCurrent).
+  // Neither verdict self-invalidates. This clearing is what makes the
+  // `claude-approved` path safe without a currency check of its own; do not
+  // read it as evidence that the native path has one for free.
   if (eventAction === "synchronize") {
     // claude-approved / claude-changes-requested are set against a specific
     // commit; a new push makes them stale. precheck failed needs no special
@@ -797,12 +1198,20 @@ module.exports = async ({
   // above and skills/review/SKILL.md) - reaching this branch already
   // implies `approved`, nothing left to re-derive here.
   if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
-    if (!autoMergeEnabled) {
+    if (!resolveAutoMerge({ autoMergeEnabled, autoMergeEnabledRaw, core })) {
       core.info(
-        `PR #${prNumber}: ready to merge with a genuine approval, but AUTO_MERGE_ENABLED is off - leaving it for a human to merge.`,
+        `PR #${prNumber}: ready to merge with a genuine approval, but auto-merge is switched off - leaving it for a human to merge.`,
       );
     } else {
-      await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);
+      const approvalCoversHead = await approvalCoversThisHead(
+        github,
+        owner,
+        repo,
+        prNumber,
+        pr.head.sha,
+        isNativeApproval,
+      );
+      await autoMergeIfApproved(github, core, owner, repo, prNumber, pr, approvalCoversHead);
     }
   }
 };
@@ -819,6 +1228,30 @@ module.exports.DUPLICATE_CODE_LABEL = DUPLICATE_CODE_LABEL;
 module.exports.COVERAGE_LABEL = COVERAGE_LABEL;
 module.exports.CLAUDE_REVIEW_FAILED_LABEL = CLAUDE_REVIEW_FAILED_LABEL;
 module.exports.ensureLabelExists = ensureLabelExists;
+// Exported so both workflow call sites turn the AUTO_MERGE_ENABLED variable
+// into the `autoMergeEnabled` boolean the same way - the parsing lives here,
+// not duplicated in two `script:` blocks that could drift apart.
+module.exports.parseAutoMergeEnabled = parseAutoMergeEnabled;
+// Exported for the tests that pin the guard: auto-merge must never land a
+// change to `.github/`, which is where every gate it trusts lives.
+module.exports.touchesProtectedPaths = touchesProtectedPaths;
+// Exported for the tests that pin which of the two auto-merge inputs wins.
+module.exports.resolveAutoMerge = resolveAutoMerge;
+// Exported so a test can drive the enforcement point itself, not just the
+// predicate it consults: an inverted condition or a dropped `return` here
+// would merge exactly the changes the guard exists to hold back, and these
+// scripts are not lcov-instrumented, so `node --test` is the only net.
+module.exports.autoMergeIfApproved = autoMergeIfApproved;
+module.exports.approvalIsCurrent = approvalIsCurrent;
+module.exports.claudeVerdictCoversHead = claudeVerdictCoversHead;
+module.exports.approvalCoversThisHead = approvalCoversThisHead;
+module.exports.mostRecentlySubmitted = mostRecentlySubmitted;
+module.exports.AUTO_MERGE_PROTECTED_PREFIXES = AUTO_MERGE_PROTECTED_PREFIXES;
+module.exports.AUTO_MERGE_PROTECTED_CONFIG_DIRS = AUTO_MERGE_PROTECTED_CONFIG_DIRS;
+module.exports.AUTO_MERGE_PROTECTED_BASENAMES = AUTO_MERGE_PROTECTED_BASENAMES;
+module.exports.AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL = AUTO_MERGE_PROTECTED_DOT_TOP_LEVEL;
+module.exports.autoMergeBlockedReason = autoMergeBlockedReason;
+module.exports.LISTED_FILES_CAP = LISTED_FILES_CAP;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,
 // circular check run (its conclusion depends on the review having already
 // happened) from the "wait for every other check on this commit" gate.

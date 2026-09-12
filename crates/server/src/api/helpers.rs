@@ -23,6 +23,29 @@ pub struct DomainQuery {
     pub domain: Option<String>,
 }
 
+/// Rejects a negative `limit` or `offset` before either reaches a SQL
+/// `LIMIT`/`OFFSET` clause. Postgres itself refuses a negative value there,
+/// which without this check surfaces as an opaque `ApiError::Database` (a
+/// 500) instead of a 400 that actually names the bad input - the difference
+/// between a caller bug and a database going down.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if `limit` or `offset` is negative.
+pub fn validate_pagination(limit: i64, offset: i64) -> Result<(), ApiError> {
+    if limit < 0 {
+        return Err(ApiError::BadRequest(
+            "limit must be non-negative".to_owned(),
+        ));
+    }
+    if offset < 0 {
+        return Err(ApiError::BadRequest(
+            "offset must be non-negative".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// Builds the base borg environment shared by all server-side borg invocations:
 /// the repository passphrase, the SSH command, and the server's `SSH_AUTH_SOCK`
 /// when one is present so borg can use the forwarded agent.
@@ -208,7 +231,8 @@ pub async fn push_config_to_all_agents(state: &crate::AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{borg_env_for_repo, validate_compression};
+    use super::{borg_env_for_repo, validate_compression, validate_pagination};
+    use crate::error::ApiError;
 
     // borg_env_for_repo_pins_known_hosts_when_host_key_present lives in
     // ssh.rs's ssh_key_dir_scoped_helpers instead of here: it writes a real
@@ -223,6 +247,28 @@ mod tests {
         let rsh = env.get("BORG_RSH").unwrap();
         assert!(rsh.contains("StrictHostKeyChecking=accept-new"));
         assert!(!rsh.contains("UserKnownHostsFile="));
+    }
+
+    #[test]
+    fn validate_pagination_accepts_zero_and_positive_values() {
+        assert!(validate_pagination(0, 0).is_ok());
+        assert!(validate_pagination(50, 100).is_ok());
+    }
+
+    #[test]
+    fn validate_pagination_rejects_a_negative_limit() {
+        assert!(matches!(
+            validate_pagination(-1, 0),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn validate_pagination_rejects_a_negative_offset() {
+        assert!(matches!(
+            validate_pagination(50, -1),
+            Err(ApiError::BadRequest(_))
+        ));
     }
 
     #[test]

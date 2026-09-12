@@ -13,13 +13,15 @@ use shared::{
     responses::{
         DeleteFailedReportsResponse, FailedReportCountResponse, PerAgentBackupSourcesResponse,
         PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
-        PerAgentFileChangePatternsResponse, ScheduleBackupSourcesResponse, ScheduleRepoResponse,
-        ScheduleTargetResponse,
+        PerAgentFileChangePatternsResponse, ReportListResponse, ScheduleBackupSourcesResponse,
+        ScheduleRepoResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
 };
 use sqlx::PgPool;
+
+use super::reports::row_to_report_response;
 
 impl From<db::ScheduleTargetRow> for ScheduleTargetResponse {
     fn from(t: db::ScheduleTargetRow) -> Self {
@@ -81,6 +83,7 @@ use uuid::Uuid;
 
 use super::{
     auth::AuthUser,
+    helpers,
     permissions::{check_repo_permission, is_visible_to_user},
 };
 use crate::{
@@ -1483,6 +1486,8 @@ pub async fn cancel_running_backup(
 pub struct ListScheduleReportsQuery {
     /// Maximum number of reports to return.
     pub limit: Option<i64>,
+    /// Number of reports to skip, for paging past `limit`.
+    pub offset: Option<i64>,
 }
 
 #[utoipa::path(
@@ -1493,14 +1498,15 @@ pub struct ListScheduleReportsQuery {
     params(
         ("id" = i64, Path, description = "Schedule ID"),
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
+        ("offset" = Option<i64>, Query, description = "Number of reports to skip"),
     ),
     responses(
-        (status = 200, description = "List of backup reports", body = Vec<crate::db::ReportRow>),
+        (status = 200, description = "Paged reports, with total count", body = ReportListResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
-/// List backup reports for a schedule.
+/// List backup reports for a schedule, newest first.
 ///
 /// # Errors
 ///
@@ -1510,11 +1516,20 @@ pub async fn list_schedule_reports(
     _auth: AuthUser,
     Path(id): Path<i64>,
     Query(query): Query<ListScheduleReportsQuery>,
-) -> Result<Json<Vec<db::ReportRow>>, ApiError> {
+) -> Result<Json<ReportListResponse>, ApiError> {
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let limit = query.limit.unwrap_or(20);
-    let reports = db::list_reports_for_schedule(&state.pool, id, limit).await?;
-    Ok(Json(reports))
+    let offset = query.offset.unwrap_or(0);
+    helpers::validate_pagination(limit, offset)?;
+    let (rows, total) = tokio::try_join!(
+        db::list_reports_for_schedule(&state.pool, id, limit, offset),
+        db::count_reports_for_schedule(&state.pool, id),
+    )?;
+    let reports: Vec<_> = rows
+        .into_iter()
+        .map(|r| row_to_report_response(r, None))
+        .collect();
+    Ok(Json(ReportListResponse { reports, total }))
 }
 
 #[utoipa::path(

@@ -2191,7 +2191,7 @@ async fn backup_report_insert_and_list(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -2216,15 +2216,125 @@ async fn backup_report_list_with_target(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, Some("test-repo"), 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, Some("test-repo"), 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, Some("nonexistent"), 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, Some("nonexistent"), 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_report_list_for_agent_respects_offset_and_total(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "offset-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, agent.id, repo.id).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let total = db::count_reports_for_agent(&pool, agent.id, None)
+        .await
+        .unwrap();
+    assert_eq!(total, 3);
+
+    let first_page = db::list_reports_for_agent(&pool, agent.id, None, 2, 0)
+        .await
+        .unwrap();
+    assert_eq!(first_page.len(), 2);
+
+    let second_page = db::list_reports_for_agent(&pool, agent.id, None, 2, 2)
+        .await
+        .unwrap();
+    assert_eq!(second_page.len(), 1);
+
+    let first_page_ids: Vec<i64> = first_page.iter().map(|r| r.id).collect();
+    assert!(!first_page_ids.contains(&second_page.first().unwrap().id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_report_list_for_agent_breaks_ties_on_started_at(pool: PgPool) {
+    // Two reports sharing the exact same started_at - plausible (e.g. reports
+    // inserted together in a batch). Without a secondary sort key, Postgres
+    // doesn't guarantee stable ordering across two separately-executed
+    // OFFSET queries when the sort key ties, so a tied row could land on
+    // both pages (a duplicate in the caller's paged list) or on neither (a
+    // silent gap), even though the total stays correct either way.
+    let agent = db::insert_agent(&pool, "tie-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    // Distinct archive_name on each: `backup_reports` has a partial unique
+    // index on (repo_id, agent_id, started_at) WHERE archive_name IS NULL,
+    // used to upsert an in-progress report into its finished row - two NULL-
+    // archive reports with the same started_at would collide there and
+    // collapse into one row instead of the two tied rows this test needs.
+    let tied_params = |archive_name: &str| InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: now,
+        finished_at: now,
+        status: shared::types::BackupStatus::Success,
+        original_size: 1_000_000,
+        compressed_size: 500_000,
+        deduplicated_size: 250_000,
+        repo_unique_csize: 250_000,
+        files_processed: 1000,
+        duration_secs: 300,
+        error_message: None,
+        warnings: vec![],
+        borg_version: Some("1.4.0".to_string()),
+        matched: true,
+        archive_name: Some(archive_name.to_string()),
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &tied_params("tie-host-1"))
+        .await
+        .unwrap();
+    db::insert_backup_report(&pool, &tied_params("tie-host-2"))
+        .await
+        .unwrap();
+
+    let first_page = db::list_reports_for_agent(&pool, agent.id, None, 1, 0)
+        .await
+        .unwrap();
+    let second_page = db::list_reports_for_agent(&pool, agent.id, None, 1, 1)
+        .await
+        .unwrap();
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(second_page.len(), 1);
+    assert_ne!(
+        first_page.first().unwrap().id,
+        second_page.first().unwrap().id
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn count_reports_for_agent_filters_by_target(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "count-target-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, agent.id, repo.id).await;
+
+    let matching = db::count_reports_for_agent(&pool, agent.id, Some("test-repo"))
+        .await
+        .unwrap();
+    assert_eq!(matching, 1);
+
+    let non_matching = db::count_reports_for_agent(&pool, agent.id, Some("nonexistent"))
+        .await
+        .unwrap();
+    assert_eq!(non_matching, 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2262,7 +2372,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
     .await
     .unwrap();
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.first().unwrap().warnings.len(), 2);
@@ -6301,7 +6411,7 @@ async fn test_merge_agent_moves_reports(pool: PgPool) {
         .await
         .unwrap();
 
-    let reports = db::list_reports_for_agent(&pool, target.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, target.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -7255,7 +7365,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
         .unwrap();
     assert_eq!(affected, 2);
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 100)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 100, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 2);
@@ -7300,7 +7410,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         .unwrap();
     assert_eq!(affected, 0);
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 100)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 100, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -8066,7 +8176,7 @@ async fn reports_for_schedule_test(pool: PgPool) {
     )
     .await;
 
-    let reports = db::list_reports_for_schedule(&pool, schedule.id, 10)
+    let reports = db::list_reports_for_schedule(&pool, schedule.id, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -8078,10 +8188,110 @@ async fn reports_for_schedule_test(pool: PgPool) {
         Some("test-schedule")
     );
 
-    let empty = db::list_reports_for_schedule(&pool, schedule.id.saturating_add(999), 10)
+    let empty = db::list_reports_for_schedule(&pool, schedule.id.saturating_add(999), 10, 0)
         .await
         .unwrap();
     assert_eq!(empty.len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_report_list_respects_offset_and_total(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+
+    let total = db::count_reports_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(total, 3);
+
+    let first_page = db::list_reports_for_schedule(&pool, schedule.id, 2, 0)
+        .await
+        .unwrap();
+    assert_eq!(first_page.len(), 2);
+
+    let second_page = db::list_reports_for_schedule(&pool, schedule.id, 2, 2)
+        .await
+        .unwrap();
+    assert_eq!(second_page.len(), 1);
+
+    let first_page_ids: Vec<i64> = first_page.iter().map(|r| r.id).collect();
+    assert!(!first_page_ids.contains(&second_page.first().unwrap().id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_report_list_breaks_ties_on_started_at(pool: PgPool) {
+    // Same tied-timestamp scenario as
+    // backup_report_list_for_agent_breaks_ties_on_started_at, against the
+    // schedule-scoped query instead of the agent-scoped one.
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+    // Distinct archive_name on each - see the sibling agent-scoped test above
+    // for why two NULL-archive reports with the same started_at would
+    // collapse into one row instead of the two tied rows this test needs.
+    let tied_params = |archive_name: &str| InsertReportParams {
+        agent_id: agent.id,
+        repo_id: repo.id,
+        schedule_id: Some(schedule.id),
+        started_at: now,
+        finished_at: now,
+        status: shared::types::BackupStatus::Success,
+        original_size: 1_000_000,
+        compressed_size: 500_000,
+        deduplicated_size: 250_000,
+        repo_unique_csize: 250_000,
+        files_processed: 1000,
+        duration_secs: 300,
+        error_message: None,
+        warnings: vec![],
+        borg_version: Some("1.4.0".to_string()),
+        matched: true,
+        archive_name: Some(archive_name.to_string()),
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &tied_params("tie-sched-1"))
+        .await
+        .unwrap();
+    db::insert_backup_report(&pool, &tied_params("tie-sched-2"))
+        .await
+        .unwrap();
+
+    let first_page = db::list_reports_for_schedule(&pool, schedule.id, 1, 0)
+        .await
+        .unwrap();
+    let second_page = db::list_reports_for_schedule(&pool, schedule.id, 1, 1)
+        .await
+        .unwrap();
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(second_page.len(), 1);
+    assert_ne!(
+        first_page.first().unwrap().id,
+        second_page.first().unwrap().id
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -8133,7 +8343,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
     )
     .await;
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -8155,7 +8365,7 @@ async fn reports_for_agent_have_no_schedule_when_not_schedule_triggered(pool: Pg
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -8812,7 +9022,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
         .unwrap();
     assert_eq!(deleted, 1);
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 0);
@@ -9031,7 +9241,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
     assert_eq!(deleted, 1);
 
     // The archive-less row should still exist
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -9185,7 +9395,7 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
         "failed report exactly at cutoff must not be deleted"
     );
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -9241,7 +9451,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
         "failed report one second before cutoff must be deleted"
     );
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 0);
@@ -9353,7 +9563,7 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
         "count must reflect the delete, not the report list's own pagination window"
     );
 
-    let remaining = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let remaining = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -9365,7 +9575,7 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
     remaining_statuses.sort_unstable();
     assert_eq!(remaining_statuses, vec!["failed", "success"]);
 
-    let other_remaining = db::list_reports_for_agent(&pool, other_agent.id, None, 10)
+    let other_remaining = db::list_reports_for_agent(&pool, other_agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(other_remaining.len(), 1);
@@ -9508,7 +9718,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
         "count must reflect the delete, not the report list's own pagination window"
     );
 
-    let remaining = db::list_reports_for_schedule(&pool, schedule.id, 10)
+    let remaining = db::list_reports_for_schedule(&pool, schedule.id, 10, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -9520,7 +9730,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
     remaining_statuses.sort_unstable();
     assert_eq!(remaining_statuses, vec!["failed", "success"]);
 
-    let other_remaining = db::list_reports_for_schedule(&pool, other_schedule.id, 10)
+    let other_remaining = db::list_reports_for_schedule(&pool, other_schedule.id, 10, 0)
         .await
         .unwrap();
     assert_eq!(other_remaining.len(), 1);
@@ -9967,7 +10177,7 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
         .await
         .unwrap();
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -10013,7 +10223,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
         .await
         .unwrap();
 
-    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -10076,7 +10286,7 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
         .unwrap();
 
     // agent_b's record must still be 'pending'.
-    let b_reports = db::list_reports_for_agent(&pool, agent_b.id, None, 10)
+    let b_reports = db::list_reports_for_agent(&pool, agent_b.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
@@ -10111,13 +10321,13 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
     .unwrap();
 
     // agent_b's record must still be 'pending' - not bulk-failed by agent_a's report.
-    let b_reports = db::list_reports_for_agent(&pool, agent_b.id, None, 10)
+    let b_reports = db::list_reports_for_agent(&pool, agent_b.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
     assert_eq!(b_reports.first().unwrap().status, "pending");
 
-    let a_reports = db::list_reports_for_agent(&pool, agent_a.id, None, 10)
+    let a_reports = db::list_reports_for_agent(&pool, agent_a.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(a_reports.len(), 1);
@@ -10519,14 +10729,14 @@ async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool)
     repo_ids.sort_unstable();
     assert_eq!(repo_ids, vec![repo_a.id, repo_b.id]);
 
-    let reports_a = db::list_reports_for_agent(&pool, agent.id, None, 10)
+    let reports_a = db::list_reports_for_agent(&pool, agent.id, None, 10, 0)
         .await
         .unwrap();
     assert!(reports_a.iter().all(|r| r.status == "failed"
         && r.error_message.as_deref()
             == Some("Agent 'reconnect-host' reconnected; previous backup abandoned")));
 
-    let other_reports = db::list_reports_for_agent(&pool, other_agent.id, None, 10)
+    let other_reports = db::list_reports_for_agent(&pool, other_agent.id, None, 10, 0)
         .await
         .unwrap();
     assert_eq!(other_reports.len(), 1);

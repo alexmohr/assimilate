@@ -46,7 +46,9 @@ import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
 import ScheduleSettingsTab from '../components/ScheduleSettingsTab.vue'
 import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
+import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
+import { useReportsPager } from '../composables/useReportsPager'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -61,8 +63,9 @@ import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 import { isScheduleSettingsSection, type ScheduleSettingsSection } from '../utils/scheduleSettings'
 
 /**
- * A schedule's detail page: a persistent header, then three tabs - Overview,
- * Backups (backup type only), Settings - following the same shape as the
+ * A schedule's detail page: a persistent header, then up to four tabs -
+ * Overview, Backups (backup type only, the archive browser), Logs (every
+ * run's history, any type), Settings - following the same shape as the
  * agent detail page. Create mode has no status to show yet, so it skips
  * straight to Settings.
  */
@@ -89,9 +92,15 @@ const runNowLoading = ref(false)
 const retryingAgentId = ref<number | null>(null)
 const cancelLoading = ref(false)
 const backupRunning = ref(false)
-const reports = ref<ReportRow[]>([])
-const reportsLoading = ref(false)
-const reportsError = ref<string | null>(null)
+const reportsPager = useReportsPager((limit, offset) =>
+  listScheduleReports(props.id, limit, offset),
+)
+const reports = reportsPager.reports
+const reportsLoading = reportsPager.loading
+const reportsError = reportsPager.error
+const filterStatus = ref<BackupFilter>('all')
+const sortAscending = ref(false)
+const expandedReportId = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
 const selectedAgentIds = ref<number[]>([])
@@ -162,11 +171,12 @@ const estimatedRemainingSecs = computed<number | null>(() => {
   return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
 })
 
-type TabId = 'overview' | 'backups' | 'settings'
+type TabId = 'overview' | 'backups' | 'logs' | 'settings'
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab
     if (t === 'backups' && isBackup.value) return 'backups'
+    if (t === 'logs') return 'logs'
     if (t === 'settings') return 'settings'
     return 'overview'
   },
@@ -197,7 +207,7 @@ function openArchive(r: ReportRow): void {
 /**
  * A preview row's output. This schedule's Backups tab is an archive browser
  * and a failed run wrote no archive, so the error lives one level down, on
- * the host's own Backups tab - which renders it in place, expanded.
+ * the host's own Logs tab - which renders it in place, expanded.
  */
 function openReportDetail(r: ReportRow): void {
   const agent = agentMap.value.get(r.agent_id ?? 0)
@@ -208,25 +218,22 @@ function openReportDetail(r: ReportRow): void {
   }
   router.push({
     path: `/agents/${encodeURIComponent(hostname)}`,
-    query: { ...domainParams(agent?.domain), tab: 'backups', report: String(r.id) },
+    query: { ...domainParams(agent?.domain), tab: 'logs', report: String(r.id) },
   })
-}
-
-function goToLogs(): void {
-  const id = schedule.value?.id
-  router.push(
-    id != null ? `/activity?category=backup&schedule_id=${id}` : '/activity?category=backup',
-  )
 }
 
 const scheduleType = computed<ScheduleType>(() => schedule.value?.schedule_type ?? 'backup')
 const isBackup = computed(() => scheduleType.value === 'backup')
 
+/**
+ * Backups carries no count: it is the archive browser, and the true archive
+ * count isn't known until it loads. Logs can show one - `reportsPager.total`
+ * is the server's real total, not just how many pages have been fetched.
+ */
 const visibleTabs = computed<TabOption<TabId>[]>(() => {
   const tabs: TabOption<TabId>[] = [{ id: 'overview', label: 'Overview' }]
-  // No count badge: `reports` is capped at 20 until the tab is opened, so a
-  // count shown up front would silently undercount everything past the cap.
   if (isBackup.value) tabs.push({ id: 'backups', label: 'Backups' })
+  tabs.push({ id: 'logs', label: 'Logs', count: reportsPager.total.value })
   tabs.push({ id: 'settings', label: 'Settings' })
   return tabs
 })
@@ -358,6 +365,11 @@ function clearScheduleState(): void {
   agentOverrides.value = emptyAgentOverrides()
   health.value = []
   reports.value = []
+  // reportsPager's own `total` isn't touched by resetting `reports` above (it
+  // is a separate ref, not derived) - without clearing it too, the Logs tab
+  // badge and "Load more" note would show the previous schedule's count until
+  // its own reportsPager.load() call below resolves.
+  reportsPager.total.value = 0
   failedReportCount.value = 0
   backupRunning.value = false
   backupHostname.value = null
@@ -394,8 +406,12 @@ async function loadData(): Promise<void> {
     .catch((e: unknown) => logger.error('getScheduleHealth failed', e))
 
   // Started here but applied after the await below, so `agentMap` is populated
-  // by the time the running-backup banner looks a hostname up.
-  const recentReportsPromise = listScheduleReports(scheduleId, 20)
+  // by the time the running-backup banner looks a hostname up. Unlike the
+  // other deferred fetches above, this doesn't need its own isCurrent() guard
+  // when it lands - reportsPager.load() already discards a stale response via
+  // its own loadToken (see useReportsPager.ts), so reports.value/total.value
+  // are always left holding whichever call was issued most recently.
+  const reportsPromise = reportsPager.load()
 
   loading.value = true
   error.value = null
@@ -486,22 +502,18 @@ async function loadData(): Promise<void> {
     if (isCurrent()) loading.value = false
   }
 
-  await recentReportsPromise
-    .then((recentReports) => {
-      if (!isCurrent() || schedule.value == null) return
-      reports.value = recentReports
-      const runningReport = recentReports.find((r) => {
-        const status = normalizeBackupStatus(r.status)
-        return status === 'pending' || status === 'started'
-      })
-      backupRunning.value = runningReport !== undefined
-      if (runningReport) {
-        const agent = agentMap.value.get(runningReport.agent_id ?? 0)
-        backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
-        backupStartedAt.value = new Date(runningReport.started_at).getTime()
-      }
-    })
-    .catch((e: unknown) => logger.error('listScheduleReports failed', e))
+  await reportsPromise
+  if (!isCurrent() || schedule.value == null) return
+  const runningReport = reports.value.find((r) => {
+    const status = normalizeBackupStatus(r.status)
+    return status === 'pending' || status === 'started'
+  })
+  backupRunning.value = runningReport !== undefined
+  if (runningReport) {
+    const agent = agentMap.value.get(runningReport.agent_id ?? 0)
+    backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
+    backupStartedAt.value = new Date(runningReport.started_at).getTime()
+  }
 }
 
 /**
@@ -628,6 +640,12 @@ async function runNow(agentId?: number): Promise<void> {
         ? `Retry started for ${agentLabel(agentId)}.`
         : `${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`,
     )
+    // The pending report row is inserted before the run-now request even
+    // returns, so this is a reliable way to pick up the running state right
+    // away rather than depending solely on the BackupStarted WS broadcast -
+    // which a burst of BackupLog lines from the run it announces can itself
+    // delay past the point the run has already finished.
+    await loadReports()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -640,8 +658,6 @@ async function runNow(agentId?: number): Promise<void> {
 }
 
 async function loadReports(): Promise<void> {
-  reportsLoading.value = true
-  reportsError.value = null
   // Independent of the report list below: it backs a menu badge, not the
   // page itself, so a failure here must not mark the whole refresh failed.
   countFailedScheduleReports(props.id)
@@ -649,18 +665,15 @@ async function loadReports(): Promise<void> {
       failedReportCount.value = count
     })
     .catch((e: unknown) => logger.error('countFailedScheduleReports failed', e))
-  try {
-    const reportRows = await listScheduleReports(props.id, 100)
-    reports.value = reportRows
-    backupRunning.value = reportRows.some((r) => {
-      const status = normalizeBackupStatus(r.status)
-      return status === 'pending' || status === 'started'
-    })
-  } catch (e: unknown) {
-    reportsError.value = extractError(e, 'Failed to load reports')
-  } finally {
-    reportsLoading.value = false
-  }
+  await reportsPager.load()
+  backupRunning.value = reports.value.some((r) => {
+    const status = normalizeBackupStatus(r.status)
+    return status === 'pending' || status === 'started'
+  })
+}
+
+function loadMoreReports(): void {
+  void reportsPager.loadMore()
 }
 
 async function cancelBackup(): Promise<void> {
@@ -673,6 +686,18 @@ async function cancelBackup(): Promise<void> {
   } finally {
     cancelLoading.value = false
   }
+}
+
+function toggleReport(r: ReportRow): void {
+  expandedReportId.value = expandedReportId.value === r.id ? null : r.id
+}
+
+function openReport(r: ReportRow): void {
+  const query: Record<string, string> = { tab: 'archives' }
+  if (r.archive_name) {
+    query.archive = r.archive_name
+  }
+  router.push({ path: `/repos/${r.repo_id}`, query })
 }
 
 onMessage('BackupStarted', (payload) => {
@@ -691,13 +716,17 @@ onMessage('BackupStarted', (payload) => {
 })
 
 onMessage('BackupCompleted', (payload) => {
-  // Matched the way BackupLog is, and for the same reason: `target_name` is
-  // one repository's display name, so comparing it against this page's
-  // primary target missed every completion on a secondary one - the progress
-  // card then sat on "running" until the next full reload. Targets run one
-  // after another, so the next one's BackupStarted puts the card back.
-  // Optional-chained rather than destructured: this is websocket input, and a
-  // message without a report should be ignored, not throw out of the handler.
+  // Matched the same way as BackupStarted above: by schedule_id when the
+  // report has one, since a repo can be shared by more than one schedule
+  // (e.g. two daily jobs against the same target) - a schedule_id-only match
+  // means a sibling schedule's completion on a shared repo can't clear this
+  // page's running state while this schedule's own run is still in flight.
+  // Falls back to checking every one of this schedule's own repo targets
+  // (not just a single "primary" one) when schedule_id is absent, since a
+  // multi-target schedule's completion on a secondary repo would otherwise
+  // never clear this state either. Optional-chained rather than destructured:
+  // this is websocket input, and a message without a report should be
+  // ignored, not throw out of the handler.
   const schedule_id = payload.report?.schedule_id
   const repo_id = payload.report?.repo_id
   if (repo_id == null) return
@@ -763,8 +792,16 @@ watch(
     loadData()
   },
 )
+// Only a first visit with nothing loaded yet triggers a fetch here - reports
+// are already kept fresh regardless of which tab is active (loadData() on
+// mount, then every WebSocket DataChanged via useArchiveDeletionEvents's
+// reload below). Refetching unconditionally on every switch to this tab
+// used to be harmless when only the Backups tab (no incremental pagination)
+// depended on it, but doing the same for the Logs tab discarded whatever
+// "Load more" progress the reports pager had - so this now only fills a
+// tab that has never loaded anything, not one already showing data.
 watch(activeTab, (tab) => {
-  if (tab === 'backups') {
+  if ((tab === 'backups' || tab === 'logs') && reports.value.length === 0) {
     loadReports().catch(() => undefined)
   }
 })
@@ -813,7 +850,6 @@ watch(activeTab, (tab) => {
         :failed-report-count="failedReportCount"
         @run-now="runNow()"
         @cancel-backup="cancelBackup"
-        @logs="goToLogs"
         @delete="showDeleteDialog = true"
         @clean-failed-reports="showCleanFailedDialog = true"
       />
@@ -852,7 +888,7 @@ watch(activeTab, (tab) => {
           :estimated-remaining-secs="estimatedRemainingSecs"
           :archive-progress="archiveProgress"
           @retry="runNow($event)"
-          @open-backups="activeTab = 'backups'"
+          @open-logs="activeTab = 'logs'"
           @open-archive="openArchive"
           @open-report-detail="openReportDetail"
         />
@@ -862,13 +898,33 @@ watch(activeTab, (tab) => {
           ref="backupsTab"
           v-model:selected="selectedBackupReport"
           :reports="reports"
+          :total="reportsPager.total.value"
           :loading="reportsLoading"
+          :loading-more="reportsPager.loadingMore.value"
           :error="reportsError"
           :agents="agentMap"
           :repo-id="primaryRepoId"
           :repo-name="repoName ?? ''"
           :is-admin="isAdmin"
           :reload="loadReports"
+          @load-more="loadMoreReports"
+        />
+
+        <RunLogTab
+          v-else-if="activeTab === 'logs'"
+          v-model:filter="filterStatus"
+          v-model:sort-ascending="sortAscending"
+          :reports="reports"
+          :total="reportsPager.total.value"
+          :loading="reportsLoading"
+          :loading-more="reportsPager.loadingMore.value"
+          :error="reportsError"
+          :expanded-report-id="expandedReportId"
+          :highlighted-archive-name="undefined"
+          :pinned-report-id="null"
+          @toggle="toggleReport"
+          @open="openReport"
+          @load-more="loadMoreReports"
         />
 
         <ScheduleSettingsTab

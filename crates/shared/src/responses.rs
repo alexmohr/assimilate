@@ -10,8 +10,8 @@ use crate::{
     protocol::{RepoOpKind, TunnelStatus},
     types::{
         BackupStatus, BorgEncryption, Compression, ExecutionMode, FindingKind, FindingSeverity,
-        FindingStatus, IndexStatus, OnFailure, QuotaAction, RunEventTarget, RunEventType,
-        ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
+        FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus, RunEventTarget,
+        RunEventType, ScheduleType, ScheduleWakeOverride, SearchEntry, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -913,8 +913,11 @@ pub struct ReportResponse {
     /// Timestamp of when the finished occurred.
     pub finished_at: DateTime<Utc>,
     #[ts(type = "string")]
-    /// Current status.
-    pub status: BackupStatus,
+    /// Current status. `ReportStatus`, not `BackupStatus`: unlike an activity
+    /// entry or a schedule's health summary, a report row can still be
+    /// `pending`/`started`/`cancelled` - states `BackupStatus` doesn't have
+    /// variants for, since it exists to describe a *finished* run's outcome.
+    pub status: ReportStatus,
     #[ts(type = "number")]
     /// Original size of the data before compression.
     pub original_size: i64,
@@ -957,6 +960,9 @@ pub struct ReportResponse {
 pub struct ReportListResponse {
     /// reports.
     pub reports: Vec<ReportResponse>,
+    #[ts(type = "number")]
+    /// Total number of matching reports, ignoring `limit`/`offset`.
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

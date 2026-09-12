@@ -51,7 +51,7 @@ const emit = defineEmits<{
   openSchedule: [schedule: ScheduleRow]
   openReport: [report: ReportRow]
   openReportDetail: [report: ReportRow]
-  showTab: [tab: 'schedules' | 'backups']
+  showTab: [tab: 'schedules' | 'logs']
   cancelBackup: [repoId: number]
 }>()
 
@@ -291,7 +291,7 @@ function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
           v-if="settledReports.length > backupPreview.length"
           class="section-link"
           type="button"
-          @click="emit('showTab', 'backups')"
+          @click="emit('showTab', 'logs')"
         >
           View all {{ settledReports.length }}
         </button>

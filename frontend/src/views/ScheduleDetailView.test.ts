@@ -167,6 +167,8 @@ function setupEditMode(schedule = mockSchedule): void {
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_agent: [] } })
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
+    if (String(url).endsWith('/reports'))
+      return Promise.resolve({ data: { reports: [], total: 0 } })
     return Promise.resolve({ data: [] })
   })
 }
@@ -190,13 +192,16 @@ function setupEditModeWithReport(report: Record<string, unknown>): void {
       return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
     if (url === '/schedules/1/sources')
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-    if (url === '/schedules/1/reports') return Promise.resolve({ data: [withRepo] })
+    if (url === '/schedules/1/reports')
+      return Promise.resolve({ data: { reports: [withRepo], total: 1 } })
     if (url === '/schedules/1/reports/failed/count') {
       const count = report.status === 'failed' ? 1 : 0
       return Promise.resolve({ data: { count } })
     }
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
+    if (String(url).endsWith('/reports'))
+      return Promise.resolve({ data: { reports: [], total: 0 } })
     return Promise.resolve({ data: [] })
   })
 }
@@ -569,6 +574,47 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', {})
   })
 
+  // The backup_reports row for a run-now is inserted before the request even
+  // returns, so refetching reports right after is a reliable way to pick up
+  // "Cancel backup" - unlike the BackupStarted WS broadcast alone, which a
+  // burst of BackupLog lines from the very run it announces can delay past
+  // the point the run has already finished (see run_dispatch.rs).
+  it('shows Cancel backup after Run now without waiting on a WS event', async () => {
+    let reportsRequested = false
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/schedules/1/reports') {
+        const reports = reportsRequested ? [{ id: 1, status: 'pending' }] : []
+        reportsRequested = true
+        return Promise.resolve({ data: { reports, total: reports.length } })
+      }
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('Run now')
+
+    const runNowButton = wrapper.findAll('button').find((b) => b.text() === 'Run now')
+    await runNowButton!.trigger('click')
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button').map((b) => b.text())
+    expect(buttons).toContain('Cancel backup')
+    expect(buttons).not.toContain('Run now')
+  })
+
   it('shows an Overdue badge and Retry button for an overdue target, with an offline note', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
@@ -634,6 +680,8 @@ describe('ScheduleDetailView - edit mode', () => {
             },
           ],
         })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.post.mockResolvedValue({ data: {} })
@@ -676,7 +724,7 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
   })
 
-  it('switches to the Backups tab from the Overview preview\'s "View all" link', async () => {
+  it('switches to the Logs tab from the Overview preview\'s "View all" link', async () => {
     setupEditModeWithReport({
       id: 1,
       status: 'success',
@@ -703,7 +751,177 @@ describe('ScheduleDetailView - edit mode', () => {
         .findAll('.tab')
         .find((t) => t.attributes('aria-selected') === 'true')!
         .text(),
-    ).toBe('Backups')
+    ).toBe('Logs 1')
+  })
+
+  // The Logs tab's own toggle/open/load-more, as opposed to the Overview
+  // preview's openArchive path covered above - RunLogTab is the real
+  // component here, not a stub, so these exercise ScheduleDetailView's own
+  // wiring end to end.
+  it('wires the Logs tab toggle, open, sort and filter through to RunLogTab', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/schedules/1/reports') {
+        return Promise.resolve({
+          data: {
+            reports: [
+              {
+                id: 3,
+                agent_id: 10,
+                repo_id: 20,
+                repo_name: 'server-daily',
+                schedule_id: 1,
+                schedule_name: null,
+                status: 'success',
+                started_at: '2026-06-01T01:50:00Z',
+                finished_at: '2026-06-01T02:00:00Z',
+                duration_secs: 10,
+                original_size: 100,
+                compressed_size: 50,
+                deduplicated_size: 50,
+                files_processed: 5,
+                error_message: null,
+                warnings: [],
+                borg_version: null,
+                archive_name: 'web-server-01-2026-06-01',
+                borg_command: null,
+                run_id: 'run-3',
+              },
+            ],
+            total: 2,
+          },
+        })
+      }
+      if (url === '/schedules/1/reports/failed/count')
+        return Promise.resolve({ data: { count: 0 } })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.find('.section-link').trigger('click')
+    await flushPromises()
+
+    // toggle: the row's own "Show detail" is only offered when there's a
+    // run_id/warnings/error to expand into - this report has a run_id.
+    const row = wrapper.find('.agent-row')
+    const toggleBtn = row.findAll('button').find((b) => b.text() === 'Show detail')
+    await toggleBtn!.trigger('click')
+    await flushPromises()
+    expect(row.find('button[aria-expanded="true"]').exists()).toBe(true)
+
+    // sort: v-model:sort-ascending, driven by RunLogTab's own toggle button.
+    const sortBtn = wrapper.findAll('button').find((b) => b.text() === 'Newest first')
+    await sortBtn!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Oldest first')).toBe(true)
+
+    // filter: v-model:filter, driven by the status segmented control.
+    const successFilter = wrapper.findAll('button').find((b) => b.text().startsWith('Success'))
+    await successFilter!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.agent-row').exists()).toBe(true)
+
+    // open: jumps to the archive on its own repository, not this schedule's
+    // Backups tab (that's openArchive, covered elsewhere) - navigates away,
+    // so this runs last.
+    await wrapper.find('.agent-row').find('button.agent-row-name').trigger('click')
+    await flushPromises()
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
+      .$router
+    expect(router.currentRoute.value.fullPath).toBe(
+      '/repos/20?tab=archives&archive=web-server-01-2026-06-01',
+    )
+  })
+
+  it('loads the next page of the Logs tab on Load more', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      original_size: 100,
+      duration_secs: 10,
+    })
+    // Override just the reports fetch to report more rows than were loaded.
+    const baseImpl = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/reports') {
+        return baseImpl(url).then((res: { data: { reports: unknown[]; total: number } }) => ({
+          data: { ...res.data, total: 5 },
+        }))
+      }
+      return baseImpl(url)
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.find('.section-link').trigger('click')
+    await flushPromises()
+    mockApiClient.get.mockClear()
+
+    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
+    await loadMoreBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.get).toHaveBeenCalledWith(
+      '/schedules/1/reports',
+      expect.objectContaining({ params: expect.objectContaining({ offset: 1 }) }),
+    )
+  })
+
+  // Regression test: the activeTab watcher used to call loadReports()
+  // unconditionally on every switch to the Backups/Logs tab, which is a full
+  // reportsPager.load() - a first-page reset. Leaving the Logs tab (e.g. to
+  // Overview) and coming back used to silently throw away whatever "Load
+  // more" progress the user had made, with nothing on screen to explain why
+  // their report count dropped back down.
+  it('keeps Load more progress on the Logs tab across a tab switch away and back', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      finished_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      original_size: 100,
+      duration_secs: 10,
+    })
+    const baseImpl = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1/reports') {
+        return baseImpl(url).then((res: { data: { reports: unknown[]; total: number } }) => ({
+          data: { ...res.data, total: 5 },
+        }))
+      }
+      return baseImpl(url)
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.find('.section-link').trigger('click')
+    await flushPromises()
+
+    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
+    await loadMoreBtn!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
+
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text() === 'Overview')!
+      .trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text().startsWith('Logs'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
   })
 
   // A run in the preview is a way in, not just a status line: its archive is
@@ -764,7 +982,7 @@ describe('ScheduleDetailView - edit mode', () => {
 
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
       .$router
-    expect(router.currentRoute.value.fullPath).toBe('/agents/web-server-01?tab=backups&report=7')
+    expect(router.currentRoute.value.fullPath).toBe('/agents/web-server-01?tab=logs&report=7')
   })
 
   // The row offers the jump on any run with output, and the host it belongs
@@ -818,6 +1036,8 @@ describe('ScheduleDetailView - edit mode', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -876,6 +1096,8 @@ describe('ScheduleDetailView - edit mode', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -918,6 +1140,8 @@ describe('ScheduleDetailView - edit mode', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -999,6 +1223,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.reject(new Error('boom'))
+      if (url.endsWith('/reports')) return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -1136,6 +1361,8 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
         return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
       if (url === '/schedules/1/sources')
         return Promise.resolve({ data: { backup_sources: [], backup_sources_per_agent: [] } })
+      if (url === '/schedules/1/reports')
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       return Promise.resolve({ data: [] })
@@ -1357,9 +1584,12 @@ describe('ScheduleDetailView - Backups tab', () => {
         return Promise.resolve({
           data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
         })
-      if (url === '/schedules/1/reports') return Promise.resolve({ data: withRepo })
+      if (url === '/schedules/1/reports')
+        return Promise.resolve({ data: { reports: withRepo, total: withRepo.length } })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
   }
@@ -1401,6 +1631,8 @@ describe('ScheduleDetailView - Backups tab', () => {
         return Promise.resolve({ data: { backup_sources: [], backup_sources_per_agent: [] } })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
@@ -1569,6 +1801,47 @@ describe('ScheduleDetailView - Backups tab', () => {
     expect(after).toBe(before + 2)
   })
 
+  // Regression test: a run dispatched elsewhere (a cron firing, another
+  // session's Run now) never touches this page directly - the server's
+  // DataChanged broadcast (sent on every backup start and completion) is the
+  // only signal it gets, and it must reach the Logs tab too, not just the
+  // Backups/Archives tab this describe block otherwise exercises.
+  it('picks up a new report on the Logs tab from a DataChanged event without user action', async () => {
+    const report = {
+      id: 1,
+      status: 'success',
+      archive_name: 'test-archive-2026-06-01',
+      started_at: '2026-06-01T02:00:00Z',
+      finished_at: '2026-06-01T02:05:00Z',
+      original_size: 500,
+      agent_id: 10,
+      hostname: 'web-server-01',
+    }
+    const wrapper = await createBackupsWrapper([report])
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text().startsWith('Logs'))!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(1)
+
+    const withNewReport = [
+      report,
+      {
+        ...report,
+        id: 2,
+        archive_name: 'test-archive-2026-06-02',
+        started_at: '2026-06-02T02:00:00Z',
+      },
+    ]
+    setupBackupWithReports(withNewReport)
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
+  })
+
   // The count backs a menu badge, not the page itself - a failure fetching
   // it during a refresh must not break the report list refresh alongside it
   // (regression: it used to sit inside the same Promise.all as the report
@@ -1592,7 +1865,10 @@ describe('ScheduleDetailView - Backups tab', () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
       if (url === '/schedules/1/reports/failed/count') return Promise.reject(new Error('boom'))
-      if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
+      if (url === '/schedules/1/reports')
+        return Promise.resolve({ data: { reports: [report], total: 1 } })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -1710,17 +1986,31 @@ describe('ScheduleDetailView - header actions', () => {
     expect(wrapper.text()).toContain('This action cannot be undone.')
   })
 
-  it('navigates to the activity log filtered by schedule from the Logs menu item', async () => {
+  it('has no Logs item in the overflow menu - Logs is a tab now', async () => {
     const wrapper = await createEditWrapper()
     await openMenu(wrapper)
 
-    await wrapper
-      .findAll('.overflow-menu-item')
-      .find((i) => i.text() === 'Logs')!
-      .trigger('click')
+    expect(wrapper.findAll('.overflow-menu-item').some((i) => i.text() === 'Logs')).toBe(false)
+  })
+
+  it('renders the run log on the Logs tab', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'failed',
+      finished_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      error_message: 'Connection refused',
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    expect(wrapper.vm.$route.fullPath).toBe('/activity?category=backup&schedule_id=1')
+    const logsTab = wrapper.findAll('button.tab').find((t) => t.text().startsWith('Logs'))
+    expect(logsTab).toBeDefined()
+    await logsTab!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[id^="report-"]').exists()).toBe(true)
+    expect(wrapper.find('.agent-row-stripe--danger').exists()).toBe(true)
   })
 })
 
@@ -1946,6 +2236,8 @@ describe('ScheduleDetailView - per-agent overrides', () => {
       if (url === '/schedules/1/sources') return Promise.resolve({ data: sources })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
   }
@@ -2155,7 +2447,7 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (url === '/schedules/1/reports')
         return new Promise((resolve) => {
-          releaseReports = (): void => resolve({ data: [] })
+          releaseReports = (): void => resolve({ data: { reports: [], total: 0 } })
         })
       return Promise.resolve({ data: [] })
     })
@@ -2193,6 +2485,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (url === '/schedules/2/reports/failed/count')
         return Promise.resolve({ data: { count: 0 } })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2243,6 +2537,8 @@ describe('ScheduleDetailView - load ordering', () => {
           })
         if (requested === '/agents') return Promise.resolve({ data: mockAgents })
         if (requested === '/repos') return Promise.resolve({ data: mockRepos })
+        if (requested.endsWith('/reports'))
+          return Promise.resolve({ data: { reports: [], total: 0 } })
         return Promise.resolve({ data: [] })
       })
 
@@ -2287,6 +2583,8 @@ describe('ScheduleDetailView - load ordering', () => {
             },
           ],
         })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2366,6 +2664,8 @@ describe('ScheduleDetailView - load ordering', () => {
             },
           ],
         })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2414,6 +2714,8 @@ describe('ScheduleDetailView - load ordering', () => {
           releaseSecondHealth = (): void => resolve({ data: [] })
         })
       }
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2455,6 +2757,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2499,6 +2803,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2540,6 +2846,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 
@@ -2583,6 +2891,8 @@ describe('ScheduleDetailView - load ordering', () => {
         })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
     mockApiClient.put.mockResolvedValue({ data: mockSchedule })
@@ -2621,8 +2931,11 @@ describe('ScheduleDetailView - load ordering', () => {
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (url === '/schedules/1/reports')
         return new Promise((resolve) => {
-          releaseFirstReports = (rows: unknown[]): void => resolve({ data: rows })
+          releaseFirstReports = (rows: unknown[]): void =>
+            resolve({ data: { reports: rows, total: rows.length } })
         })
+      if (String(url).endsWith('/reports'))
+        return Promise.resolve({ data: { reports: [], total: 0 } })
       return Promise.resolve({ data: [] })
     })
 

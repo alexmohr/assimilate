@@ -7,20 +7,19 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::responses::{
-    DeleteFailedReportsResponse, FailedReportCountResponse, ReportResponse, RunEventResponse,
+    DeleteFailedReportsResponse, FailedReportCountResponse, ReportListResponse, ReportResponse,
+    RunEventResponse,
 };
 use tracing::warn;
 
 use super::{
     auth::{AuthUser, RequireAdmin},
-    helpers::DomainQuery,
+    helpers::{self, DomainQuery},
 };
 use crate::{AppState, db, error::ApiError};
 
 #[cfg(test)]
 mod tests {
-    use shared::types::BackupStatus;
-
     use super::*;
 
     fn make_row(status: &str) -> db::ReportRow {
@@ -49,35 +48,63 @@ mod tests {
     }
 
     #[test]
-    fn row_to_report_response_parses_valid_status() {
+    fn row_to_report_response_passes_a_finished_status_through() {
         let row = make_row("success");
-        let resp = row_to_report_response(row, "myhost".to_owned());
-        assert_eq!(resp.status, BackupStatus::Success);
-    }
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, shared::types::ReportStatus::Success);
 
-    #[test]
-    fn row_to_report_response_parses_failed_status() {
         let row = make_row("failed");
-        let resp = row_to_report_response(row, "myhost".to_owned());
-        assert_eq!(resp.status, BackupStatus::Failed);
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, shared::types::ReportStatus::Failed);
     }
 
+    // `BackupStatus` (a finished run's outcome) has no variant for these -
+    // a report row still in flight must reach the client as such, not get
+    // silently reported as a success it hasn't had yet. `ReportStatus` does.
     #[test]
-    fn row_to_report_response_falls_back_to_success_on_invalid_status() {
-        let row = make_row("corrupted_status_value");
-        let resp = row_to_report_response(row, "myhost".to_owned());
-        assert_eq!(resp.status, BackupStatus::Success);
+    fn row_to_report_response_passes_an_in_flight_status_through() {
+        let row = make_row("pending");
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, shared::types::ReportStatus::Pending);
+
+        let row = make_row("started");
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, shared::types::ReportStatus::Started);
+
+        let row = make_row("cancelled");
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, shared::types::ReportStatus::Cancelled);
+    }
+
+    // The one path that can't come from a real DB row: a status string that
+    // matches none of ReportStatus's variants (a future typo, a manual DB
+    // edit, or a migration that adds a status column value this enum hasn't
+    // caught up with). Before ReportResponse.status was widened from a raw
+    // String to ReportStatus, this exact case regressed silently - restoring
+    // the parse means it needs its own coverage, not just a passthrough.
+    #[test]
+    fn row_to_report_response_defaults_an_unparseable_status_to_pending() {
+        let row = make_row("not-a-real-status");
+        let resp = row_to_report_response(row, Some("myhost".to_owned()));
+        assert_eq!(resp.status, shared::types::ReportStatus::Pending);
     }
 
     #[test]
     fn row_to_report_response_hostname_is_set() {
         let row = make_row("success");
-        let resp = row_to_report_response(row, "webserver-01".to_owned());
+        let resp = row_to_report_response(row, Some("webserver-01".to_owned()));
         assert_eq!(resp.hostname, Some("webserver-01".to_owned()));
     }
 }
 
-fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportResponse {
+pub(crate) fn row_to_report_response(
+    row: db::ReportRow,
+    hostname: Option<String>,
+) -> ReportResponse {
+    let status = row.status.parse().unwrap_or_else(|_| {
+        warn!(raw_status = %row.status, "failed to parse report status, defaulting to Pending");
+        shared::types::ReportStatus::default()
+    });
     ReportResponse {
         id: row.id,
         agent_id: row.agent_id,
@@ -85,14 +112,7 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
         schedule_id: row.schedule_id,
         started_at: row.started_at,
         finished_at: row.finished_at,
-        status: row.status.parse().unwrap_or_else(|e| {
-            warn!(
-                error = %e,
-                raw_status = %row.status,
-                "failed to parse backup status, defaulting to Success"
-            );
-            shared::types::BackupStatus::default()
-        }),
+        status,
         original_size: row.original_size,
         compressed_size: row.compressed_size,
         deduplicated_size: row.deduplicated_size,
@@ -103,7 +123,7 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
         borg_version: row.borg_version,
         archive_name: row.archive_name,
         borg_command: row.borg_command,
-        hostname: Some(hostname),
+        hostname,
         repo_name: Some(row.repo_name),
         schedule_name: row.schedule_name,
         run_id: row.run_id,
@@ -117,6 +137,8 @@ pub struct ListReportsQuery {
     pub target: Option<String>,
     /// Maximum number of reports to return.
     pub limit: Option<i64>,
+    /// Number of reports to skip, for paging past `limit`.
+    pub offset: Option<i64>,
     /// Domain, required if the hostname is shared by multiple agents.
     pub domain: Option<String>,
 }
@@ -130,16 +152,17 @@ pub struct ListReportsQuery {
         ("hostname" = String, Path, description = "Agent hostname"),
         ("target" = Option<String>, Query, description = "Filter by target repo name"),
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
+        ("offset" = Option<i64>, Query, description = "Number of reports to skip"),
         ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
-        (status = 200, description = "List of backup reports", body = Vec<ReportResponse>),
+        (status = 200, description = "Paged reports, with total count", body = ReportListResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Agent not found"),
         (status = 409, description = "Hostname is ambiguous; specify a domain"),
     )
 )]
-/// List backup reports for an agent.
+/// List backup reports for an agent, newest first.
 ///
 /// # Errors
 ///
@@ -149,17 +172,26 @@ pub async fn list_reports(
     _auth: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<ListReportsQuery>,
-) -> Result<Json<Vec<ReportResponse>>, ApiError> {
+) -> Result<Json<ReportListResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
     let limit = query.limit.unwrap_or(50);
-    let hostname_clone = hostname.clone();
-    let reports: Vec<ReportResponse> =
-        db::list_reports_for_agent(&state.pool, agent.id, query.target.as_deref(), limit)
-            .await?
-            .into_iter()
-            .map(|r| row_to_report_response(r, hostname_clone.clone()))
-            .collect();
-    Ok(Json(reports))
+    let offset = query.offset.unwrap_or(0);
+    helpers::validate_pagination(limit, offset)?;
+    let (rows, total) = tokio::try_join!(
+        db::list_reports_for_agent(
+            &state.pool,
+            agent.id,
+            query.target.as_deref(),
+            limit,
+            offset
+        ),
+        db::count_reports_for_agent(&state.pool, agent.id, query.target.as_deref()),
+    )?;
+    let reports: Vec<ReportResponse> = rows
+        .into_iter()
+        .map(|r| row_to_report_response(r, Some(hostname.clone())))
+        .collect();
+    Ok(Json(ReportListResponse { reports, total }))
 }
 
 fn row_to_run_event_response(row: db::run_events::RunEventRow) -> RunEventResponse {

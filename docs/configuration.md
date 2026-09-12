@@ -43,7 +43,7 @@ System settings are stored in the database and managed through the UI or the `/a
 |---------|---------|-------------|
 | `retention_days` | `7` | Legacy setting — number of days to retain backup-run *history* (failed/cancelled runs without an archive) and system event log entries. Replaced by the independent settings below on first save, but still read as a fallback. |
 | `report_retention_days` | `retention_days` (or `0`) | Days to keep successful/archived backup reports. Reports with an archive are pruned by this window. `0` = keep forever. |
-| `failed_report_retention_days` | `365` | Days to keep failed/archive-less backup reports. `0` = keep forever. To clear an agent's failed reports immediately rather than waiting on this window, use **Clean up failed backups** in its [header overflow menu](agents.md#schedules-and-backups). |
+| `failed_report_retention_days` | `365` | Days to keep failed/archive-less backup reports. `0` = keep forever. To clear an agent's failed reports immediately rather than waiting on this window, use **Clean up failed backups** in its [header overflow menu](agents.md#logs-tab). |
 | `system_event_retention_days` | `retention_days` (or `90`) | Days to keep system event log entries. `0` = keep forever. |
 | `notification_delivery_retention_days` | `retention_days` (or `30`) | Days to keep notification delivery-attempt history (the `notification_deliveries` debug/retry log). `0` = keep forever. |
 | `run_event_retention_days` | `retention_days` (or `90`) | Days to keep a run's [power-management](power-management.md) event timeline (the `backup_run_events` table). `0` = keep forever. |

@@ -256,13 +256,13 @@ describe('AgentOverviewTab', () => {
       expect(wrapper.emitted('openReportDetail')).toHaveLength(1)
     })
 
-    it('switches to the backups tab from its View all link', async () => {
+    it('switches to the logs tab from its View all link', async () => {
       const wrapper = mount({
         reports: Array.from({ length: 8 }, (_, i) => report({ id: i + 1 })),
       })
       const link = wrapper.findAll('.section-link').find((l) => l.text().includes('View all 8'))
       await link!.trigger('click')
-      expect(wrapper.emitted('showTab')).toEqual([['backups']])
+      expect(wrapper.emitted('showTab')).toEqual([['logs']])
     })
 
     // A run still in flight is shown by the progress card above, not as a

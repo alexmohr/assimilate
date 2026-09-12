@@ -618,6 +618,62 @@ impl FromStr for BackupStatus {
     }
 }
 
+/// A `backup_reports` row's status across its whole lifecycle, not just its
+/// outcome once finished.
+///
+/// [`BackupStatus`] intentionally has no variants for these three states -
+/// it exists to describe a *finished* run's outcome (used where a run is
+/// already known to be over, e.g. the activity feed and health summaries,
+/// which only ever surface completed runs). A single report row, by
+/// contrast, can be read while still in flight, so its status needs a wider
+/// type: this one.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum ReportStatus {
+    /// Dispatched but not yet acknowledged as started by the agent.
+    #[default]
+    Pending,
+    /// The agent has acknowledged the run and it is currently in progress.
+    Started,
+    /// A cancel request was honored before the run finished.
+    Cancelled,
+    /// The backup completed with no errors or warnings.
+    Success,
+    /// The backup completed but borg reported at least one warning.
+    Warning,
+    /// The backup did not complete successfully.
+    Failed,
+}
+
+impl FromStr for ReportStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "started" => Ok(Self::Started),
+            "cancelled" => Ok(Self::Cancelled),
+            "success" => Ok(Self::Success),
+            "warning" => Ok(Self::Warning),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("unknown report status: {other}")),
+        }
+    }
+}
+
 /// Visibility scope of a repository, agent, or schedule - controls whether
 /// the resource is visible only to its owner or shared with all users that
 /// share a group with the owner.
@@ -1510,6 +1566,23 @@ mod tests {
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
         }
+    }
+
+    #[test]
+    fn report_status_display_and_parse_roundtrip() {
+        let variants = [
+            (ReportStatus::Pending, "pending"),
+            (ReportStatus::Started, "started"),
+            (ReportStatus::Cancelled, "cancelled"),
+            (ReportStatus::Success, "success"),
+            (ReportStatus::Warning, "warning"),
+            (ReportStatus::Failed, "failed"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<ReportStatus>().unwrap(), variant);
+        }
+        assert!("unknown".parse::<ReportStatus>().is_err());
     }
 
     #[test]

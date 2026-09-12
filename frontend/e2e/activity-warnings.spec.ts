@@ -120,7 +120,7 @@ test('expands warning report row and shows warning messages', async ({ page }: {
   await loginAsAdmin(page)
   await stubActivityLog(page, {
     activity: () => [makeActivityRow()],
-    reports: () => [makeWarningReport()],
+    reports: () => ({ reports: [makeWarningReport()], total: 1 }),
   })
 
   await page.goto('/activity')

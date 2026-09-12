@@ -112,7 +112,7 @@ A saved schedule's detail page opens on **Overview**: an at-a-glance summary (re
 
 On the Overview tab, a target that's behind shows an **Overdue** badge and a **Retry** button, both in the attention banner at the top and in its row further down. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
 
-The **Recent backups** preview below them is a way into each run, not just a status line. A run that produced an archive opens it from the host name, selected on this schedule's **Backups** tab. A run that finished with warnings or failed carries **View warnings** / **View error**, which opens that run on the host's own Backups tab with its output expanded — a failed run wrote no archive, so its output is the only thing there is to show for it.
+The **Recent backups** preview below them is a way into each run, not just a status line. A run that produced an archive opens it from the host name, selected on this schedule's **Backups** tab. A run that finished with warnings or failed carries **View warnings** / **View error**, which opens that run on the host's own Logs tab with its output expanded — a failed run wrote no archive, so its output is the only thing there is to show for it.
 
 While a backup for the schedule is running, the Overview tab also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
@@ -123,6 +123,12 @@ For backup-type schedules, the schedule detail view includes a **Backups** tab. 
 The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
 
 A failed run usually produced no borg archive, so there is nothing on disk to lose by clearing its history — and the rare failed run that did produce one (e.g. a prune or post-backup hook failing after a successful `borg create`) is left alone rather than deleted. When there are one or more archive-less failed runs, **Clean up failed backups (N)** in the header's overflow menu deletes every such failed report for this schedule after a confirmation dialog. This is a manual, on-demand action for this schedule alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* schedule automatically by age. It requires the same permission as editing or deleting the schedule itself.
+
+### Logs Tab
+
+Every schedule, of any type, has a **Logs** tab: one line per run, any status, oldest failures included — the same view an [agent's own Logs tab](agents.md#logs-tab) renders. A status filter (All / Success / Warning / Failed) and a Newest/Oldest sort sit above the rows; a warned or failed run expands its warning or error output in place. A run that produced an archive links straight to it in the Backups tab's file browser.
+
+The tab label carries the true total, not just how many runs are currently loaded — the list itself starts at the 50 most recent and offers **Load N more** once there are more to fetch, rather than silently capping at that first page.
 
 ## Cron Expression Builder
 

@@ -124,11 +124,19 @@ api PUT "/api/agents/media-store-01" '{
 }' > /dev/null
 
 echo "==> Registering repositories..."
+# ssh_host is "demo" (this container's own Compose service name), not
+# "localhost" like the repos below: server-daily is the one repo a real
+# schedule dispatch (not just seed-time archive creation) runs against - see
+# the "Run now"/cancel-backup e2e specs. Every agent container already
+# reaches this host at "demo" for its own seed-time archives (start-agent.sh
+# hardcodes REPO_HOST=demo), but "localhost" from an agent's own network
+# namespace is itself, not this server - so a live dispatch against a repo
+# seeded with ssh_host=localhost fails instantly with connection refused.
 REPO_DAILY_ID=$(api POST "/api/repos" "{
     \"name\": \"server-daily\",
     \"repo_path\": \"/backup/repos/server-daily\",
     \"ssh_user\": \"borg\",
-    \"ssh_host\": \"localhost\",
+    \"ssh_host\": \"demo\",
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
@@ -400,6 +408,25 @@ SQL
 echo "==> Creating schedules..."
 # The one job that wakes web-server-01, whose own wake setting is off - the
 # "Enabled" side of a per-schedule override.
+#
+# backup_sources is /etc, not /var/www or /etc/nginx (nginx's actual config
+# paths, which only ever existed inside the seed-time archives' own temp
+# directories - this container never has a real nginx installed) - "Run
+# now"/cancel-backup e2e specs dispatch a real backup against this schedule,
+# and a real borg create needs a source path that genuinely exists here, the
+# same as every other demo schedule below.
+#
+# pre_backup_commands adds a deliberate couple-second delay before borg
+# create even starts: /etc is small enough that a real create/prune/compact
+# cycle against it finishes in ~1.5s, too fast for the cancel-backup e2e spec
+# to reliably click Cancel before the run completes on its own. A pre-backup
+# hook that takes real time (e.g. quiescing a service) is realistic, and
+# gives that spec a window to cancel within. Kept short deliberately: every
+# borg operation against this repo is serialized through the agent's
+# per-repo queue (see executor.rs's repo_operation_queue), so a long hook
+# here would make a Run Now that lands while a previous run is still mid-hook
+# queue for the full remaining cycle - risking busting the e2e specs' own
+# wait timeouts for the Cancel backup button to appear.
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -410,8 +437,9 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
-    \"backup_sources\": [\"/var/www\", \"/etc/nginx\"],
-    \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\"
+    \"backup_sources\": [\"/etc\"],
+    \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
+    \"pre_backup_commands\": [{\"command\": \"sleep 2\"}]
 }" | jq -r '.id')
 
 # A schedule with two target repositories: the daily repo is required, the
@@ -1101,6 +1129,27 @@ if [ -z "$DB01_REVIEWED_REPORT_ID" ]; then
     exit 1
 fi
 api POST "/api/stats/activity/$DB01_REVIEWED_REPORT_ID/acknowledge" > /dev/null
+
+echo "==> Backfilling db-server-01's hourly run history past the first Logs page..."
+# The Agent detail Logs tab paginates 50 runs at a time with a "Load more"
+# button - db-server-01 is the one host whose real hourly cron would
+# eventually produce that many runs, but the demo container is nowhere near
+# old enough for the scheduler to have actually ticked that often. Backfill
+# the history directly so the Logs tab's pagination has more than one page
+# to show. archive_name stays NULL for the same reason as the incident rows
+# above: it lets these survive if the repo is ever resynced.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL > /dev/null
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status)
+SELECT $DB01_ID, $REPO_HOURLY_ID, s.id,
+       NOW() - (n || ' hours')::interval - interval '3 minutes',
+       NOW() - (n || ' hours')::interval,
+       'success'
+FROM generate_series(10, 65) AS n
+CROSS JOIN LATERAL (
+    SELECT id FROM schedules WHERE repo_id = $REPO_HOURLY_ID ORDER BY id LIMIT 1
+) s;
+SQL
 
 echo "==> Seeding a cancelled run on web-server-01..."
 # Feeds the Schedules view's run-history strip: a cancelled run must render

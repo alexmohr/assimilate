@@ -176,9 +176,9 @@ test.describe('Repositories management journey', () => {
     await expect(page.locator('.quota-fchip')).toHaveCount(3)
     await expect(page.locator('.quota-fchip', { hasText: 'All' })).toBeVisible()
 
-    // The demo's server-daily/database-hourly/media-weekly repos share the "localhost"
-    // ssh_host and a configured server quota (see .devcontainer/demo/seed-demo.sh),
-    // and group by host is the default view - no need to toggle it on.
+    // The demo's database-hourly/media-weekly repos share the "localhost" ssh_host
+    // and a configured server quota (see .devcontainer/demo/seed-demo.sh), and
+    // group by host is the default view - no need to toggle it on.
     const poolHeader = page.locator('.pool-header', { hasText: 'localhost' })
     await expect(poolHeader).toBeVisible()
     await expect(poolHeader.locator('.pool-track')).toBeVisible()

@@ -7,25 +7,47 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import AgentBackupRow from './AgentBackupRow.vue'
+import AsyncSection from './AsyncSection.vue'
+import PagerLoadMore from './PagerLoadMore.vue'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
 
 export type BackupFilter = 'all' | 'success' | 'warning' | 'failed'
 
-const props = defineProps<{
-  reports: readonly ReportRow[]
-  filter: BackupFilter
-  sortAscending: boolean
-  expandedReportId: number | null
-  highlightedArchiveName: string | undefined
-  pinnedReportId: number | null
-}>()
+/**
+ * The run log: every backup run regardless of status, one line each, with
+ * expandable detail for a warned or failed one - what used to be an agent's
+ * "Backups" tab, now shared with a schedule's "Logs" tab too, since neither
+ * page's log view was ever agent-specific.
+ *
+ * `reports` is only the rows loaded so far - the server has always capped a
+ * bare fetch, and `total` is how the caller says whether "Load more" has
+ * anything left to fetch. The status counts above the rows are therefore
+ * counts of what's loaded, not of `total`; a filter can undercount until
+ * every page is in.
+ */
+const props = withDefaults(
+  defineProps<{
+    reports: readonly ReportRow[]
+    total: number
+    loading?: boolean
+    loadingMore: boolean
+    error?: string | null
+    filter: BackupFilter
+    sortAscending: boolean
+    expandedReportId: number | null
+    highlightedArchiveName: string | undefined
+    pinnedReportId: number | null
+  }>(),
+  { loading: false, error: null },
+)
 
 const emit = defineEmits<{
   'update:filter': [value: BackupFilter]
   'update:sortAscending': [value: boolean]
   toggle: [report: ReportRow]
   open: [report: ReportRow]
+  loadMore: []
 }>()
 
 function countOf(status: BackupFilter): number {
@@ -74,31 +96,43 @@ const visible = computed(() => {
       </button>
     </div>
 
-    <div
-      v-if="visible.length === 0"
-      class="state-msg"
+    <AsyncSection
+      :loading="loading"
+      :error="error"
+      :empty="visible.length === 0"
     >
-      {{
-        reports.length === 0
-          ? 'No backup reports available.'
-          : 'No backups match the current filter.'
-      }}
-    </div>
-    <div
-      v-else
-      class="rows"
+      <div class="rows">
+        <AgentBackupRow
+          v-for="r in visible"
+          :key="r.id"
+          :report="r"
+          :expanded="expandedReportId === r.id"
+          :highlighted="r.archive_name === highlightedArchiveName || r.id === pinnedReportId"
+          show-detail
+          @toggle="emit('toggle', r)"
+          @open="emit('open', r)"
+        />
+      </div>
+      <template #empty>
+        <div class="state-msg">
+          {{
+            reports.length === 0
+              ? 'No backup reports available.'
+              : 'No backups match the current filter.'
+          }}
+        </div>
+      </template>
+    </AsyncSection>
+
+    <PagerLoadMore
+      v-if="!loading && !error && reports.length > 0"
+      :loaded="reports.length"
+      :total="total"
+      :loading-more="loadingMore"
+      @load-more="emit('loadMore')"
     >
-      <AgentBackupRow
-        v-for="r in visible"
-        :key="r.id"
-        :report="r"
-        :expanded="expandedReportId === r.id"
-        :highlighted="r.archive_name === highlightedArchiveName || r.id === pinnedReportId"
-        show-detail
-        @toggle="emit('toggle', r)"
-        @open="emit('open', r)"
-      />
-    </div>
+      Showing {{ reports.length }} of {{ total }} runs
+    </PagerLoadMore>
   </div>
 </template>
 

@@ -80,27 +80,24 @@ describe('ScheduleHeader', () => {
     expect(wrapper.emitted('cancelBackup')).toHaveLength(1)
   })
 
-  it('hides Logs and Delete until the overflow menu is opened', async () => {
+  it('hides Delete until the overflow menu is opened', async () => {
     const wrapper = mount()
     expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
 
     await openMenu(wrapper)
 
-    expect(menuLabels(wrapper)).toEqual(['Logs', 'Delete schedule'])
+    expect(menuLabels(wrapper)).toEqual(['Delete schedule'])
   })
 
-  it.each([
-    ['Logs', 'logs'],
-    ['Delete schedule', 'delete'],
-  ])('emits %s from the menu and closes it', async (label, event) => {
+  it('emits delete from the menu and closes it', async () => {
     const wrapper = mount()
     await openMenu(wrapper)
     await wrapper
       .findAll('.overflow-menu-item')
-      .find((i) => i.text().trim() === label)!
+      .find((i) => i.text().trim() === 'Delete schedule')!
       .trigger('click')
 
-    expect(wrapper.emitted(event)).toHaveLength(1)
+    expect(wrapper.emitted('delete')).toHaveLength(1)
     expect(wrapper.findAll('.overflow-menu-item')).toHaveLength(0)
   })
 
@@ -118,11 +115,7 @@ describe('ScheduleHeader', () => {
     it('shows the failed count', async () => {
       const wrapper = mount({}, { failedReportCount: 4 })
       await openMenu(wrapper)
-      expect(menuLabels(wrapper)).toEqual([
-        'Logs',
-        'Clean up failed backups (4)',
-        'Delete schedule',
-      ])
+      expect(menuLabels(wrapper)).toEqual(['Clean up failed backups (4)', 'Delete schedule'])
     })
 
     it('emits cleanFailedReports from the menu and closes it', async () => {

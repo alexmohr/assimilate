@@ -1467,9 +1467,11 @@ async fn push_pre_run_config(
 }
 
 /// Computes the schedule's next cron occurrence from `ctx`, logging and returning
-/// `None` on an invalid cron expression - shared by [`mark_schedule_triggered_once`]
-/// and [`record_schedule_failure_once`], which both need this same "advance
-/// `next_run_at`" starting point.
+/// `None` on an invalid cron expression - used by [`record_schedule_failure_once`]
+/// to fall back to a fixed backoff when the cron itself can't be evaluated.
+/// [`mark_schedule_triggered_once`] needs this same starting point too, but gets
+/// it via [`db::advance_schedule_run`], which both it and the manual/catch-up
+/// dispatch path in `run_dispatch.rs` now share.
 fn calculate_next_run_or_log(ctx: &SequentialTargetCtx<'_>) -> Option<DateTime<Utc>> {
     calculate_next_run(ctx.cron, ctx.now, ctx.tz)
         .inspect_err(|e| {
@@ -1484,17 +1486,7 @@ fn calculate_next_run_or_log(ctx: &SequentialTargetCtx<'_>) -> Option<DateTime<U
 }
 
 async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_triggered: &mut bool) {
-    let Some(next) = calculate_next_run_or_log(ctx) else {
-        return;
-    };
-    let schedule_id = ctx.schedule_id;
-    if let Err(e) = db::mark_schedule_triggered(ctx.pool, schedule_id, ctx.now, next).await {
-        tracing::error!(
-            schedule_id,
-            error = %e,
-            "sequential: failed to mark schedule triggered"
-        );
-    } else {
+    if db::advance_schedule_run(ctx.pool, ctx.schedule_id, ctx.cron, ctx.tz, ctx.now).await {
         *marked_triggered = true;
     }
 }

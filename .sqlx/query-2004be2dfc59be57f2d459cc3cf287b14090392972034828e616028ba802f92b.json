@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", completed.finished_at AS \"last_backup_at?\", completed.status AS \"last_backup_status?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+  "query": "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, latest.status AS \"last_status?\", completed.finished_at AS \"last_backup_at?\", completed.status AS \"last_backup_status?\", latest.error_message AS \"last_error_message?\", s.cron_expression, s.enabled AS schedule_enabled, s.consecutive_failures AS consecutive_missed_backups, s.missed_backup_threshold FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.status, br.error_message FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id ORDER BY br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true WHERE a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, r.name",
   "describe": {
     "columns": [
       {
@@ -65,7 +65,9 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8"
+      ]
     },
     "nullable": [
       false,
@@ -82,5 +84,5 @@
       false
     ]
   },
-  "hash": "d989caec8d5729e704bb1d26b2118512eb285dbecaeded6456051a7bb2c6b18c"
+  "hash": "2004be2dfc59be57f2d459cc3cf287b14090392972034828e616028ba802f92b"
 }

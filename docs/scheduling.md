@@ -225,7 +225,7 @@ The **Only if the next run is at least ... away** field (`catch_up_min_lead_minu
 
 Each of a schedule's target hosts is tracked separately, so one laptop coming back does not re-run the backup for servers that never missed anything.
 
-A pending catch-up is visible before it runs: the schedule card carries a **Catch-up pending** badge, and the schedule's Overview tab names the host it is waiting on. When one runs, it is recorded in the [activity log](activity.md) as a **Schedule Catch Up** event, and produces a normal backup report.
+A pending catch-up is visible before it runs: the schedule card carries a **Catch-up pending** badge, and the schedule's Overview tab names the host it is waiting on. When one runs, it is recorded in the [activity log](activity.md) as a **Schedule Catch Up** event, and produces a normal backup report. Like a manual **Run now**, a catch-up run also updates the schedule's **Last run** and **Next run**.
 
 | Field | Default | Required | Description |
 |-------|---------|----------|-------------|
@@ -242,6 +242,8 @@ A pending miss is also dropped, without running, when the schedule or its reposi
 To run a backup immediately without waiting for the next scheduled time, click **Run now** on the schedule row. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
 
 Manual runs follow the same retention policy and exclude patterns as scheduled runs, and write every [backup target](#backup-targets) in the same order, so **Run now** produces the same copies the cron would. Because it writes them all, it needs permission on every target repository, not only the schedule's primary one. **Cancel** stops the run on all of them and asks only for permission on the schedule, so whoever can pause it can also stop a run already going.
+
+A manual run also updates **Last run** and **Next run** exactly as a scheduled one does, so the schedule doesn't look overdue right after you've just run it, and the regular cron run for the same occurrence is skipped rather than duplicating the work.
 
 ## Backup Notifications
 

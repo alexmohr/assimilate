@@ -523,6 +523,53 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/schedules\/\d+/)
   })
 
+  // The detail page shows one schedule's hosts. Asking for the whole
+  // installation's health made its first paint wait on a response that grows
+  // with the number of schedule targets in the deployment.
+  test('schedule detail asks for its own health and paints before it arrives', async ({ page }) => {
+    await loginAsAdmin(page)
+    // The dashboard that login lands on asks for the whole installation's
+    // health. Let it settle before the route below starts recording, so the
+    // only requests it sees are the schedule page's own.
+    await page.waitForLoadState('networkidle')
+
+    // Held open until the assertions below have run, so a page that still
+    // waits on the health summary cannot render its Settings form.
+    let releaseHealth: (() => void) | undefined
+    const healthHeld = new Promise<void>((resolve) => {
+      releaseHealth = resolve
+    })
+    let markRequested: (() => void) | undefined
+    const healthRequested = new Promise<void>((resolve) => {
+      markRequested = resolve
+    })
+
+    const healthUrls: string[] = []
+    await page.route(
+      (url) => url.pathname === '/api/stats/health',
+      async (route) => {
+        healthUrls.push(route.request().url())
+        markRequested?.()
+        await healthHeld
+        await route.continue()
+      },
+    )
+
+    await page.goto('/schedules/1')
+    await healthRequested
+
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await expect(page.locator('.cron-input')).toHaveValue('0 2 * * *')
+
+    expect(healthUrls).not.toHaveLength(0)
+    for (const url of healthUrls) {
+      expect(new URL(url).searchParams.get('schedule_id')).toBe('1')
+    }
+
+    releaseHealth?.()
+    await page.waitForLoadState('networkidle')
+  })
+
   test('schedule detail shows cron expression and human-readable description', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')

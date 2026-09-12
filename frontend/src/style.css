@@ -2213,6 +2213,94 @@
     gap: var(--space-1);
   }
 
+  /* --- Compact card --------------------------------------------------------
+     A denser `.entity-card` for a list long enough that six stacked blocks
+     cost a real page of scrolling: schedules and agents both had a card that
+     stacked identity, badges, a meta row, stats and a footer as five or six
+     separate lines, each with its own gap, for facts that read fine as three
+     or four. `--compact` tightens the card's own padding and gap;
+     `.card-grid--compact` narrows the grid's minimum column to match.
+
+     `.cc-head` is the identity row - the name, plus whatever applies to the
+     whole card pinned to its far end via `.cc-head-end` (a toggle, most
+     often). `.cc-facts` is a line of plain prose rather than another `.stat`
+     block: a cadence or a count reads better as a sentence ("Daily at 02:00 ·
+     2 agents") than as a value stacked over an uppercase caption, and prose
+     wraps instead of overflowing. `.cc-foot` closes the card with whatever
+     needs the row's full width - a run-history sparkline, most often - and
+     `.cc-foot-end` pins the trailing controls to its right. */
+  .entity-card--compact {
+    padding: var(--space-5) var(--space-6);
+    gap: var(--space-4);
+  }
+
+  .entity-card--compact .card-name {
+    font-size: var(--fs-sm);
+  }
+
+  .card-grid--compact {
+    grid-template-columns: repeat(auto-fill, minmax(min(304px, 100%), 1fr));
+    gap: var(--space-5);
+    /* Cards size to their own content instead of stretching to the tallest
+       in their row - the exact thing that manufactured an empty band under a
+       card with fewer chips or tags than its neighbour. */
+    align-items: start;
+  }
+
+  .cc-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .cc-head-end {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-shrink: 0;
+  }
+
+  .cc-facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2) var(--space-4);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cc-facts b {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .cc-sep {
+    color: var(--text-muted);
+  }
+
+  .cc-foot {
+    display: flex;
+    align-items: center;
+    /* A run-history sparkline's own caption ("10 runs · 2m-4m") is already
+       near its natural minimum width once it has anything to say, so on a
+       narrow card this wraps to a second line rather than either shrinking
+       the caption to an unreadable sliver or pushing `.cc-foot-end` past the
+       card's own edge. */
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-4);
+  }
+
+  .cc-foot-end {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-shrink: 0;
+  }
+
   /* --- List toolbar -------------------------------------------------------
      The filter/sort strip above a list view. */
   .filter-toggle {

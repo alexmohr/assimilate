@@ -16,6 +16,7 @@ import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
+import { usePersistedRef } from '../composables/usePersistedRef'
 import { useToast } from '../composables/useToast'
 import { useScheduleRun } from '../composables/useScheduleRun'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -69,6 +70,7 @@ const health = ref<ScheduleHealthEntry[]>([])
 const activity = ref<ScheduleActivityEntry[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedules.')
 const router = useRouter()
+const route = useRoute()
 type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
 
 const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
@@ -81,6 +83,22 @@ type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
 type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
 
+function isFilterStatus(value: string): value is FilterStatus {
+  return value === 'all' || value === 'enabled' || value === 'disabled'
+}
+function isFilterType(value: string): value is FilterType {
+  return value === 'all' || value === 'backup' || value === 'check' || value === 'verify'
+}
+function isFilterHealth(value: string): value is FilterHealth {
+  return (
+    value === 'all' ||
+    value === 'overdue' ||
+    value === 'success' ||
+    value === 'warning' ||
+    value === 'failed'
+  )
+}
+
 /**
  * How the cards are bucketed into sections. Time answers "what runs next",
  * agent "what does this machine back up", repo "what writes into this
@@ -88,29 +106,48 @@ type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
  * rather than another sort field.
  */
 type GroupMode = 'time' | 'agent' | 'repo'
+function isGroupMode(value: string): value is GroupMode {
+  return value === 'time' || value === 'agent' || value === 'repo'
+}
 
 const GROUP_OPTIONS: readonly SegmentedOption<GroupMode>[] = [
   { value: 'time', label: 'Time' },
   { value: 'agent', label: 'Agent' },
   { value: 'repo', label: 'Repo' },
 ]
-const groupMode = ref<GroupMode>('time')
+// Every toolbar choice below is persisted under its own `assimilate-schedules-*`
+// key and restored on the next visit - how this list is grouped, sorted or
+// filtered is a setting a person makes once, not a one-off query that should
+// reset the moment they navigate away. `filterHealth` alone also takes a
+// query override, since a link such as `?filter=overdue` is an explicit
+// choice made just now and should win over whatever was last persisted.
+const groupMode = usePersistedRef<GroupMode>('assimilate-schedules-group', 'time', isGroupMode)
 
 const {
   field: sortField,
   direction: sortDir,
   toggle: toggleSort,
   sign: sortSign,
-} = useListSort<SortField>('agent')
-const filterStatus = ref<FilterStatus>('all')
-const filterType = ref<FilterType>('all')
+} = useListSort<SortField>('agent', 'asc', {
+  key: 'assimilate-schedules-sort',
+  fields: SORT_OPTIONS.map((option) => option.field),
+})
+const filterStatus = usePersistedRef<FilterStatus>(
+  'assimilate-schedules-filter-status',
+  'all',
+  isFilterStatus,
+)
+const filterType = usePersistedRef<FilterType>(
+  'assimilate-schedules-filter-type',
+  'all',
+  isFilterType,
+)
 const filterText = ref('')
-const filterHealth = ref<FilterHealth>(
-  (() => {
-    const q = useRoute().query.filter as string | undefined
-    if (q === 'overdue' || q === 'success' || q === 'warning' || q === 'failed') return q
-    return 'all'
-  })(),
+const filterHealth = usePersistedRef<FilterHealth>(
+  'assimilate-schedules-filter-health',
+  'all',
+  isFilterHealth,
+  route.query.filter as string | undefined,
 )
 
 const { isMobile } = useMobile()
@@ -700,11 +737,11 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           <span class="list-group-count">{{ group.schedules.length }}</span>
           <span class="list-group-rule"></span>
         </div>
-        <div class="card-grid">
+        <div class="card-grid card-grid--compact">
           <div
             v-for="s in group.schedules"
             :key="s.id"
-            class="entity-card"
+            class="entity-card entity-card--compact"
             :class="{
               'entity-card--notable': !s.enabled,
               'entity-card--highlighted': s.overdueEntries.length > 0,
@@ -712,17 +749,35 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             :data-schedule-id="s.id"
             @click="navigateToSchedule(s)"
           >
-            <span class="card-name">{{
-              s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
-            }}</span>
-            <EntityStatusBadges
-              :notable="!s.enabled"
-              :notable-label="scheduleDisabledLabel(s)"
-              :running="s.isRunning"
-              running-label="Running"
-              :issues="scheduleIssues(s)"
-            />
+            <div class="cc-head">
+              <span class="card-name">{{
+                s.name ||
+                s.repo?.name ||
+                (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
+              }}</span>
+              <div
+                class="cc-head-end"
+                @click.stop
+              >
+                <div class="schedule-toggle">
+                  <ToggleSwitch
+                    :model-value="s.enabled"
+                    :disabled="toggleLoading === s.id"
+                    :label="s.enabled ? 'Disable schedule' : 'Enable schedule'"
+                    @update:model-value="toggleScheduleEnabled(s)"
+                  />
+                  <span class="schedule-toggle-label">{{ scheduleDisabledLabel(s) }}</span>
+                </div>
+              </div>
+            </div>
             <div class="card-meta">
+              <EntityStatusBadges
+                :notable="!s.enabled"
+                :notable-label="scheduleDisabledLabel(s)"
+                :running="s.isRunning"
+                running-label="Running"
+                :issues="scheduleIssues(s)"
+              />
               <span class="meta-pill">
                 {{ s.target_hostnames.length }} agent{{
                   s.target_hostnames.length === 1 ? '' : 's'
@@ -748,50 +803,40 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
                 Catch-up pending
               </span>
             </div>
-            <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{
-                  cronToHuman(s.cron_expression) ?? s.cron_expression
-                }}</span>
-                <span class="stat-label">Every</span>
-              </div>
-              <div class="stat stat-align-end">
-                <span class="stat-value">{{ formatDateShort(s.next_run_at) }}</span>
-                <span class="stat-label">Next run</span>
-              </div>
+            <div class="cc-facts">
+              <b>{{ cronToHuman(s.cron_expression) ?? s.cron_expression }}</b>
             </div>
-            <div
-              class="card-actions"
-              @click.stop
-            >
-              <div class="schedule-toggle">
-                <ToggleSwitch
-                  :model-value="s.enabled"
-                  :disabled="toggleLoading === s.id"
-                  :label="s.enabled ? 'Disable schedule' : 'Enable schedule'"
-                  @update:model-value="toggleScheduleEnabled(s)"
-                />
-                <span class="schedule-toggle-label">{{ scheduleDisabledLabel(s) }}</span>
+            <div class="cc-foot">
+              <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />
+              <div
+                class="cc-foot-end"
+                @click.stop
+              >
+                <span
+                  class="cc-next"
+                  title="Next run"
+                >
+                  {{ formatDateShort(s.next_run_at) }}
+                </span>
+                <button
+                  v-if="s.isRunning"
+                  class="btn btn-sm btn-danger"
+                  :disabled="cancelLoading === s.id"
+                  title="Cancel the running backup"
+                  @click="cancelBackup(s)"
+                >
+                  {{ cancelLoading === s.id ? '...' : 'Cancel' }}
+                </button>
+                <button
+                  v-else
+                  class="btn btn-sm btn-ghost"
+                  :disabled="runNowLoading === s.id"
+                  :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
+                  @click="runNow(s)"
+                >
+                  {{ runNowLoading === s.id ? '...' : 'Run' }}
+                </button>
               </div>
-              <button
-                v-if="s.isRunning"
-                class="btn btn-sm btn-danger"
-                :disabled="cancelLoading === s.id"
-                title="Cancel the running backup"
-                @click="cancelBackup(s)"
-              >
-                {{ cancelLoading === s.id ? '...' : 'Cancel' }}
-              </button>
-              <button
-                v-else
-                class="btn btn-sm btn-ghost"
-                :disabled="runNowLoading === s.id"
-                :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
-                @click="runNow(s)"
-              >
-                {{ runNowLoading === s.id ? '...' : 'Run' }}
-              </button>
             </div>
           </div>
         </div>

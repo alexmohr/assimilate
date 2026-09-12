@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET missed_backup_threshold = 100 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb362b194b7c2bf54e80e1cf0941441b13ceaa9e01a90d51f83fe80f50d64d4a"
+}

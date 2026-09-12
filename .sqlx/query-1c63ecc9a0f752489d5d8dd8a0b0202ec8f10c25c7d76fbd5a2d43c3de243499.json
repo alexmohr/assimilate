@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT catch_up_pending_for FROM schedule_targets WHERE schedule_id = $1 AND agent_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "catch_up_pending_for",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "1c63ecc9a0f752489d5d8dd8a0b0202ec8f10c25c7d76fbd5a2d43c3de243499"
+}

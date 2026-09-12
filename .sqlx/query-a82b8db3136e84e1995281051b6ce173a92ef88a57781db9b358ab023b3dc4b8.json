@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, 'schedule_auto_disabled', true)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a82b8db3136e84e1995281051b6ce173a92ef88a57781db9b358ab023b3dc4b8"
+}

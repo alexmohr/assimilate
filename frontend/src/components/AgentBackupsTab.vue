@@ -116,4 +116,19 @@ const visible = computed(() => {
 .backups-sort {
   margin-left: auto;
 }
+
+@media (max-width: 640px) {
+  /* Four segments plus a sort button don't fit a phone width - scrolling the
+     toolbar sideways keeps every option one tap away instead of wrapping the
+     segmented control's own pills mid-row or squeezing their labels. */
+  .backups-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .backups-toolbar :deep(.segmented),
+  .backups-sort {
+    flex: none;
+  }
+}
 </style>

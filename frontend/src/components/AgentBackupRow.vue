@@ -172,76 +172,90 @@ onMessage('RunEvent', (payload) => {
       :class="`agent-row-stripe--${stripe}`"
       aria-hidden="true"
     />
-    <span class="agent-row-when">{{ relativeTime(report.finished_at) }}</span>
-    <button
-      v-if="report.archive_name"
-      class="agent-row-name mono"
-      type="button"
-      title="Browse this archive"
-      @click="emit('open')"
-    >
-      {{ report.repo_name }}
-    </button>
-    <span
-      v-else
-      class="agent-row-name mono"
-      >{{ report.repo_name }}</span
-    >
-    <span
-      v-if="!isSuccess"
-      class="badge"
-      :class="backupStatusBadgeClass(report.status)"
-      >{{ status }}</span
-    >
+    <div class="agent-row-line">
+      <span class="agent-row-when">{{ relativeTime(report.finished_at) }}</span>
+      <button
+        v-if="report.archive_name"
+        class="agent-row-name mono"
+        type="button"
+        title="Browse this archive"
+        @click="emit('open')"
+      >
+        {{ report.repo_name }}
+      </button>
+      <span
+        v-else
+        class="agent-row-name mono"
+        >{{ report.repo_name }}</span
+      >
+      <span
+        v-if="!isSuccess"
+        class="badge"
+        :class="backupStatusBadgeClass(report.status)"
+        >{{ status }}</span
+      >
+    </div>
     <!--
       Named only when it differs from the repository, which is the case a bare
       repo name cannot disambiguate: several schedules can write to one repo,
       and tracing a failure means knowing which one produced it.
     -->
-    <RouterLink
-      v-if="report.schedule_id && report.schedule_name && report.schedule_name !== report.repo_name"
-      class="agent-row-sub row-schedule-link"
-      :to="`/schedules/${report.schedule_id}`"
+    <div
+      v-if="
+        (report.schedule_id && report.schedule_name && report.schedule_name !== report.repo_name) ||
+        report.archive_name
+      "
+      class="agent-row-line"
     >
-      {{ report.schedule_name }}
-    </RouterLink>
-    <span
-      v-if="report.archive_name"
-      class="agent-row-sub mono"
-      >{{ report.archive_name }}</span
-    >
-    <span class="agent-row-stats">
-      <template v-if="isSuccess || status === 'warning'">
-        <span>{{ formatBytes(report.original_size) }}</span>
-        <span>{{ formatBytes(report.deduplicated_size) }} dedup</span>
-        <span>{{ report.files_processed }} files</span>
-      </template>
-      <span>{{ formatDuration(report.duration_secs) }}</span>
-    </span>
-    <!--
-      A preview row cannot expand in place - it has no detail block - so what
-      it offers instead is the trip to the row that does, on the Backups tab.
-      Without it a failed run in a preview is a dead end: the badge says it
-      broke and nothing on the row says why.
-    -->
-    <button
-      v-if="!showDetail && messageLabel"
-      class="btn btn-sm btn-ghost"
-      type="button"
-      title="Open this run on the Backups tab"
-      @click="emit('detail')"
-    >
-      {{ messageLabel }}
-    </button>
-    <button
-      v-if="showDetail && hasDetail"
-      class="btn btn-sm btn-ghost"
-      type="button"
-      :aria-expanded="expanded"
-      @click="emit('toggle')"
-    >
-      {{ expanded ? 'Hide detail' : 'Show detail' }}
-    </button>
+      <RouterLink
+        v-if="
+          report.schedule_id && report.schedule_name && report.schedule_name !== report.repo_name
+        "
+        class="agent-row-sub row-schedule-link"
+        :to="`/schedules/${report.schedule_id}`"
+      >
+        {{ report.schedule_name }}
+      </RouterLink>
+      <span
+        v-if="report.archive_name"
+        class="agent-row-sub mono"
+        >{{ report.archive_name }}</span
+      >
+    </div>
+    <div class="agent-row-line">
+      <span class="agent-row-stats">
+        <template v-if="isSuccess || status === 'warning'">
+          <span>{{ formatBytes(report.original_size) }}</span>
+          <span>{{ formatBytes(report.deduplicated_size) }} dedup</span>
+          <span>{{ report.files_processed }} files</span>
+        </template>
+        <span>{{ formatDuration(report.duration_secs) }}</span>
+      </span>
+      <!--
+        A preview row cannot expand in place - it has no detail block - so what
+        it offers instead is the trip to the row that does, on the Backups tab.
+        Without it a failed run in a preview is a dead end: the badge says it
+        broke and nothing on the row says why.
+      -->
+      <button
+        v-if="!showDetail && messageLabel"
+        class="btn btn-sm btn-ghost"
+        type="button"
+        title="Open this run on the Backups tab"
+        @click="emit('detail')"
+      >
+        {{ messageLabel }}
+      </button>
+      <button
+        v-if="showDetail && hasDetail"
+        class="btn btn-sm btn-ghost"
+        type="button"
+        :aria-expanded="expanded"
+        @click="emit('toggle')"
+      >
+        {{ expanded ? 'Hide detail' : 'Show detail' }}
+      </button>
+    </div>
   </div>
   <div
     v-if="expanded && hasDetail"

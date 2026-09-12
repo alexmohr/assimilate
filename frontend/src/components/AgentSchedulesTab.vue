@@ -92,6 +92,7 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
       <AgentScheduleRow
         v-for="s in schedules"
         :key="s.id"
+        :data-schedule-id="s.id"
         :schedule="s"
         :repo-name="repoNameFor(s)"
         :health="healthFor(s)"

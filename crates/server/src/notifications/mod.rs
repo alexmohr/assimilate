@@ -589,7 +589,11 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
         .get("schedule_id")
         .and_then(serde_json::Value::as_i64)
     {
-        format!("/schedules/{schedule_id}")
+        if is_backup_problem {
+            format!("/schedules/{schedule_id}?tab=logs")
+        } else {
+            format!("/schedules/{schedule_id}")
+        }
     } else if let Some(hostname) = payload.get("hostname").and_then(serde_json::Value::as_str) {
         if is_backup_problem {
             let archive_name = payload
@@ -964,11 +968,36 @@ mod tests {
         assert_eq!(build_push_url(&p), "/schedules/3");
     }
 
+    // The dominant real-world case: a schedule-triggered run's warning/failure
+    // notification must land on the schedule's Logs tab, the same as an
+    // agent-only one does - not just the bare schedule page, which is what
+    // this returned before `schedule_id`'s branch grew its own `is_backup_problem`
+    // check to match the hostname branch's.
     #[test]
     fn schedule_id_takes_priority_over_hostname() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",
             "hostname": "myhost",
+            "schedule_id": 42,
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/42?tab=logs");
+    }
+
+    #[test]
+    fn schedule_id_backup_failed_goes_to_logs_tab() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "schedule_id": 42,
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/42?tab=logs");
+    }
+
+    // A non-problem schedule event (e.g. auto-disabled) has nothing to show
+    // on the Logs tab specifically, so it stays on the schedule's default tab.
+    #[test]
+    fn schedule_id_non_problem_event_has_no_tab_param() {
+        let p = payload(serde_json::json!({
+            "event_type": "schedule_auto_disabled",
             "schedule_id": 42,
         }));
         assert_eq!(build_push_url(&p), "/schedules/42");

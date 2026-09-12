@@ -1581,6 +1581,27 @@ async fn write_dry_run_pattern_files(
     Some((exclude_file, include_file))
 }
 
+/// Builds the `borg create --dry-run` flags, placing `--patterns-from`
+/// (when include patterns exist) before `--exclude-from`: borg tests
+/// patterns in the order given on the command line, first match wins, so an
+/// include there rescues a path a later, broader exclude would otherwise
+/// drop.
+fn dry_run_create_args<'a>(
+    archive_spec: &'a str,
+    include_file_path: Option<&'a str>,
+    exclude_file_path: &'a str,
+) -> Vec<&'a str> {
+    let mut flags: Vec<&str> = vec!["create", "--dry-run", "--list", "--log-json"];
+    if let Some(include_file_path) = include_file_path {
+        flags.push("--patterns-from");
+        flags.push(include_file_path);
+    }
+    flags.push("--exclude-from");
+    flags.push(exclude_file_path);
+    flags.push(archive_spec);
+    flags
+}
+
 async fn run_dry_run_task(params: DryRunTaskParams, ctx: FreeTaskContext<'_>, borg: &Borg) {
     let DryRunTaskParams {
         repo_id,
@@ -1616,23 +1637,16 @@ async fn run_dry_run_task(params: DryRunTaskParams, ctx: FreeTaskContext<'_>, bo
 
     let env_vars = build_borg_env(&target);
 
-    // Listed before --exclude-from: borg tests patterns in the order given on
-    // the command line, first match wins, so an include here rescues a path a
-    // later, broader exclude would otherwise drop.
     let include_file_path = include_file
         .as_ref()
         .map(|f| f.path().to_string_lossy().into_owned());
     let exclude_file_path = exclude_file.path().to_string_lossy().into_owned();
 
-    let mut flags: Vec<&str> = vec!["create", "--dry-run", "--list", "--log-json"];
-    if let Some(include_file_path) = &include_file_path {
-        flags.push("--patterns-from");
-        flags.push(include_file_path.as_str());
-    }
-    flags.push("--exclude-from");
-    flags.push(exclude_file_path.as_str());
-    flags.push(archive_spec.as_str());
-
+    let flags = dry_run_create_args(
+        &archive_spec,
+        include_file_path.as_deref(),
+        &exclude_file_path,
+    );
     let args = Borg::args_with_positional(&flags, &backup_sources);
 
     info!(repo_id = ?repo_id, "running borg create --dry-run");
@@ -2124,6 +2138,75 @@ mod tests {
             .unwrap();
         let content = std::fs::read_to_string(file.path()).unwrap();
         assert_eq!(content, "+ /home/keep\n");
+    }
+
+    #[test]
+    fn dry_run_create_args_without_include_patterns() {
+        let flags = dry_run_create_args("::host-dryrun-1", None, "/tmp/exclude");
+        assert_eq!(
+            flags,
+            vec![
+                "create",
+                "--dry-run",
+                "--list",
+                "--log-json",
+                "--exclude-from",
+                "/tmp/exclude",
+                "::host-dryrun-1",
+            ]
+        );
+    }
+
+    #[test]
+    fn dry_run_create_args_places_include_before_exclude() {
+        let flags = dry_run_create_args("::host-dryrun-1", Some("/tmp/include"), "/tmp/exclude");
+        assert_eq!(
+            flags,
+            vec![
+                "create",
+                "--dry-run",
+                "--list",
+                "--log-json",
+                "--patterns-from",
+                "/tmp/include",
+                "--exclude-from",
+                "/tmp/exclude",
+                "::host-dryrun-1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn write_dry_run_pattern_files_writes_both_when_include_patterns_present() {
+        let (outbound_tx, _outbound_rx) = mpsc::channel(4);
+        let result = write_dry_run_pattern_files(
+            &["*.log".to_owned()],
+            &["/home/keep".to_owned()],
+            "req-1",
+            &outbound_tx,
+        )
+        .await;
+
+        let (exclude_file, include_file) = result.expect("both pattern files should be written");
+        let include_file = include_file.expect("include patterns were provided");
+        assert_eq!(
+            std::fs::read_to_string(exclude_file.path()).unwrap(),
+            "*.log\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(include_file.path()).unwrap(),
+            "+ /home/keep\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_dry_run_pattern_files_omits_include_file_when_no_include_patterns() {
+        let (outbound_tx, _outbound_rx) = mpsc::channel(4);
+        let result =
+            write_dry_run_pattern_files(&["*.log".to_owned()], &[], "req-1", &outbound_tx).await;
+
+        let (_exclude_file, include_file) = result.expect("exclude file should still be written");
+        assert!(include_file.is_none());
     }
 
     fn make_schedule(id: i64, sources: Vec<&str>) -> shared::types::ScheduleConfig {

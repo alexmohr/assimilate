@@ -3160,6 +3160,95 @@ esac
         );
     }
 
+    /// The tick that crosses `missed_backup_threshold` is both an individual miss and
+    /// the miss that auto-disables the schedule - `backup_skipped_agent_offline` fires
+    /// unconditionally on every connectivity miss in `record_schedule_failure_once`,
+    /// before the auto-disable check even runs, so a channel subscribed to both events
+    /// must see `backup_skipped_agent_offline` on every tick *and* `schedule_auto_disabled`
+    /// additionally on the final one, not one instead of the other.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_auto_disable_dispatches_both_notifications_on_the_final_miss(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (_, schedule_id, _) = setup_due_schedule(&pool, &key).await;
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_skipped_agent_offline', true), ($1, 'schedule_auto_disabled', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let notification_service = crate::notifications::NotificationService::new(pool.clone());
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        for _ in 0..MAX_CONSECUTIVE_FAILURES {
+            let past = Utc::now()
+                .checked_sub_signed(chrono::Duration::hours(1))
+                .unwrap();
+            db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
+
+            tick(&TickDeps {
+                pool: &pool,
+                registry: &registry,
+                encryption_key: &key,
+                tunnel_manager: &tunnel,
+                completion_bus: &bus,
+                repo_lock: &RepoLock::default(),
+                repo_op_tracker: &RepoOpTracker::default(),
+                ui_broadcast: &UiBroadcast::new(),
+                background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+                power_sessions: &crate::power::PowerSessionTracker::default(),
+                notification_service: &notification_service,
+                task_registry: &task_registry,
+            })
+            .await
+            .unwrap();
+        }
+
+        let outstanding = task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+        assert_eq!(
+            outstanding, 0,
+            "task_registry.shutdown must join every notification delivery task"
+        );
+
+        let mut delivery_event_types: Vec<String> = sqlx::query_scalar!(
+            "SELECT event_type FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        delivery_event_types.sort();
+
+        let mut expected: Vec<String> =
+            vec!["backup_skipped_agent_offline".to_owned(); MAX_CONSECUTIVE_FAILURES as usize];
+        expected.push("schedule_auto_disabled".to_owned());
+        expected.sort();
+
+        assert_eq!(
+            delivery_event_types, expected,
+            "every miss must dispatch backup_skipped_agent_offline, and the final miss must \
+             additionally dispatch schedule_auto_disabled rather than replacing it"
+        );
+    }
+
     /// A schedule's own `missed_backup_threshold` - not the `MAX_CONSECUTIVE_FAILURES`
     /// default - must govern when the scheduler gives up and disables it. Below that
     /// custom threshold, misses must keep accumulating with the schedule still enabled

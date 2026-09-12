@@ -1041,6 +1041,36 @@ if [ -z "$MEDIA_UNEXPLAINED_REPORT_ID" ]; then
 fi
 api POST "/api/stats/activity/$MEDIA_UNEXPLAINED_REPORT_ID/acknowledge" > /dev/null
 
+echo "==> Seeding a failed pre-backup hook command on media-store-01..."
+# Demonstrates the failure detail view's command-output block (see
+# docs/scheduling.md#pre--and-post-backup-commands): a hook command's exit
+# code alone rarely explains anything, so the agent now folds both its
+# stdout and stderr into error_message, one labelled section each, the same
+# shape run_hook_command in crates/agent/src/backup.rs produces for a real
+# failure. Left unacknowledged, unlike the warning above, so it shows up in
+# the Activity Log's default Needs Attention view without switching filters.
+MEDIA_HOOK_FAILURE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "
+WITH inserted AS (
+INSERT INTO backup_reports
+    (agent_id, repo_id, schedule_id, started_at, finished_at, status, error_message)
+SELECT $MEDIA_ID, $REPO_WEEKLY_ID, s.id,
+       NOW() - interval '1 day' - interval '20 seconds',
+       NOW() - interval '1 day',
+       'failed',
+       'pre-backup hook command exited with code 1' || chr(10) ||
+       'stdout:' || chr(10) ||
+       'creating LVM snapshot media-snap-1768000000' || chr(10) ||
+       'stderr:' || chr(10) ||
+       'lvcreate: Snapshot origin volume /dev/vg0/media not found.'
+FROM (SELECT id FROM schedules WHERE repo_id = $REPO_WEEKLY_ID ORDER BY id LIMIT 1) s
+RETURNING id
+)
+SELECT id FROM inserted")
+if [ -z "$MEDIA_HOOK_FAILURE_REPORT_ID" ]; then
+    echo "expected to seed a media-store-01 hook failure report, inserted none" >&2
+    exit 1
+fi
+
 echo "==> Seeding a recovered outage on db-server-01..."
 # Feeds the agent detail Overview's run strip, which draws one cell per run
 # rather than reducing a window of days to a percentage. Three *consecutive*

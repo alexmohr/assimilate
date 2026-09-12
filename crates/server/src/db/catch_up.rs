@@ -21,6 +21,9 @@ pub struct CatchUpCandidate {
     pub hostname: String,
     /// Schedule type, as stored - parsed at the call site.
     pub schedule_type: String,
+    /// The schedule's cron expression, needed to advance `next_run_at` past
+    /// this catch-up run the same way a scheduled tick does.
+    pub cron_expression: String,
     /// The occurrence that was missed.
     pub pending_for: DateTime<Utc>,
     /// When the schedule next runs on its own, which the lead-time floor is
@@ -107,12 +110,13 @@ pub async fn list_catch_up_candidates_for_agent(
     sqlx::query_as!(
         CatchUpCandidate,
         "SELECT s.id AS schedule_id, s.name AS schedule_name, st.agent_id, a.hostname, \
-         s.schedule_type, st.catch_up_pending_for AS \"pending_for!\", s.next_run_at, \
-         s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st JOIN schedules \
-         s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE st.agent_id = $1 \
-         AND st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = true AND s.enabled \
-         = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM schedule_repos sr JOIN repos r \
-         ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND r.enabled = true) ORDER BY s.id",
+         s.schedule_type, s.cron_expression, st.catch_up_pending_for AS \"pending_for!\", \
+         s.next_run_at, s.catch_up_min_lead_minutes AS min_lead_minutes FROM schedule_targets st \
+         JOIN schedules s ON s.id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE \
+         st.agent_id = $1 AND st.catch_up_pending_for IS NOT NULL AND s.catch_up_missed_runs = \
+         true AND s.enabled = true AND a.is_hidden = false AND EXISTS (SELECT 1 FROM \
+         schedule_repos sr JOIN repos r ON r.id = sr.repo_id WHERE sr.schedule_id = s.id AND \
+         r.enabled = true) ORDER BY s.id",
         agent_id,
     )
     .fetch_all(pool)

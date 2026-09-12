@@ -1433,6 +1433,57 @@ async fn schedule_due_and_trigger(pool: PgPool) {
     assert_eq!(due.len(), 0);
 }
 
+/// `advance_schedule_run` is the helper both the scheduler's own tick and a
+/// manual/catch-up dispatch call to record a successful run - this is its
+/// happy path.
+#[sqlx::test(migrations = "./migrations")]
+async fn advance_schedule_run_updates_last_and_next_run(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+
+    let advanced =
+        db::advance_schedule_run(&pool, schedule.id, &schedule.cron_expression, Tz::UTC, now).await;
+    assert!(advanced, "a valid cron expression must advance the run");
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        fetched.last_run_at.map(|t| t.timestamp()),
+        Some(now.timestamp()),
+        "last_run_at must advance to the moment the run was asked for"
+    );
+    assert!(
+        fetched.next_run_at.is_some_and(|next| next > now),
+        "next_run_at must advance past this run"
+    );
+}
+
+/// Regression test for a review finding on the manual/catch-up dispatch path:
+/// an unevaluatable cron must report failure rather than silently doing
+/// nothing while a caller assumes success - a caller mustn't count this run as
+/// "triggered" when the bookkeeping it depends on never actually ran.
+#[sqlx::test(migrations = "./migrations")]
+async fn advance_schedule_run_reports_failure_for_an_invalid_cron(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+
+    let advanced =
+        db::advance_schedule_run(&pool, schedule.id, "not a cron expression", Tz::UTC, now).await;
+    assert!(
+        !advanced,
+        "an invalid cron expression must not report success"
+    );
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(
+        fetched.last_run_at, schedule.last_run_at,
+        "a failed advance must leave last_run_at untouched"
+    );
+    assert_eq!(
+        fetched.next_run_at, schedule.next_run_at,
+        "a failed advance must leave next_run_at untouched"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_agent_hostname(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
@@ -3090,7 +3141,7 @@ async fn health_summary(pool: PgPool) {
     )
     .await;
 
-    let health = db::get_health_summary(&pool).await.unwrap();
+    let health = db::get_health_summary(&pool, None).await.unwrap();
     assert_eq!(health.len(), 1);
     assert_eq!(health.first().unwrap().hostname, "sched-host");
     assert_eq!(health.first().unwrap().schedule_id, schedule.id);
@@ -3153,7 +3204,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
     )
     .await;
 
-    let health = db::get_health_summary(&pool).await.unwrap();
+    let health = db::get_health_summary(&pool, None).await.unwrap();
     let entry_a = health
         .iter()
         .find(|h| h.schedule_id == schedule_a.id)
@@ -3167,6 +3218,81 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
     assert_eq!(
         entry_b.last_status, None,
         "schedule_b must not inherit schedule_a's run status"
+    );
+}
+
+/// The schedule detail page shows one schedule's targets, so it asks for one
+/// schedule's health rather than the whole installation's.
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_filters_to_one_schedule(pool: PgPool) {
+    let (agent, repo, schedule_a) = create_test_schedule(&pool).await;
+    let schedule_b = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            wake_override: ScheduleWakeOverride::HostDefault,
+            name: "other-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 5 * * *",
+            enabled: true,
+            canary_enabled: false,
+            vm_snapshot_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: &[],
+            post_backup_commands: &[],
+            hook_timeout_seconds: 60,
+            missed_backup_threshold: 3,
+            catch_up_missed_runs: false,
+            catch_up_min_lead_minutes: 120,
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, schedule_b.id, &[(agent.id, 0)])
+        .await
+        .unwrap();
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule_a.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
+
+    let all = db::get_health_summary(&pool, None).await.unwrap();
+    assert_eq!(
+        all.len(),
+        2,
+        "an unfiltered summary still covers everything"
+    );
+
+    let filtered = db::get_health_summary(&pool, Some(schedule_a.id))
+        .await
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+    let entry = filtered.first().unwrap();
+    assert_eq!(entry.schedule_id, schedule_a.id);
+    assert_eq!(entry.last_status.as_deref(), Some("success"));
+
+    let unknown_schedule_id = schedule_a.id.max(schedule_b.id).saturating_add(1);
+    let missing = db::get_health_summary(&pool, Some(unknown_schedule_id))
+        .await
+        .unwrap();
+    assert!(
+        missing.is_empty(),
+        "a schedule that does not exist has no health rows"
     );
 }
 
@@ -3226,7 +3352,7 @@ async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(p
     .await
     .unwrap();
 
-    let health = db::get_health_summary(&pool).await.unwrap();
+    let health = db::get_health_summary(&pool, None).await.unwrap();
     let entry = health
         .iter()
         .find(|h| h.schedule_id == schedule.id)
@@ -3292,7 +3418,7 @@ async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool
     )
     .await;
 
-    let health = db::get_health_summary(&pool).await.unwrap();
+    let health = db::get_health_summary(&pool, None).await.unwrap();
     let entry = health
         .iter()
         .find(|h| h.schedule_id == schedule.id)
@@ -3381,7 +3507,7 @@ async fn backup_reports_status_check_constraint_rejects_invalid_status(pool: PgP
         "insert must fail specifically on the status CHECK constraint"
     );
 
-    let health = db::get_health_summary(&pool).await.unwrap();
+    let health = db::get_health_summary(&pool, None).await.unwrap();
     let entry = health
         .iter()
         .find(|h| h.schedule_id == schedule.id)

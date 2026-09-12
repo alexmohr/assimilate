@@ -3687,6 +3687,46 @@ pub async fn mark_schedule_triggered(
     Ok(())
 }
 
+/// Advances `schedule_id`'s `last_run_at` to `now` and `next_run_at` to the
+/// next cron occurrence from it - the bookkeeping a successful dispatch
+/// performs, whether it came from a scheduled tick, a manual "Run now", or a
+/// caught-up run. The single implementation both `scheduler::mark_schedule_triggered_once`
+/// and `run_dispatch`'s manual/catch-up dispatch call, so the two paths can't
+/// drift out of sync with each other.
+///
+/// Returns whether the write actually landed, so a caller that only wants to
+/// count a run as "triggered" once this bookkeeping truly succeeded can gate
+/// that decision on it, rather than assuming success: an invalid cron
+/// expression or a transient database error must not be silently treated as
+/// "done".
+pub async fn advance_schedule_run(
+    pool: &PgPool,
+    schedule_id: i64,
+    cron_expression: &str,
+    tz: chrono_tz::Tz,
+    now: DateTime<Utc>,
+) -> bool {
+    let next = match shared::schedule::calculate_next_run(cron_expression, now, tz) {
+        Ok(next) => next,
+        Err(e) => {
+            tracing::error!(
+                schedule_id,
+                cron = %cron_expression,
+                error = %e,
+                "invalid cron expression, not advancing schedule run"
+            );
+            return false;
+        }
+    };
+    match mark_schedule_triggered(pool, schedule_id, now, next).await {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!(schedule_id, error = %e, "failed to advance schedule run");
+            false
+        }
+    }
+}
+
 /// Resets a schedule's consecutive-failure count once a tick completes having
 /// recorded no failure for any of its targets - the only place `consecutive_failures`
 /// goes back to 0 (deliberately *not* folded into [`mark_schedule_triggered`], which
@@ -5155,7 +5195,10 @@ pub async fn get_activity_feed(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
+pub async fn get_health_summary(
+    pool: &PgPool,
+    schedule_id: Option<i64>,
+) -> Result<Vec<HealthRow>, ApiError> {
     // Two LATERAL joins per (schedule, agent) row: `latest` is the most recent report
     // regardless of status, which is what tells the UI a backup is currently running
     // (status 'pending'/'started'); `completed` is the most recent *settled* report, whose
@@ -5168,6 +5211,11 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
     // failed run as coverage - see HostsView.vue's mostRecentBackupAt - has the real
     // completed-run outcome to gate on, even while a newer run is in flight and `latest`'s
     // own status can't represent that (pending/started isn't a `BackupStatus`).
+    //
+    // `schedule_id` narrows the whole thing to one schedule for a caller that only shows
+    // that schedule's hosts. The filter sits on the base `schedules` scan, so the two
+    // LATERAL lookups run once per target of that schedule instead of once per
+    // (schedule, agent) pair in the installation.
     sqlx::query_as!(
         HealthRow,
         "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, \
@@ -5182,7 +5230,9 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
          LEFT JOIN LATERAL ( SELECT br.status, br.finished_at FROM backup_reports br WHERE \
          br.schedule_id = s.id AND br.agent_id = a.id AND br.repo_id = s.repo_id AND br.status \
          NOT IN ('pending', 'started') ORDER BY br.started_at DESC LIMIT 1 ) completed ON true \
-         WHERE a.is_hidden = false ORDER BY a.hostname, r.name",
+         WHERE a.is_hidden = false AND ($1::bigint IS NULL OR s.id = $1) ORDER BY a.hostname, \
+         r.name",
+        schedule_id,
     )
     .fetch_all(pool)
     .await

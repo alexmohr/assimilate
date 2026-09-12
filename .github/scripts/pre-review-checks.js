@@ -63,7 +63,17 @@ module.exports = async ({ github, context, core, prNumber, headSha, force }) => 
   // Claude had even begun. Only exclude "Review PR" from that check once
   // Claude's actual review work is done and only the job's own bookkeeping
   // is left, which is what the later call is for.
-  await syncLabels({ github, context, core, prNumber });
+  //
+  // autoMergeEnabled is pinned off explicitly rather than left to the
+  // parameter's own fail-closed default (see sync-pr-labels.js): this call
+  // exists only to refresh the labels this gate is about to read, and merging
+  // from inside the pre-review gate would mean merging *before* the review it
+  // gates has run. Not passing it happens to be safe today only because the
+  // "Review PR" job's own check run is still pending here, which keeps the
+  // completeness check false and so keeps `ready to merge` unreachable
+  // through this call - incidental to unrelated logic, and not something a
+  // future refactor of that check should be able to quietly undo.
+  await syncLabels({ github, context, core, prNumber, autoMergeEnabled: false });
 
   const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
   const labels = pr.labels.map((l) => l.name);

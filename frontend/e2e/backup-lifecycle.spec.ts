@@ -11,6 +11,12 @@ async function openFirstSchedule(page: Page): Promise<string> {
   return '1'
 }
 
+// The Schedule info panel's value (<dd>) for the <dt> row named `label`, e.g.
+// "Last run" or "Next run".
+function scheduleInfoValue(page: Page, label: string) {
+  return page.locator('dt', { hasText: label }).locator('xpath=following-sibling::dd[1]')
+}
+
 // Minimal report row that satisfies the view's status checks.
 function makeReport(status: 'started' | 'pending' | 'success' | 'cancelled'): object {
   return {
@@ -151,6 +157,9 @@ test('Run now triggers a backup that eventually completes', async ({ page }) => 
   await loginAsAdmin(page)
   await openFirstSchedule(page)
 
+  const lastRun = scheduleInfoValue(page, 'Last run')
+  const lastRunBefore = await lastRun.textContent()
+
   // The demo runs real agents, so Run now dispatches an actual borg operation.
   const runNowBtn = page.getByRole('button', { name: 'Run now' })
   await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
@@ -171,6 +180,11 @@ test('Run now triggers a backup that eventually completes', async ({ page }) => 
       timeout: 500,
     })
   }).toPass({ timeout: 120_000 })
+
+  // Regression check: a manual run must count toward the schedule's Last run
+  // exactly like a scheduled tick would, so the Overview tab doesn't keep
+  // showing whatever it read before this run.
+  await expect(lastRun).not.toHaveText(lastRunBefore ?? '', { timeout: 10_000 })
 })
 
 test('cancel running backup and verify it is marked cancelled', async ({ page }) => {

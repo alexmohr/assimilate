@@ -61,12 +61,29 @@ vi.mock('../utils/logger', () => ({
 // Captured WebSocket message handlers - populated during component setup().
 // Accessing wsHandlers here is safe because onMessage is only CALLED during
 // component setup(), which happens inside test functions after module evaluation.
+// The real useWebSocket keeps a Set of callbacks per message type - the
+// component registers more than one handler for 'DataChanged' (its own
+// schedule refresh plus useArchiveDeletionEvents'), so this composes rather
+// than overwrites, to match that fan-out instead of only ever running the
+// last handler registered for a given type. The global beforeEach below
+// clears it between every test, so composed handlers never carry over from
+// an earlier test's (by-then-unmounted) component instance.
 const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
+beforeEach(() => {
+  for (const key of Object.keys(wsHandlers)) {
+    delete wsHandlers[key]
+  }
+})
 
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: () => ({
     onMessage: (type: string, cb: (p: unknown) => void) => {
-      wsHandlers[type] = cb
+      const previous = wsHandlers[type]
+      wsHandlers[type] = (payload) => {
+        previous?.(payload)
+        cb(payload)
+      }
     },
   }),
 }))
@@ -940,6 +957,62 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     vi.restoreAllMocks()
   })
 
+  it('refreshes the schedule on DataChanged without clobbering an unsaved Settings edit', async () => {
+    const wrapper = await createEditWrapper()
+    await goToSettings(wrapper)
+
+    const cronInput = wrapper.find('.cron-builder-stub')
+    await cronInput.setValue('0 9 * * *')
+
+    const callsBefore = mockApiClient.get.mock.calls.filter((c) => c[0] === '/schedules/1').length
+
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1')
+        return Promise.resolve({ data: { ...mockSchedule, last_run_at: '2026-06-15T03:00:00Z' } })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    // The schedule row was re-fetched (this is what actually picks up a
+    // manual/catch-up run's last_run_at bump)...
+    const callsAfter = mockApiClient.get.mock.calls.filter((c) => c[0] === '/schedules/1').length
+    expect(callsAfter).toBe(callsBefore + 1)
+    // ...but the unsaved cron edit on the Settings tab must survive: DataChanged
+    // must not repopulate the form the way a full loadData() would.
+    expect((wrapper.find('.cron-builder-stub').element as HTMLInputElement).value).toBe('0 9 * * *')
+  })
+
+  it('logs and leaves the page working when the background schedule refresh fails', async () => {
+    const wrapper = await createEditWrapper()
+
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.reject(new Error('boom'))
+      return Promise.resolve({ data: [] })
+    })
+
+    wsHandlers['DataChanged']?.({})
+    await flushPromises()
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'background schedule refresh failed',
+      expect.any(Error),
+    )
+    // The last-good schedule stays on screen rather than the page blanking out.
+    expect(wrapper.text()).toContain('human(0 2 * * *)')
+  })
+
   async function createActiveBackupWrapper(): Promise<ReturnType<typeof renderWithPlugins>> {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
@@ -1517,6 +1590,7 @@ describe('ScheduleDetailView - Backups tab', () => {
     await goToBackups(wrapper)
 
     mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
       if (url === '/schedules/1/reports/failed/count') return Promise.reject(new Error('boom'))
       if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
       return Promise.resolve({ data: [] })
@@ -2035,5 +2109,546 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     expect(payload.exclude_patterns_per_agent).toBeUndefined()
     expect(payload.file_change_patterns_per_agent).toBeUndefined()
     expect(payload.commands_per_agent).toBeUndefined()
+  })
+})
+
+describe('ScheduleDetailView - load ordering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('asks for this schedule health only, not the whole installation', async () => {
+    await createEditWrapper()
+
+    const healthCall = mockApiClient.get.mock.calls.find(
+      (call: unknown[]) => call[0] === '/stats/health',
+    )
+    expect(healthCall).toBeDefined()
+    const config = healthCall![1] as { params?: { schedule_id?: string } }
+    expect(config.params?.schedule_id).toBe('1')
+  })
+
+  it('renders the settings form before health and the report list arrive', async () => {
+    // The two deferred requests never settle here, so anything the page shows
+    // is proof it did not wait on them.
+    let releaseHealth: (() => void) | undefined
+    let releaseReports: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return new Promise((resolve) => {
+          releaseHealth = (): void => resolve({ data: [] })
+        })
+      if (url === '/schedules/1/reports')
+        return new Promise((resolve) => {
+          releaseReports = (): void => resolve({ data: [] })
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.find('.base-spinner').exists()).toBe(false)
+    await goToSettings(wrapper)
+    expect(wrapper.find('.cron-builder-stub').exists()).toBe(true)
+
+    releaseHealth?.()
+    releaseReports?.()
+    await flushPromises()
+  })
+
+  it('drops a slow response for a schedule the user has navigated away from', async () => {
+    let releaseFirstCount: ((count: number) => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/2') return Promise.resolve({ data: mockCheckSchedule })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/schedules/1/reports/failed/count')
+        return new Promise((resolve) => {
+          releaseFirstCount = (count: number): void => resolve({ data: { count } })
+        })
+      if (url === '/schedules/2/reports/failed/count')
+        return Promise.resolve({ data: { count: 0 } })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await wrapper.setProps({ id: '2' })
+    await flushPromises()
+
+    // Schedule 1's count finally lands. Schedule 2 is on screen and has
+    // nothing failed, so its menu must not offer to clean up seven runs.
+    releaseFirstCount?.(7)
+    await flushPromises()
+
+    await wrapper.find('.overflow-toggle').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper.findAll('.overflow-menu-item').some((i) => i.text().startsWith('Clean up failed')),
+    ).toBe(false)
+  })
+
+  // Same guard on the report list, which the Backups tab renders directly: a
+  // run belonging to the schedule the user left must not show up under the
+  // one they are on.
+  // The whole point of moving these three off the critical path is that the
+  // page no longer depends on them. Each one failing must leave the schedule
+  // rendered and readable, with the failure logged rather than surfaced.
+  const deferredRequests = [
+    { label: 'health', url: '/stats/health' },
+    { label: 'the report list', url: '/schedules/1/reports' },
+    { label: 'the failed-report count', url: '/schedules/1/reports/failed/count' },
+  ] as const
+
+  for (const { label, url } of deferredRequests) {
+    it(`still renders the schedule when ${label} fails`, async () => {
+      mockApiClient.get.mockImplementation((requested: string) => {
+        if (requested === url) return Promise.reject(new Error('boom'))
+        if (requested === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+        if (requested === '/schedules/1/repos')
+          return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+        if (requested === '/schedules/1/targets')
+          return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+        if (requested === '/schedules/1/sources')
+          return Promise.resolve({
+            data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+          })
+        if (requested === '/agents') return Promise.resolve({ data: mockAgents })
+        if (requested === '/repos') return Promise.resolve({ data: mockRepos })
+        return Promise.resolve({ data: [] })
+      })
+
+      const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+      await flushPromises()
+
+      expect(wrapper.find('.error-banner').exists()).toBe(false)
+      await goToSettings(wrapper)
+      expect(wrapper.find('.cron-builder-stub').exists()).toBe(true)
+      expect(logger.error).toHaveBeenCalled()
+    })
+  }
+
+  // The rows now arrive already scoped to this schedule, so the only match
+  // left is the target host. The Overview tab's badge covers the same lookup;
+  // this pins the header's count, which reads it through `overdueTargetCount`.
+  it('marks a target overdue from the scoped health rows', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return Promise.resolve({
+          data: [
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              is_overdue: true,
+              schedule_enabled: true,
+              consecutive_missed_backups: 0,
+              missed_backup_threshold: 3,
+            },
+          ],
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1 target overdue')
+  })
+
+  // A running backup's ETA is extrapolated from the last settled run's size.
+  // Nothing exercised that arithmetic, so the whole computation was dead
+  // weight as far as the tests were concerned.
+  it('estimates the remaining time of a running backup from the last run', async () => {
+    setupEditModeWithReport({
+      id: 1,
+      status: 'success',
+      started_at: '2026-06-01T02:00:00Z',
+      agent_id: 10,
+      original_size: 1000,
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+      started_at: new Date().toISOString(),
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: 1,
+      repo_id: 20,
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 10,
+        original_size: 500,
+        path: '/srv/data',
+      }),
+    })
+    await nextTick()
+
+    expect(wrapper.text()).toContain('Est. remaining')
+  })
+
+  // A target whose agent is not in the agent list - hidden, or deleted out
+  // from under the schedule - has no hostname to match health on, so the
+  // lookup has to bail rather than mis-key on another host's row.
+  it('handles a target whose agent is missing from the agent list', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/repos')
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: 99, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return Promise.resolve({
+          data: [
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              is_overdue: true,
+              schedule_enabled: true,
+              consecutive_missed_backups: 0,
+              missed_backup_threshold: 3,
+            },
+          ],
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('#99')
+    // web-server-01's row is overdue, but agent 99 is not that host, so the
+    // count must not borrow it.
+    expect(wrapper.text()).not.toContain('1 target overdue')
+  })
+
+  // Two schedules can target the same host, and `healthForAgent` matches on
+  // hostname alone. Until the new schedule's own health lands there must be
+  // nothing to match against, or its page inherits the old one's verdict.
+  it('does not show the previous schedule health while the new one loads', async () => {
+    const overdueRow = {
+      repo_id: 20,
+      schedule_id: 1,
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      is_overdue: true,
+      schedule_enabled: true,
+      consecutive_missed_backups: 0,
+      missed_backup_threshold: 3,
+    }
+    let releaseSecondHealth: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string, config?: { params?: unknown }) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health') {
+        const params = config?.params as { schedule_id?: string } | undefined
+        if (params?.schedule_id === '1') return Promise.resolve({ data: [overdueRow] })
+        // Schedule 4's own health stays in flight, which is the window under test.
+        return new Promise((resolve) => {
+          releaseSecondHealth = (): void => resolve({ data: [] })
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    // Without this the assertion below could pass on a page that never showed
+    // the badge at all.
+    expect(wrapper.text()).toContain('1 target overdue')
+
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('1 target overdue')
+
+    releaseSecondHealth?.()
+    await flushPromises()
+  })
+
+  // The mirror of the health case: the core group sets the schedule's own
+  // identity, so a slow one landing late puts the abandoned schedule's name and
+  // targets back beside the current schedule's badges.
+  it('drops a slow core load for a schedule the user has navigated away from', async () => {
+    let releaseFirstSchedule: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1')
+        return new Promise((resolve) => {
+          releaseFirstSchedule = (): void =>
+            resolve({ data: { ...mockSchedule, name: 'Schedule Alpha' } })
+        })
+      if (url === '/schedules/4')
+        return Promise.resolve({ data: { ...mockSchedule, id: 4, name: 'Schedule Beta' } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+    // Precondition: schedule 4 really is on screen, so the assertion below is
+    // about the late arrival rather than a page that never rendered.
+    expect(wrapper.text()).toContain('Schedule Beta')
+
+    releaseFirstSchedule?.()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Schedule Beta')
+    expect(wrapper.text()).not.toContain('Schedule Alpha')
+  })
+
+  // Two loads overlap whenever the user switches mid-flight, and the abandoned
+  // one usually settles FIRST because its requests went out first. Its spinner
+  // and its errors must not speak for the schedule now on screen.
+  it('keeps the spinner up when the abandoned load settles before the current one', async () => {
+    let releaseFirst: (() => void) | undefined
+    let releaseSecond: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1')
+        return new Promise((resolve) => {
+          releaseFirst = (): void => resolve({ data: mockSchedule })
+        })
+      if (url === '/schedules/4')
+        return new Promise((resolve) => {
+          releaseSecond = (): void => resolve({ data: { ...mockSchedule, id: 4 } })
+        })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    // Schedule 1's core lands after the user has moved on, and before 4's own.
+    releaseFirst?.()
+    await flushPromises()
+
+    expect(wrapper.find('.base-spinner').exists()).toBe(true)
+
+    releaseSecond?.()
+    await flushPromises()
+    expect(wrapper.find('.base-spinner').exists()).toBe(false)
+  })
+
+  it("does not raise the abandoned load's error over the current schedule", async () => {
+    let failFirst: (() => void) | undefined
+    let releaseSecond: (() => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1')
+        return new Promise((_resolve, reject) => {
+          failFirst = (): void => reject(new Error('schedule one is gone'))
+        })
+      if (url === '/schedules/4')
+        return new Promise((resolve) => {
+          releaseSecond = (): void => resolve({ data: { ...mockSchedule, id: 4 } })
+        })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    failFirst?.()
+    await flushPromises()
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+
+    releaseSecond?.()
+    await flushPromises()
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.find('.base-spinner').exists()).toBe(false)
+  })
+
+  // Per-host mode is only ever switched ON by a load, so without a reset the
+  // previous schedule's paths ride along and the next save writes them onto a
+  // schedule that never had them.
+  it('does not carry per-host sources across to the next schedule', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      // Schedule 1 stores its sources per host; schedule 4 shares one list.
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: {
+            backup_sources: [],
+            backup_sources_per_agent: [{ agent_id: 10, paths: ['/only/on/schedule-one'] }],
+          },
+        })
+      if (url === '/schedules/4/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/shared'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    await goToSettings(wrapper)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save changes')!
+      .trigger('click')
+    await flushPromises()
+
+    const payload = mockApiClient.put.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.backup_sources_per_agent).toBeUndefined()
+    expect(payload.backup_sources).toEqual(['/shared'])
+  })
+
+  it('drops a slow report list for a schedule the user has navigated away from', async () => {
+    let releaseFirstReports: ((rows: unknown[]) => void) | undefined
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
+      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
+        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
+      if (url.endsWith('/targets'))
+        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
+      if (url.endsWith('/sources'))
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/schedules/1/reports')
+        return new Promise((resolve) => {
+          releaseFirstReports = (rows: unknown[]): void => resolve({ data: rows })
+        })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await wrapper.setProps({ id: '4' })
+    await flushPromises()
+
+    releaseFirstReports?.([
+      {
+        id: 99,
+        repo_id: 20,
+        agent_id: 10,
+        status: 'started',
+        started_at: '2026-06-01T02:00:00Z',
+        archive_name: 'stale-run-from-schedule-one',
+      },
+    ])
+    await flushPromises()
+
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text() === 'Backups')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('stale-run-from-schedule-one')
   })
 })

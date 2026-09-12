@@ -102,8 +102,11 @@ All visual constants live in `frontend/src/style.css`.
   its one accented action. Agents, schedules and repositories all use it.
 * **Settings tabs** — a tab whose content is itself sectioned gets a
   `.settings-tab` rail. The rail names the section, so the pane does not
-  repeat it: a pane opens with `.pane-head` holding a `.pane-lede` and the
-  action that applies to the whole of it, renders its fields straight into
+  repeat it: a pane opens with `.pane-head` holding a section's `HelpHint`
+  (see Components → Structure and navigation, below) and the action that
+  applies to the whole of it, with `.pane-head--end` when the `HelpHint` is
+  the row's only content, so it sits at the trailing edge rather than
+  `space-between`'s default leading one. It renders its fields straight into
   `.settings-pane`, and reaches for `.pane-section` (+ `.pane-section-head` or
   a bare `.group-label`) only when it genuinely holds more than one group.
 
@@ -127,6 +130,14 @@ Reach for these rather than rebuilding them.
   for a labelled section that opens and closes. It announces its state and
   rotates its chevron on the shared duration; the badge says what is inside
   without opening it.
+* **Help** — `HelpHint` (`label`, optional `align="end"`), the `?` beside a
+  label, a field title, or a pane head, disclosing prose that explains what a
+  setting *does* rather than what to type into it - the sentence a reader
+  needs once, not on every visit. Click-toggled, one open at a time across the
+  page, closes on Escape or an outside click. A unit, a default, a sentinel
+  value ("Leave empty to..."), or anything reflecting live state stays a plain
+  `.field-hint` instead - the difference is whether the sentence would still
+  be true with the field left empty.
 * **Segmented controls** — `BaseSegmented`, same reasoning.
 * **Breadcrumbs** — `.detail-breadcrumb` with `.crumb-link` / `.crumb-sep` /
   `.crumb-current` for a detail view's trail. A *path* trail is `.path-crumbs`
@@ -206,14 +217,19 @@ Reach for these rather than rebuilding them.
   help text and `.form-error` / `.form-success` for messages. Every text-shaped
   control (`input`, `select`, `textarea`) carries `.input`; checkboxes, radios
   and file pickers do not. `.form-group` / `.form-label` / `.form-input` and
-  `.msg-error` / `.msg-success` are retired names and are rejected by CI.
+  `.msg-error` / `.msg-success` are retired names and are rejected by CI. A
+  hint that explains what the setting *does* rather than what to type is a
+  `HelpHint` (see Structure and navigation, above), not a permanent
+  `.field-hint`.
 * **Layout** — `.form-grid` (two columns, `.field-full` to span both) or
   `.form-stack` (one column); `.field-row` for fields side by side, with
   `.field-narrow` for a short value.
 * **Inline variants** — `.field field-inline` puts a control beside its label
   instead of under it (used for toggles); `.field-label-row` shares a label's
-  row with a secondary control; `.toggle-row` (+ `--spread`) pairs a toggle
-  with `.toggle-row-label`.
+  row with a secondary control (`--tight` when that control is only a
+  `HelpHint`, so the two sit close together rather than spread across the
+  field's full width); `.toggle-row` (+ `--spread`) pairs a toggle with
+  `.toggle-row-label`.
 * **Sizing** — `.input-sm` for a toolbar or table-header control;
   `.select-input` (+ `--sm` / `--md` / `--lg`) for a `<select>` that sizes to
   its content; `.filter-input` for a table column filter; `.area-input`

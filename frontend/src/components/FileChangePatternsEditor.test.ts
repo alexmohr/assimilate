@@ -52,18 +52,20 @@ describe('FileChangePatternsEditor', () => {
     expect(wrapper.find('input[type="text"]').element.value).toBe('*/foo*')
   })
 
-  it('renders default hint text when no hint slot is provided', () => {
+  it('renders default hint text when no hint slot is provided', async () => {
     const wrapper = mount(FileChangePatternsEditor, { props: { modelValue: '' } })
-    expect(wrapper.find('.field-hint').text()).toContain(
+    await wrapper.find('.help-hint-btn').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
       'Unconfigured files still produce warnings.',
     )
   })
 
-  it('renders custom hint text via the hint slot', () => {
+  it('renders custom hint text via the hint slot', async () => {
     const wrapper = mount(FileChangePatternsEditor, {
       props: { modelValue: '' },
       slots: { hint: 'Custom hint text' },
     })
-    expect(wrapper.find('.field-hint').text()).toBe('Custom hint text')
+    await wrapper.find('.help-hint-btn').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe('Custom hint text')
   })
 })

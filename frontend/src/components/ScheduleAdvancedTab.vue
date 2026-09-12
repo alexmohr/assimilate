@@ -8,6 +8,7 @@ import { ref } from 'vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 import CommandListEditor from './CommandListEditor.vue'
+import HelpHint from './HelpHint.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import BorgPatternReference from './BorgPatternReference.vue'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -36,19 +37,26 @@ const refOpen = ref(false)
 
 <template>
   <div class="form-stack">
-    <p class="pane-lede">
-      Settings most schedules leave alone: bandwidth and verification, the patterns that decide what
-      is skipped, and commands to run around each backup.
-    </p>
+    <div class="pane-head pane-head--end">
+      <HelpHint
+        label="bandwidth, patterns and commands"
+        align="end"
+      >
+        Settings most schedules leave alone: bandwidth and verification, the patterns that decide
+        what is skipped, and commands to run around each backup.
+      </HelpHint>
+    </div>
     <section class="pane-section">
       <span class="group-label group-label--lg">Options</span>
       <div class="pane-rows">
         <div class="pane-row">
           <div class="field-body">
-            <p class="field-title">Canary verification</p>
-            <p class="field-hint">
-              Writes a canary file before the backup and verifies it afterwards, so a silent failure
-              does not pass as a success.
+            <p class="field-title">
+              Canary verification
+              <HelpHint label="catching a silent failure">
+                Writes a canary file before the backup and verifies it afterwards, so a silent
+                failure does not pass as a success.
+              </HelpHint>
             </p>
           </div>
           <div class="pane-row-control">
@@ -60,9 +68,11 @@ const refOpen = ref(false)
         </div>
         <div class="pane-row">
           <div class="field-body">
-            <p class="field-title">Ignore global excludes</p>
-            <p class="field-hint">
-              Back up using only this schedule's patterns, not the server-wide exclude list.
+            <p class="field-title">
+              Ignore global excludes
+              <HelpHint label="skipping the server-wide list">
+                Back up using only this schedule's patterns, not the server-wide exclude list.
+              </HelpHint>
             </p>
           </div>
           <div class="pane-row-control">
@@ -74,9 +84,11 @@ const refOpen = ref(false)
         </div>
         <div class="pane-row">
           <div class="field-body">
-            <p class="field-title">Compact after backup</p>
-            <p class="field-hint">
-              Runs borg compact once pruning is done, to reclaim the space it freed.
+            <p class="field-title">
+              Compact after backup
+              <HelpHint label="reclaiming freed space">
+                Runs borg compact once pruning is done, to reclaim the space it freed.
+              </HelpHint>
             </p>
           </div>
           <div class="pane-row-control">
@@ -88,11 +100,13 @@ const refOpen = ref(false)
         </div>
         <div class="pane-row">
           <div class="field-body">
-            <p class="field-title">Back up virtual machines</p>
-            <p class="field-hint">
-              Snapshots the libvirt domains of every host this schedule targets before the backup
-              starts, using each host's own staging settings. Hosts that do not allow it are
-              skipped.
+            <p class="field-title">
+              Back up virtual machines
+              <HelpHint label="VM snapshots">
+                Snapshots the libvirt domains of every host this schedule targets before the backup
+                starts, using each host's own staging settings. Hosts that do not allow it are
+                skipped.
+              </HelpHint>
             </p>
           </div>
           <div class="pane-row-control">
@@ -104,13 +118,21 @@ const refOpen = ref(false)
         </div>
         <div class="pane-row">
           <div class="field-body">
-            <label
-              class="field-title"
-              for="schedule-rate-limit"
-            >
-              Remote rate limit (kB/s)
-            </label>
-            <p class="field-hint">Caps borg's upload bandwidth. Set to 0 for unlimited.</p>
+            <div class="field-label-row field-label-row--tight">
+              <label
+                class="field-title"
+                for="schedule-rate-limit"
+              >
+                Remote rate limit (kB/s)
+              </label>
+              <HelpHint
+                label="capping upload bandwidth"
+                align="end"
+              >
+                Caps borg's upload bandwidth.
+              </HelpHint>
+            </div>
+            <p class="field-hint">Set to 0 for unlimited.</p>
           </div>
           <div class="pane-row-control">
             <input
@@ -133,9 +155,11 @@ const refOpen = ref(false)
           class="pane-row"
         >
           <div class="field-body">
-            <p class="field-title">Configure per agent</p>
-            <p class="field-hint">
-              Give each host its own patterns instead of one list for the schedule.
+            <p class="field-title">
+              Configure per agent
+              <HelpHint label="splitting the list by host">
+                Give each host its own patterns instead of one list for the schedule.
+              </HelpHint>
             </p>
           </div>
           <div class="pane-row-control">
@@ -148,7 +172,16 @@ const refOpen = ref(false)
         <div class="pane-row pane-row--stack">
           <div class="field-body">
             <div class="field-label-row">
-              <p class="field-title">Patterns</p>
+              <p class="field-title">
+                Patterns
+                <HelpHint
+                  v-if="!overrides.usePerHostExcludes"
+                  label="pattern syntax"
+                >
+                  Leave empty to use only global and agent-level default excludes. Lines starting
+                  with <code>#</code> are treated as comments.
+                </HelpHint>
+              </p>
               <button
                 type="button"
                 class="ref-toggle"
@@ -157,13 +190,6 @@ const refOpen = ref(false)
                 {{ refOpen ? 'Close Reference' : 'Pattern Reference' }}
               </button>
             </div>
-            <p
-              v-if="!overrides.usePerHostExcludes"
-              class="field-hint"
-            >
-              Leave empty to use only global and agent-level default excludes. Lines starting with
-              <code>#</code> are treated as comments.
-            </p>
           </div>
           <div class="pane-row-control">
             <textarea
@@ -211,9 +237,11 @@ const refOpen = ref(false)
           class="pane-row"
         >
           <div class="field-body">
-            <p class="field-title">Configure per agent</p>
-            <p class="field-hint">
-              Give each host its own patterns instead of one list for the schedule.
+            <p class="field-title">
+              Configure per agent
+              <HelpHint label="configure file change patterns per agent">
+                Give each host its own patterns instead of one list for the schedule.
+              </HelpHint>
             </p>
           </div>
           <div class="pane-row-control">
@@ -268,9 +296,11 @@ const refOpen = ref(false)
           class="pane-row"
         >
           <div class="field-body">
-            <p class="field-title">Configure per agent</p>
-            <p class="field-hint">
-              Give each host its own commands instead of one set for the schedule.
+            <p class="field-title">
+              Configure per agent
+              <HelpHint label="configure commands per agent">
+                Give each host its own commands instead of one set for the schedule.
+              </HelpHint>
             </p>
           </div>
           <div class="pane-row-control">
@@ -282,16 +312,18 @@ const refOpen = ref(false)
         </div>
         <div class="pane-row">
           <div class="field-body">
-            <label
-              class="field-title"
-              for="schedule-hook-timeout"
-            >
-              Hook command timeout (seconds)
-            </label>
-            <p class="field-hint">
-              The default for every pre- and post-backup command that does not set its own. A
-              command still running past its timeout is killed and the backup fails.
-            </p>
+            <div class="field-label-row field-label-row--tight">
+              <label
+                class="field-title"
+                for="schedule-hook-timeout"
+              >
+                Hook command timeout (seconds)
+              </label>
+              <HelpHint label="the default per-command budget">
+                The default for every pre- and post-backup command that does not set its own. A
+                command still running past its timeout is killed and the backup fails.
+              </HelpHint>
+            </div>
           </div>
           <div class="pane-row-control">
             <input

@@ -14,6 +14,7 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import EditableSection from './EditableSection.vue'
 import EmptyState from './EmptyState.vue'
+import HelpHint from './HelpHint.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
@@ -364,6 +365,7 @@ onMounted(load)
     <EditableSection
       lede="Stage this host's virtual machines into a directory before a backup runs, so borg
           picks them up as ordinary files. Schedules opt in one by one."
+      lede-label="VM staging"
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"
@@ -408,10 +410,12 @@ onMounted(load)
 
           <div class="field field-inline">
             <div class="field-body">
-              <p class="field-title">Allow schedules to back up virtual machines</p>
-              <p class="field-hint">
-                Each schedule decides whether its own runs include them. Blocked here means no
-                schedule backs up this host's virtual machines, whatever the schedule asks for.
+              <p class="field-title">
+                Allow schedules to back up virtual machines
+                <HelpHint label="allow VM backups">
+                  Each schedule decides whether its own runs include them. Blocked here means no
+                  schedule backs up this host's virtual machines, whatever the schedule asks for.
+                </HelpHint>
               </p>
             </div>
             <ToggleSwitch
@@ -430,12 +434,18 @@ onMounted(load)
           </div>
 
           <div class="field">
-            <label
-              class="field-label"
-              for="vm-staging-dir"
-            >
-              Staging directory
-            </label>
+            <div class="field-label-row field-label-row--tight">
+              <label
+                class="field-label"
+                for="vm-staging-dir"
+              >
+                Staging directory
+              </label>
+              <HelpHint label="where domains are staged">
+                An absolute path with one subdirectory per domain. It must be writable by the user
+                QEMU runs as, and it joins the sources of every schedule that opts in.
+              </HelpHint>
+            </div>
             <input
               id="vm-staging-dir"
               v-model="stagingDir"
@@ -443,10 +453,6 @@ onMounted(load)
               type="text"
               placeholder="/home/virt/backups"
             />
-            <span class="field-hint">
-              An absolute path with one subdirectory per domain. It must be writable by the user
-              QEMU runs as, and it joins the sources of every schedule that opts in.
-            </span>
           </div>
 
           <div class="field-row">

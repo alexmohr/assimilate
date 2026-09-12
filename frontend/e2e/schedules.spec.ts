@@ -641,12 +641,14 @@ test.describe('Schedules management', () => {
     await page.getByRole('button', { name: 'Retention' }).click()
 
     // The pane no longer restates the rail item that opened it, so what proves
-    // Retention is showing is the rail marking it current plus its own lede.
+    // Retention is showing is the rail marking it current plus its own lede,
+    // disclosed behind its `HelpHint`.
     await expect(page.getByRole('button', { name: 'Retention' })).toHaveAttribute(
       'aria-current',
       'true',
     )
-    await expect(page.locator('.settings-pane .pane-lede')).toContainText('borg keeps')
+    await page.getByRole('button', { name: 'Help: how long archives are kept' }).click()
+    await expect(page.locator('.settings-pane')).toContainText('borg keeps')
     await expect(page.getByText('Daily', { exact: true })).toBeVisible()
     await expect(page.getByText('Weekly', { exact: true })).toBeVisible()
   })

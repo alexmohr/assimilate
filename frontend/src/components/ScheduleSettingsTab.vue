@@ -8,6 +8,7 @@ import { computed, ref } from 'vue'
 import { ArrowDown, ArrowUp } from '@lucide/vue'
 import AgentMultiSelect from './AgentMultiSelect.vue'
 import CronBuilder from './CronBuilder.vue'
+import HelpHint from './HelpHint.vue'
 import ScheduleRepoTargets from './ScheduleRepoTargets.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
@@ -131,7 +132,14 @@ const leadValue = computed<number>({
     @update:section="emit('update:section', $event)"
   >
     <template v-if="currentSection === 'general'">
-      <p class="pane-lede">What this schedule is called, and when it runs.</p>
+      <div class="pane-head pane-head--end">
+        <HelpHint
+          label="naming and timing"
+          align="end"
+        >
+          What this schedule is called, and when it runs.
+        </HelpHint>
+      </div>
       <div class="field">
         <label class="field-label">Name</label>
         <input
@@ -151,27 +159,31 @@ const leadValue = computed<number>({
         <ToggleSwitch v-model="form.enabled" />
       </div>
       <div class="field">
-        <label class="field-label">Mark as failed after</label>
+        <div class="field-label-row field-label-row--tight">
+          <label class="field-label">Mark as failed after</label>
+          <HelpHint label="mark as failed after">
+            Consecutive missed backups (agent or target unreachable at trigger time) tolerated
+            before this schedule is marked failed and disabled. Below this count, a miss only shows
+            as a warning.
+          </HelpHint>
+        </div>
         <input
           v-model.number="form.missed_backup_threshold"
           type="number"
           min="1"
           class="input"
         />
-        <span class="field-hint">
-          Consecutive missed backups (agent or target unreachable at trigger time) tolerated before
-          this schedule is marked failed and disabled. Below this count, a miss only shows as a
-          warning.
-        </span>
       </div>
       <div class="field field-inline">
         <div class="field-body">
-          <p class="field-title">Catch up missed runs</p>
-          <span class="field-hint">
-            If a host was offline when this schedule was due, run it once as soon as the host
-            reconnects. Missed runs never stack: 35 missed occurrences still produce a single
-            catch-up run.
-          </span>
+          <p class="field-title">
+            Catch up missed runs
+            <HelpHint label="running once after an outage">
+              If a host was offline when this schedule was due, run it once as soon as the host
+              reconnects. Missed runs never stack: 35 missed occurrences still produce a single
+              catch-up run.
+            </HelpHint>
+          </p>
         </div>
         <ToggleSwitch
           v-model="form.catch_up_missed_runs"
@@ -182,11 +194,18 @@ const leadValue = computed<number>({
         v-if="form.catch_up_missed_runs"
         class="field catch-up-lead"
       >
-        <label
-          class="field-label"
-          for="catch-up-lead"
-          >Only if the next run is at least</label
-        >
+        <div class="field-label-row field-label-row--tight">
+          <label
+            class="field-label"
+            for="catch-up-lead"
+            >Only if the next run is at least</label
+          >
+          <HelpHint label="avoiding a collision with the next run">
+            A catch-up is skipped when the next scheduled run is closer than this, so it never
+            collides with the regular one. A host reconnecting 30 minutes before a 02:00 backup
+            waits for that run instead.
+          </HelpHint>
+        </div>
         <div class="field-row">
           <input
             id="catch-up-lead"
@@ -205,26 +224,28 @@ const leadValue = computed<number>({
           </select>
           <span class="muted">away</span>
         </div>
-        <span class="field-hint">
-          A catch-up is skipped when the next scheduled run is closer than this, so it never
-          collides with the regular one. A host reconnecting 30 minutes before a 02:00 backup waits
-          for that run instead.
-        </span>
       </div>
     </template>
 
     <template v-else-if="currentSection === 'targets'">
-      <p class="pane-lede">
-        Which hosts this schedule runs on, which repositories they write to, and what happens when
-        one of them fails.
-      </p>
+      <div class="pane-head pane-head--end">
+        <HelpHint
+          label="hosts and destinations"
+          align="end"
+        >
+          Which hosts this schedule runs on, which repositories they write to, and what happens when
+          one of them fails.
+        </HelpHint>
+      </div>
       <div class="field">
-        <label class="field-label">Hosts</label>
+        <div class="field-label-row field-label-row--tight">
+          <label class="field-label">Hosts</label>
+          <HelpHint label="hosts">The agents that will execute this schedule.</HelpHint>
+        </div>
         <AgentMultiSelect
           v-model="selectedAgentIds"
           :agents="agents"
         />
-        <span class="field-hint">The agents that will execute this schedule</span>
       </div>
 
       <ScheduleRepoTargets
@@ -234,7 +255,12 @@ const leadValue = computed<number>({
       />
 
       <div class="field">
-        <label class="field-label">On failure</label>
+        <div class="field-label-row field-label-row--tight">
+          <label class="field-label">On failure</label>
+          <HelpHint label="on failure">
+            What a failing host, or a failing required target, does to the rest of the run.
+          </HelpHint>
+        </div>
         <select
           v-model="onFailure"
           class="input"
@@ -242,9 +268,6 @@ const leadValue = computed<number>({
           <option value="stop">Stop</option>
           <option value="continue">Continue</option>
         </select>
-        <span class="field-hint">
-          What a failing host, or a failing required target, does to the rest of the run.
-        </span>
       </div>
 
       <div
@@ -342,10 +365,15 @@ const leadValue = computed<number>({
     </template>
 
     <template v-else-if="currentSection === 'retention'">
-      <p class="pane-lede">
-        How many archives borg keeps when this schedule prunes. Blank or zero keeps none of that
-        interval.
-      </p>
+      <div class="pane-head pane-head--end">
+        <HelpHint
+          label="how long archives are kept"
+          align="end"
+        >
+          How many archives borg keeps when this schedule prunes. Blank or zero keeps none of that
+          interval.
+        </HelpHint>
+      </div>
       <div class="retention-grid">
         <div class="field">
           <label class="field-label">Hourly</label>

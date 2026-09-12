@@ -1011,6 +1011,13 @@
     gap: var(--space-5) var(--space-6);
   }
 
+  /* A pane whose lede moved behind a `HelpHint` and has no Edit button beside
+     it - the `?` is the row's only content, so it sits at the trailing edge
+     rather than at `space-between`'s default leading one. */
+  .pane-head--end {
+    justify-content: flex-end;
+  }
+
   .pane-lede {
     font-size: var(--fs-sm);
     line-height: 1.5;
@@ -1187,6 +1194,75 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
+  }
+
+  /* A label sharing its row with nothing but a `HelpHint` - the two sit next
+     to each other rather than spread across the field's full width. */
+  .field-label-row--tight {
+    justify-content: flex-start;
+  }
+
+  /* The `?` beside a label, a field title or a pane head, disclosing the
+     prose that used to sit permanently under it - see `HelpHint.vue`. */
+  .help-hint {
+    position: relative;
+    display: inline-flex;
+    vertical-align: middle;
+  }
+
+  .help-hint-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition:
+      color var(--duration-base),
+      background var(--duration-base);
+  }
+
+  .help-hint-btn:hover {
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+  }
+
+  .help-hint-btn[aria-expanded='true'] {
+    color: var(--accent);
+    background: var(--accent-subtle);
+  }
+
+  .help-hint-pop {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + var(--space-3));
+    left: 0;
+    width: max-content;
+    max-width: min(300px, 68vw);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-5) var(--space-6);
+    font-size: var(--fs-xs);
+    line-height: 1.55;
+    color: var(--text-secondary);
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+  }
+
+  /* Opens toward the trailing edge instead, for a `?` at the end of its row -
+     the left edge would otherwise overflow the pane. */
+  .help-hint-pop--end {
+    left: auto;
+    right: 0;
   }
 
   .required {

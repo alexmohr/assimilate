@@ -9,6 +9,7 @@ import { updateAgentPower } from '../api/agents'
 import { listSchedules } from '../api/schedules'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
+import HelpHint from './HelpHint.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow } from '../types/schedule'
@@ -182,6 +183,7 @@ async function save(): Promise<void> {
   <EditableSection
     lede="Wake this host before a backup runs, and let Assimilate power it back down when it's
       done."
+    lede-label="waking this host"
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"
@@ -199,7 +201,13 @@ async function save(): Promise<void> {
           <span class="group-label group-label--lg">Host power</span>
         </div>
         <dl class="info-grid">
-          <dt>Wake host before backup</dt>
+          <dt>
+            Wake host before backup
+            <HelpHint label="wake host before backup">
+              This is the default for jobs that do not set their own. A schedule can override it
+              under its Settings, in Power.
+            </HelpHint>
+          </dt>
           <dd>{{ agent.power.wake.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
           <template v-if="showWakeDetails">
             <dt>MAC address</dt>
@@ -225,10 +233,6 @@ async function save(): Promise<void> {
             <dd>{{ agent.power.wake.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
           </template>
         </dl>
-        <p class="field-hint">
-          This is the default for jobs that do not set their own. A schedule can override it under
-          its Settings, in Power.
-        </p>
         <p
           v-if="overridingSchedules.length > 0"
           class="field-hint"
@@ -282,32 +286,36 @@ async function save(): Promise<void> {
 
         <div class="field field-inline">
           <div class="field-body">
-            <p class="field-title">Wake host before backup</p>
-            <p class="field-hint">
-              Checked before every backup - the Wake-on-LAN packet below is only sent if the agent
-              doesn't already respond. This is the default for jobs that do not set their own; a
-              schedule can override it either way.
+            <p class="field-title">
+              Wake host before backup
+              <HelpHint label="wake host before backup">
+                Checked before every backup - the Wake-on-LAN packet below is only sent if the agent
+                doesn't already respond. This is the default for jobs that do not set their own; a
+                schedule can override it either way.
+              </HelpHint>
             </p>
           </div>
           <ToggleSwitch v-model="wakeEnabled" />
         </div>
 
         <div class="field">
-          <label
-            class="field-label"
-            for="power-wake-mac"
-            >MAC address</label
-          >
+          <div class="field-label-row field-label-row--tight">
+            <label
+              class="field-label"
+              for="power-wake-mac"
+              >MAC address</label
+            >
+            <HelpHint label="where the wake packet is sent">
+              Used whenever this host is woken - by the setting above, or by a schedule that asks
+              for it under its own Power settings.
+            </HelpHint>
+          </div>
           <input
             id="power-wake-mac"
             v-model="wakeMac"
             class="input mono"
             placeholder="3C:97:0E:2B:9A:44"
           />
-          <span class="field-hint"
-            >Used whenever this host is woken - by the setting above, or by a schedule that asks for
-            it under its own Power settings.</span
-          >
         </div>
 
         <div class="field">
@@ -328,11 +336,16 @@ async function save(): Promise<void> {
         </div>
 
         <div class="field">
-          <label
-            class="field-label"
-            for="power-wake-timeout"
-            >Wait for host (seconds)</label
-          >
+          <div class="field-label-row field-label-row--tight">
+            <label
+              class="field-label"
+              for="power-wake-timeout"
+              >Wait for host (seconds)</label
+            >
+            <HelpHint label="the reconnect deadline">
+              How long to wait for the agent to reconnect before the backup is marked failed.
+            </HelpHint>
+          </div>
           <input
             id="power-wake-timeout"
             v-model.number="wakeTimeout"
@@ -340,17 +353,16 @@ async function save(): Promise<void> {
             min="1"
             class="input"
           />
-          <span class="field-hint"
-            >How long to wait for the agent to reconnect before the backup is marked failed.</span
-          >
         </div>
 
         <div class="field field-inline">
           <div class="field-body">
-            <p class="field-title">Shut down host after backup</p>
-            <p class="field-hint">
-              Only if this run woke it - a host that was already on when the backup started is left
-              running.
+            <p class="field-title">
+              Shut down host after backup
+              <HelpHint label="shut down host after backup">
+                Only if this run woke it - a host that was already on when the backup started is
+                left running.
+              </HelpHint>
             </p>
           </div>
           <ToggleSwitch v-model="shutdownAfterBackup" />
@@ -364,10 +376,12 @@ async function save(): Promise<void> {
 
         <div class="field field-inline">
           <div class="field-body">
-            <p class="field-title">Start agent before backup</p>
-            <p class="field-hint">
-              Checked first, same as above - only started if the agent isn't already connected. For
-              hosts where it runs on demand instead of as a background service.
+            <p class="field-title">
+              Start agent before backup
+              <HelpHint label="start agent before backup">
+                Checked first, same as above - only started if the agent isn't already connected.
+                For hosts where it runs on demand instead of as a background service.
+              </HelpHint>
             </p>
           </div>
           <ToggleSwitch v-model="startAgentEnabled" />
@@ -376,11 +390,20 @@ async function save(): Promise<void> {
         <template v-if="needsSshHost">
           <div class="field-row">
             <div class="field">
-              <label
-                class="field-label"
-                for="power-ssh-host"
-                >SSH host</label
-              >
+              <div class="field-label-row field-label-row--tight">
+                <label
+                  class="field-label"
+                  for="power-ssh-host"
+                  >SSH host</label
+                >
+                <HelpHint
+                  v-if="!startAgentEnabled"
+                  label="needed for shutdown only"
+                >
+                  Needed to shut this host down after backup - the agent itself already runs as a
+                  persistent service.
+                </HelpHint>
+              </div>
               <input
                 id="power-ssh-host"
                 v-model="sshHost"
@@ -404,12 +427,6 @@ async function save(): Promise<void> {
               />
             </div>
           </div>
-          <span
-            v-if="!startAgentEnabled"
-            class="field-hint"
-            >Needed to shut this host down after backup - the agent itself already runs as a
-            persistent service.</span
-          >
         </template>
 
         <template v-if="startAgentEnabled">
@@ -428,8 +445,10 @@ async function save(): Promise<void> {
 
           <div class="field field-inline">
             <div class="field-body">
-              <p class="field-title">Stop agent after backup</p>
-              <p class="field-hint">Only if this run started it.</p>
+              <p class="field-title">
+                Stop agent after backup
+                <HelpHint label="stop agent after backup">Only if this run started it.</HelpHint>
+              </p>
             </div>
             <ToggleSwitch v-model="stopAgentAfterBackup" />
           </div>

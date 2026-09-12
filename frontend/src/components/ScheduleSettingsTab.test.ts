@@ -133,10 +133,12 @@ describe('ScheduleSettingsTab', () => {
     expect(wrapper.emitted('update:section')).toEqual([['targets']])
   })
 
-  it('falls back to General when the section prop is unavailable for this schedule type', () => {
+  it('falls back to General when the section prop is unavailable for this schedule type', async () => {
     const wrapper = mount({ isBackup: false, section: 'advanced' })
     expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe('General')
-    expect(wrapper.find('.pane-lede').text()).toContain('What this schedule is called')
+
+    await wrapper.find('[aria-label="Help: naming and timing"]').trigger('click')
+    expect(wrapper.text()).toContain('What this schedule is called')
   })
 
   it('shows the Name field and writes into it', async () => {
@@ -157,6 +159,30 @@ describe('ScheduleSettingsTab', () => {
 
   it('marks the repository list as required', () => {
     expect(mount({ section: 'targets' }).findAll('.required')).toHaveLength(1)
+  })
+
+  it('discloses the Targets pane-head hint with its explainer text', async () => {
+    const wrapper = mount({ section: 'targets' })
+    await wrapper.find('[aria-label="Help: hosts and destinations"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'Which hosts this schedule runs on, which repositories they write to',
+    )
+  })
+
+  it('discloses the Hosts field hint with its explainer text', async () => {
+    const wrapper = mount({ section: 'targets' })
+    await wrapper.find('[aria-label="Help: hosts"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'The agents that will execute this schedule.',
+    )
+  })
+
+  it('discloses the On Failure hint with its explainer text', async () => {
+    const wrapper = mount({ section: 'targets' })
+    await wrapper.find('[aria-label="Help: on failure"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'What a failing host, or a failing required target, does to the rest of the run.',
+    )
   })
 
   it('shows the multi-select summary and opens the dropdown', async () => {
@@ -231,6 +257,14 @@ describe('ScheduleSettingsTab', () => {
     expect(wrapper.findAll('textarea')).toHaveLength(2)
   })
 
+  it('discloses the Retention pane-head hint with its explainer text', async () => {
+    const wrapper = mount({ section: 'retention' })
+    await wrapper.find('[aria-label="Help: how long archives are kept"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'How many archives borg keeps when this schedule prunes.',
+    )
+  })
+
   it('hides the retention section body when a different section is active', () => {
     const wrapper = mount({ section: 'retention' })
     expect(wrapper.find('.retention-grid').exists()).toBe(true)
@@ -279,6 +313,32 @@ describe('ScheduleSettingsTab', () => {
     const wrapper = mount({ form })
     await wrapper.find('input[type="number"]').setValue('5')
     expect(form.missed_backup_threshold).toBe(5)
+  })
+
+  it('discloses the missed backup threshold hint with its explainer text', async () => {
+    const wrapper = mount()
+    await wrapper.find('[aria-label="Help: mark as failed after"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'Consecutive missed backups (agent or target unreachable at trigger time) tolerated',
+    )
+  })
+
+  it('discloses the catch-up-missed-runs hint with its explainer text', async () => {
+    const wrapper = mount()
+    await wrapper.find('[aria-label="Help: running once after an outage"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'If a host was offline when this schedule was due, run it once',
+    )
+  })
+
+  it('discloses the catch-up lead time hint with its explainer text', async () => {
+    const wrapper = mount({ form: { ...baseForm(), catch_up_missed_runs: true } })
+    await wrapper
+      .find('[aria-label="Help: avoiding a collision with the next run"]')
+      .trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'A catch-up is skipped when the next scheduled run is closer than this',
+    )
   })
 
   it('hides the catch-up floor until catch-up is switched on', () => {

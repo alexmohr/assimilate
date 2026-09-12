@@ -61,6 +61,14 @@ describe('AgentPowerCard', () => {
     expect(text).toContain('assimilate-agent')
   })
 
+  it('discloses the view-mode wake explanation behind its HelpHint', async () => {
+    const wrapper = mount()
+    await wrapper.find('[aria-label="Help: wake host before backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'A schedule can override it under its Settings, in Power.',
+    )
+  })
+
   it('omits the dependent rows when wake and start-agent are both off', () => {
     const wrapper = mount({
       agent: {
@@ -352,6 +360,57 @@ describe('AgentPowerCard', () => {
     vi.mocked(apiClient.put).mockRejectedValue(new Error('agent offline'))
     const wrapper = mount()
     await expectSaveErrorKeepsEditing(wrapper, 'agent offline', '#power-wake-mac')
+  })
+
+  it('discloses the edit-mode wake, timeout, shutdown and agent explanations behind their HelpHints', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    await wrapper.find('[aria-label="Help: wake host before backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      "the Wake-on-LAN packet below is only sent if the agent doesn't already respond",
+    )
+
+    await wrapper.find('[aria-label="Help: where the wake packet is sent"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'by a schedule that asks for it under its own Power settings',
+    )
+
+    await wrapper.find('[aria-label="Help: the reconnect deadline"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'How long to wait for the agent to reconnect before the backup is marked failed.',
+    )
+
+    await wrapper.find('[aria-label="Help: shut down host after backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'a host that was already on when the backup started is left running',
+    )
+
+    await wrapper.find('[aria-label="Help: start agent before backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      "only started if the agent isn't already connected",
+    )
+
+    await wrapper.find('[aria-label="Help: stop agent after backup"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe('Only if this run started it.')
+  })
+
+  // The SSH host field's HelpHint only appears once start-agent is off, since
+  // otherwise the field's purpose (starting the agent) is self-evident from
+  // the section it sits in - it needs the explanation only when shutdown is
+  // the sole reason it's there.
+  it('discloses why SSH host is needed once start-agent is off but shutdown still needs it', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+
+    const toggles = wrapper.findAllComponents({ name: 'ToggleSwitch' })
+    await toggles[2]!.vm.$emit('update:modelValue', false) // startAgentEnabled
+    await flushPromises()
+
+    await wrapper.find('[aria-label="Help: needed for shutdown only"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'the agent itself already runs as a persistent service',
+    )
   })
 
   it('leaves the card without saving on Cancel', async () => {

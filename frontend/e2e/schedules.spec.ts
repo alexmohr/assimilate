@@ -1094,7 +1094,11 @@ test.describe('Schedules management', () => {
     await page.goto('/agents/web-server-01?tab=schedules')
     await page.waitForLoadState('networkidle')
 
-    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
+    // Several other seeded schedules also target the "server-daily" repo, so
+    // a text filter would match multiple rows - data-schedule-id (fallen
+    // through from AgentSchedulesTab, same pattern as the schedule card's
+    // data-schedule-id) is the only unambiguous selector.
+    const row = page.locator('.rows .agent-row[data-schedule-id="1"]')
     const stats = row.locator('.agent-row-stats')
     await expect(stats).toContainText(/last .+ ago/)
     await expect(stats).not.toContainText('never run')

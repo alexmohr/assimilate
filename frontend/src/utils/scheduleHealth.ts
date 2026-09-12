@@ -17,6 +17,25 @@ export function scheduleRunStatus(
   return entry?.last_status != null ? normalizeBackupStatus(entry.last_status) : null
 }
 
+/**
+ * When a schedule last actually produced a completed backup (success,
+ * warning or failure), across every health entry it has - as opposed to
+ * `schedule.last_run_at`, which is dispatch bookkeeping: it is advanced only
+ * when a trigger attempt reaches the agent, so a run whose dispatch never
+ * got that far (the agent was unreachable) can still leave behind a settled
+ * `backup_reports` row - e.g. abandoned as failed once the agent reconnects
+ * - without `last_run_at` ever moving. Reading it back off `last_run_at`
+ * then shows "never run" for a schedule the Recent backups list clearly
+ * shows has run, which is the contradiction this reads around by trusting
+ * the same completed-report evidence that list is built from. ISO 8601
+ * timestamps sort correctly as strings, so no `Date` parsing is needed to
+ * find the latest one.
+ */
+export function latestCompletedBackupAt(entries: readonly ScheduleHealthEntry[]): string | null {
+  const dates = entries.map((h) => h.last_backup_at).filter((d): d is string => d != null)
+  return dates.length > 0 ? dates.reduce((latest, d) => (d > latest ? d : latest)) : null
+}
+
 export function navigateToScheduleIssue(
   router: Router,
   scheduleId: number,

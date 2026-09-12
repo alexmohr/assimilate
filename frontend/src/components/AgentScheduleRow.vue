@@ -7,7 +7,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { formatDateShort, relativeTime } from '../utils/format'
+import { cronToHuman } from '../utils/cron'
 import {
+  latestCompletedBackupAt,
   scheduleIssuesFromEntries,
   scheduleRunStatus,
   withErrorTitles,
@@ -60,10 +62,25 @@ const stripe = computed(() => {
   return 'success'
 })
 
+/**
+ * Backed by completed-run evidence (`health[].last_backup_at`), not
+ * `schedule.last_run_at`: the latter is dispatch bookkeeping, advanced only
+ * once a trigger attempt actually reaches the agent, so a run whose dispatch
+ * never got that far (the agent was unreachable) can still leave behind a
+ * settled `backup_reports` row - e.g. abandoned as failed once the agent
+ * reconnects - without `last_run_at` ever moving. Reading it back off
+ * `last_run_at` then shows "never run" for a schedule the Recent backups
+ * list right below it clearly shows has run.
+ */
 const lastRun = computed(() => {
-  const at = props.schedule.last_run_at
+  const at = latestCompletedBackupAt(props.health)
   return at ? relativeTime(at) : 'never run'
 })
+
+/** Falls back to the raw expression for a shape `cronToHuman` doesn't cover. */
+const cadence = computed(
+  () => cronToHuman(props.schedule.cron_expression) || props.schedule.cron_expression,
+)
 </script>
 
 <template>
@@ -83,38 +100,48 @@ const lastRun = computed(() => {
     >
       {{ schedule.name || repoName }}
     </button>
-    <span class="agent-row-when">{{ schedule.cron_expression }}</span>
-    <span class="agent-row-sub">{{ repoName }}</span>
-    <EntityStatusBadges
-      :notable="!schedule.enabled"
-      :notable-label="scheduleDisabledLabel(schedule)"
-      :issues="issues"
-    />
-    <span class="agent-row-stats">
-      <span>last {{ lastRun }}</span>
-      <span v-if="schedule.next_run_at && schedule.enabled">
-        next {{ formatDateShort(schedule.next_run_at) }}
+    <div class="agent-row-line">
+      <span
+        class="agent-row-when"
+        :title="schedule.cron_expression"
+        >{{ cadence }}</span
+      >
+      <span class="agent-row-sub">{{ repoName }}</span>
+    </div>
+    <div class="agent-row-line">
+      <EntityStatusBadges
+        :notable="!schedule.enabled"
+        :notable-label="scheduleDisabledLabel(schedule)"
+        :issues="issues"
+      />
+      <span class="agent-row-stats">
+        <span>last {{ lastRun }}</span>
+        <span v-if="schedule.next_run_at && schedule.enabled">
+          next {{ formatDateShort(schedule.next_run_at) }}
+        </span>
       </span>
-    </span>
+    </div>
     <div
       v-if="showActions"
-      class="agent-row-actions"
+      class="agent-row-line"
     >
-      <button
-        class="btn btn-sm"
-        type="button"
-        :disabled="running || !schedule.enabled"
-        @click="emit('run')"
-      >
-        {{ running ? 'Starting...' : 'Run now' }}
-      </button>
-      <button
-        class="btn btn-sm btn-ghost"
-        type="button"
-        @click="emit('open')"
-      >
-        Open
-      </button>
+      <div class="agent-row-actions">
+        <button
+          class="btn btn-sm"
+          type="button"
+          :disabled="running || !schedule.enabled"
+          @click="emit('run')"
+        >
+          {{ running ? 'Starting...' : 'Run now' }}
+        </button>
+        <button
+          class="btn btn-sm btn-ghost"
+          type="button"
+          @click="emit('open')"
+        >
+          Open
+        </button>
+      </div>
     </div>
   </div>
 </template>

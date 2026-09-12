@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Router } from 'vue-router'
 import {
+  latestCompletedBackupAt,
   navigateToScheduleIssue,
   scheduleIssuesFromEntries,
   scheduleRunStatus,
@@ -224,5 +225,31 @@ describe('withErrorTitles', () => {
     const issues = scheduleIssuesFromEntries(entries, 1, makeRouter())
 
     expect(withErrorTitles(issues, entries)).toEqual(issues)
+  })
+})
+
+describe('latestCompletedBackupAt', () => {
+  it('returns the one entry it has', () => {
+    expect(latestCompletedBackupAt([makeEntry({ last_backup_at: '2026-03-01T00:00:00Z' })])).toBe(
+      '2026-03-01T00:00:00Z',
+    )
+  })
+
+  it('picks the most recent across several entries, regardless of order', () => {
+    const entries = [
+      makeEntry({ last_backup_at: '2026-03-01T00:00:00Z' }),
+      makeEntry({ last_backup_at: '2026-05-01T00:00:00Z' }),
+      makeEntry({ last_backup_at: '2026-01-01T00:00:00Z' }),
+    ]
+    expect(latestCompletedBackupAt(entries)).toBe('2026-05-01T00:00:00Z')
+  })
+
+  it('ignores entries with no completed backup yet', () => {
+    const entries = [makeEntry({ last_backup_at: null }), makeEntry({ last_backup_at: null })]
+    expect(latestCompletedBackupAt(entries)).toBeNull()
+  })
+
+  it('returns null for an empty list', () => {
+    expect(latestCompletedBackupAt([])).toBeNull()
   })
 })

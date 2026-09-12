@@ -195,7 +195,7 @@ async function save(): Promise<void> {
             for="repo-power-wake-mac"
             >MAC address</label
           >
-          <HelpHint label="MAC address">
+          <HelpHint label="where the wake packet is sent">
             Used whenever this host is woken - by the setting above, or by a schedule that asks for
             it under its own Power settings.
           </HelpHint>
@@ -232,7 +232,7 @@ async function save(): Promise<void> {
             for="repo-power-wake-timeout"
             >Wait for host (seconds)</label
           >
-          <HelpHint label="wait for host">
+          <HelpHint label="the reconnect deadline">
             How long to wait for SSH before the backup is marked failed.
           </HelpHint>
         </div>

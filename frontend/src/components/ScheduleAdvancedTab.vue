@@ -53,7 +53,7 @@ const refOpen = ref(false)
           <div class="field-body">
             <p class="field-title">
               Canary verification
-              <HelpHint label="canary verification">
+              <HelpHint label="catching a silent failure">
                 Writes a canary file before the backup and verifies it afterwards, so a silent
                 failure does not pass as a success.
               </HelpHint>
@@ -70,7 +70,7 @@ const refOpen = ref(false)
           <div class="field-body">
             <p class="field-title">
               Ignore global excludes
-              <HelpHint label="ignore global excludes">
+              <HelpHint label="skipping the server-wide list">
                 Back up using only this schedule's patterns, not the server-wide exclude list.
               </HelpHint>
             </p>
@@ -86,7 +86,7 @@ const refOpen = ref(false)
           <div class="field-body">
             <p class="field-title">
               Compact after backup
-              <HelpHint label="compact after backup">
+              <HelpHint label="reclaiming freed space">
                 Runs borg compact once pruning is done, to reclaim the space it freed.
               </HelpHint>
             </p>
@@ -126,7 +126,7 @@ const refOpen = ref(false)
                 Remote rate limit (kB/s)
               </label>
               <HelpHint
-                label="remote rate limit"
+                label="capping upload bandwidth"
                 align="end"
               >
                 Caps borg's upload bandwidth.
@@ -157,7 +157,7 @@ const refOpen = ref(false)
           <div class="field-body">
             <p class="field-title">
               Configure per agent
-              <HelpHint label="configure exclude patterns per agent">
+              <HelpHint label="splitting the list by host">
                 Give each host its own patterns instead of one list for the schedule.
               </HelpHint>
             </p>
@@ -176,7 +176,7 @@ const refOpen = ref(false)
                 Patterns
                 <HelpHint
                   v-if="!overrides.usePerHostExcludes"
-                  label="exclude patterns"
+                  label="pattern syntax"
                 >
                   Leave empty to use only global and agent-level default excludes. Lines starting
                   with <code>#</code> are treated as comments.
@@ -319,7 +319,7 @@ const refOpen = ref(false)
               >
                 Hook command timeout (seconds)
               </label>
-              <HelpHint label="hook command timeout">
+              <HelpHint label="the default per-command budget">
                 The default for every pre- and post-backup command that does not set its own. A
                 command still running past its timeout is killed and the backup fails.
               </HelpHint>

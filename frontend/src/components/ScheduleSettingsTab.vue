@@ -178,7 +178,7 @@ const leadValue = computed<number>({
         <div class="field-body">
           <p class="field-title">
             Catch up missed runs
-            <HelpHint label="catch up missed runs">
+            <HelpHint label="running once after an outage">
               If a host was offline when this schedule was due, run it once as soon as the host
               reconnects. Missed runs never stack: 35 missed occurrences still produce a single
               catch-up run.
@@ -200,7 +200,7 @@ const leadValue = computed<number>({
             for="catch-up-lead"
             >Only if the next run is at least</label
           >
-          <HelpHint label="catch-up lead time">
+          <HelpHint label="avoiding a collision with the next run">
             A catch-up is skipped when the next scheduled run is closer than this, so it never
             collides with the regular one. A host reconnecting 30 minutes before a 02:00 backup
             waits for that run instead.

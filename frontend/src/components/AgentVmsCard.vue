@@ -441,7 +441,7 @@ onMounted(load)
               >
                 Staging directory
               </label>
-              <HelpHint label="staging directory">
+              <HelpHint label="where domains are staged">
                 An absolute path with one subdirectory per domain. It must be writable by the user
                 QEMU runs as, and it joins the sources of every schedule that opts in.
               </HelpHint>

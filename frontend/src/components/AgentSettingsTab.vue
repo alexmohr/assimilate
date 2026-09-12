@@ -120,7 +120,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
         <div class="pane-section-head">
           <div class="field-label-row field-label-row--tight">
             <span class="group-label">Connection</span>
-            <HelpHint label="regenerate token">
+            <HelpHint label="what a new token means for the agent">
               Regenerating invalidates the current token immediately. The agent stays disconnected
               until it is restarted with the new one.
             </HelpHint>

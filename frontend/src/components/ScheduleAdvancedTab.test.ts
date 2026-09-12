@@ -217,12 +217,12 @@ describe('ScheduleAdvancedTab', () => {
 
     it('shows the shared hint only in shared mode, so it cannot contradict the fields', async () => {
       const shared = mount()
-      expect(shared.find('[aria-label="Help: exclude patterns"]').exists()).toBe(true)
-      await shared.find('[aria-label="Help: exclude patterns"]').trigger('click')
+      expect(shared.find('[aria-label="Help: pattern syntax"]').exists()).toBe(true)
+      await shared.find('[aria-label="Help: pattern syntax"]').trigger('click')
       expect(shared.text()).toContain('Leave empty to use only global')
 
       const perAgent = mount({ overrides: agentOverrides({ usePerHostExcludes: true }) })
-      expect(perAgent.find('[aria-label="Help: exclude patterns"]').exists()).toBe(false)
+      expect(perAgent.find('[aria-label="Help: pattern syntax"]').exists()).toBe(false)
       expect(perAgent.text()).toContain('Leave an agent empty')
     })
 

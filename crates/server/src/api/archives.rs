@@ -15,6 +15,7 @@ use futures_util::StreamExt as _;
 use lz4_flex::frame::FrameEncoder;
 use serde::{Deserialize, Serialize};
 use shared::{
+    borg::GracefulChild,
     responses::{
         ArchiveEntryResponse, ArchiveIndexStatusResponse, ArchiveInfoResponse,
         DeleteArchiveResponse as SharedDeleteArchiveResponse,
@@ -220,6 +221,30 @@ pub(crate) fn stream_export_tar_lz4(
     task_registry.register(handle);
 
     Ok(Body::from_stream(ReaderStream::new(reader)))
+}
+
+/// Spawns the task that holds `child` alive until `done_rx` fires (the download
+/// stream finished or the client disconnected), then drops it. Dropping
+/// `GracefulChild` sends SIGTERM first (graceful lock release), escalating to
+/// SIGKILL + break-lock after `kill_escalation_delay()` if the process hasn't
+/// already exited on its own.
+///
+/// Registered with `task_registry` (mirroring `stream_export_tar_lz4` above) so
+/// shutdown joins this wait-and-drop task itself, not just the `GracefulChild`
+/// reaper `Borg::with_registry` already registered for the child process --
+/// otherwise this task's completion races runtime/process shutdown untracked,
+/// the same class of bug `BackgroundTaskTracker` exists to close for
+/// request-scoped spawns.
+fn spawn_extract_cleanup(
+    child: GracefulChild,
+    done_rx: oneshot::Receiver<()>,
+    task_registry: &shared::task_registry::TaskRegistry,
+) {
+    let handle = tokio::spawn(async move {
+        let _ = done_rx.await;
+        drop(child);
+    });
+    task_registry.register(handle);
 }
 
 /// MIME content type derived from a file extension.
@@ -1341,14 +1366,7 @@ pub async fn extract_file(
     });
     let body = Body::from_stream(stream);
 
-    // Hold the child alive until the stream finishes or the connection is closed,
-    // then drop it. Dropping GracefulChild sends SIGTERM first (graceful lock
-    // release), escalating to SIGKILL + break-lock after kill_escalation_delay()
-    // if the process has not already exited on its own.
-    tokio::spawn(async move {
-        let _ = done_rx.await;
-        drop(child);
-    });
+    spawn_extract_cleanup(child, done_rx, &state.task_registry);
 
     Ok((
         [
@@ -1385,6 +1403,26 @@ mod tests {
             1,
             "the encode-and-wait pump task must be registered synchronously before returning, not \
              just the GracefulChild reaper it may spawn later"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_extract_cleanup_registers_its_wait_and_drop_task() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let _guard = crate::borg::override_binary_for_tests(std::path::PathBuf::from("true"));
+        // A default (unshared) registry backs the child's own `GracefulChild`
+        // reaper, isolating that registration from the one under test below.
+        let child = Borg::new().spawn(&[] as &[&str], &HashMap::new()).unwrap();
+        let (_done_tx, done_rx) = oneshot::channel::<()>();
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        spawn_extract_cleanup(child, done_rx, &task_registry);
+
+        assert_eq!(
+            task_registry.pending_count(),
+            1,
+            "the wait-and-drop task must be registered synchronously before returning, so \
+             shutdown joins it instead of racing its completion untracked"
         );
     }
 

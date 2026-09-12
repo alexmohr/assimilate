@@ -18,10 +18,15 @@ function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
 describe('scheduleFormPayload', () => {
   it('renames the form fields the API spells differently', () => {
     const payload = scheduleFormPayload(
-      form({ exclude_patterns: '*.tmp', file_change_patterns: '/etc/** warn' }),
+      form({
+        exclude_patterns: '*.tmp',
+        include_patterns: '/home/keep',
+        file_change_patterns: '/etc/** warn',
+      }),
     )
 
     expect(payload.exclude_patterns_raw).toBe('*.tmp')
+    expect(payload.include_patterns_raw).toBe('/home/keep')
     expect(payload.file_change_patterns_raw).toBe('/etc/** warn')
   })
 
@@ -64,6 +69,8 @@ function overrides(patch: Partial<ScheduleAgentOverrides> = {}): ScheduleAgentOv
   return {
     usePerHostExcludes: false,
     perHostExcludes: {},
+    usePerHostIncludes: false,
+    perHostIncludes: {},
     usePerHostFileChangePatterns: false,
     perHostFileChangePatterns: {},
     usePerAgentCmds: false,
@@ -93,6 +100,20 @@ describe('agentOverridePayload', () => {
     ])
     expect(payload.file_change_patterns_per_agent).toBeUndefined()
     expect(payload.commands_per_agent).toBeUndefined()
+  })
+
+  it('clears the shared includes and sends one entry per selected host', () => {
+    const payload = agentOverridePayload(
+      overrides({ usePerHostIncludes: true, perHostIncludes: { 1: '/home/keep' } }),
+      [1, 2],
+    )
+
+    expect(payload.include_patterns_raw).toBe('')
+    expect(payload.include_patterns_per_agent).toEqual([
+      { agent_id: 1, raw_text: '/home/keep' },
+      { agent_id: 2, raw_text: '' },
+    ])
+    expect(payload.exclude_patterns_per_agent).toBeUndefined()
   })
 
   it('clears the shared file-change patterns the same way', () => {

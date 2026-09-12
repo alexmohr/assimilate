@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM per_agent_includes WHERE schedule_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "55c94851993e2fee71e092d2489eb8722bbb247b0e552bb5c23c40c281e7ff01"
+}

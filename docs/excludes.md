@@ -64,6 +64,7 @@ Individual schedules can override global excludes in two ways:
 
 1. **Add schedule-specific patterns** — these are merged with global excludes.
 2. **Ignore global excludes** — check this option in the schedule configuration to use only the schedule's own patterns.
+3. **Add include patterns** — rescue specific paths from any of the excludes above instead of adding to them. See [Include Patterns](scheduling.md#include-patterns).
 
 See [Scheduling](scheduling.md) for per-schedule exclude configuration.
 

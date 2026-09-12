@@ -114,6 +114,8 @@ function emptyAgentOverrides(): ScheduleAgentOverrides {
   return {
     usePerHostExcludes: false,
     perHostExcludes: {},
+    usePerHostIncludes: false,
+    perHostIncludes: {},
     usePerHostFileChangePatterns: false,
     perHostFileChangePatterns: {},
     usePerAgentCmds: false,
@@ -304,6 +306,7 @@ function populateForm(s: ScheduleRow): void {
     canary_enabled: s.canary_enabled,
     vm_snapshot_enabled: s.vm_snapshot_enabled ?? false,
     exclude_patterns: s.exclude_patterns_raw ?? '',
+    include_patterns: s.include_patterns_raw ?? '',
     file_change_patterns: s.file_change_patterns_raw ?? '',
     ignore_global_excludes: s.ignore_global_excludes,
     keep_hourly: s.keep_hourly ?? 0,
@@ -454,6 +457,15 @@ async function loadData(): Promise<void> {
         map[Number(entry.agent_id)] = entry.raw_text
       }
       agentOverrides.value.perHostExcludes = map
+    }
+    const perHostIncludeEntries = sources.include_patterns_per_agent ?? []
+    if (perHostIncludeEntries.length > 0) {
+      agentOverrides.value.usePerHostIncludes = true
+      const map: Record<number, string> = {}
+      for (const entry of perHostIncludeEntries) {
+        map[Number(entry.agent_id)] = entry.raw_text
+      }
+      agentOverrides.value.perHostIncludes = map
     }
     const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
     if (perHostFileChangePatternsEntries.length > 0) {

@@ -2004,6 +2004,39 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     )
   })
 
+  // Mirrors the exclude-patterns case above: include patterns get the same
+  // per-agent-override reopen/round-trip behavior.
+  it('reopens in per-agent mode and sends the includes back per agent', async () => {
+    const wrapper = await renderAdvanced({
+      backup_sources: [],
+      backup_sources_per_agent: [
+        { agent_id: 10, paths: ['/srv'] },
+        { agent_id: 11, paths: ['/var'] },
+      ],
+      include_patterns_per_agent: [
+        { agent_id: 10, raw_text: '/srv/keep' },
+        { agent_id: 11, raw_text: '/var/keep' },
+      ],
+    })
+
+    await save(wrapper)
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({
+        include_patterns_raw: '',
+        include_patterns_per_agent: [
+          { agent_id: 10, raw_text: '/srv/keep' },
+          { agent_id: 11, raw_text: '/var/keep' },
+        ],
+        backup_sources_per_agent: [
+          { agent_id: 10, paths: ['/srv'] },
+          { agent_id: 11, paths: ['/var'] },
+        ],
+      }),
+    )
+  })
+
   it('reopens in per-agent mode and sends the file change patterns back per agent', async () => {
     const wrapper = await renderAdvanced({
       backup_sources: ['/data'],

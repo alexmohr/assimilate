@@ -613,6 +613,7 @@ impl Executor {
 
         let backup_sources = schedule.backup_sources.clone();
         let exclude_patterns = schedule.exclude_patterns.clone();
+        let include_patterns = schedule.include_patterns.clone();
         let target = backup_target_from_repo(
             repo,
             &config.agent_hostname,
@@ -647,6 +648,7 @@ impl Executor {
                     target,
                     backup_sources,
                     exclude_patterns,
+                    include_patterns,
                     request_id,
                 },
                 FreeTaskContext {
@@ -1028,6 +1030,7 @@ struct DryRunTaskParams {
     target: BackupTarget,
     backup_sources: Vec<String>,
     exclude_patterns: Vec<String>,
+    include_patterns: Vec<String>,
     request_id: String,
 }
 
@@ -1459,6 +1462,7 @@ pub fn backup_target_from_repo(
         hook_timeout_seconds: schedule.map_or(60, |s| s.hook_timeout_seconds),
         skip_targets: Vec::new(),
         exclude_patterns: schedule.map_or_else(Vec::new, |s| s.exclude_patterns.clone()),
+        include_patterns: schedule.map_or_else(Vec::new, |s| s.include_patterns.clone()),
         file_change_patterns: schedule.map_or_else(Vec::new, |s| s.file_change_patterns.clone()),
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
@@ -1539,12 +1543,72 @@ async fn run_verify_task(
     }
 }
 
+/// Writes the exclude and (when present) include patterns files a dry-run
+/// preview needs, reporting `OperationFailed` and returning `None` if either
+/// write fails.
+async fn write_dry_run_pattern_files(
+    exclude_patterns: &[String],
+    include_patterns: &[String],
+    request_id: &str,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+) -> Option<(tempfile::NamedTempFile, Option<tempfile::NamedTempFile>)> {
+    let exclude_file = match write_temp_excludes(exclude_patterns) {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = AgentToServer::OperationFailed {
+                request_id: request_id.to_owned(),
+                error: format!("failed to write exclude file: {e}"),
+            };
+            if let Err(send_err) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send_err, "outbound send failed");
+            }
+            return None;
+        }
+    };
+    let include_file = match write_temp_include_patterns(include_patterns) {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = AgentToServer::OperationFailed {
+                request_id: request_id.to_owned(),
+                error: format!("failed to write include patterns file: {e}"),
+            };
+            if let Err(send_err) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send_err, "outbound send failed");
+            }
+            return None;
+        }
+    };
+    Some((exclude_file, include_file))
+}
+
+/// Builds the `borg create --dry-run` flags, placing `--patterns-from`
+/// (when include patterns exist) before `--exclude-from`: borg tests
+/// patterns in the order given on the command line, first match wins, so an
+/// include there rescues a path a later, broader exclude would otherwise
+/// drop.
+fn dry_run_create_args<'a>(
+    archive_spec: &'a str,
+    include_file_path: Option<&'a str>,
+    exclude_file_path: &'a str,
+) -> Vec<&'a str> {
+    let mut flags: Vec<&str> = vec!["create", "--dry-run", "--list", "--log-json"];
+    if let Some(include_file_path) = include_file_path {
+        flags.push("--patterns-from");
+        flags.push(include_file_path);
+    }
+    flags.push("--exclude-from");
+    flags.push(exclude_file_path);
+    flags.push(archive_spec);
+    flags
+}
+
 async fn run_dry_run_task(params: DryRunTaskParams, ctx: FreeTaskContext<'_>, borg: &Borg) {
     let DryRunTaskParams {
         repo_id,
         mut target,
         backup_sources,
         exclude_patterns,
+        include_patterns,
         request_id,
     } = params;
 
@@ -1557,18 +1621,15 @@ async fn run_dry_run_task(params: DryRunTaskParams, ctx: FreeTaskContext<'_>, bo
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let exclude_file = match write_temp_excludes(&exclude_patterns) {
-        Ok(f) => f,
-        Err(e) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id,
-                error: format!("failed to write exclude file: {e}"),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
-            }
-            return;
-        }
+    let Some((exclude_file, include_file)) = write_dry_run_pattern_files(
+        &exclude_patterns,
+        &include_patterns,
+        &request_id,
+        outbound_tx,
+    )
+    .await
+    else {
+        return;
     };
 
     let timestamp = Utc::now().timestamp();
@@ -1576,18 +1637,17 @@ async fn run_dry_run_task(params: DryRunTaskParams, ctx: FreeTaskContext<'_>, bo
 
     let env_vars = build_borg_env(&target);
 
-    let args = Borg::args_with_positional(
-        &[
-            "create",
-            "--dry-run",
-            "--list",
-            "--log-json",
-            "--exclude-from",
-            exclude_file.path().to_string_lossy().as_ref(),
-            archive_spec.as_str(),
-        ],
-        &backup_sources,
+    let include_file_path = include_file
+        .as_ref()
+        .map(|f| f.path().to_string_lossy().into_owned());
+    let exclude_file_path = exclude_file.path().to_string_lossy().into_owned();
+
+    let flags = dry_run_create_args(
+        &archive_spec,
+        include_file_path.as_deref(),
+        &exclude_file_path,
     );
+    let args = Borg::args_with_positional(&flags, &backup_sources);
 
     info!(repo_id = ?repo_id, "running borg create --dry-run");
 
@@ -1892,6 +1952,25 @@ fn write_temp_excludes(patterns: &[String]) -> Result<tempfile::NamedTempFile, s
     Ok(file)
 }
 
+/// Writes a borg patterns file rescuing `patterns` from the exclude list, for
+/// a `--patterns-from` placed ahead of `--exclude-from` in the dry-run
+/// preview - mirrors `BackupEngine::write_include_patterns_file`. Returns
+/// `None` when there is nothing to rescue.
+fn write_temp_include_patterns(
+    patterns: &[String],
+) -> Result<Option<tempfile::NamedTempFile>, std::io::Error> {
+    use std::io::Write;
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+    let mut file = tempfile::NamedTempFile::new()?;
+    for pattern in patterns {
+        writeln!(file, "+ {pattern}")?;
+    }
+    file.flush()?;
+    Ok(Some(file))
+}
+
 fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
     let repo_url = build_repo_url(
         &target.ssh_user,
@@ -2047,6 +2126,89 @@ mod tests {
         assert_eq!(total_size, 0);
     }
 
+    #[test]
+    fn write_temp_include_patterns_returns_none_when_empty() {
+        assert!(write_temp_include_patterns(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn write_temp_include_patterns_prefixes_each_pattern_with_plus() {
+        let file = write_temp_include_patterns(&["/home/keep".to_owned()])
+            .unwrap()
+            .unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert_eq!(content, "+ /home/keep\n");
+    }
+
+    #[test]
+    fn dry_run_create_args_without_include_patterns() {
+        let flags = dry_run_create_args("::host-dryrun-1", None, "/tmp/exclude");
+        assert_eq!(
+            flags,
+            vec![
+                "create",
+                "--dry-run",
+                "--list",
+                "--log-json",
+                "--exclude-from",
+                "/tmp/exclude",
+                "::host-dryrun-1",
+            ]
+        );
+    }
+
+    #[test]
+    fn dry_run_create_args_places_include_before_exclude() {
+        let flags = dry_run_create_args("::host-dryrun-1", Some("/tmp/include"), "/tmp/exclude");
+        assert_eq!(
+            flags,
+            vec![
+                "create",
+                "--dry-run",
+                "--list",
+                "--log-json",
+                "--patterns-from",
+                "/tmp/include",
+                "--exclude-from",
+                "/tmp/exclude",
+                "::host-dryrun-1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn write_dry_run_pattern_files_writes_both_when_include_patterns_present() {
+        let (outbound_tx, _outbound_rx) = mpsc::channel(4);
+        let result = write_dry_run_pattern_files(
+            &["*.log".to_owned()],
+            &["/home/keep".to_owned()],
+            "req-1",
+            &outbound_tx,
+        )
+        .await;
+
+        let (exclude_file, include_file) = result.expect("both pattern files should be written");
+        let include_file = include_file.expect("include patterns were provided");
+        assert_eq!(
+            std::fs::read_to_string(exclude_file.path()).unwrap(),
+            "*.log\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(include_file.path()).unwrap(),
+            "+ /home/keep\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_dry_run_pattern_files_omits_include_file_when_no_include_patterns() {
+        let (outbound_tx, _outbound_rx) = mpsc::channel(4);
+        let result =
+            write_dry_run_pattern_files(&["*.log".to_owned()], &[], "req-1", &outbound_tx).await;
+
+        let (_exclude_file, include_file) = result.expect("exclude file should still be written");
+        assert!(include_file.is_none());
+    }
+
     fn make_schedule(id: i64, sources: Vec<&str>) -> shared::types::ScheduleConfig {
         shared::types::ScheduleConfig {
             id,
@@ -2059,6 +2221,7 @@ mod tests {
             vm_snapshot_enabled: false,
             exclude_patterns: Vec::new(),
             ignore_global_excludes: false,
+            include_patterns: Vec::new(),
             keep_hourly: 24,
             keep_daily: 7,
             keep_weekly: 4,
@@ -2119,6 +2282,16 @@ mod tests {
         let target =
             backup_target_from_repo(&repo, "hostname", Some(99), &VmSnapshotConfig::default());
         assert_eq!(target.backup_sources, vec!["/var"]);
+    }
+
+    #[test]
+    fn backup_target_maps_include_patterns_from_schedule() {
+        let repo = make_repo(vec![shared::types::ScheduleConfig {
+            include_patterns: vec!["/home/keep".to_owned()],
+            ..make_schedule(10, vec!["/var"])
+        }]);
+        let target = backup_target_from_repo(&repo, "hostname", None, &VmSnapshotConfig::default());
+        assert_eq!(target.include_patterns, vec!["/home/keep".to_owned()]);
     }
 
     #[test]

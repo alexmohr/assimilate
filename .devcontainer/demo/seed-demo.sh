@@ -642,6 +642,10 @@ api POST "/api/schedules" "{
 # listed under each of their sections, while the single-agent schedules above
 # spread across those same sections and across the three repositories the
 # "Group: Repo" mode buckets by.
+#
+# web-server-01's include pattern demonstrates rescuing a path from its own
+# broader exclude: `*.log` would otherwise drop access.log along with every
+# other log file under /var/log/nginx.
 api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -662,6 +666,9 @@ api POST "/api/schedules" "{
     \"exclude_patterns_per_agent\": [
         {\"agent_id\": $WEB01_ID, \"raw_text\": \"*.log\"},
         {\"agent_id\": $DB01_ID, \"raw_text\": \"*.tmp\"}
+    ],
+    \"include_patterns_per_agent\": [
+        {\"agent_id\": $WEB01_ID, \"raw_text\": \"/var/log/nginx/access.log\"}
     ],
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
     \"file_change_patterns_per_agent\": [

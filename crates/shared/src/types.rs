@@ -1316,6 +1316,11 @@ pub struct ScheduleConfig {
     /// Whether to skip the server's global exclude patterns for this schedule.
     #[serde(default)]
     pub ignore_global_excludes: bool,
+    /// Glob patterns rescued from this schedule's excludes - checked before
+    /// them, so a path they match is backed up even if a broader exclude
+    /// (global, agent-default, or this schedule's own) would otherwise skip it.
+    #[serde(default)]
+    pub include_patterns: Vec<String>,
     /// Number of hourly archives to retain when pruning.
     #[serde(default = "default_keep_hourly")]
     pub keep_hourly: u32,

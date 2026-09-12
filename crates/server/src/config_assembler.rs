@@ -22,7 +22,7 @@ pub async fn assemble_config(
 ) -> Result<AgentConfig, ApiError> {
     let agent = db::get_agent_by_id(pool, agent_id).await?;
 
-    let global_excludes = parse_raw_excludes(&db::get_global_excludes_raw(pool).await?);
+    let global_excludes = parse_raw_pattern_lines(&db::get_global_excludes_raw(pool).await?);
 
     let schedule_rows = db::list_schedules_for_agent(pool, agent.id).await?;
 
@@ -198,10 +198,17 @@ async fn build_schedule_config(
         exclude_patterns.extend(global_excludes.iter().cloned());
     }
     exclude_patterns.extend(agent.default_exclude_patterns.iter().cloned());
-    exclude_patterns.extend(parse_raw_excludes(effective_excludes_raw));
+    exclude_patterns.extend(parse_raw_pattern_lines(effective_excludes_raw));
 
     let mut seen = std::collections::HashSet::new();
     exclude_patterns.retain(|p| seen.insert(p.clone()));
+
+    let per_agent_includes_raw =
+        db::get_per_agent_includes_raw(pool, schedule.id, agent.id).await?;
+    let effective_includes_raw = per_agent_includes_raw
+        .as_deref()
+        .unwrap_or(&schedule.include_patterns_raw);
+    let include_patterns = parse_raw_pattern_lines(effective_includes_raw);
 
     let per_agent_cmds = db::get_per_agent_commands(pool, schedule.id, agent.id).await?;
 
@@ -242,6 +249,7 @@ async fn build_schedule_config(
         vm_snapshot_enabled: schedule.vm_snapshot_enabled,
         exclude_patterns,
         ignore_global_excludes: schedule.ignore_global_excludes,
+        include_patterns,
         keep_hourly: retention.keep_hourly,
         keep_daily: retention.keep_daily,
         keep_weekly: retention.keep_weekly,
@@ -344,7 +352,7 @@ pub async fn push_config_to_all_schedule_targets(state: &AppState, schedule_id: 
     }
 }
 
-fn parse_raw_excludes(raw: &str) -> Vec<String> {
+fn parse_raw_pattern_lines(raw: &str) -> Vec<String> {
     raw.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -383,35 +391,35 @@ fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePat
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_raw_excludes, parse_raw_file_change_patterns};
+    use super::{parse_raw_file_change_patterns, parse_raw_pattern_lines};
 
     #[test]
     fn empty_input_returns_empty() {
-        assert_eq!(parse_raw_excludes("").len(), 0);
+        assert_eq!(parse_raw_pattern_lines("").len(), 0);
     }
 
     #[test]
     fn blank_lines_stripped() {
         let input = "*.log\n\n*.tmp\n\n";
-        assert_eq!(parse_raw_excludes(input), vec!["*.log", "*.tmp"]);
+        assert_eq!(parse_raw_pattern_lines(input), vec!["*.log", "*.tmp"]);
     }
 
     #[test]
     fn comment_lines_stripped() {
         let input = "# cache files\n*.cache\n# runtime\n/proc";
-        assert_eq!(parse_raw_excludes(input), vec!["*.cache", "/proc"]);
+        assert_eq!(parse_raw_pattern_lines(input), vec!["*.cache", "/proc"]);
     }
 
     #[test]
     fn leading_trailing_whitespace_trimmed_per_line() {
         let input = "  *.log  \n\t/proc\t";
-        assert_eq!(parse_raw_excludes(input), vec!["*.log", "/proc"]);
+        assert_eq!(parse_raw_pattern_lines(input), vec!["*.log", "/proc"]);
     }
 
     #[test]
     fn whitespace_only_lines_stripped() {
         let input = "*.log\n   \n\t\n/proc";
-        assert_eq!(parse_raw_excludes(input), vec!["*.log", "/proc"]);
+        assert_eq!(parse_raw_pattern_lines(input), vec!["*.log", "/proc"]);
     }
 
     #[test]
@@ -419,7 +427,7 @@ mod tests {
         let input = "# System paths\n/proc\n/sys\n\n# Cache\n*.cache\npp:__pycache__\n\n# \
                      Downloads\n/home/*/Downloads";
         assert_eq!(
-            parse_raw_excludes(input),
+            parse_raw_pattern_lines(input),
             vec![
                 "/proc",
                 "/sys",
@@ -433,7 +441,7 @@ mod tests {
     #[test]
     fn order_is_preserved() {
         let input = "/z\n/a\n/m";
-        assert_eq!(parse_raw_excludes(input), vec!["/z", "/a", "/m"]);
+        assert_eq!(parse_raw_pattern_lines(input), vec!["/z", "/a", "/m"]);
     }
 
     #[test]
@@ -441,7 +449,10 @@ mod tests {
         // Only full-line comments (trimmed line starts with #) are stripped;
         // inline # is part of a valid borg pattern.
         let input = "re:/tmp/[^/]+\\.sock$";
-        assert_eq!(parse_raw_excludes(input), vec!["re:/tmp/[^/]+\\.sock$"]);
+        assert_eq!(
+            parse_raw_pattern_lines(input),
+            vec!["re:/tmp/[^/]+\\.sock$"]
+        );
     }
 
     #[test]

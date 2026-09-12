@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT raw_text FROM per_agent_includes WHERE schedule_id = $1 AND agent_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "raw_text",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "02b07caa87d30b7bf9efeadf5474b33241cbdcccc1c6854dc74640f4bb368c2c"
+}

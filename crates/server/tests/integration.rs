@@ -711,11 +711,11 @@ async fn clean_tables(pool: &PgPool) {
     sqlx::query(
         "TRUNCATE TABLE audit_log, login_attempts, system_events, system_settings, server_quotas, \
          notification_deliveries, notification_rules, ssh_tunnels, agent_hostname_patterns, \
-         agent_tags, schedule_targets, per_agent_excludes, per_agent_commands, \
-         per_agent_file_change_patterns, archive_dirs, archive_tags, archive_index_jobs, \
-         archive_paths, archives, backup_sources, backup_run_events, backup_reports, \
-         canary_results, repo_tags, repo_stats, repo_import_state, repo_last_op, repo_quotas, \
-         repo_relocation_pending_hosts, schedules, dismissed_dashboard_findings, \
+         agent_tags, schedule_targets, per_agent_excludes, per_agent_includes, \
+         per_agent_commands, per_agent_file_change_patterns, archive_dirs, archive_tags, \
+         archive_index_jobs, archive_paths, archives, backup_sources, backup_run_events, \
+         backup_reports, canary_results, repo_tags, repo_stats, repo_import_state, repo_last_op, \
+         repo_quotas, repo_relocation_pending_hosts, schedules, dismissed_dashboard_findings, \
          push_subscriptions, api_tokens, sessions, user_roles, user_groups, repo_permissions, \
          totp_attempts, users, groups, tags, repos, agents, notification_channels CASCADE",
     )
@@ -5527,6 +5527,236 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
         agent_id
     );
     assert_eq!(per_agent.first().unwrap().get("raw_text").unwrap(), raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_per_agent_includes_roundtrip_preserves_raw_text(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('inc-host', 'hash-inc') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo_id = insert_test_repo(&pool, "inc-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let raw = "# Keep these\n/home/keep\n\n/var/keep";
+
+    sqlx::query(
+        "INSERT INTO per_agent_includes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3)",
+    )
+    .bind(schedule_id)
+    .bind(agent_id)
+    .bind(raw)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/sources")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+
+    let per_agent = body
+        .get("include_patterns_per_agent")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(per_agent.len(), 1);
+    assert_eq!(
+        per_agent.first().unwrap().get("agent_id").unwrap(),
+        agent_id
+    );
+    assert_eq!(per_agent.first().unwrap().get("raw_text").unwrap(), raw);
+}
+
+/// Unlike the roundtrip test above (which seeds `per_agent_includes` by hand),
+/// this drives the create endpoint itself so `insert_per_agent_includes` -
+/// the create-time counterpart to the update path already exercised
+/// elsewhere - actually runs.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_create_schedule_with_per_agent_include_patterns(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('create-inc-host', \
+         'hash-create-inc') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "create-inc-repo").await;
+
+    let payload = json!({
+        "agent_ids": [agent_id],
+        "repo_id": repo_id,
+        "cron_expression": "0 3 * * *",
+        "enabled": false,
+        "backup_sources": ["/data"],
+        "include_patterns_per_agent": [
+            { "agent_id": agent_id, "raw_text": "/home/keep" }
+        ],
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/schedules", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let schedule_id = body.get("id").unwrap().as_i64().unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/sources")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let per_agent = body
+        .get("include_patterns_per_agent")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(per_agent.len(), 1);
+    assert_eq!(
+        per_agent.first().unwrap().get("agent_id").unwrap(),
+        agent_id
+    );
+    assert_eq!(
+        per_agent.first().unwrap().get("raw_text").unwrap(),
+        "/home/keep"
+    );
+}
+
+/// A schedule target's per-agent exclude/include/file-change-pattern
+/// overrides must survive a full export -> import round trip: exported into
+/// the target's own `exclude_patterns`/`include_patterns`/
+/// `file_change_patterns` fields, then re-applied to the newly imported
+/// schedule.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_export_import_schedule_target_roundtrip_preserves_per_agent_overrides(
+    pool: sqlx::PgPool,
+) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('roundtrip-host', \
+         'hash-roundtrip') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "roundtrip-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    sqlx::query(
+        "INSERT INTO per_agent_excludes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3)",
+    )
+    .bind(schedule_id)
+    .bind(agent_id)
+    .bind("*.cache")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO per_agent_includes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3)",
+    )
+    .bind(schedule_id)
+    .bind(agent_id)
+    .bind("/home/keep")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let export_resp = oneshot(&mut app, get_request("/api/config/export")).await;
+    assert_eq!(export_resp.status(), StatusCode::OK);
+    let export_body = body_json(export_resp).await;
+
+    let schedules = export_body.get("schedules").unwrap().as_array().unwrap();
+    assert_eq!(schedules.len(), 1);
+    let schedule = schedules.first().unwrap();
+    let targets = schedule.get("targets").unwrap().as_array().unwrap();
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert_eq!(target.get("hostname").unwrap(), "roundtrip-host");
+    assert_eq!(target.get("exclude_patterns").unwrap(), "*.cache");
+    assert_eq!(target.get("include_patterns").unwrap(), "/home/keep");
+    assert_eq!(
+        schedule
+            .get("backup_sources")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .first()
+            .unwrap(),
+        "/home"
+    );
+
+    let import_resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(export_body)),
+    )
+    .await;
+    assert_eq!(import_resp.status(), StatusCode::OK);
+    let import_result = body_json(import_resp).await;
+    assert_eq!(import_result.get("schedules_created").unwrap(), 1);
+
+    let new_schedule_id: i64 =
+        sqlx::query_scalar("SELECT id FROM schedules WHERE id != $1 ORDER BY id DESC LIMIT 1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let sources_resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{new_schedule_id}/sources")),
+    )
+    .await;
+    assert_eq!(sources_resp.status(), StatusCode::OK);
+    let sources_body = body_json(sources_resp).await;
+
+    let exclude_per_agent = sources_body
+        .get("exclude_patterns_per_agent")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(exclude_per_agent.len(), 1);
+    assert_eq!(
+        exclude_per_agent.first().unwrap().get("agent_id").unwrap(),
+        agent_id
+    );
+    assert_eq!(
+        exclude_per_agent.first().unwrap().get("raw_text").unwrap(),
+        "*.cache"
+    );
+
+    let include_per_agent = sources_body
+        .get("include_patterns_per_agent")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(include_per_agent.len(), 1);
+    assert_eq!(
+        include_per_agent.first().unwrap().get("agent_id").unwrap(),
+        agent_id
+    );
+    assert_eq!(
+        include_per_agent.first().unwrap().get("raw_text").unwrap(),
+        "/home/keep"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

@@ -26,6 +26,10 @@ export type ScheduleTargetExportResponse = {
    */
   exclude_patterns: string;
   /**
+   * Include patterns for the target.
+   */
+  include_patterns: string;
+  /**
    * File change detection patterns.
    */
   file_change_patterns: string;

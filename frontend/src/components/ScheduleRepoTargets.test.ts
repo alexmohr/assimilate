@@ -36,6 +36,14 @@ function lastModel(wrapper: ReturnType<typeof mount>): ScheduleRepoTarget[] {
 }
 
 describe('ScheduleRepoTargets', () => {
+  it('discloses the repositories hint with its explainer text', async () => {
+    const wrapper = mount([{ repo_id: 20, required: true }])
+    await wrapper.find('[aria-label="Help: repositories"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'Written in this order, one after another, each as its own run over the source.',
+    )
+  })
+
   it('lists each target with its address and required state', () => {
     const wrapper = mount([
       { repo_id: 20, required: true },

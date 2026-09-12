@@ -203,7 +203,7 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 
 ### Missed Backup Threshold
 
-Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Below that count, a miss only shows as an **N/threshold missed** warning chip on the schedule card; once the threshold is reached, the schedule is disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) fires if a channel has a rule for it. A single successful run resets the count back to zero.
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires a **Backup Skipped (Agent Offline)** [notification](notifications.md#supported-events) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss. A single successful run resets the count back to zero.
 
 ### Catch-Up Runs
 

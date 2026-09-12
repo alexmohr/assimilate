@@ -142,7 +142,11 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
     };
     if matches!(
         event_type_str,
-        "backup_warning" | "backup_failed" | "check_failed" | "schedule_auto_disabled"
+        "backup_warning"
+            | "backup_failed"
+            | "check_failed"
+            | "schedule_auto_disabled"
+            | "backup_skipped_agent_offline"
     ) {
         if let Some(msg) = payload
             .get("error_message")
@@ -314,6 +318,21 @@ mod tests {
             build_email_subject(&p),
             "Assimilate: schedule auto disabled - web-server-01: agent 'web-server-01' stayed \
              unreachable"
+        );
+    }
+
+    #[test]
+    fn subject_backup_skipped_agent_offline_includes_hostname_and_reason() {
+        let p = serde_json::json!({
+            "event_type": "backup_skipped_agent_offline",
+            "hostname": "web-server-01",
+            "status": "skipped",
+            "error_message": "agent 'web-server-01' is offline",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: backup skipped agent offline - web-server-01: agent 'web-server-01' is \
+             offline"
         );
     }
 

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, 'backup_skipped_agent_offline', true)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d08a5add73a164ac094191e1d26650f28e6f595d377ecdf72243d61b5f42056"
+}

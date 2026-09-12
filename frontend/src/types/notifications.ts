@@ -43,6 +43,7 @@ export type NotificationEventType =
   | 'agent_connected'
   | 'agent_disconnected'
   | 'schedule_auto_disabled'
+  | 'backup_skipped_agent_offline'
 
 export type SmtpSecurity = 'none' | 'starttls' | 'tls'
 

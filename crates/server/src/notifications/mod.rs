@@ -165,6 +165,9 @@ pub enum EventType {
     /// The scheduler auto-disabled a schedule after it reached its
     /// `missed_backup_threshold` of consecutive missed backups.
     ScheduleAutoDisabled,
+    /// A scheduled backup could not be started because its target agent was
+    /// offline (not connected to the server) when the run came due.
+    BackupSkippedAgentOffline,
 }
 
 impl EventType {
@@ -178,6 +181,7 @@ impl EventType {
         "agent_connected",
         "agent_disconnected",
         "schedule_auto_disabled",
+        "backup_skipped_agent_offline",
     ];
 }
 
@@ -561,7 +565,11 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
         .filter(|_| {
             matches!(
                 event_type_str,
-                "backup_warning" | "backup_failed" | "check_failed" | "schedule_auto_disabled"
+                "backup_warning"
+                    | "backup_failed"
+                    | "check_failed"
+                    | "schedule_auto_disabled"
+                    | "backup_skipped_agent_offline"
             )
         }) {
         Some(msg) => {
@@ -869,6 +877,10 @@ mod tests {
             EventType::from_str("schedule_auto_disabled"),
             Ok(EventType::ScheduleAutoDisabled)
         );
+        assert_eq!(
+            EventType::from_str("backup_skipped_agent_offline"),
+            Ok(EventType::BackupSkippedAgentOffline)
+        );
         assert!(EventType::from_str("unknown_event").is_err());
     }
 
@@ -887,6 +899,10 @@ mod tests {
         assert_eq!(
             EventType::ScheduleAutoDisabled.to_string(),
             "schedule_auto_disabled"
+        );
+        assert_eq!(
+            EventType::BackupSkippedAgentOffline.to_string(),
+            "backup_skipped_agent_offline"
         );
     }
 
@@ -962,6 +978,16 @@ mod tests {
             "schedule_id": 3,
         }));
         assert_eq!(build_push_url(&p), "/schedules/3");
+    }
+
+    #[test]
+    fn backup_skipped_agent_offline_goes_to_the_schedule_detail_page() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_skipped_agent_offline",
+            "hostname": "myhost",
+            "schedule_id": 5,
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/5");
     }
 
     #[test]
@@ -1049,6 +1075,20 @@ mod tests {
         assert_eq!(
             build_push_body(&p),
             "myhost - auto_disabled: agent 'myhost' stayed unreachable"
+        );
+    }
+
+    #[test]
+    fn push_body_backup_skipped_agent_offline_includes_reason() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_skipped_agent_offline",
+            "hostname": "myhost",
+            "status": "skipped",
+            "error_message": "agent 'myhost' is offline",
+        }));
+        assert_eq!(
+            build_push_body(&p),
+            "myhost - skipped: agent 'myhost' is offline"
         );
     }
 

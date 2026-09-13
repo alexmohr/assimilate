@@ -170,6 +170,13 @@ pub struct SettingsResponse {
     /// never been configured (the effective default is still enforced).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_idle_timeout_minutes: Option<i64>,
+    /// Base URL (scheme + host, no trailing slash, e.g. `https://backups.example.com`) used
+    /// to build absolute deep links -- such as an Activity Log link on a failed backup --
+    /// in email and webhook notifications. `None` when not configured, in which case those
+    /// notifications omit the link. Web push notifications don't need this: the browser
+    /// resolves their relative links against its own origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 /// Reads a setting and parses it, logging (without failing the request) if
@@ -231,6 +238,10 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
     let session_idle_timeout_minutes =
         parsed_setting::<i64>(pool, "session_idle_timeout_minutes").await?;
 
+    let public_url = db::get_setting(pool, "public_url")
+        .await?
+        .filter(|s| !s.is_empty());
+
     Ok(SettingsResponse {
         retention_days,
         report_retention_days,
@@ -241,6 +252,7 @@ async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiE
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
         session_idle_timeout_minutes,
+        public_url,
     })
 }
 
@@ -289,6 +301,47 @@ pub struct UpdateSettingsRequest {
     /// Idle timeout for user sessions in minutes, must be positive. `None`
     /// leaves the current value unchanged; the timeout cannot be disabled.
     pub session_idle_timeout_minutes: Option<i64>,
+    /// New base URL for notification deep links (e.g. `https://backups.example.com`), or an
+    /// empty string to clear it. `None` leaves the current value unchanged.
+    pub public_url: Option<String>,
+}
+
+/// The two URL schemes a `public_url` setting may use. A private enum kept local to this
+/// validation, converted from the raw scheme string at this one boundary rather than
+/// matching on the string directly everywhere it's checked.
+enum PublicUrlScheme {
+    Http,
+    Https,
+    Other,
+}
+
+impl From<&str> for PublicUrlScheme {
+    fn from(scheme: &str) -> Self {
+        match scheme {
+            "http" => Self::Http,
+            "https" => Self::Https,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// Validates and persists (or clears, on an empty string) the `public_url` setting.
+async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), ApiError> {
+    if public_url.is_empty() {
+        return db::set_setting(pool, "public_url", "").await;
+    }
+
+    let parsed = reqwest::Url::parse(public_url)
+        .map_err(|e| ApiError::BadRequest(format!("invalid public_url: {e}")))?;
+    if matches!(
+        PublicUrlScheme::from(parsed.scheme()),
+        PublicUrlScheme::Other
+    ) {
+        return Err(ApiError::BadRequest(
+            "public_url must use http or https".to_string(),
+        ));
+    }
+    db::set_setting(pool, "public_url", public_url.trim_end_matches('/')).await
 }
 
 #[utoipa::path(
@@ -412,6 +465,10 @@ pub async fn update_settings(
             ));
         }
         db::set_setting(&state.pool, "session_idle_timeout_minutes", &v.to_string()).await?;
+    }
+
+    if let Some(public_url) = body.public_url {
+        apply_public_url_update(&state.pool, &public_url).await?;
     }
 
     // Refresh the cached session idle timeout
@@ -595,4 +652,33 @@ pub async fn reset_system(
         cancelled_backups,
         notified_agents,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PublicUrlScheme;
+
+    #[test]
+    fn public_url_scheme_accepts_http_and_https() {
+        assert!(matches!(
+            PublicUrlScheme::from("http"),
+            PublicUrlScheme::Http
+        ));
+        assert!(matches!(
+            PublicUrlScheme::from("https"),
+            PublicUrlScheme::Https
+        ));
+    }
+
+    #[test]
+    fn public_url_scheme_rejects_other_schemes() {
+        assert!(matches!(
+            PublicUrlScheme::from("ftp"),
+            PublicUrlScheme::Other
+        ));
+        assert!(matches!(
+            PublicUrlScheme::from("file"),
+            PublicUrlScheme::Other
+        ));
+    }
 }

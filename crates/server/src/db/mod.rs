@@ -4196,6 +4196,29 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
     })
 }
 
+/// Reads a schedule's next scheduled run time, for surfacing in a failure/warning
+/// notification alongside the schedule name. Returns `None` for a schedule that doesn't
+/// exist rather than erroring, since a notification is best-effort context, not a
+/// correctness-critical read.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_schedule_next_run_at(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Option<DateTime<Utc>>, ApiError> {
+    let next_run_at = sqlx::query_scalar!(
+        "SELECT next_run_at FROM schedules WHERE id = $1",
+        schedule_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    .flatten();
+    Ok(next_run_at)
+}
+
 /// Batched form of [`get_schedule_targets_for_run`] for callers that need target hostnames
 /// for many schedules at once (e.g. projecting calendar events for every schedule in a
 /// fleet) -- one round trip instead of one query per schedule.

@@ -9640,6 +9640,71 @@ async fn test_update_settings_partial_put_reflects_persisted_values_not_request_
     assert_eq!(body.get("borg_query_timeout_secs").unwrap(), 120);
 }
 
+/// `public_url` builds the absolute Activity Log links a failed/warning backup
+/// notification includes -- it must persist, survive an omitted PUT (rather than
+/// resetting like the stale-echo bug above), reject a non-http(s) scheme, and be
+/// clearable with an empty string.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_update_settings_public_url_persists_validates_and_clears() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let mut app = build_test_app(pool.clone());
+
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({
+            "retention_days": 7,
+            "public_url": "https://backups.example.com/",
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.com",
+        "trailing slash must be normalized away"
+    );
+
+    // Omitting public_url on a later PUT must not reset it.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7 })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.com"
+    );
+
+    // A non-http(s) scheme is rejected.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "ftp://backups.example.com" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // An empty string clears it.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(body.get("public_url").is_none());
+}
+
 /// The VM endpoints are the only path by which the UI reads or changes a
 /// host's staging settings, and none of the agent-side doubles touch them.
 /// These drive the real router so the extractors, the hostname lookup, the

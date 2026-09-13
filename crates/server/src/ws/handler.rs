@@ -651,6 +651,15 @@ fn dispatch_quota_breach_notification(
         schedule_id: None,
         schedule_name: None,
         archive_name: None,
+        run_id: None,
+        duration_secs: None,
+        original_size: None,
+        compressed_size: None,
+        deduplicated_size: None,
+        files_processed: None,
+        warnings: Vec::new(),
+        next_run_at: None,
+        activity_url: None,
     };
     spawn_notification_dispatch(state, quota_event);
 }
@@ -1348,23 +1357,80 @@ async fn check_server_quota_after_backup(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "grouping these into a struct would obscure the call site more than it would clarify \
-              it; all params are single-use scalars/refs from the caller's own locals"
-)]
-async fn dispatch_backup_completion_notification(
-    state: &AppState,
+/// Context for [`dispatch_backup_completion_notification`], gathered by its caller from a
+/// `BackupReport` before that report is moved into `persist_backup_completed_report`.
+struct BackupCompletionNotificationArgs<'a> {
     status: shared::types::BackupStatus,
-    hostname: &str,
+    hostname: &'a str,
     repo_name: String,
-    status_str: &str,
+    status_str: &'a str,
     error_message: Option<String>,
     repo_id: i64,
     agent_id: i64,
     schedule_id: Option<i64>,
     archive_name: Option<String>,
+    run_id: Option<String>,
+    duration_secs: i64,
+    original_size: i64,
+    compressed_size: i64,
+    deduplicated_size: i64,
+    files_processed: i64,
+    warnings: Vec<String>,
+}
+
+/// The `BackupReport` fields needed for the completion notification, cloned out before the
+/// report is moved into `persist_backup_completed_report`.
+struct NotificationReportFields {
+    error_message: Option<String>,
+    archive_name: Option<String>,
+    run_id: Option<String>,
+    duration_secs: i64,
+    original_size: i64,
+    compressed_size: i64,
+    deduplicated_size: i64,
+    files_processed: i64,
+    warnings: Vec<String>,
+}
+
+impl NotificationReportFields {
+    fn clone_from(report: &shared::types::BackupReport) -> Self {
+        Self {
+            error_message: report.error_message.clone(),
+            archive_name: report.archive_name.clone(),
+            run_id: report.run_id.clone(),
+            duration_secs: report.duration_secs,
+            original_size: report.original_size,
+            compressed_size: report.compressed_size,
+            deduplicated_size: report.deduplicated_size,
+            files_processed: report.files_processed,
+            warnings: report.warnings.clone(),
+        }
+    }
+}
+
+async fn dispatch_backup_completion_notification(
+    state: &AppState,
+    args: BackupCompletionNotificationArgs<'_>,
 ) {
+    let BackupCompletionNotificationArgs {
+        status,
+        hostname,
+        repo_name,
+        status_str,
+        error_message,
+        repo_id,
+        agent_id,
+        schedule_id,
+        archive_name,
+        run_id,
+        duration_secs,
+        original_size,
+        compressed_size,
+        deduplicated_size,
+        files_processed,
+        warnings,
+    } = args;
+
     let event_type = match status {
         shared::types::BackupStatus::Success => EventType::BackupSuccess,
         shared::types::BackupStatus::Warning => EventType::BackupWarning,
@@ -1374,6 +1440,13 @@ async fn dispatch_backup_completion_notification(
         Some(sid) => db::get_schedule_display_name(&state.pool, sid, &repo_name)
             .await
             .ok(),
+        None => None,
+    };
+    let next_run_at = match schedule_id {
+        Some(sid) => db::get_schedule_next_run_at(&state.pool, sid)
+            .await
+            .ok()
+            .flatten(),
         None => None,
     };
     let event = NotificationEvent {
@@ -1388,6 +1461,15 @@ async fn dispatch_backup_completion_notification(
         schedule_id,
         schedule_name,
         archive_name,
+        run_id,
+        duration_secs: Some(duration_secs),
+        original_size: Some(original_size),
+        compressed_size: Some(compressed_size),
+        deduplicated_size: Some(deduplicated_size),
+        files_processed: Some(files_processed),
+        warnings,
+        next_run_at,
+        activity_url: None,
     };
     spawn_notification_dispatch(state, event);
 }
@@ -1623,9 +1705,8 @@ async fn handle_backup_completed(
         success: outcome_success,
     });
 
-    let notification_error_message = report.error_message.clone();
-    let notification_archive_name = report.archive_name.clone();
-    let index_archive_name = notification_archive_name.clone();
+    let notification_fields = NotificationReportFields::clone_from(&report);
+    let index_archive_name = notification_fields.archive_name.clone();
     let succeeded_or_warned = matches!(
         report_status,
         shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
@@ -1674,15 +1755,24 @@ async fn handle_backup_completed(
 
     dispatch_backup_completion_notification(
         state,
-        report_status,
-        hostname,
-        repo_name,
-        status_str,
-        notification_error_message,
-        repo_id,
-        agent_id,
-        schedule_id,
-        notification_archive_name,
+        BackupCompletionNotificationArgs {
+            status: report_status,
+            hostname,
+            repo_name,
+            status_str,
+            error_message: notification_fields.error_message,
+            repo_id,
+            agent_id,
+            schedule_id,
+            archive_name: notification_fields.archive_name,
+            run_id: notification_fields.run_id,
+            duration_secs: notification_fields.duration_secs,
+            original_size: notification_fields.original_size,
+            compressed_size: notification_fields.compressed_size,
+            deduplicated_size: notification_fields.deduplicated_size,
+            files_processed: notification_fields.files_processed,
+            warnings: notification_fields.warnings,
+        },
     )
     .await;
 
@@ -1792,6 +1882,15 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         schedule_id: schedule.map(|s| s.id),
         schedule_name,
         archive_name: None,
+        run_id: None,
+        duration_secs: Some(duration_secs),
+        original_size: None,
+        compressed_size: None,
+        deduplicated_size: None,
+        files_processed: None,
+        warnings: Vec::new(),
+        next_run_at: None,
+        activity_url: None,
     };
     spawn_notification_dispatch(state, event);
 

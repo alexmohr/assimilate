@@ -129,108 +129,174 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
     let hostname = payload
         .get("hostname")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let event_label = if event_type_str.is_empty() {
-        "Notification".to_owned()
-    } else {
-        event_type_str.replace('_', " ")
-    };
-    let base = if hostname.is_empty() {
-        format!("Assimilate: {event_label}")
-    } else {
-        format!("Assimilate: {event_label} - {hostname}")
-    };
-    if matches!(
-        event_type_str,
-        "backup_warning"
-            | "backup_failed"
-            | "check_failed"
-            | "schedule_auto_disabled"
-            | "backup_skipped_agent_offline"
-    ) {
-        if let Some(msg) = payload
-            .get("error_message")
-            .and_then(serde_json::Value::as_str)
-        {
-            let mut chars = msg.chars();
-            let short: String = chars.by_ref().take(60).collect();
-            let short = if chars.next().is_some() {
-                format!("{short}...")
-            } else {
-                short
-            };
-            format!("{base}: {short}")
-        } else {
-            base
-        }
-    } else {
-        base
-    }
-}
-
-pub(crate) fn build_email_body(payload: &serde_json::Value) -> String {
-    let event_type = payload
-        .get("event_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let hostname = payload
-        .get("hostname")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
+        .filter(|s| !s.is_empty());
     let repo_name = payload
         .get("repo_name")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let schedule_name = payload
-        .get("schedule_name")
-        .and_then(serde_json::Value::as_str);
-    let status = payload
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let timestamp = payload
-        .get("timestamp")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let error_message = payload
-        .get("error_message")
-        .and_then(serde_json::Value::as_str);
-    let archive_name = payload
-        .get("archive_name")
-        .and_then(serde_json::Value::as_str);
+        .filter(|s| !s.is_empty());
+    let label = super::event_label(event_type_str);
 
-    let event_label = if event_type.is_empty() {
-        "Notification".to_owned()
+    match (hostname, repo_name) {
+        (Some(hostname), Some(repo_name)) => format!("{label}: {hostname} / {repo_name}"),
+        (Some(hostname), None) => format!("{label}: {hostname}"),
+        (None, _) => label.to_owned(),
+    }
+}
+
+/// Renders a byte count as a human-readable size (e.g. `12.4 GiB`).
+fn format_bytes(bytes: i64) -> String {
+    const UNITS: [(&str, u64); 4] = [
+        ("TiB", 1 << 40),
+        ("GiB", 1 << 30),
+        ("MiB", 1 << 20),
+        ("KiB", 1 << 10),
+    ];
+    let bytes = u64::try_from(bytes).unwrap_or(0);
+    for (unit, size) in UNITS {
+        if bytes >= size {
+            let whole = bytes.checked_div(size).unwrap_or(0);
+            let tenths = bytes
+                .checked_rem(size)
+                .unwrap_or(0)
+                .saturating_mul(10)
+                .checked_div(size)
+                .unwrap_or(0);
+            return format!("{whole}.{tenths} {unit}");
+        }
+    }
+    format!("{bytes} B")
+}
+
+/// Renders a duration as e.g. `1h 2m 3s`, `4m 5s`, or `6s`.
+fn format_duration_secs(secs: i64) -> String {
+    let secs = u64::try_from(secs).unwrap_or(0);
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
     } else {
-        let label = event_type.replace('_', " ");
-        let mut chars = label.chars();
-        chars.next().map_or_else(String::new, |c| {
-            c.to_uppercase().to_string() + chars.as_str()
-        })
-    };
+        format!("{seconds}s")
+    }
+}
 
-    let mut parts = vec![format!("Event:      {event_label}")];
-    if !hostname.is_empty() {
-        parts.push(format!("Host:       {hostname}"));
+/// Fields pulled out of a notification payload for [`build_email_body`], gathered up front
+/// so the body-assembly logic below reads as a flat list of "if present, add this line"
+/// rather than being interleaved with `payload.get(...)` boilerplate.
+struct EmailBodyFields<'a> {
+    event_type: &'a str,
+    hostname: &'a str,
+    repo_name: &'a str,
+    schedule_name: Option<&'a str>,
+    next_run_at: Option<&'a str>,
+    timestamp: &'a str,
+    error_message: Option<&'a str>,
+    archive_name: Option<&'a str>,
+    duration_secs: Option<i64>,
+    original_size: Option<i64>,
+    compressed_size: Option<i64>,
+    deduplicated_size: Option<i64>,
+    files_processed: Option<i64>,
+    warnings: Vec<&'a str>,
+    activity_url: Option<&'a str>,
+}
+
+impl<'a> EmailBodyFields<'a> {
+    fn from_payload(payload: &'a serde_json::Value) -> Self {
+        let str_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
+        let int_field = |key: &str| payload.get(key).and_then(serde_json::Value::as_i64);
+        Self {
+            event_type: str_field("event_type").unwrap_or(""),
+            hostname: str_field("hostname").unwrap_or(""),
+            repo_name: str_field("repo_name").unwrap_or(""),
+            schedule_name: str_field("schedule_name"),
+            next_run_at: str_field("next_run_at"),
+            timestamp: str_field("timestamp").unwrap_or(""),
+            error_message: str_field("error_message"),
+            archive_name: str_field("archive_name"),
+            duration_secs: int_field("duration_secs"),
+            original_size: int_field("original_size"),
+            compressed_size: int_field("compressed_size"),
+            deduplicated_size: int_field("deduplicated_size"),
+            files_processed: int_field("files_processed"),
+            warnings: payload
+                .get("warnings")
+                .and_then(serde_json::Value::as_array)
+                .map(|arr| arr.iter().filter_map(serde_json::Value::as_str).collect())
+                .unwrap_or_default(),
+            activity_url: str_field("activity_url"),
+        }
     }
-    if !repo_name.is_empty() {
-        parts.push(format!("Repository: {repo_name}"));
+}
+
+/// Renders the `Size:` line (with an optional "new" suffix from deduplication), or `None`
+/// when the payload doesn't carry both an original and compressed size.
+fn format_size_line(
+    original: Option<i64>,
+    compressed: Option<i64>,
+    dedup: Option<i64>,
+) -> Option<String> {
+    let (original, compressed) = (original?, compressed?);
+    let dedup_suffix = dedup.map_or_else(String::new, |dedup| {
+        format!(" ({} new)", format_bytes(dedup))
+    });
+    Some(format!(
+        "Size:        {} -> {} compressed{dedup_suffix}",
+        format_bytes(original),
+        format_bytes(compressed),
+    ))
+}
+
+pub(crate) fn build_email_body(payload: &serde_json::Value) -> String {
+    let fields = EmailBodyFields::from_payload(payload);
+    let event_label = super::event_label(fields.event_type);
+
+    let mut parts = vec![format!("Event:       {event_label}")];
+    if !fields.hostname.is_empty() {
+        parts.push(format!("Host:        {}", fields.hostname));
     }
-    if let Some(name) = schedule_name.filter(|n| !n.is_empty()) {
-        parts.push(format!("Schedule:   {name}"));
+    if !fields.repo_name.is_empty() {
+        parts.push(format!("Repository:  {}", fields.repo_name));
     }
-    if let Some(name) = archive_name {
-        parts.push(format!("Archive:    {name}"));
+    if let Some(name) = fields.schedule_name.filter(|n| !n.is_empty()) {
+        match fields.next_run_at {
+            Some(next) => parts.push(format!("Schedule:    {name} (next run: {next})")),
+            None => parts.push(format!("Schedule:    {name}")),
+        }
     }
-    if !status.is_empty() {
-        parts.push(format!("Status:     {status}"));
+    if let Some(name) = fields.archive_name {
+        parts.push(format!("Archive:     {name}"));
     }
-    if !timestamp.is_empty() {
-        parts.push(format!("Time:       {timestamp}"));
+    if let Some(secs) = fields.duration_secs {
+        parts.push(format!("Duration:    {}", format_duration_secs(secs)));
     }
-    if let Some(msg) = error_message {
+    if let Some(size_line) = format_size_line(
+        fields.original_size,
+        fields.compressed_size,
+        fields.deduplicated_size,
+    ) {
+        parts.push(size_line);
+    }
+    if let Some(files) = fields.files_processed {
+        parts.push(format!("Files:       {files} processed"));
+    }
+    if !fields.timestamp.is_empty() {
+        parts.push(format!("Time:        {}", fields.timestamp));
+    }
+    if !fields.warnings.is_empty() {
+        parts.push(String::new());
+        parts.push("Warnings:".to_owned());
+        parts.extend(fields.warnings.iter().map(|w| format!("- {w}")));
+    }
+    if let Some(msg) = fields.error_message {
         parts.push(String::new());
         parts.push(format!("Error:\n{msg}"));
+    }
+    if let Some(url) = fields.activity_url {
+        parts.push(String::new());
+        parts.push(format!("View activity log: {url}"));
     }
 
     parts.join("\n")
@@ -266,133 +332,83 @@ mod tests {
     use super::*;
 
     #[test]
-    fn subject_backup_failed_includes_hostname_and_error() {
+    fn subject_includes_hostname_and_repo() {
         let p = serde_json::json!({
             "event_type": "backup_failed",
             "hostname": "web-server-01",
-            "status": "failed",
-            "error_message": "repository is locked",
+            "repo_name": "server-daily",
         });
         assert_eq!(
             build_email_subject(&p),
-            "Assimilate: backup failed - web-server-01: repository is locked"
+            "Backup failed: web-server-01 / server-daily"
         );
     }
 
     #[test]
-    fn subject_backup_warning_includes_hostname_and_error() {
+    fn subject_backup_warning() {
         let p = serde_json::json!({
             "event_type": "backup_warning",
             "hostname": "db-server-01",
-            "status": "warning",
-            "error_message": "quota exceeded",
+            "repo_name": "db-hourly",
         });
         assert_eq!(
             build_email_subject(&p),
-            "Assimilate: backup warning - db-server-01: quota exceeded"
+            "Backup warning: db-server-01 / db-hourly"
         );
     }
 
     #[test]
-    fn subject_check_failed_includes_hostname_and_error() {
+    fn subject_check_failed() {
         let p = serde_json::json!({
             "event_type": "check_failed",
             "hostname": "myhost",
-            "error_message": "integrity check failed",
+            "repo_name": "myrepo",
         });
-        assert_eq!(
-            build_email_subject(&p),
-            "Assimilate: check failed - myhost: integrity check failed"
-        );
+        assert_eq!(build_email_subject(&p), "Check failed: myhost / myrepo");
     }
 
     #[test]
-    fn subject_schedule_auto_disabled_includes_hostname_and_reason() {
+    fn subject_schedule_auto_disabled() {
         let p = serde_json::json!({
             "event_type": "schedule_auto_disabled",
             "hostname": "web-server-01",
-            "status": "auto_disabled",
-            "error_message": "agent 'web-server-01' stayed unreachable",
         });
         assert_eq!(
             build_email_subject(&p),
-            "Assimilate: schedule auto disabled - web-server-01: agent 'web-server-01' stayed \
-             unreachable"
+            "Schedule auto-disabled: web-server-01"
         );
     }
 
     #[test]
-    fn subject_backup_skipped_agent_offline_includes_hostname_and_reason() {
+    fn subject_backup_skipped_agent_offline() {
         let p = serde_json::json!({
             "event_type": "backup_skipped_agent_offline",
             "hostname": "web-server-01",
-            "status": "skipped",
-            "error_message": "agent 'web-server-01' is offline",
         });
-        assert_eq!(
-            build_email_subject(&p),
-            "Assimilate: backup skipped agent offline - web-server-01: agent 'web-server-01' is \
-             offline"
-        );
+        assert_eq!(build_email_subject(&p), "Backup skipped: web-server-01");
     }
 
     #[test]
-    fn subject_backup_success_omits_error() {
+    fn subject_backup_success_omits_repo_when_absent() {
         let p = serde_json::json!({
             "event_type": "backup_success",
             "hostname": "myhost",
-            "error_message": "should be ignored",
         });
-        assert_eq!(
-            build_email_subject(&p),
-            "Assimilate: backup success - myhost"
-        );
+        assert_eq!(build_email_subject(&p), "Backup succeeded: myhost");
     }
 
     #[test]
-    fn subject_long_error_truncated() {
-        let long_msg = "e".repeat(100);
+    fn subject_no_hostname_omits_details() {
         let p = serde_json::json!({
             "event_type": "backup_failed",
-            "hostname": "myhost",
-            "error_message": long_msg,
         });
-        let subject = build_email_subject(&p);
-        assert!(subject.ends_with("..."));
-        assert_eq!(
-            subject,
-            format!("Assimilate: backup failed - myhost: {}...", "e".repeat(60))
-        );
-    }
-
-    #[test]
-    fn subject_no_hostname_omits_dash() {
-        let p = serde_json::json!({
-            "event_type": "backup_failed",
-            "error_message": "something went wrong",
-        });
-        assert_eq!(
-            build_email_subject(&p),
-            "Assimilate: backup failed: something went wrong"
-        );
+        assert_eq!(build_email_subject(&p), "Backup failed");
     }
 
     #[test]
     fn subject_empty_event_type_uses_notification() {
         let p = serde_json::json!({});
-        assert_eq!(build_email_subject(&p), "Assimilate: Notification");
-    }
-
-    #[test]
-    fn subject_no_error_message_for_failed_event() {
-        let p = serde_json::json!({
-            "event_type": "backup_failed",
-            "hostname": "myhost",
-        });
-        assert_eq!(
-            build_email_subject(&p),
-            "Assimilate: backup failed - myhost"
-        );
+        assert_eq!(build_email_subject(&p), "Notification");
     }
 
     #[test]
@@ -402,20 +418,61 @@ mod tests {
             "hostname": "web-server-01",
             "repo_name": "server-daily",
             "schedule_name": "Nightly Server Backup",
+            "next_run_at": "2026-06-10T10:00:00Z",
             "archive_name": "web-server-01-2026-06-09T10:00:00.000000",
             "status": "failed",
             "timestamp": "2026-06-09T10:00:00Z",
+            "duration_secs": 10,
             "error_message": "repository is locked",
+            "activity_url": "https://assimilate.example.com/activity?run_id=abc",
         });
         let body = build_email_body(&p);
-        assert!(body.contains("Event:      Backup failed"));
-        assert!(body.contains("Host:       web-server-01"));
-        assert!(body.contains("Repository: server-daily"));
-        assert!(body.contains("Schedule:   Nightly Server Backup"));
-        assert!(body.contains("Archive:    web-server-01-2026-06-09T10:00:00.000000"));
-        assert!(body.contains("Status:     failed"));
+        assert!(body.contains("Event:       Backup failed"));
+        assert!(body.contains("Host:        web-server-01"));
+        assert!(body.contains("Repository:  server-daily"));
+        assert!(
+            body.contains("Schedule:    Nightly Server Backup (next run: 2026-06-10T10:00:00Z)")
+        );
+        assert!(body.contains("Archive:     web-server-01-2026-06-09T10:00:00.000000"));
+        assert!(body.contains("Duration:    10s"));
         assert!(body.contains("Error:\nrepository is locked"));
+        assert!(
+            body.contains("View activity log: https://assimilate.example.com/activity?run_id=abc")
+        );
+        assert!(!body.contains("Status:"));
         assert!(!body.contains('{'));
+    }
+
+    #[test]
+    fn body_includes_size_and_files_when_present() {
+        let p = serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "myhost",
+            "duration_secs": 272,
+            "original_size": 10_737_418_240i64,
+            "compressed_size": 2_147_483_648i64,
+            "deduplicated_size": 524_288_000i64,
+            "files_processed": 184_203,
+        });
+        let body = build_email_body(&p);
+        assert!(body.contains("Duration:    4m 32s"));
+        assert!(body.contains("Size:        10.0 GiB -> 2.0 GiB compressed (500.0 MiB new)"));
+        assert!(body.contains("Files:       184203 processed"));
+    }
+
+    #[test]
+    fn body_includes_warnings_list() {
+        let p = serde_json::json!({
+            "event_type": "backup_warning",
+            "hostname": "myhost",
+            "warnings": ["file changed while reading", "permission denied: /etc/shadow"],
+        });
+        let body = build_email_body(&p);
+        assert!(
+            body.contains(
+                "Warnings:\n- file changed while reading\n- permission denied: /etc/shadow"
+            )
+        );
     }
 
     #[test]
@@ -424,11 +481,22 @@ mod tests {
             "event_type": "backup_failed",
             "hostname": "web-server-01",
             "repo_name": "server-daily",
-            "status": "failed",
             "timestamp": "2026-06-09T10:00:00Z",
         });
         let body = build_email_body(&p);
         assert!(!body.contains("Schedule:"));
+    }
+
+    #[test]
+    fn body_schedule_without_next_run_at_omits_parenthetical() {
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "schedule_name": "Nightly Server Backup",
+        });
+        let body = build_email_body(&p);
+        assert!(body.ends_with("Schedule:    Nightly Server Backup"));
+        assert!(!body.contains("(next run"));
     }
 
     #[test]
@@ -441,16 +509,29 @@ mod tests {
             "timestamp": "2026-06-09T10:00:00Z",
         });
         let body = build_email_body(&p);
-        assert!(body.contains("Event:      Agent connected"));
-        assert!(body.contains("Host:       web-server-01"));
+        assert!(body.contains("Event:       Agent connected"));
+        assert!(body.contains("Host:        web-server-01"));
         assert!(!body.contains("Repository:"));
-        assert!(!body.contains("Status:"));
         assert!(!body.contains("Error:"));
     }
 
     #[test]
     fn body_empty_payload_returns_notification_label() {
         let body = build_email_body(&serde_json::json!({}));
-        assert_eq!(body, "Event:      Notification");
+        assert_eq!(body, "Event:       Notification");
+    }
+
+    #[test]
+    fn format_bytes_renders_expected_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(13_314_562_048), "12.4 GiB");
+    }
+
+    #[test]
+    fn format_duration_secs_renders_expected_units() {
+        assert_eq!(format_duration_secs(9), "9s");
+        assert_eq!(format_duration_secs(272), "4m 32s");
+        assert_eq!(format_duration_secs(3725), "1h 2m 5s");
     }
 }

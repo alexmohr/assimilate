@@ -101,8 +101,8 @@ pub(crate) fn row_to_report_response(
     row: db::ReportRow,
     hostname: Option<String>,
 ) -> ReportResponse {
-    let status = row.status.parse().unwrap_or_else(|_| {
-        warn!(raw_status = %row.status, "failed to parse report status, defaulting to Pending");
+    let status = row.status.parse().unwrap_or_else(|e| {
+        warn!(raw_status = %row.status, error = %e, "failed to parse report status, defaulting to Pending");
         shared::types::ReportStatus::default()
     });
     ReportResponse {

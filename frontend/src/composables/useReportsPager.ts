@@ -66,7 +66,16 @@ export function useReportsPager(
 
   async function load(): Promise<void> {
     const token = ++loadToken
-    loading.value = true
+    // Only shows the spinner for the initial fetch (nothing loaded yet).
+    // load() also runs on every fleet-wide WebSocket DataChanged event (see
+    // the comment on `limit` below) - if it always flipped `loading` on, an
+    // unrelated backup finishing elsewhere would replace whatever's already
+    // rendered with a full spinner for the duration of the refetch, wiping
+    // scroll position for an event that has nothing to do with what the user
+    // is looking at. Mirrors the same silent-refresh pattern used elsewhere
+    // in this PR (AgentArchivesTab's `silent` param, the tab-switch watcher
+    // gated on an empty list).
+    if (reports.value.length === 0) loading.value = true
     // A fresh load() replaces the list wholesale, so any loadMore() still in
     // flight is now moot: its own token check below will discard its
     // response, but that leaves its `finally` block unable to match tokens

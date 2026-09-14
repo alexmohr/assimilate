@@ -44,6 +44,46 @@ describe('useReportsPager', () => {
     expect(pager.loading.value).toBe(false)
   })
 
+  it('load() shows loading while the initial fetch is in flight', async () => {
+    let resolve!: (p: ReportsPage) => void
+    const fetchPage = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<ReportsPage>((r) => (resolve = r)))
+    const pager = useReportsPager(fetchPage)
+
+    const loadPromise = pager.load()
+    expect(pager.loading.value).toBe(true)
+
+    resolve(page(REPORTS_PAGE_SIZE, 312))
+    await loadPromise
+    expect(pager.loading.value).toBe(false)
+  })
+
+  // Regression: load() isn't only the initial fetch - both AgentDetailView
+  // and ScheduleDetailView also run it on every fleet-wide WebSocket
+  // DataChanged event, unscoped to the agent/schedule being viewed. Always
+  // flipping `loading` on there replaced whatever a user was actively
+  // looking at with a full spinner for an unrelated backup finishing
+  // elsewhere, wiping scroll position for no reason relevant to the page.
+  it('a background load() with data already showing does not toggle loading', async () => {
+    let resolve!: (p: ReportsPage) => void
+    const fetchPage = vi
+      .fn()
+      .mockResolvedValueOnce(page(REPORTS_PAGE_SIZE, 312))
+      .mockImplementationOnce(() => new Promise<ReportsPage>((r) => (resolve = r)))
+    const pager = useReportsPager(fetchPage)
+
+    await pager.load()
+    expect(pager.loading.value).toBe(false)
+
+    const loadPromise = pager.load()
+    expect(pager.loading.value).toBe(false)
+
+    resolve(page(REPORTS_PAGE_SIZE, 312))
+    await loadPromise
+    expect(pager.loading.value).toBe(false)
+  })
+
   it('loadMore() appends the next page, offset by what is already loaded', async () => {
     const fetchPage = vi
       .fn()

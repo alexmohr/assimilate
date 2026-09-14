@@ -9693,6 +9693,40 @@ async fn test_update_settings_public_url_persists_validates_and_clears() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
+    // A URL with a path is rejected -- it must be a bare origin, since
+    // build_absolute_activity_url concatenates it directly with the Activity
+    // Log's own path.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "https://backups.example.com/app" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A URL with a query string is rejected for the same reason.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7, "public_url": "https://backups.example.com?x=1" })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The public_url from before these rejected attempts must be unchanged.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({ "retention_days": 7 })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.com"
+    );
+
     // An empty string clears it.
     let req = json_request(
         "PUT",

@@ -280,6 +280,59 @@ describe('HostsView', () => {
     expect(wrapper.text()).not.toContain('protected-host')
   })
 
+  it('reacts to a coverage query arriving after the page has already mounted', async () => {
+    // Distinct from "applies the coverage filter from the route query" above:
+    // that one covers the initial-mount override path, this one covers the
+    // reactive watcher that handles an in-app navigation (a dashboard link
+    // clicked while Agents is already open) landing on a live component.
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').element.value).toBe(
+      'all',
+    )
+
+    await router.push('/agents?coverage=never-succeeded')
+    await flushPromises()
+
+    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').element.value).toBe(
+      'never-succeeded',
+    )
+  })
+
+  describe('persisted view settings', () => {
+    it('restores the status filter from a previous visit', async () => {
+      localStorage.setItem('assimilate-agents-filter-status', 'offline')
+      const router = makeRouter()
+      await router.push('/agents')
+      await router.isReady()
+      const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const statusSelect = selects.find((s) => s.find('option[value="online"]').exists())
+      expect(statusSelect!.element.value).toBe('offline')
+    })
+
+    it('persists a status filter change for the next visit', async () => {
+      const router = makeRouter()
+      await router.push('/agents')
+      await router.isReady()
+      const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+      await flushPromises()
+
+      const selects = wrapper.findAll('select')
+      const statusSelect = selects.find((s) => s.find('option[value="online"]').exists())
+      await statusSelect!.setValue('online')
+      await flushPromises()
+
+      expect(localStorage.getItem('assimilate-agents-filter-status')).toBe('online')
+    })
+  })
+
   it('shows the fleet summary band with agent, online and schedule counts', async () => {
     const router = makeRouter()
     await router.push('/agents')

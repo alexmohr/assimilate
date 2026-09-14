@@ -1243,9 +1243,10 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
 }
 
 /// Runs both quota checks (the repo's own quota and, if it shares an SSH host with other
-/// repos, the combined server quota) after a backup completes. The two share an identical
-/// parameter list, so calling them back to back inline at the single call site would just
-/// repeat those seven arguments twice for no reason.
+/// repos, the combined server quota) after a backup completes. The two are independent --
+/// each reads its own settings and dispatches its own notification/enforcement -- so they
+/// run concurrently via [`tokio::join!`] instead of paying their DB/notification latency
+/// twice in sequence.
 async fn check_quotas_after_backup(
     state: &AppState,
     hostname: &str,
@@ -1255,26 +1256,26 @@ async fn check_quotas_after_backup(
     repo_unique_csize: i64,
     repo_name: &str,
 ) {
-    check_repo_quota_after_backup(
-        state,
-        hostname,
-        agent_id,
-        repo_id,
-        schedule_id,
-        repo_unique_csize,
-        repo_name,
-    )
-    .await;
-    check_server_quota_after_backup(
-        state,
-        hostname,
-        agent_id,
-        repo_id,
-        schedule_id,
-        repo_unique_csize,
-        repo_name,
-    )
-    .await;
+    tokio::join!(
+        check_repo_quota_after_backup(
+            state,
+            hostname,
+            agent_id,
+            repo_id,
+            schedule_id,
+            repo_unique_csize,
+            repo_name,
+        ),
+        check_server_quota_after_backup(
+            state,
+            hostname,
+            agent_id,
+            repo_id,
+            schedule_id,
+            repo_unique_csize,
+            repo_name,
+        ),
+    );
 }
 
 /// Checks whether the just-completed backup pushed the repository's own

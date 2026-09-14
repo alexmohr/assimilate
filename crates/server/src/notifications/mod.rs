@@ -958,6 +958,158 @@ mod tests {
         assert!(delivery.error_message.is_some());
     }
 
+    /// Regression test for the core new glue behind the Activity Log deep-linking feature:
+    /// `dispatch` resolving an event's relative Activity Log path into an absolute
+    /// `activity_url` using the `public_url` system setting, and baking it into the payload
+    /// every channel receives. Checked via the persisted `notification_deliveries.payload`
+    /// rather than a live webhook call -- the webhook target is deliberately unreachable, but
+    /// `payload` (and therefore `activity_url`) is recorded regardless of delivery outcome.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_resolves_activity_url_from_public_url_setting(pool: sqlx::PgPool) {
+        crate::db::set_setting(&pool, "public_url", "https://backups.example.com")
+            .await
+            .unwrap();
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_failed', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = NotificationService::new(pool.clone());
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupFailed,
+            hostname: "myhost".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "failed".to_owned(),
+            error_message: Some("repository is locked".to_owned()),
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+            run_id: Some("run-123".to_owned()),
+            duration_secs: Some(10),
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+        task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+
+        let payload: serde_json::Value = sqlx::query_scalar!(
+            "SELECT payload FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            payload
+                .get("activity_url")
+                .and_then(serde_json::Value::as_str),
+            Some("https://backups.example.com/activity?category=backup&run_id=run-123"),
+            "dispatch must resolve the Activity Log deep link into an absolute URL using the \
+             public_url setting"
+        );
+    }
+
+    /// Companion to the above: when `public_url` is not configured, `activity_url` must stay
+    /// absent rather than, say, falling back to a relative (and therefore broken outside a
+    /// browser) link for channels like email/webhook that don't resolve it client-side.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_omits_activity_url_when_public_url_not_configured(pool: sqlx::PgPool) {
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_failed', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = NotificationService::new(pool.clone());
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupFailed,
+            hostname: "myhost".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "failed".to_owned(),
+            error_message: Some("repository is locked".to_owned()),
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+            run_id: Some("run-123".to_owned()),
+            duration_secs: Some(10),
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+        task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+
+        let payload: serde_json::Value = sqlx::query_scalar!(
+            "SELECT payload FROM notification_deliveries WHERE channel_id = $1",
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            payload
+                .get("activity_url")
+                .is_none_or(serde_json::Value::is_null),
+            "activity_url must stay absent when public_url is not configured, not payload: \
+             {payload}"
+        );
+    }
+
     #[test]
     fn channel_type_from_str() {
         assert_eq!(ChannelType::from_str("email"), Ok(ChannelType::Email));

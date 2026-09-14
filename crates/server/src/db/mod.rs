@@ -4196,27 +4196,43 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
     })
 }
 
-/// Reads a schedule's next scheduled run time, for surfacing in a failure/warning
-/// notification alongside the schedule name. Returns `None` for a schedule that doesn't
-/// exist rather than erroring, since a notification is best-effort context, not a
-/// correctness-critical read.
+/// Reads a schedule's display name (falling back to `default_name` when unset) and its next
+/// scheduled run time in a single round trip, for a backup-completion notification -- both
+/// come from the same `schedules` row, so there is no reason to query it twice.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_schedule_next_run_at(
+/// Returns [`ApiError::NotFound`] if the schedule doesn't exist, or [`ApiError::Database`] if
+/// the query fails.
+pub async fn get_schedule_name_and_next_run_at(
     pool: &PgPool,
     schedule_id: i64,
-) -> Result<Option<DateTime<Utc>>, ApiError> {
-    let next_run_at = sqlx::query_scalar!(
-        "SELECT next_run_at FROM schedules WHERE id = $1",
+    default_name: &str,
+) -> Result<(String, Option<DateTime<Utc>>), ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        name: String,
+        next_run_at: Option<DateTime<Utc>>,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT name, next_run_at FROM schedules WHERE id = $1",
         schedule_id,
     )
-    .fetch_optional(pool)
+    .fetch_one(pool)
     .await
-    .map_err(ApiError::Database)?
-    .flatten();
-    Ok(next_run_at)
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("schedule {schedule_id} not found")),
+        other => ApiError::Database(other),
+    })?;
+
+    let name = if row.name.trim().is_empty() {
+        default_name.to_owned()
+    } else {
+        row.name
+    };
+    Ok((name, row.next_run_at))
 }
 
 /// Batched form of [`get_schedule_targets_for_run`] for callers that need target hostnames
@@ -4421,42 +4437,6 @@ pub async fn get_repo_ssh_host(pool: &PgPool, repo_id: i64) -> Result<String, Ap
         })?;
 
     Ok(row.ssh_host)
-}
-
-/// Resolves a schedule's display name, falling back to `default_name` (typically
-/// the repo name) when the schedule has no custom name set, mirroring the
-/// `COALESCE(NULLIF(s.name, ''), r.name)` convention used elsewhere.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - [`ApiError::NotFound`]: the requested resource does not exist
-/// - [`ApiError::Database`]: the database query fails
-pub async fn get_schedule_display_name(
-    pool: &PgPool,
-    schedule_id: i64,
-    default_name: &str,
-) -> Result<String, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        name: String,
-    }
-
-    let row = sqlx::query_as!(Row, "SELECT name FROM schedules WHERE id = $1", schedule_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                ApiError::NotFound(format!("schedule {schedule_id} not found"))
-            }
-            other => ApiError::Database(other),
-        })?;
-
-    Ok(if row.name.trim().is_empty() {
-        default_name.to_owned()
-    } else {
-        row.name
-    })
 }
 
 /// # Errors

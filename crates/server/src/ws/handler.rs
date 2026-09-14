@@ -1436,18 +1436,13 @@ async fn dispatch_backup_completion_notification(
         shared::types::BackupStatus::Warning => EventType::BackupWarning,
         shared::types::BackupStatus::Failed => EventType::BackupFailed,
     };
-    let schedule_name = match schedule_id {
-        Some(sid) => db::get_schedule_display_name(&state.pool, sid, &repo_name)
+    let (schedule_name, next_run_at) = match schedule_id {
+        Some(sid) => db::get_schedule_name_and_next_run_at(&state.pool, sid, &repo_name)
             .await
-            .ok(),
-        None => None,
-    };
-    let next_run_at = match schedule_id {
-        Some(sid) => db::get_schedule_next_run_at(&state.pool, sid)
-            .await
-            .ok()
-            .flatten(),
-        None => None,
+            .map_or((None, None), |(name, next_run_at)| {
+                (Some(name), next_run_at)
+            }),
+        None => (None, None),
     };
     let event = NotificationEvent {
         event_type,

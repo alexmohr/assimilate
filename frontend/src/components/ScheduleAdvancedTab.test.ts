@@ -13,6 +13,7 @@ function form(overrides: Partial<ScheduleFormState> = {}): ScheduleFormState {
     enabled: true,
     canary_enabled: false,
     exclude_patterns: '*.cache',
+    include_patterns: '',
     file_change_patterns: '',
     ignore_global_excludes: false,
     keep_hourly: 0,
@@ -35,6 +36,8 @@ function agentOverrides(o: Partial<ScheduleAgentOverrides> = {}): ScheduleAgentO
   return {
     usePerHostExcludes: false,
     perHostExcludes: {},
+    usePerHostIncludes: false,
+    perHostIncludes: {},
     usePerHostFileChangePatterns: false,
     perHostFileChangePatterns: {},
     usePerAgentCmds: false,
@@ -63,7 +66,13 @@ describe('ScheduleAdvancedTab', () => {
     const titles = mount()
       .findAll('.pane-section > .group-label')
       .map((t) => t.text())
-    expect(titles).toEqual(['Options', 'Exclude patterns', 'File change patterns', 'Commands'])
+    expect(titles).toEqual([
+      'Options',
+      'Exclude patterns',
+      'Include patterns',
+      'File change patterns',
+      'Commands',
+    ])
   })
 
   // Every setting is one row: the name and its description on the left, the
@@ -148,6 +157,7 @@ describe('ScheduleAdvancedTab', () => {
 
   it.each([
     ['Exclude Patterns', 'usePerHostExcludes'],
+    ['Include Patterns', 'usePerHostIncludes'],
     ['File Change Patterns', 'usePerHostFileChangePatterns'],
     ['Commands', 'usePerAgentCmds'],
   ])('flips the %s per-agent switch onto overrides.%s', async (_section, key) => {
@@ -193,7 +203,7 @@ describe('ScheduleAdvancedTab', () => {
   it('offers a per-agent switch per section on a multi-agent schedule', () => {
     const wrapper = mount()
     const perAgent = wrapper.findAll('.pane-row').filter((f) => f.text().includes('per agent'))
-    expect(perAgent).toHaveLength(3)
+    expect(perAgent).toHaveLength(4)
   })
 
   describe('exclude patterns', () => {
@@ -221,6 +231,46 @@ describe('ScheduleAdvancedTab', () => {
       const wrapper = mount({ overrides })
       await wrapper.findAll('textarea')[1].setValue('/var/tmp')
       expect(overrides.perHostExcludes[2]).toBe('/var/tmp')
+    })
+  })
+
+  describe('include patterns', () => {
+    it('edits one shared list while per-agent includes are off', () => {
+      const wrapper = mount()
+      const includeField = wrapper.find('textarea[aria-label="Include patterns"]')
+      expect(includeField.exists()).toBe(true)
+    })
+
+    it('swaps to a field per agent once per-agent includes are on', () => {
+      const wrapper = mount({ overrides: agentOverrides({ usePerHostIncludes: true }) })
+      expect(
+        wrapper.findAll('textarea[placeholder="Include patterns, one per line"]'),
+      ).toHaveLength(2)
+      expect(wrapper.text()).toContain('host-01')
+      expect(wrapper.text()).toContain('host-02')
+    })
+
+    it('shows the shared hint only in shared mode, so it cannot contradict the fields', () => {
+      expect(mount().text()).toContain('Rescues paths from the exclude patterns above')
+      const perAgent = mount({ overrides: agentOverrides({ usePerHostIncludes: true }) })
+      expect(perAgent.text()).toContain(
+        'Leave an agent empty to exclude everything its exclude patterns cover.',
+      )
+    })
+
+    it('writes edited include patterns back through the form model', async () => {
+      const state = form()
+      const wrapper = mount({ form: state })
+      await wrapper.find('textarea[aria-label="Include patterns"]').setValue('/home/keep')
+      expect(state.include_patterns).toBe('/home/keep')
+    })
+
+    it('routes an edited per-agent pattern to that agent', async () => {
+      const overrides = agentOverrides({ usePerHostIncludes: true })
+      const wrapper = mount({ overrides })
+      const fields = wrapper.findAll('textarea[placeholder="Include patterns, one per line"]')
+      await fields[1].setValue('/opt/keep')
+      expect(overrides.perHostIncludes[2]).toBe('/opt/keep')
     })
   })
 

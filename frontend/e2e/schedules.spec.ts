@@ -716,6 +716,29 @@ test.describe('Schedules management', () => {
     await expect(timeoutInput).toHaveValue('7200')
   })
 
+  // Include patterns rescue a path from a broader exclude - the happy path
+  // for the feature covers typing one in and confirming it round-trips
+  // through the save as `include_patterns_raw`, the same way exclude
+  // patterns already do.
+  test('schedule detail Advanced section edits and saves include patterns', async ({ page }) => {
+    await openScheduleAdvanced(page)
+
+    const includeField = page.getByLabel('Include patterns')
+    await expect(includeField).toBeVisible()
+
+    const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
+      ...responseBody,
+      include_patterns_raw: requestBody.include_patterns_raw,
+    }))
+
+    await includeField.fill('/home/keep')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+
+    const savedBody = await waitForSave()
+    expect(savedBody.include_patterns_raw).toBe('/home/keep')
+    await expect(includeField).toHaveValue('/home/keep')
+  })
+
   test('schedule detail General section edits and saves the missed backup threshold', async ({
     page,
   }) => {
@@ -1086,5 +1109,37 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
     const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
     await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · error')
+  })
+
+  // schedule.last_run_at is dispatch bookkeeping, advanced only once a
+  // trigger attempt reaches the agent - a run whose dispatch never got that
+  // far (agent unreachable) can still settle a backup_reports row later
+  // (e.g. abandoned as failed once the agent reconnects), leaving
+  // last_run_at null while a completed backup genuinely exists. The agent's
+  // own Schedules tab must read that completed-backup evidence from health
+  // data instead of trusting last_run_at, and show the cron cadence in
+  // plain English rather than the raw crontab string.
+  test('agent Schedules tab shows real last-run evidence, not "never run", for a schedule with no last_run_at', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOnePatch(page, { last_run_at: null })
+    await mockScheduleOneHealth(page, {
+      last_status: 'success',
+      last_backup_at: '2020-01-01T02:00:00Z',
+    })
+
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+
+    // Several other seeded schedules also target the "server-daily" repo, so
+    // a text filter would match multiple rows - data-schedule-id (fallen
+    // through from AgentSchedulesTab, same pattern as the schedule card's
+    // data-schedule-id) is the only unambiguous selector.
+    const row = page.locator('.rows .agent-row[data-schedule-id="1"]')
+    const stats = row.locator('.agent-row-stats')
+    await expect(stats).toContainText(/last .+ ago/)
+    await expect(stats).not.toContainText('never run')
+    await expect(row.locator('.agent-row-when')).toHaveText('Daily at 02:00')
   })
 })

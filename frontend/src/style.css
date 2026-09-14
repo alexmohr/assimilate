@@ -1830,6 +1830,41 @@
     outline-offset: -2px;
   }
 
+  /* A run of an `.agent-row`'s own children, wrapped so they can be pushed
+     onto their own line below `--breakpoint-sm` without changing the row at
+     any width wide enough for one line: `display: contents` here makes the
+     wrapper invisible, so its children stay direct flex items of
+     `.agent-row` itself, in the same source order, at every width above the
+     breakpoint. AgentScheduleRow and AgentBackupRow each wrap a different
+     run of their own existing children in one of these - the schedule row's
+     cron+repo pair, the backup row's timestamp+name+status trio, and so on -
+     rather than this file choosing the grouping for content it can't see. */
+  .agent-row-line {
+    display: contents;
+  }
+
+  @media (max-width: 640px) {
+    /* A schedule/backup row was one dense flex-wrap line at every width -
+       cron, repo, badges, byte counts and buttons all wrapping mid-phrase
+       instead of as the groups they actually are. Below the breakpoint each
+       `.agent-row-line` becomes the line it already reads as. */
+    .agent-row-line {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-3);
+      width: 100%;
+    }
+
+    /* Its `margin-left: auto` exists to push it to the row's far right on a
+       single wide line; inside its own full-width line on a narrow one that
+       just strands it at the right edge with nothing to its left to push
+       against. */
+    .agent-row-stats {
+      margin-left: 0;
+    }
+  }
+
   .agent-row-stripe {
     width: 3px;
     align-self: stretch;

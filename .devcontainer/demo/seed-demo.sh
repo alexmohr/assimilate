@@ -670,6 +670,10 @@ api POST "/api/schedules" "{
 # listed under each of their sections, while the single-agent schedules above
 # spread across those same sections and across the three repositories the
 # "Group: Repo" mode buckets by.
+#
+# web-server-01's include pattern demonstrates rescuing a path from its own
+# broader exclude: `*.log` would otherwise drop access.log along with every
+# other log file under /var/log/nginx.
 api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -690,6 +694,9 @@ api POST "/api/schedules" "{
     \"exclude_patterns_per_agent\": [
         {\"agent_id\": $WEB01_ID, \"raw_text\": \"*.log\"},
         {\"agent_id\": $DB01_ID, \"raw_text\": \"*.tmp\"}
+    ],
+    \"include_patterns_per_agent\": [
+        {\"agent_id\": $WEB01_ID, \"raw_text\": \"/var/log/nginx/access.log\"}
     ],
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
     \"file_change_patterns_per_agent\": [
@@ -830,7 +837,8 @@ INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
     (NOW() - interval '2 days', 'repo_sync_slow', 'media-store-01', 'Repository sync took longer than the warning threshold'),
     (NOW() - interval '7 days', 'repo_sync_failed', 'web-server-01', 'Repository sync failed: repository lock could not be acquired'),
     (NOW() - interval '9 days', 'repo_sync_failed', 'db-server-01', 'Repository sync failed: connection refused'),
-    (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token');
+    (NOW() - interval '1 day', 'auth_failed', 'web-server-01', 'Agent authentication failed: invalid token'),
+    (NOW() - interval '6 hours', 'backup_skipped_agent_offline', 'media-store-01', 'Backup for schedule ''Weekly media backup'' could not be started: agent ''media-store-01'' is offline');
 SQL
 
 echo "==> Acknowledging the older failed sync, so both system-event states exist..."
@@ -873,7 +881,7 @@ INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES
 INSERT INTO notification_rules (channel_id, event_type, enabled)
 SELECT c.id, e.event_type, true
 FROM notification_channels c,
-     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'))
+     (VALUES ('backup_failed'), ('backup_warning'), ('agent_disconnected'), ('schedule_auto_disabled'), ('backup_skipped_agent_offline'))
          AS e(event_type)
 WHERE c.name = 'Ops Webhook';
 
@@ -908,6 +916,14 @@ SELECT c.id, 'schedule_auto_disabled',
     'sent',
     NULL,
     NOW() - interval '2 days'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'backup_skipped_agent_offline',
+    '{"event_type":"backup_skipped_agent_offline","hostname":"media-store-01","repo_name":"media-weekly","schedule_name":"Weekly media backup","status":"skipped","error_message":"agent ''media-store-01'' is offline","timestamp":"2026-01-15T06:00:00Z"}',
+    'sent',
+    NULL,
+    NOW() - interval '6 hours'
 FROM notification_channels c WHERE c.name = 'Ops Webhook';
 SQL
 

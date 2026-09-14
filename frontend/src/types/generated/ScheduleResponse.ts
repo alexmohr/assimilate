@@ -54,6 +54,10 @@ export type ScheduleResponse = {
    */
   exclude_patterns_raw: string;
   /**
+   * Raw include patterns, rescuing paths from a broader exclude.
+   */
+  include_patterns_raw: string;
+  /**
    * Raw file change detection patterns.
    */
   file_change_patterns_raw: string;

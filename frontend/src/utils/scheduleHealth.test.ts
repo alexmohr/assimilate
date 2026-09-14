@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Router } from 'vue-router'
 import {
+  latestCompletedBackupAt,
   navigateToScheduleIssue,
   scheduleIssuesFromEntries,
   scheduleRunStatus,
@@ -224,5 +225,45 @@ describe('withErrorTitles', () => {
     const issues = scheduleIssuesFromEntries(entries, 1, makeRouter())
 
     expect(withErrorTitles(issues, entries)).toEqual(issues)
+  })
+})
+
+describe('latestCompletedBackupAt', () => {
+  it('returns the one entry it has', () => {
+    expect(latestCompletedBackupAt([makeEntry({ last_backup_at: '2026-03-01T00:00:00Z' })])).toBe(
+      '2026-03-01T00:00:00Z',
+    )
+  })
+
+  it('picks the most recent across several entries, regardless of order', () => {
+    const entries = [
+      makeEntry({ last_backup_at: '2026-03-01T00:00:00Z' }),
+      makeEntry({ last_backup_at: '2026-05-01T00:00:00Z' }),
+      makeEntry({ last_backup_at: '2026-01-01T00:00:00Z' }),
+    ]
+    expect(latestCompletedBackupAt(entries)).toBe('2026-05-01T00:00:00Z')
+  })
+
+  it('ignores entries with no completed backup yet', () => {
+    const entries = [makeEntry({ last_backup_at: null }), makeEntry({ last_backup_at: null })]
+    expect(latestCompletedBackupAt(entries)).toBeNull()
+  })
+
+  it('returns null for an empty list', () => {
+    expect(latestCompletedBackupAt([])).toBeNull()
+  })
+
+  // Regression: chrono serializes a `DateTime<Utc>` with its fractional
+  // seconds omitted entirely when they are exactly zero, so a whole-second
+  // timestamp compares as lexically GREATER than a later, fractional one in
+  // the same second ('...:05Z' > '...:05.482910Z', since 'Z' > '.'). Naive
+  // string comparison would pick the whole-second entry as "latest" even
+  // though the fractional one is chronologically later.
+  it('compares by parsed time, not lexically, across a fractional-second boundary', () => {
+    const entries = [
+      makeEntry({ last_backup_at: '2026-01-01T02:00:05Z' }),
+      makeEntry({ last_backup_at: '2026-01-01T02:00:05.482910Z' }),
+    ]
+    expect(latestCompletedBackupAt(entries)).toBe('2026-01-01T02:00:05.482910Z')
   })
 })

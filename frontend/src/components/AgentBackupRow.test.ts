@@ -110,6 +110,15 @@ describe('AgentBackupRow', () => {
     expect(wrapper.find('a.row-schedule-link').exists()).toBe(false)
   })
 
+  // Neither the schedule link nor the archive name has anything to say, so
+  // the line they'd share renders nothing at all rather than an empty row.
+  it('renders no second line when there is no schedule link or archive name', () => {
+    const wrapper = mount({
+      report: report({ schedule_id: null, schedule_name: null, archive_name: null }),
+    })
+    expect(wrapper.find('.agent-row-sub').exists()).toBe(false)
+  })
+
   it('reports size and duration for a completed run', () => {
     const stats = mount().find('.agent-row-stats').text()
     expect(stats).toContain('128 files')

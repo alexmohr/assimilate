@@ -231,7 +231,7 @@ pub struct NotificationEvent {
     pub next_run_at: Option<DateTime<Utc>>,
     /// Absolute URL deep-linking to this event's entry in the Activity Log. Set by
     /// [`dispatch`] from the `public_url` system setting when one is configured and the
-    /// event is precise enough to link (backup/check failures and warnings); channels that
+    /// event is precise enough to link (backup failures and warnings); channels that
     /// resolve links client-side (web push) build their own relative link instead and do
     /// not depend on this field.
     pub activity_url: Option<String>,

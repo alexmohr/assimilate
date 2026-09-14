@@ -143,28 +143,11 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
     }
 }
 
-/// Renders a byte count as a human-readable size (e.g. `12.4 GiB`).
+/// Renders a byte count as a human-readable size (e.g. `12.4 GiB`). Sizes in a payload are
+/// carried as `i64` (JSON has no unsigned integer type), so this adapts to the `u64` shared
+/// formatter rather than duplicating it -- see `shared::format::format_bytes`.
 fn format_bytes(bytes: i64) -> String {
-    const UNITS: [(&str, u64); 4] = [
-        ("TiB", 1 << 40),
-        ("GiB", 1 << 30),
-        ("MiB", 1 << 20),
-        ("KiB", 1 << 10),
-    ];
-    let bytes = u64::try_from(bytes).unwrap_or(0);
-    for (unit, size) in UNITS {
-        if bytes >= size {
-            let whole = bytes.checked_div(size).unwrap_or(0);
-            let tenths = bytes
-                .checked_rem(size)
-                .unwrap_or(0)
-                .saturating_mul(10)
-                .checked_div(size)
-                .unwrap_or(0);
-            return format!("{whole}.{tenths} {unit}");
-        }
-    }
-    format!("{bytes} B")
+    shared::format::format_bytes(u64::try_from(bytes).unwrap_or(0))
 }
 
 /// Renders a duration as e.g. `1h 2m 3s`, `4m 5s`, or `6s`.

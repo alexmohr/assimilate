@@ -11,6 +11,9 @@ pub mod borg;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.
 pub mod crypto;
+/// Human-readable formatting shared by the agent's VM staging output and the
+/// server's notification content.
+pub mod format;
 /// Pre- and post-backup hook commands and their per-command timeouts.
 pub mod hooks;
 /// Message types exchanged over the agent/server WebSocket connection.

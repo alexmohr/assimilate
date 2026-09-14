@@ -31,6 +31,7 @@ use std::{
 use chrono::Utc;
 use shared::{
     borg::{GracefulChild, kill_escalation_delay},
+    format::format_bytes,
     task_registry::TaskRegistry,
     vm::{
         DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmRunAction, VmSnapshotConfig,
@@ -370,29 +371,6 @@ async fn is_file(path: &Path) -> bool {
     tokio::fs::metadata(path)
         .await
         .is_ok_and(|metadata| metadata.is_file())
-}
-
-/// Renders a byte count the way the operator sees it in the UI.
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [(&str, u64); 4] = [
-        ("TiB", 1 << 40),
-        ("GiB", 1 << 30),
-        ("MiB", 1 << 20),
-        ("KiB", 1 << 10),
-    ];
-    for (unit, size) in UNITS {
-        if bytes >= size {
-            let whole = bytes.checked_div(size).unwrap_or(0);
-            let tenths = bytes
-                .checked_rem(size)
-                .unwrap_or(0)
-                .saturating_mul(10)
-                .checked_div(size)
-                .unwrap_or(0);
-            return format!("{whole}.{tenths} {unit}");
-        }
-    }
-    format!("{bytes} B")
 }
 
 /// The domain definition of a restored domain, edited so it can be defined
@@ -3340,13 +3318,6 @@ mod tests {
         // copies like a shut off one rather than failing the backup.
         assert_eq!(parse_domain_state("crashed"), VmState::Crashed);
         assert!(!parse_domain_state("crashed").is_live());
-    }
-
-    #[test]
-    fn byte_counts_render_in_the_units_the_ui_uses() {
-        assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(2048), "2.0 KiB");
-        assert_eq!(format_bytes(3 << 30), "3.0 GiB");
     }
 
     #[tokio::test]

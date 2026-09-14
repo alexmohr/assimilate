@@ -651,9 +651,12 @@ pub(crate) fn build_activity_path(payload: &serde_json::Value) -> Option<String>
         .get("event_type")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
+    let Ok(event_type) = event_type_str.parse::<EventType>() else {
+        return None;
+    };
     if !matches!(
-        event_type_str,
-        "backup_warning" | "backup_failed" | "check_failed"
+        event_type,
+        EventType::BackupWarning | EventType::BackupFailed | EventType::CheckFailed
     ) {
         return None;
     }

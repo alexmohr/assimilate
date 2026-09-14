@@ -1864,6 +1864,7 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         Some(_) => Some(repo_name.clone()),
         None => None,
     };
+    let next_run_at = schedule.as_ref().and_then(|s| s.next_run_at);
 
     let event_type = if success {
         EventType::CheckSuccess
@@ -1889,7 +1890,7 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         deduplicated_size: None,
         files_processed: None,
         warnings: Vec::new(),
-        next_run_at: None,
+        next_run_at,
         activity_url: None,
     };
     spawn_notification_dispatch(state, event);

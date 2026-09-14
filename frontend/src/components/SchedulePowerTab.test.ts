@@ -92,6 +92,14 @@ function labels(wrapper: ReturnType<typeof mount>): string[] {
 }
 
 describe('SchedulePowerTab', () => {
+  it('discloses the pane-head hint describing what waking hosts does', async () => {
+    const wrapper = mount('host_default')
+    await wrapper.find('[aria-label="Help: waking hosts"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'Whether this job wakes the hosts it needs before it runs.',
+    )
+  })
+
   it('offers the three states, with the host default selected by default', () => {
     const wrapper = mount('host_default')
     const options = wrapper.findAll('.segmented-option')

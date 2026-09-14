@@ -9,6 +9,7 @@ import { updateRepoPower } from '../api/repos'
 import { listRepoSchedules } from '../api/schedules'
 import { extractError } from '../utils/error'
 import EditableSection from './EditableSection.vue'
+import HelpHint from './HelpHint.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { RepoWithStats } from '../types/repo'
 import type { ScheduleRow } from '../types/schedule'
@@ -119,6 +120,7 @@ async function save(): Promise<void> {
   <EditableSection
     lede="Wake the machine hosting this repository before a backup writes to it, and power it back
       down when the run is done."
+    lede-label="waking its host"
     :editing="editing"
     :can-edit="isAdmin"
     :saving="saving"
@@ -129,7 +131,13 @@ async function save(): Promise<void> {
   >
     <template #view>
       <dl class="info-grid">
-        <dt>Wake host before backup</dt>
+        <dt>
+          Wake host before backup
+          <HelpHint label="wake host before backup">
+            This is the default for jobs that do not set their own. A schedule can override it under
+            its Settings, in Power.
+          </HelpHint>
+        </dt>
         <dd>{{ repo.power.wake_enabled ? 'Enabled' : 'Disabled' }}</dd>
         <template v-if="showWakeDetails">
           <dt>MAC address</dt>
@@ -145,10 +153,6 @@ async function save(): Promise<void> {
           <dd>{{ repo.power.shutdown_after_backup ? 'Enabled' : 'Disabled' }}</dd>
         </template>
       </dl>
-      <p class="field-hint">
-        This is the default for jobs that do not set their own. A schedule can override it under its
-        Settings, in Power.
-      </p>
       <p
         v-if="overridingSchedules.length > 0"
         class="field-hint"
@@ -171,33 +175,37 @@ async function save(): Promise<void> {
     <template #edit>
       <div class="field field-inline">
         <div class="field-body">
-          <p class="field-title">Wake host before backup</p>
-          <p class="field-hint">
-            Checked before every backup, reusing the same connection check as
-            <em>Test connection</em> on the Repository section - the Wake-on-LAN packet below is
-            only sent if the host doesn't respond. This is the default for jobs that do not set
-            their own; a schedule can override it either way.
+          <p class="field-title">
+            Wake host before backup
+            <HelpHint label="wake host before backup">
+              Checked before every backup, reusing the same connection check as
+              <em>Test connection</em> on the Repository section - the Wake-on-LAN packet below is
+              only sent if the host doesn't respond. This is the default for jobs that do not set
+              their own; a schedule can override it either way.
+            </HelpHint>
           </p>
         </div>
         <ToggleSwitch v-model="wakeEnabled" />
       </div>
 
       <div class="field">
-        <label
-          class="field-label"
-          for="repo-power-wake-mac"
-          >MAC address</label
-        >
+        <div class="field-label-row field-label-row--tight">
+          <label
+            class="field-label"
+            for="repo-power-wake-mac"
+            >MAC address</label
+          >
+          <HelpHint label="where the wake packet is sent">
+            Used whenever this host is woken - by the setting above, or by a schedule that asks for
+            it under its own Power settings.
+          </HelpHint>
+        </div>
         <input
           id="repo-power-wake-mac"
           v-model="wakeMac"
           class="input mono"
           placeholder="9C:B6:D0:1A:44:7F"
         />
-        <span class="field-hint"
-          >Used whenever this host is woken - by the setting above, or by a schedule that asks for
-          it under its own Power settings.</span
-        >
       </div>
 
       <div class="field">
@@ -218,11 +226,16 @@ async function save(): Promise<void> {
       </div>
 
       <div class="field">
-        <label
-          class="field-label"
-          for="repo-power-wake-timeout"
-          >Wait for host (seconds)</label
-        >
+        <div class="field-label-row field-label-row--tight">
+          <label
+            class="field-label"
+            for="repo-power-wake-timeout"
+            >Wait for host (seconds)</label
+          >
+          <HelpHint label="the reconnect deadline">
+            How long to wait for SSH before the backup is marked failed.
+          </HelpHint>
+        </div>
         <input
           id="repo-power-wake-timeout"
           v-model.number="wakeTimeout"
@@ -230,15 +243,16 @@ async function save(): Promise<void> {
           min="1"
           class="input"
         />
-        <span class="field-hint">How long to wait for SSH before the backup is marked failed.</span>
       </div>
 
       <div class="field field-inline">
         <div class="field-body">
-          <p class="field-title">Shut down host after backup</p>
-          <p class="field-hint">
-            Only if this run woke it - a repository host that was already on is left running, since
-            other schedules may still be writing to it.
+          <p class="field-title">
+            Shut down host after backup
+            <HelpHint label="shut down host after backup">
+              Only if this run woke it - a repository host that was already on is left running,
+              since other schedules may still be writing to it.
+            </HelpHint>
           </p>
         </div>
         <ToggleSwitch v-model="shutdownAfterBackup" />

@@ -195,4 +195,15 @@ describe('QuotaPanel', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('API error')
   })
+
+  it('discloses the space limits explanation on demand', async () => {
+    mockGet.mockReturnValue(new Promise(() => {}))
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 },
+    })
+    await wrapper.find('[aria-label="Help: space limits"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toBe(
+      'How much space this repository may use, and what Assimilate does as it fills up.',
+    )
+  })
 })

@@ -13,6 +13,7 @@ import {
 } from '../api/agents'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
+import HelpHint from './HelpHint.vue'
 import type { AgentHostnamePattern } from '../types/agent'
 
 /**
@@ -77,12 +78,17 @@ defineExpose({ reload: load })
 </script>
 
 <template>
-  <p class="pane-lede">
-    Glob patterns that match archive hostnames to this agent during repository import. Only affects
-    future discoveries — existing imported agents are not retroactively reassigned, so use "Merge
-    into" on one to move its historical archives. <code>*</code> matches any characters,
-    <code>?</code> a single one.
-  </p>
+  <div class="pane-head pane-head--end">
+    <HelpHint
+      label="matching archive hostnames"
+      align="end"
+    >
+      Glob patterns that match archive hostnames to this agent during repository import. Only
+      affects future discoveries — existing imported agents are not retroactively reassigned, so use
+      "Merge into" on one to move its historical archives. <code>*</code> matches any characters,
+      <code>?</code> a single one.
+    </HelpHint>
+  </div>
   <div
     v-if="patterns.length > 0"
     class="paths-list"

@@ -158,6 +158,24 @@ describe('AgentSettingsTab', () => {
       expect(text).toContain('abc1234')
     })
 
+    it('discloses the host naming explanation behind its HelpHint', async () => {
+      const wrapper = mount()
+      await wrapper.find('[aria-label="Help: host naming"]').trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toBe(
+        'How this host names itself, and what the server knows about it.',
+      )
+    })
+
+    it('discloses what regenerating the token means behind its HelpHint', async () => {
+      const wrapper = mount()
+      await wrapper
+        .find('[aria-label="Help: what a new token means for the agent"]')
+        .trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'The agent stays disconnected until it is restarted with the new one.',
+      )
+    })
+
     it('opens the identity dialog from Edit', async () => {
       const wrapper = mount()
       await clickButton(wrapper, 'Edit')

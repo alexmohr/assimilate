@@ -44,6 +44,14 @@ describe('AgentHostnameAliases', () => {
     expect(wrapper.text()).toContain('web-??')
   })
 
+  it('discloses the alias matching explanation behind its HelpHint', async () => {
+    const wrapper = await mount()
+    await wrapper.find('[aria-label="Help: matching archive hostnames"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'Glob patterns that match archive hostnames to this agent during repository import.',
+    )
+  })
+
   it('reloads when the view switches to another host', async () => {
     const wrapper = await mount()
     await wrapper.setProps({ hostname: 'db-01' })

@@ -138,6 +138,19 @@ describe('AgentVmsCard', () => {
     expect(wrapper.text()).toContain('agent is not connected')
   })
 
+  it('discloses the VM backup and staging directory explanations behind their HelpHints', async () => {
+    const wrapper = await mount()
+    await startEditingSection(wrapper)
+
+    await wrapper.find('[aria-label="Help: allow VM backups"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain(
+      'Blocked here means no schedule backs up this host',
+    )
+
+    await wrapper.find('[aria-label="Help: where domains are staged"]').trigger('click')
+    expect(wrapper.find('.help-hint-pop').text()).toContain('one subdirectory per domain')
+  })
+
   it('saves the host settings in bytes, from the GiB the operator typed', async () => {
     const wrapper = await mount()
     await startEditingSection(wrapper)

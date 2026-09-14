@@ -12,6 +12,7 @@ import {
   serializeFileChangePatterns,
   type FileChangePatternRow,
 } from '../utils/fileChangePatterns'
+import HelpHint from './HelpHint.vue'
 
 const props = defineProps<{
   modelValue: string
@@ -91,23 +92,26 @@ function removeRow(index: number): void {
         <X :size="14" />
       </button>
     </div>
-    <button
-      class="btn btn-sm btn-ghost"
-      @click="addRow()"
-    >
-      + Add pattern
-    </button>
-    <span class="field-hint">
-      <slot name="hint">
-        Glob patterns matched against the full warning message, with actions:
-        <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
-        <code>fatal</code> (fail backup). A bare path will not match - the message continues past it
-        with <code>: file changed while we backed it up</code>, so end the pattern with
-        <code>*</code>, e.g. <code>/etc/config*</code>. <code>*</code> does not match
-        <code>/</code> - to cover every file under a directory, end the pattern with
-        <code>**</code>, e.g. <code>/data/wal/**</code>. Unconfigured files still produce warnings.
-      </slot>
-    </span>
+    <div class="fcp-footer">
+      <button
+        class="btn btn-sm btn-ghost"
+        @click="addRow()"
+      >
+        + Add pattern
+      </button>
+      <HelpHint label="file change patterns">
+        <slot name="hint">
+          Glob patterns matched against the full warning message, with actions:
+          <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
+          <code>fatal</code> (fail backup). A bare path will not match - the message continues past
+          it with <code>: file changed while we backed it up</code>, so end the pattern with
+          <code>*</code>, e.g. <code>/etc/config*</code>. <code>*</code> does not match
+          <code>/</code> - to cover every file under a directory, end the pattern with
+          <code>**</code>, e.g. <code>/data/wal/**</code>. Unconfigured files still produce
+          warnings.
+        </slot>
+      </HelpHint>
+    </div>
   </div>
 </template>
 
@@ -115,6 +119,12 @@ function removeRow(index: number): void {
 .fcp-editor {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
+}
+
+.fcp-footer {
+  display: flex;
+  align-items: center;
   gap: var(--space-4);
 }
 

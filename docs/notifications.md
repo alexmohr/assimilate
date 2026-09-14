@@ -92,18 +92,21 @@ Browser push notifications appear even when the Assimilate tab is closed. They u
 
 When you create your first Web Push channel, the browser will prompt you to allow notifications. No separate subscription step is required.
 
-Tapping a push notification opens the app to the most relevant page: a backup or check
+Tapping a push notification opens the app to the most relevant page: a backup
 failure/warning opens the [Activity Log](#activity-log-deep-links) filtered to that run (or
 the host, if the exact run isn't known), a schedule auto-disabled or backup-skipped event
-opens that schedule, and everything else opens the affected host or repository.
+opens that schedule, a repository check failure opens the affected host's overview (checks
+aren't recorded in the Activity Log, so there's no run detail to link to), and everything
+else opens the affected host or repository.
 
 ## Activity Log Deep Links
 
-A backup or check **failure or warning** notification links to the [Activity Log](activity.md)
-so you can go straight from the alert to the full run detail (duration, size, warnings, and
-the exact error). Web Push notifications build this link automatically -- as precisely as
+A backup **failure or warning** notification links to the [Activity Log](activity.md) so you
+can go straight from the alert to the full run detail (duration, size, warnings, and the
+exact error). Web Push notifications build this link automatically -- as precisely as
 `run_id` allows, or by host otherwise -- since the browser resolves it against its own
-origin.
+origin. Repository check failures don't get this link: a check run isn't persisted anywhere
+the Activity Log reads from, so those notifications link to the host overview instead.
 
 Email and webhook notifications are delivered outside the browser, so they need to know the
 server's externally-reachable address to build a clickable link. Set it once via the

@@ -1242,6 +1242,41 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
     });
 }
 
+/// Runs both quota checks (the repo's own quota and, if it shares an SSH host with other
+/// repos, the combined server quota) after a backup completes. The two share an identical
+/// parameter list, so calling them back to back inline at the single call site would just
+/// repeat those seven arguments twice for no reason.
+async fn check_quotas_after_backup(
+    state: &AppState,
+    hostname: &str,
+    agent_id: i64,
+    repo_id: i64,
+    schedule_id: Option<i64>,
+    repo_unique_csize: i64,
+    repo_name: &str,
+) {
+    check_repo_quota_after_backup(
+        state,
+        hostname,
+        agent_id,
+        repo_id,
+        schedule_id,
+        repo_unique_csize,
+        repo_name,
+    )
+    .await;
+    check_server_quota_after_backup(
+        state,
+        hostname,
+        agent_id,
+        repo_id,
+        schedule_id,
+        repo_unique_csize,
+        repo_name,
+    )
+    .await;
+}
+
 /// Checks whether the just-completed backup pushed the repository's own
 /// quota over a warning/critical threshold, dispatching a notification and
 /// enforcement action if so.
@@ -1380,34 +1415,6 @@ struct BackupCompletionNotificationArgs<'a> {
 
 /// The `BackupReport` fields needed for the completion notification, cloned out before the
 /// report is moved into `persist_backup_completed_report`.
-struct NotificationReportFields {
-    error_message: Option<String>,
-    archive_name: Option<String>,
-    run_id: Option<String>,
-    duration_secs: i64,
-    original_size: i64,
-    compressed_size: i64,
-    deduplicated_size: i64,
-    files_processed: i64,
-    warnings: Vec<String>,
-}
-
-impl NotificationReportFields {
-    fn clone_from(report: &shared::types::BackupReport) -> Self {
-        Self {
-            error_message: report.error_message.clone(),
-            archive_name: report.archive_name.clone(),
-            run_id: report.run_id.clone(),
-            duration_secs: report.duration_secs,
-            original_size: report.original_size,
-            compressed_size: report.compressed_size,
-            deduplicated_size: report.deduplicated_size,
-            files_processed: report.files_processed,
-            warnings: report.warnings.clone(),
-        }
-    }
-}
-
 async fn dispatch_backup_completion_notification(
     state: &AppState,
     args: BackupCompletionNotificationArgs<'_>,
@@ -1700,8 +1707,16 @@ async fn handle_backup_completed(
         success: outcome_success,
     });
 
-    let notification_fields = NotificationReportFields::clone_from(&report);
-    let index_archive_name = notification_fields.archive_name.clone();
+    let notification_error_message = report.error_message.clone();
+    let notification_archive_name = report.archive_name.clone();
+    let index_archive_name = notification_archive_name.clone();
+    let notification_run_id = report.run_id.clone();
+    let notification_duration_secs = report.duration_secs;
+    let notification_original_size = report.original_size;
+    let notification_compressed_size = report.compressed_size;
+    let notification_deduplicated_size = report.deduplicated_size;
+    let notification_files_processed = report.files_processed;
+    let notification_warnings = report.warnings.clone();
     let succeeded_or_warned = matches!(
         report_status,
         shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
@@ -1727,17 +1742,7 @@ async fn handle_backup_completed(
         .unwrap_or_else(|_| repo_id.to_string());
     let completed_repo_name = repo_name.clone();
 
-    check_repo_quota_after_backup(
-        state,
-        hostname,
-        agent_id,
-        repo_id,
-        schedule_id,
-        repo_unique_csize,
-        &repo_name,
-    )
-    .await;
-    check_server_quota_after_backup(
+    check_quotas_after_backup(
         state,
         hostname,
         agent_id,
@@ -1755,18 +1760,18 @@ async fn handle_backup_completed(
             hostname,
             repo_name,
             status_str,
-            error_message: notification_fields.error_message,
+            error_message: notification_error_message,
             repo_id,
             agent_id,
             schedule_id,
-            archive_name: notification_fields.archive_name,
-            run_id: notification_fields.run_id,
-            duration_secs: notification_fields.duration_secs,
-            original_size: notification_fields.original_size,
-            compressed_size: notification_fields.compressed_size,
-            deduplicated_size: notification_fields.deduplicated_size,
-            files_processed: notification_fields.files_processed,
-            warnings: notification_fields.warnings,
+            archive_name: notification_archive_name,
+            run_id: notification_run_id,
+            duration_secs: notification_duration_secs,
+            original_size: notification_original_size,
+            compressed_size: notification_compressed_size,
+            deduplicated_size: notification_deduplicated_size,
+            files_processed: notification_files_processed,
+            warnings: notification_warnings,
         },
     )
     .await;

@@ -306,25 +306,6 @@ pub struct UpdateSettingsRequest {
     pub public_url: Option<String>,
 }
 
-/// The two URL schemes a `public_url` setting may use. A private enum kept local to this
-/// validation, converted from the raw scheme string at this one boundary rather than
-/// matching on the string directly everywhere it's checked.
-enum PublicUrlScheme {
-    Http,
-    Https,
-    Other,
-}
-
-impl From<&str> for PublicUrlScheme {
-    fn from(scheme: &str) -> Self {
-        match scheme {
-            "http" => Self::Http,
-            "https" => Self::Https,
-            _ => Self::Other,
-        }
-    }
-}
-
 /// Validates and persists (or clears, on an empty string) the `public_url` setting.
 async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), ApiError> {
     if public_url.is_empty() {
@@ -334,8 +315,8 @@ async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), 
     let parsed = reqwest::Url::parse(public_url)
         .map_err(|e| ApiError::BadRequest(format!("invalid public_url: {e}")))?;
     if matches!(
-        PublicUrlScheme::from(parsed.scheme()),
-        PublicUrlScheme::Other
+        crate::notifications::net::Scheme::from(parsed.scheme()),
+        crate::notifications::net::Scheme::Other(_)
     ) {
         return Err(ApiError::BadRequest(
             "public_url must use http or https".to_string(),
@@ -652,33 +633,4 @@ pub async fn reset_system(
         cancelled_backups,
         notified_agents,
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::PublicUrlScheme;
-
-    #[test]
-    fn public_url_scheme_accepts_http_and_https() {
-        assert!(matches!(
-            PublicUrlScheme::from("http"),
-            PublicUrlScheme::Http
-        ));
-        assert!(matches!(
-            PublicUrlScheme::from("https"),
-            PublicUrlScheme::Https
-        ));
-    }
-
-    #[test]
-    fn public_url_scheme_rejects_other_schemes() {
-        assert!(matches!(
-            PublicUrlScheme::from("ftp"),
-            PublicUrlScheme::Other
-        ));
-        assert!(matches!(
-            PublicUrlScheme::from("file"),
-            PublicUrlScheme::Other
-        ));
-    }
 }

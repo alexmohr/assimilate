@@ -638,12 +638,14 @@ fn truncate_for_notification(message: &str) -> String {
     }
 }
 
-/// Builds a relative deep link into the Activity Log for a backup or check failure/warning,
-/// using whatever context the event carries: a `run_id` links to the exact run, otherwise
+/// Builds a relative deep link into the Activity Log for a backup failure/warning, using
+/// whatever context the event carries: a `run_id` links to the exact run, otherwise
 /// `hostname`/`schedule_id` narrow the feed as far as possible. Returns `None` for event
-/// types with no meaningful Activity Log entry (success, agent connect/disconnect, schedule
-/// auto-disabled, backup skipped -- these link elsewhere, see `build_push_url`) or when
-/// there isn't enough context to link at all.
+/// types with no meaningful Activity Log entry. Notably excludes `CheckFailed`: the
+/// Activity Log's backup category reads only from `backup_reports`, and a repository
+/// check is never persisted there, so a check-failure link could only ever land on that
+/// host's unrelated backup history, not the check that actually failed (see
+/// `build_push_url`'s fallback -- check outcomes link to the agent overview instead).
 pub(crate) fn build_activity_path(payload: &serde_json::Value) -> Option<String> {
     use std::fmt::Write as _;
 
@@ -656,7 +658,7 @@ pub(crate) fn build_activity_path(payload: &serde_json::Value) -> Option<String>
     };
     if !matches!(
         event_type,
-        EventType::BackupWarning | EventType::BackupFailed | EventType::CheckFailed
+        EventType::BackupWarning | EventType::BackupFailed
     ) {
         return None;
     }
@@ -718,14 +720,16 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
         .get("repo_name")
         .and_then(serde_json::Value::as_str)
         .filter(|s| !s.is_empty());
-    let is_problem = matches!(
-        event_type_str,
-        "backup_warning"
-            | "backup_failed"
-            | "check_failed"
-            | "schedule_auto_disabled"
-            | "backup_skipped_agent_offline"
-    );
+    let is_problem = event_type_str.parse::<EventType>().is_ok_and(|event_type| {
+        matches!(
+            event_type,
+            EventType::BackupWarning
+                | EventType::BackupFailed
+                | EventType::CheckFailed
+                | EventType::ScheduleAutoDisabled
+                | EventType::BackupSkippedAgentOffline
+        )
+    });
     let error_message = payload
         .get("error_message")
         .and_then(serde_json::Value::as_str)
@@ -1277,15 +1281,16 @@ mod tests {
     }
 
     #[test]
-    fn check_failed_links_to_activity_by_hostname() {
+    fn check_failed_goes_to_agent_overview_not_activity_log() {
+        // A check run is never persisted to backup_reports, so the Activity Log's backup
+        // category has nothing to show for it -- build_activity_path deliberately excludes
+        // CheckFailed, and this falls through to the plain agent-overview link instead of a
+        // deep link implying detail that doesn't exist.
         let p = payload(serde_json::json!({
             "event_type": "check_failed",
             "hostname": "myhost",
         }));
-        assert_eq!(
-            build_push_url(&p),
-            "/activity?category=backup&hostname=myhost"
-        );
+        assert_eq!(build_push_url(&p), "/agents/myhost");
     }
 
     #[test]

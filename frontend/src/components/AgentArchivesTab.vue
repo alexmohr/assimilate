@@ -8,7 +8,7 @@ import { ref, watch } from 'vue'
 import ArchiveExplorer from './ArchiveExplorer.vue'
 import EmptyState from './EmptyState.vue'
 import { listRepoArchives } from '../api/archives'
-import { resolveArchiveHost } from '../utils/archiveHost'
+import { resolveArchiveDomain, resolveArchiveHost } from '../utils/archiveHost'
 import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
@@ -28,6 +28,13 @@ import type { Repo } from '../types/repo'
  */
 const props = defineProps<{
   hostname: string
+  /**
+   * Disambiguates `hostname` when it is shared by more than one agent (see
+   * `resolveArchiveDomain`). Two such agents can back up to the same
+   * repository, so filtering archives by hostname alone would mix one
+   * agent's archives into the other's tab.
+   */
+  domain?: string | null
   repos: Repo[]
   isAdmin: boolean
 }>()
@@ -56,7 +63,11 @@ async function loadSection(section: RepoSection, silent = false): Promise<void> 
   section.error = null
   try {
     const all = await listRepoArchives(section.repo.id)
-    section.archives = all.filter((a) => resolveArchiveHost(a) === props.hostname)
+    section.archives = all.filter(
+      (a) =>
+        resolveArchiveHost(a) === props.hostname &&
+        resolveArchiveDomain(a) === (props.domain ?? null),
+    )
   } catch (e: unknown) {
     section.error = extractError(e)
   } finally {

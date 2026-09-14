@@ -1003,6 +1003,9 @@ pub struct ArchiveEntryResponse {
     pub matched: Option<bool>,
     /// Hostname of the agent.
     pub agent_hostname: Option<String>,
+    /// Domain of the agent, disambiguating `agent_hostname` when it is
+    /// shared by more than one agent.
+    pub agent_domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

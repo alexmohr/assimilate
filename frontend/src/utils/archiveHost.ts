@@ -3,8 +3,9 @@
 
 import type { ArchiveEntryResponse } from '../types/generated'
 
-/** Only the two fields the rule reads, so callers can pass a group key too. */
+/** Only the fields the rules read, so callers can pass a group key too. */
 type HostSource = Pick<ArchiveEntryResponse, 'matched' | 'agent_hostname' | 'hostname'>
+type DomainSource = Pick<ArchiveEntryResponse, 'matched' | 'agent_domain'>
 
 /**
  * Which hostname an archive belongs to.
@@ -22,4 +23,20 @@ type HostSource = Pick<ArchiveEntryResponse, 'matched' | 'agent_hostname' | 'hos
  */
 export function resolveArchiveHost(archive: HostSource): string {
   return archive.matched === true ? (archive.agent_hostname ?? archive.hostname) : archive.hostname
+}
+
+/**
+ * Which agent domain an archive belongs to, or `null` when that can't be
+ * determined - either because the archive is unmatched (see
+ * {@link resolveArchiveHost}: an unmatched archive isn't reliably tied to any
+ * particular agent, so its domain isn't either) or because the matched agent
+ * has no domain set.
+ *
+ * A bare hostname alone doesn't identify an agent when two agents share it
+ * and are told apart only by domain, so callers scoping archives to one
+ * specific agent must compare this alongside `resolveArchiveHost`, not
+ * instead of it.
+ */
+export function resolveArchiveDomain(archive: DomainSource): string | null {
+  return archive.matched === true ? archive.agent_domain : null
 }

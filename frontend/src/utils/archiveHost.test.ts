@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { resolveArchiveHost } from './archiveHost'
+import { resolveArchiveDomain, resolveArchiveHost } from './archiveHost'
 
 describe('resolveArchiveHost', () => {
   it('prefers the agent hostname on a matched archive', () => {
@@ -30,5 +30,25 @@ describe('resolveArchiveHost', () => {
     expect(
       resolveArchiveHost({ matched: null, agent_hostname: 'web-01', hostname: 'legacy-nas' }),
     ).toBe('legacy-nas')
+  })
+})
+
+describe('resolveArchiveDomain', () => {
+  it('returns the agent domain on a matched archive', () => {
+    expect(resolveArchiveDomain({ matched: true, agent_domain: 'dc1.example.com' })).toBe(
+      'dc1.example.com',
+    )
+  })
+
+  it('returns null on a matched archive with no agent domain', () => {
+    expect(resolveArchiveDomain({ matched: true, agent_domain: null })).toBeNull()
+  })
+
+  it('ignores the agent domain on an unmatched archive', () => {
+    expect(resolveArchiveDomain({ matched: false, agent_domain: 'dc1.example.com' })).toBeNull()
+  })
+
+  it('treats a missing matched flag as unmatched', () => {
+    expect(resolveArchiveDomain({ matched: null, agent_domain: 'dc1.example.com' })).toBeNull()
   })
 })

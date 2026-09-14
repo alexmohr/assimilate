@@ -42,6 +42,7 @@ function archive(overrides: Partial<ArchiveEntry>): ArchiveEntry {
     deduplicated_size: 100,
     matched: true,
     agent_hostname: 'bell',
+    agent_domain: null,
     ...overrides,
   }
 }
@@ -83,6 +84,35 @@ describe('AgentArchivesTab', () => {
     expect(mockListRepoArchives).toHaveBeenCalledWith(1)
     const section = wrapper.find('.stub-explorer')
     expect(section.attributes('data-repo')).toBe('Inhouse Global')
+    expect(section.find('.stub-count').text()).toBe('1')
+  })
+
+  // Regression test: two agents can share a hostname and be told apart only
+  // by domain (`repos.spec.ts` e2e coverage). `listRepoArchives` returns
+  // every archive in the repo regardless of which agent made it, so this tab
+  // must filter by domain too, not just the ambiguous bare hostname, or one
+  // agent's archives leak onto the other's page.
+  it('disambiguates by domain when two agents share a hostname', async () => {
+    mockListRepoArchives.mockResolvedValue([
+      archive({ name: 'bell-dc1', agent_domain: 'dc1.example.com' }),
+      archive({ name: 'bell-dc2', agent_domain: 'dc2.example.com' }),
+    ])
+    const wrapper = mount({ domain: 'dc1.example.com' })
+    await flushPromises()
+
+    const section = wrapper.find('.stub-explorer')
+    expect(section.find('.stub-count').text()).toBe('1')
+  })
+
+  it('matches archives from an agent with no domain when none is given', async () => {
+    mockListRepoArchives.mockResolvedValue([
+      archive({ name: 'bell-none', agent_domain: null }),
+      archive({ name: 'bell-dc1', agent_domain: 'dc1.example.com' }),
+    ])
+    const wrapper = mount()
+    await flushPromises()
+
+    const section = wrapper.find('.stub-explorer')
     expect(section.find('.stub-count').text()).toBe('1')
   })
 

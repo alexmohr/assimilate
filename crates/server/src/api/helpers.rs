@@ -23,20 +23,34 @@ pub struct DomainQuery {
     pub domain: Option<String>,
 }
 
-/// Rejects a negative `limit` or `offset` before either reaches a SQL
-/// `LIMIT`/`OFFSET` clause. Postgres itself refuses a negative value there,
-/// which without this check surfaces as an opaque `ApiError::Database` (a
-/// 500) instead of a 400 that actually names the bad input - the difference
-/// between a caller bug and a database going down.
+/// Upper bound on a paginated `limit`, well above any page size the UI
+/// requests in practice (the frontend pages 50 rows at a time, more as a
+/// user clicks "Load more"), but well short of letting one request pull an
+/// entire large table.
+const MAX_PAGE_LIMIT: i64 = 1000;
+
+/// Rejects a negative `limit`/`offset`, or a `limit` above [`MAX_PAGE_LIMIT`],
+/// before either reaches a SQL `LIMIT`/`OFFSET` clause. Postgres itself
+/// refuses a negative value there, which without this check surfaces as an
+/// opaque `ApiError::Database` (a 500) instead of a 400 that actually names
+/// the bad input - the difference between a caller bug and a database going
+/// down. The upper bound additionally stops an authenticated caller from
+/// requesting an entire table in one response.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if `limit` or `offset` is negative.
+/// Returns [`ApiError::BadRequest`] if `limit` is negative or exceeds
+/// [`MAX_PAGE_LIMIT`], or if `offset` is negative.
 pub fn validate_pagination(limit: i64, offset: i64) -> Result<(), ApiError> {
     if limit < 0 {
         return Err(ApiError::BadRequest(
             "limit must be non-negative".to_owned(),
         ));
+    }
+    if limit > MAX_PAGE_LIMIT {
+        return Err(ApiError::BadRequest(format!(
+            "limit must not exceed {MAX_PAGE_LIMIT}"
+        )));
     }
     if offset < 0 {
         return Err(ApiError::BadRequest(
@@ -267,6 +281,15 @@ mod tests {
     fn validate_pagination_rejects_a_negative_offset() {
         assert!(matches!(
             validate_pagination(50, -1),
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn validate_pagination_accepts_the_max_limit_but_rejects_above_it() {
+        assert!(validate_pagination(1000, 0).is_ok());
+        assert!(matches!(
+            validate_pagination(1001, 0),
             Err(ApiError::BadRequest(_))
         ));
     }

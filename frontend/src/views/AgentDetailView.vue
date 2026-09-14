@@ -956,6 +956,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         <AgentArchivesTab
           v-else-if="activeTab === 'backups' && agent"
           :hostname="agent.hostname"
+          :domain="agent.domain"
           :repos="repos"
           :is-admin="isAdmin"
         />

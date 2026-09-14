@@ -57,6 +57,10 @@ function hostFor(report: ReportRow): string {
   return agent?.hostname ?? report.hostname ?? ''
 }
 
+function domainFor(report: ReportRow): string | null {
+  return props.agents.get(report.agent_id ?? 0)?.domain ?? null
+}
+
 /**
  * A successful run is an archive: the repository's own archive list is built
  * from exactly these rows server-side, so mapping them here keeps the two
@@ -85,6 +89,7 @@ const archives = computed<ArchiveEntry[]>(() => {
       deduplicated_size: r.deduplicated_size,
       matched: true,
       agent_hostname: hostFor(r),
+      agent_domain: domainFor(r),
     })
   }
   return [...byName.values()]

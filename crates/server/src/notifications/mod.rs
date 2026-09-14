@@ -740,7 +740,11 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
         (Some(repo), Some(err)) => format!("{repo} - {err}"),
         (Some(repo), None) => repo.to_owned(),
         (None, Some(err)) => err,
-        (None, None) => "Notification".to_owned(),
+        (None, None) => payload
+            .get("hostname")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| "Notification".to_owned(), str::to_owned),
     }
 }
 
@@ -755,7 +759,7 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
     {
         format!("/schedules/{schedule_id}")
     } else if let Some(hostname) = payload.get("hostname").and_then(serde_json::Value::as_str) {
-        format!("/agents/{hostname}")
+        format!("/agents/{}", percent_encode_query_value(hostname))
     } else if let Some(repo_id) = payload.get("repo_id").and_then(serde_json::Value::as_i64) {
         format!("/repos/{repo_id}")
     } else {
@@ -1488,5 +1492,23 @@ mod tests {
             "event_type": "backup_failed",
         }));
         assert_eq!(build_push_body(&p), "Notification");
+    }
+
+    #[test]
+    fn push_body_agent_connected_falls_back_to_hostname_not_literal_notification() {
+        let p = payload(serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "myhost",
+        }));
+        assert_eq!(build_push_body(&p), "myhost");
+    }
+
+    #[test]
+    fn push_url_agent_fallback_percent_encodes_hostname() {
+        let p = payload(serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "my host/../etc",
+        }));
+        assert_eq!(build_push_url(&p), "/agents/my%20host%2F..%2Fetc");
     }
 }

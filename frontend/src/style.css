@@ -2295,6 +2295,14 @@
 
   .cc-foot-end {
     margin-left: auto;
+    /* HostsView's action group also carries `.card-actions` (its e2e
+       coverage locates the Deploy/Upgrade button through it), whose
+       `margin-top: auto` is meant for pinning a footer to the bottom of a
+       stretched card - meaningless here, where this sits inside the
+       `.card-meta` row rather than as the card's last flex-column child,
+       so it is reset back to the normal flow rather than left to apply by
+       accident. */
+    margin-top: 0;
     display: flex;
     align-items: center;
     gap: var(--space-3);

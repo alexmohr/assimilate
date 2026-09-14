@@ -1113,7 +1113,7 @@ watch(
                 </span>
               </div>
               <div
-                class="cc-foot-end"
+                class="cc-foot-end card-actions"
                 @click.stop
               >
                 <template v-if="agent.is_hidden">

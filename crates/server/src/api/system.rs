@@ -322,11 +322,15 @@ async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), 
             "public_url must use http or https".to_string(),
         ));
     }
-    if !matches!(parsed.path(), "" | "/") || parsed.query().is_some() || parsed.fragment().is_some()
+    if !matches!(parsed.path(), "" | "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
     {
         return Err(ApiError::BadRequest(
-            "public_url must be a bare origin (scheme://host[:port]) with no path, query, or \
-             fragment"
+            "public_url must be a bare origin (scheme://host[:port]) with no path, query, \
+             fragment, or credentials"
                 .to_string(),
         ));
     }

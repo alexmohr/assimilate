@@ -9713,6 +9713,19 @@ async fn test_update_settings_public_url_persists_validates_and_clears() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
+    // A URL with embedded credentials is rejected -- otherwise they'd be
+    // stored verbatim and end up in every notification's activity_url.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({
+            "retention_days": 7,
+            "public_url": "https://user:pass@backups.example.com",
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
     // The public_url from before these rejected attempts must be unchanged.
     let req = json_request(
         "PUT",

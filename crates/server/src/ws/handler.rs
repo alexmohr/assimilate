@@ -1413,8 +1413,7 @@ struct BackupCompletionNotificationArgs<'a> {
     warnings: Vec<String>,
 }
 
-/// The `BackupReport` fields needed for the completion notification, cloned out before the
-/// report is moved into `persist_backup_completed_report`.
+/// Dispatches a [`NotificationEvent`] for a completed backup.
 async fn dispatch_backup_completion_notification(
     state: &AppState,
     args: BackupCompletionNotificationArgs<'_>,

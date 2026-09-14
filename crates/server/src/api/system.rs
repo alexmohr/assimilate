@@ -334,7 +334,7 @@ async fn apply_public_url_update(pool: &PgPool, public_url: &str) -> Result<(), 
                 .to_string(),
         ));
     }
-    db::set_setting(pool, "public_url", public_url.trim_end_matches('/')).await
+    db::set_setting(pool, "public_url", &parsed.origin().ascii_serialization()).await
 }
 
 #[utoipa::path(

@@ -9684,6 +9684,28 @@ async fn test_update_settings_public_url_persists_validates_and_clears() {
         "https://backups.example.com"
     );
 
+    // Surrounding whitespace must not survive into the stored value -- the
+    // URL parser tolerates it during validation, so the stored value has to
+    // come from the parsed/normalized form rather than the raw input, or a
+    // stray space would end up embedded in every notification's
+    // activity_url.
+    let req = json_request(
+        "PUT",
+        "/api/system/settings",
+        Some(json!({
+            "retention_days": 7,
+            "public_url": " https://backups.example.org/ ",
+        })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("public_url").unwrap(),
+        "https://backups.example.org",
+        "surrounding whitespace must be normalized away"
+    );
+
     // A non-http(s) scheme is rejected.
     let req = json_request(
         "PUT",
@@ -9737,7 +9759,7 @@ async fn test_update_settings_public_url_persists_validates_and_clears() {
     let body = body_json(resp).await;
     assert_eq!(
         body.get("public_url").unwrap(),
-        "https://backups.example.com"
+        "https://backups.example.org"
     );
 
     // An empty string clears it.
